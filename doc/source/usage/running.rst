@@ -12,15 +12,18 @@ Simulator (no hardware required)::
 
    uv run bridge --protocol simulator --port 3000
 
-Serial device (COBS framed CBOR)::
-
-   uv run bridge --protocol serial --device /dev/ttyACM0 --baud 1000000
-
-TCP / UDP endpoint::
+TCP endpoint::
 
    uv run bridge --protocol tcp --remote-host 127.0.0.1 --remote-port 9000
 
-Common options:
+UDP endpoint::
+
+   uv run bridge --protocol udp --remote-host 127.0.0.1 --remote-port 9000
+
+Add ``--listen`` to accept connections from the target instead of connecting
+to it.
+
+Options:
 
 .. list-table::
    :header-rows: 1
@@ -29,7 +32,10 @@ Common options:
    * - Option
      - Default
      - Description
-   * - ``--host``
+   * - ``--protocol`` / ``-p``
+     - ``simulator``
+     - Data source: ``simulator``, ``tcp`` or ``udp``
+   * - ``--host`` / ``-h``
      - ``127.0.0.1``
      - WebSocket server bind address
    * - ``--port``
@@ -38,6 +44,18 @@ Common options:
    * - ``--path``
      - ``/ws/bridge``
      - WebSocket endpoint path
+   * - ``--remote-host``
+     - ``127.0.0.1``
+     - Target host (TCP/UDP); bind address with ``--listen``
+   * - ``--remote-port``
+     - ``9000``
+     - Target port (TCP/UDP); listen port with ``--listen``
+   * - ``--listen``
+     - off
+     - Listen for the target instead of connecting (TCP/UDP)
+   * - ``--interval``
+     - ``20``
+     - Simulator sampling interval in milliseconds
    * - ``--verbose`` / ``-v``
      - off
      - Enable debug output

@@ -83,7 +83,7 @@ Bridge
 
 .. req:: Serial bridge
    :id: REQ_BRIDGE_SERIAL
-   :status: implemented
+   :status: approved
    :component: bridge
    :satisfies: STK_DEVICE_IF
 

@@ -43,5 +43,4 @@ Text frames received by blip are logged but otherwise ignored.
 
 .. note::
 
-   On serial links the bridge frames CBOR payloads using COBS. On the
-   WebSocket side each frame carries exactly one message.
+   On the WebSocket side each frame carries exactly one message.

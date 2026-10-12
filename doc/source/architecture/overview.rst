@@ -17,7 +17,7 @@ CBOR-encoded message schema:
       blip   [label="blip\n(Rust / egui, web + native)"];
       proto  [label="proto\n(shared schema)", shape=note, fillcolor="#fff8dc"];
 
-      target -> bridge [label="Serial (COBS) /\nTCP / UDP", dir=both];
+      target -> bridge [label="TCP / UDP", dir=both];
       bridge -> blip   [label="WebSocket\nCBOR frames", dir=both];
       proto  -> blip   [style=dashed, arrowhead=none];
       proto  -> bridge [style=dashed, arrowhead=none, label="mirrored"];
@@ -40,7 +40,7 @@ CBOR-encoded message schema:
        embedded targets.
    * - ``bridge``
      - Python
-     - Asynchronous bridge from a device protocol (serial, TCP/UDP,
-       simulator) to a WebSocket server.
+     - Asynchronous bridge from a device protocol (TCP/UDP, simulator) to a
+       WebSocket server.
 
 See :doc:`components` for details and :doc:`protocol` for the message schema.

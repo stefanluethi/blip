@@ -31,7 +31,7 @@ Components
    :id: ARCH_BRIDGE
    :status: implemented
    :component: bridge
-   :satisfies: REQ_BRIDGE_SERIAL, REQ_BRIDGE_SOCKET, REQ_BRIDGE_SIM, REQ_CONN_WS
+   :satisfies: REQ_BRIDGE_SOCKET, REQ_BRIDGE_SIM, REQ_CONN_WS
 
    Python package (``bridge/src/bridge``) managed with ``uv``:
 
@@ -40,7 +40,7 @@ Components
      client actions to the protocol backend.
    * ``protocols/base.py`` -- ``BaseProtocol``, the extension point for new
      device protocols.
-   * ``protocols/`` -- ``serial``, ``socket`` and ``simulator``
+   * ``protocols/`` -- ``socket`` (TCP/UDP) and ``simulator``
      implementations.
    * ``main.py`` -- ``click`` based command line entry point (``bridge``).
 
