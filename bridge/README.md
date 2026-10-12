@@ -5,7 +5,7 @@ A Python-based asynchronous bridge linking various data sources and protocols (T
 ## Features
 
 - **Protocol Agnostic Architecture**: Easily extendable base class for integrating new protocol handlers.
-- **Simulator Mode**: Streams CPU load and simulated sensor measurements encoded via CBOR (`cbor2`), replicating the Rust simulator.
+- **Simulator Mode**: Streams CPU load, simulated sensor measurements and synthetic log records encoded via CBOR (`cbor2`), replicating the Rust simulator.
 - **Socket Bridge Mode**: TCP and UDP packet forwarding over WebSockets.
 - **CBOR Serialization**: Native support for binary `proto` messages matching the Rust `proto` library schema.
 - **`uv` Integration**: Managed using `uv` and standard `pyproject.toml`.
@@ -23,11 +23,13 @@ uv sync
 ### Running the Bridge
 
 #### Simulator Mode (Default)
-Starts the WebSocket server on `ws://127.0.0.1:3000/ws/bridge` with simulated CPU and accelerometer telemetry:
+Starts the WebSocket server on `ws://127.0.0.1:3000/ws/bridge` with simulated CPU and accelerometer telemetry and log records:
 
 ```bash
 uv run bridge --protocol simulator --port 3000
 ```
+
+Use `--interval` to set the sampling interval and `--log-interval` to set the mean interval between log records (both in milliseconds).
 
 #### TCP Socket Mode
 Bridges a TCP endpoint to WebSockets:

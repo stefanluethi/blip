@@ -106,4 +106,5 @@ Bridge
    :satisfies: STK_DEVICE_IF
 
    The bridge shall provide a simulator mode that streams synthetic CPU load
-   and sensor values without hardware.
+   and sensor values, and log records of all severity levels, without
+   hardware.

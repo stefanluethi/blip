@@ -3,6 +3,7 @@
 import asyncio
 import random
 import logging
+import time
 from typing import Union
 import psutil
 
@@ -11,21 +12,51 @@ from bridge.proto import Message
 
 logger = logging.getLogger("bridge.simulator")
 
+# Log levels as understood by blip (proto LogRecord.level)
+TRACE, DEBUG, INFO, WARN, ERROR = range(5)
+
+# Smoothed per-core CPU load (percent) above which a warning is logged, and below
+# which it is reported back to normal. Raw samples at short intervals jump between
+# 0 and 100%, so the load is averaged over CPU_SMOOTHING_SEC first.
+CPU_HIGH_THRESHOLD = 90.0
+CPU_NORMAL_THRESHOLD = 70.0
+CPU_SMOOTHING_SEC = 2.0
+
+# Background log messages: (weight, level, component, message template)
+_RANDOM_LOGS = [
+    (30, TRACE, "sensor", "accelerometer sample {accel:.3f} m/s^2"),
+    (20, DEBUG, "sensor", "accelerometer FIFO level {fifo}/32"),
+    (15, DEBUG, "net", "heartbeat sent (seq={seq})"),
+    (10, INFO, "motor", "speed setpoint changed to {rpm} rpm"),
+    (8, INFO, "storage", "flushed {blocks} blocks to flash"),
+    (5, WARN, "net", "packet retransmit (seq={seq}, attempt {attempt})"),
+    (4, WARN, "power", "supply voltage low: {voltage:.2f} V"),
+    (2, ERROR, "sensor", "accelerometer I2C read timeout (addr=0x{addr:02x})"),
+    (1, ERROR, "storage", "flash write failed at 0x{flash_addr:08x}, retrying"),
+]
+
 
 class SimulatorProtocol(BaseProtocol):
-    """Simulator protocol driving synthetic telemetry (CPU usage & accelerometer)."""
+    """Simulator protocol driving synthetic telemetry (CPU usage & accelerometer) and logs."""
 
-    def __init__(self, interval_ms: int = 50) -> None:
+    def __init__(self, interval_ms: int = 50, log_interval_ms: int = 500) -> None:
         super().__init__()
         self.interval_sec = interval_ms / 1000.0
+        self.log_interval_sec = log_interval_ms / 1000.0
         self._task: asyncio.Task | None = None
         self._running = False
+        self._seq = 0
+        self._cpu_avg: dict[int, float] = {}
+        self._cpu_high: set[int] = set()
 
     async def start(self) -> None:
         """Start simulator telemetry stream task."""
         self._running = True
         self._task = asyncio.create_task(self._run_loop())
-        logger.info(f"Simulator started (sampling interval: {self.interval_sec * 1000:.0f}ms)")
+        logger.info(
+            f"Simulator started (sampling interval: {self.interval_sec * 1000:.0f}ms, "
+            f"log interval: {self.log_interval_sec * 1000:.0f}ms)"
+        )
 
     async def stop(self) -> None:
         """Stop simulator background task."""
@@ -39,10 +70,14 @@ class SimulatorProtocol(BaseProtocol):
         logger.info("Simulator stopped.")
 
     async def _run_loop(self) -> None:
-        """Periodic loop broadcasting accelerometer and CPU telemetry encoded in CBOR."""
+        """Periodic loop broadcasting accelerometer and CPU telemetry and logs encoded in CBOR."""
         # Initialize psutil cpu percent calculation
-        psutil.cpu_percent(percpu=True)
-        
+        cpu_percentages = psutil.cpu_percent(percpu=True)
+        await self._send_log(
+            INFO, "main", f"simulator booted ({len(cpu_percentages)} CPU cores detected)"
+        )
+        next_log = time.monotonic() + self.log_interval_sec
+
         while self._running:
             try:
                 # 1. Accelerometer simulation
@@ -56,6 +91,13 @@ class SimulatorProtocol(BaseProtocol):
                     cpu_path = f"sysinfo/cpu/cpu{idx}"
                     cpu_msg = Message.create_value(cpu_path, float(cpu_val))
                     await self.send_to_websocket(cpu_msg.encode_cbor())
+                await self._log_cpu_transitions(cpu_percentages)
+
+                # 3. Random background logs, at a jittered rate
+                now = time.monotonic()
+                if now >= next_log:
+                    await self._send_random_log(accel_val)
+                    next_log = now + self.log_interval_sec * random.uniform(0.5, 1.5)
 
                 await asyncio.sleep(self.interval_sec)
             except asyncio.CancelledError:
@@ -63,6 +105,44 @@ class SimulatorProtocol(BaseProtocol):
             except Exception as e:
                 logger.error(f"Error in simulator loop: {e}")
                 await asyncio.sleep(0.1)
+
+    async def _send_log(self, level: int, component: str, message: str) -> None:
+        """Broadcast a single log record."""
+        log_msg = Message.create_log(level, message, component=component)
+        await self.send_to_websocket(log_msg.encode_cbor())
+
+    async def _log_cpu_transitions(self, cpu_percentages: list[float]) -> None:
+        """Log when a core's smoothed load enters or leaves the high-load range."""
+        alpha = min(1.0, self.interval_sec / CPU_SMOOTHING_SEC)
+        for idx, cpu_val in enumerate(cpu_percentages):
+            avg = self._cpu_avg.get(idx, cpu_val)
+            avg += alpha * (cpu_val - avg)
+            self._cpu_avg[idx] = avg
+            if avg >= CPU_HIGH_THRESHOLD and idx not in self._cpu_high:
+                self._cpu_high.add(idx)
+                await self._send_log(WARN, "sysinfo", f"cpu{idx} load high: {avg:.1f}%")
+            elif avg < CPU_NORMAL_THRESHOLD and idx in self._cpu_high:
+                self._cpu_high.discard(idx)
+                await self._send_log(INFO, "sysinfo", f"cpu{idx} load back to normal: {avg:.1f}%")
+
+    async def _send_random_log(self, accel_val: float) -> None:
+        """Pick a weighted random background log message and broadcast it."""
+        self._seq += 1
+        _, level, component, template = random.choices(
+            _RANDOM_LOGS, weights=[entry[0] for entry in _RANDOM_LOGS]
+        )[0]
+        message = template.format(
+            accel=accel_val,
+            fifo=random.randint(0, 32),
+            seq=self._seq,
+            rpm=random.randrange(0, 3001, 100),
+            blocks=random.randint(1, 64),
+            attempt=random.randint(1, 3),
+            voltage=random.uniform(3.0, 3.2),
+            addr=0x19,
+            flash_addr=random.randrange(0x08000000, 0x08100000, 0x100),
+        )
+        await self._send_log(level, component, message)
 
     async def handle_incoming_ws_message(self, message: Union[bytes, str]) -> None:
         """Echo incoming messages back to WebSocket clients (matching simulator behavior)."""

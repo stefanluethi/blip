@@ -35,6 +35,7 @@ def setup_logging(verbose: bool) -> None:
 @click.option("--remote-port", default=9000, type=int, help="Remote port for TCP/UDP mode.")
 @click.option("--listen", is_flag=True, help="Listen mode for TCP/UDP sockets.")
 @click.option("--interval", default=20, type=int, help="Simulator sampling interval in milliseconds.")
+@click.option("--log-interval", default=500, type=int, help="Simulator mean log interval in milliseconds.")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose debug output.")
 def main(
     protocol: str,
@@ -45,6 +46,7 @@ def main(
     remote_port: int,
     listen: bool,
     interval: int,
+    log_interval: int,
     verbose: bool
 ) -> None:
     """Protocol to WebSocket Server Bridge CLI."""
@@ -54,7 +56,7 @@ def main(
 
     # Instantiate protocol backend
     if protocol.lower() == "simulator":
-        proto_instance = SimulatorProtocol(interval_ms=interval)
+        proto_instance = SimulatorProtocol(interval_ms=interval, log_interval_ms=log_interval)
     elif protocol.lower() in ("tcp", "udp"):
         proto_instance = SocketProtocol(
             mode=protocol.lower(),
