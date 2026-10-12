@@ -1,7 +1,7 @@
 use super::Viewable;
 use crate::app::model::{Model, streams::{Stream, Value}};
 use std::cmp::min;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use egui::Ui;
 
 const MAX_PLOT_COUNT: usize = 6;
@@ -12,6 +12,70 @@ const MAX_POINTS_PER_CURVE: usize = 100_000;
 
 fn timestamp_to_seconds(timestamp: u64) -> f64 {
     timestamp as f64 / NANOS_PER_SECOND
+}
+
+/// Stream paths split into a tree at each "/".
+#[derive(Default)]
+struct StreamTree<'a> {
+    /// Full stream path if a stream ends at this node.
+    path: Option<&'a str>,
+    children: BTreeMap<&'a str, StreamTree<'a>>,
+}
+
+impl<'a> StreamTree<'a> {
+    fn build(paths: impl Iterator<Item = &'a str>) -> Self {
+        let mut root = Self::default();
+        for path in paths {
+            let mut node = &mut root;
+            for segment in path.split('/').filter(|segment| !segment.is_empty()) {
+                node = node.children.entry(segment).or_default();
+            }
+            node.path = Some(path);
+        }
+        root
+    }
+}
+
+fn show_stream_button(ui: &mut Ui, label: &str, path: &str, selectors: &mut HashMap<String, bool>) {
+    let selected = selectors.entry(path.to_string()).or_insert(false);
+    if ui
+        .add_sized(
+            egui::Vec2::new(ui.available_width(), 20.0),
+            egui::Button::new(label).selected(*selected),
+        )
+        .on_hover_text(path)
+        .clicked()
+    {
+        *selected = !*selected;
+    }
+}
+
+/// Shows the children of `node` as collapsible branches and stream buttons.
+fn show_stream_tree(
+    ui: &mut Ui,
+    node: &StreamTree<'_>,
+    prefix: &str,
+    selectors: &mut HashMap<String, bool>,
+) {
+    for (segment, child) in &node.children {
+        let child_prefix = format!("{prefix}/{segment}");
+        if child.children.is_empty() {
+            if let Some(path) = child.path {
+                show_stream_button(ui, segment, path, selectors);
+            }
+        } else {
+            egui::CollapsingHeader::new(*segment)
+                .id_salt(("stream_tree", &child_prefix))
+                .default_open(true)
+                .show(ui, |ui| {
+                    // a stream can also be the prefix of other streams
+                    if let Some(path) = child.path {
+                        show_stream_button(ui, segment, path, selectors);
+                    }
+                    show_stream_tree(ui, child, &child_prefix, selectors);
+                });
+        }
+    }
 }
 
 #[derive(serde::Deserialize, serde::Serialize, PartialEq, Debug, Clone, Copy)]
@@ -123,22 +187,10 @@ impl Plot {
                     let active_selectors = &mut self.selected_streams[self.selected_plot];
 
                     ui.set_width(ui.available_width());
-                    ui.vertical(|ui| {
-                        let mut streams = model.streams.iter().collect::<Vec<_>>();
-                        streams.sort_by_key(|stream| stream.path.clone());
-
-                        for stream in streams {
-                            let stream_selected = *active_selectors
-                                .entry(stream.path.clone())
-                                .or_insert(false);
-                            let button_name =stream.path.clone();
-                            if ui.add_sized(
-                                egui::Vec2::new(ui.available_width(), 20.0),
-                                egui::Button::new(button_name).selected(stream_selected),
-                            ).clicked() {
-                                *active_selectors.get_mut(&stream.path).unwrap() = !stream_selected;
-                            }
-                        }
+                    let tree =
+                        StreamTree::build(model.streams.iter().map(|stream| stream.path.as_str()));
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        show_stream_tree(ui, &tree, "", active_selectors);
                     });
                 });
             });
@@ -456,5 +508,16 @@ mod tests {
         assert_eq!(visible.last().unwrap().timestamp, 21_000_000);
         assert_eq!(visible_values(&values, None).len(), 100);
         assert!(visible_values(&values, Some((1.0, 2.0))).len() <= 1);
+    }
+
+    #[test]
+    fn stream_tree_branches_at_slashes() {
+        let tree = StreamTree::build(["acc/x", "acc/y", "/cpu", "acc"].into_iter());
+        assert_eq!(tree.children.keys().copied().collect::<Vec<_>>(), ["acc", "cpu"]);
+        let acc = &tree.children["acc"];
+        assert_eq!(acc.path, Some("acc"));
+        assert_eq!(acc.children.keys().copied().collect::<Vec<_>>(), ["x", "y"]);
+        assert_eq!(acc.children["x"].path, Some("acc/x"));
+        assert_eq!(tree.children["cpu"].path, Some("/cpu"));
     }
 }

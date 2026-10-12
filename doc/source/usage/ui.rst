@@ -15,7 +15,9 @@ The window is split into tiled panes that can be rearranged and grouped into
 tabs:
 
 Plot
-   Time-series plot of all received ``Value`` streams, keyed by ``path``.
+   Time-series plot of all received ``Value`` streams, keyed by ``path``. The
+   streams are selected per plot from a tree that branches at each ``/`` of
+   the path.
 
 Log table
    Table of received ``Log`` records with timestamp, level, component and
