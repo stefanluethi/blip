@@ -34,6 +34,10 @@ pub struct Plot {
     latest_timestamp: Option<u64>,
     #[serde(skip)]
     scan_range_x: Option<(f64, f64)>,
+    /// Seconds subtracted from the sample times to get plot x coordinates. In scan mode
+    /// this is the newest sample, so the x axis shows the time before it.
+    #[serde(skip)]
+    x_offset: f64,
 }
 
 impl Default for Plot {
@@ -53,6 +57,7 @@ impl Plot {
             reset_bounds: false,
             latest_timestamp: None,
             scan_range_x: None,
+            x_offset: 0.0,
         }
     }
 
@@ -146,7 +151,7 @@ impl Plot {
         plot_ui: &mut egui_plot::PlotUi<'_>,
     ) {
         let values = visible_values(&stream.values, range_x);
-        let points = downsample(values, MAX_POINTS_PER_CURVE);
+        let points = downsample(values, self.x_offset, MAX_POINTS_PER_CURVE);
 
         plot_ui.line(egui_plot::Line::new(
             format!("{} / {}", stream.path, "none"),
@@ -154,11 +159,11 @@ impl Plot {
         ));
     }
 
-    /// The x range in seconds the plot shows this frame, or `None` if all data is needed,
-    /// e.g. while the bounds are fitted automatically to the data.
+    /// The range of sample times in seconds the plot shows this frame, or `None` if all
+    /// data is needed, e.g. while the bounds are fitted automatically to the data.
     fn visible_range_x(&self, plot_ui: &egui_plot::PlotUi<'_>) -> Option<(f64, f64)> {
-        if let Some(range_x) = self.scan_range_x {
-            return Some(range_x);
+        if let Some((start, end)) = self.scan_range_x {
+            return Some((start + self.x_offset, end + self.x_offset));
         }
         if (self.reset_bounds && self.scope_mode == ScopeMode::Full) || plot_ui.auto_bounds().x {
             return None;
@@ -166,7 +171,7 @@ impl Plot {
         let bounds = plot_ui.plot_bounds();
         bounds
             .is_valid_x()
-            .then(|| (bounds.min()[0], bounds.max()[0]))
+            .then(|| (bounds.min()[0] + self.x_offset, bounds.max()[0] + self.x_offset))
     }
 
     fn latest_timestamp(model: &Model) -> Option<u64> {
@@ -178,19 +183,20 @@ impl Plot {
             .max()
     }
 
-    /// The scan viewport: the last `scan_window` seconds up to the newest sample.
-    /// Only returned when new data arrived, so the viewport can be moved freely otherwise.
+    /// The scan viewport in plot coordinates: the last `scan_window` seconds up to the
+    /// newest sample at 0. Only returned when new data arrived, so the viewport can be
+    /// moved freely otherwise.
     fn scan_range_x(&self, latest_timestamp: Option<u64>) -> Option<(f64, f64)> {
         if self.scope_mode != ScopeMode::Scan
             || (latest_timestamp == self.latest_timestamp && !self.reset_bounds)
         {
             return None;
         }
-        let end = timestamp_to_seconds(latest_timestamp?);
-        Some((end - self.scan_window as f64, end))
+        latest_timestamp.map(|_| (-self.scan_window as f64, 0.0))
     }
 
-    /// The y range covered by the selected streams of a plot within `[start, end]` seconds.
+    /// The y range covered by the selected streams of a plot within the sample times
+    /// `[start, end]` seconds.
     fn scan_range_y(&self, model: &Model, plot_index: usize, (start, end): (f64, f64)) -> Option<(f64, f64)> {
         let mut range: Option<(f64, f64)> = None;
         for stream in self.selected_stream_iter(model, plot_index) {
@@ -244,6 +250,10 @@ impl Plot {
         let link_x = egui::Vec2b::new(true, false);
 
         let latest_timestamp = Self::latest_timestamp(model);
+        self.x_offset = match (self.scope_mode, latest_timestamp) {
+            (ScopeMode::Scan, Some(timestamp)) => timestamp_to_seconds(timestamp),
+            _ => 0.0,
+        };
         self.scan_range_x = self.scan_range_x(latest_timestamp);
 
         self.selected_plot = min(self.selected_plot, self.number_of_plots - 1);
@@ -308,8 +318,20 @@ impl Plot {
                     .min_thickness(50.0),
             ]);
 
-        if plot_index == self.number_of_plots {
-            plot = plot.x_axis_label("t / s");
+        if self.scope_mode == ScopeMode::Scan {
+            // x is the time relative to the newest sample, label it as seconds before it
+            plot = plot.x_axis_formatter(|mark, _range| {
+                let num_decimals = (-mark.step_size.log10().round()).max(0.0) as usize;
+                // `+ 0.0` turns -0 into 0
+                let seconds_before = -mark.value + 0.0;
+                egui::emath::format_with_decimals_in_range(seconds_before, num_decimals..=num_decimals)
+            });
+        }
+        if plot_index + 1 == self.number_of_plots {
+            plot = plot.x_axis_label(match self.scope_mode {
+                ScopeMode::Full => "t / s",
+                ScopeMode::Scan => "t before latest / s",
+            });
         }
 
         plot.show(ui, |plot_ui| {
@@ -317,9 +339,10 @@ impl Plot {
                 plot_ui.set_auto_bounds(true);
             }
 
-            if let Some(range_x) = self.scan_range_x {
-                plot_ui.set_plot_bounds_x(range_x.0..=range_x.1);
-                if let Some((min_y, max_y)) = self.scan_range_y(model, plot_index, range_x) {
+            if let Some((start, end)) = self.scan_range_x {
+                plot_ui.set_plot_bounds_x(start..=end);
+                let sample_range = (start + self.x_offset, end + self.x_offset);
+                if let Some((min_y, max_y)) = self.scan_range_y(model, plot_index, sample_range) {
                     plot_ui.set_plot_bounds_y(min_y..=max_y);
                 }
             }
@@ -345,9 +368,10 @@ fn visible_values(values: &[Value], range_x: Option<(f64, f64)>) -> &[Value] {
 }
 
 /// Reduces `values` to at most `max_points` points by keeping the minimum and maximum
-/// of equally sized buckets, so peaks stay visible.
-fn downsample(values: &[Value], max_points: usize) -> Vec<[f64; 2]> {
-    let to_point = |v: &Value| [timestamp_to_seconds(v.timestamp), v.value as f64];
+/// of equally sized buckets, so peaks stay visible. The x coordinates are the sample
+/// times in seconds minus `x_offset`.
+fn downsample(values: &[Value], x_offset: f64, max_points: usize) -> Vec<[f64; 2]> {
+    let to_point = |v: &Value| [timestamp_to_seconds(v.timestamp) - x_offset, v.value as f64];
     if values.len() <= max_points {
         return values.iter().map(to_point).collect();
     }
@@ -411,13 +435,13 @@ mod tests {
     #[test]
     fn downsample_keeps_small_series() {
         let values = values(10);
-        assert_eq!(downsample(&values, 100).len(), 10);
+        assert_eq!(downsample(&values, 0.0, 100).len(), 10);
     }
 
     #[test]
     fn downsample_limits_points_and_keeps_extremes() {
         let values = values(1_000_003);
-        let points = downsample(&values, 1_000);
+        let points = downsample(&values, 0.0, 1_000);
         assert!(points.len() <= 1_000);
         assert!(points.windows(2).all(|p| p[0][0] <= p[1][0]));
         assert!(points.iter().any(|p| p[1] == 0.0));
