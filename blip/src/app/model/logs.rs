@@ -116,8 +116,4 @@ impl Logs {
         }
         self.entries.push_back(entry);
     }
-
-    pub fn clear(&mut self) {
-        self.entries.clear();
-    }
 }

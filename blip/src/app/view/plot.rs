@@ -119,8 +119,6 @@ impl Plot {
     }
 
     fn plot_stream_series(&self, stream: &Stream, plot_ui: &mut egui_plot::PlotUi<'_>) {
-        let stride_length = stream.values.len() / 10_000 + 1;
-
         let subset = match self.scope_mode {
             // todo: downsampling
             ScopeMode::Full => stream
@@ -151,10 +149,8 @@ impl Plot {
         let spacing_between_plots = ui.spacing().item_spacing.y * (plot_count - 1.0);
         let frame_vertical_overhead = plot_count * (2.0 * frame_stroke_width + 2.0 * frame_inner_margin);
 
-        let plot_height =
-            ((ui.available_height() - spacing_between_plots - frame_vertical_overhead) / plot_count)
-                .max(0.0);
-        plot_height
+        ((ui.available_height() - spacing_between_plots - frame_vertical_overhead) / plot_count)
+            .max(0.0)
     }
 
     fn show_plot_stack(&mut self, model: &Model, ui: &mut egui::Ui) {

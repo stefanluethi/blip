@@ -25,7 +25,7 @@ impl Default for LogFilter {
     }
 }
 
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(serde::Deserialize, serde::Serialize, Default)]
 #[serde(default)]
 pub struct LogTable {
     pub filter: LogFilter,
@@ -38,18 +38,6 @@ pub struct LogTable {
     last_case_sensitive: bool,
     #[serde(skip)]
     filter_menu_open: bool,
-}
-
-impl Default for LogTable {
-    fn default() -> Self {
-        Self {
-            filter: LogFilter::default(),
-            compiled_regex: None,
-            last_regex_str: String::new(),
-            last_case_sensitive: false,
-            filter_menu_open: false,
-        }
-    }
 }
 
 impl LogTable {
@@ -252,10 +240,10 @@ impl LogTable {
                             }
                         }
 
-                        if !self.filter.message_regex.is_empty() {
-                            if ui.small_button(egui_phosphor::regular::X).clicked() {
-                                self.filter.message_regex.clear();
-                            }
+                        if !self.filter.message_regex.is_empty()
+                            && ui.small_button(egui_phosphor::regular::X).clicked()
+                        {
+                            self.filter.message_regex.clear();
                         }
 
                         ui.separator();
@@ -297,10 +285,8 @@ impl LogTable {
                                 || !self.filter.message_regex.is_empty()
                                 || self.filter.case_sensitive;
 
-                            if is_filtered {
-                                if ui.button("Reset").clicked() {
-                                    self.filter = LogFilter::default();
-                                }
+                            if is_filtered && ui.button("Reset").clicked() {
+                                self.filter = LogFilter::default();
                             }
                         });
                     });
@@ -391,11 +377,6 @@ impl Viewable for LogTable {
     fn view(&mut self, ui: &mut egui::Ui, model: &mut crate::app::model::Model) {
         self.ui(ui, &model.logs);
     }
-}
-
-pub fn log_table_ui(ui: &mut egui::Ui, logs: &Logs) {
-    let mut table = LogTable::default();
-    table.ui(ui, logs);
 }
 
 #[cfg(test)]

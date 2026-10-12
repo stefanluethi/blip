@@ -45,8 +45,10 @@ impl Default for State {
 impl State {
     fn websocket_connect(&mut self, ctx: egui::Context) {
         let wakeup = move || ctx.request_repaint();
-        let mut options = ewebsock::Options::default();
-        options.max_incoming_frame_size = 2048;
+        let options = ewebsock::Options {
+            max_incoming_frame_size: 2048,
+            ..Default::default()
+        };
         let (sender, receiver) =
             ewebsock::connect_with_wakeup(self.target_address.clone(), options, wakeup).unwrap();
         self.ws_receiver = Some(receiver);
@@ -94,6 +96,7 @@ impl State {
         false
     }
 
+    #[expect(dead_code, reason = "no UI sends commands yet")]
     fn websocket_send(&mut self, command: proto::Action) {
         if let Some(sender) = self.ws_sender.as_mut() {
             let command_packet = serde_cbor_2::to_vec(&command).unwrap();
