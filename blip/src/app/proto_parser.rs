@@ -1,0 +1,24 @@
+use crate::app::model::{logs::LogEntry, Model};
+
+pub fn parse_message(message: Vec<u8>, model: &mut Model) {
+    log::info!("received {}B", message.len());
+    match serde_cbor_2::from_slice::<proto::Message>(&message) {
+        Ok(message) => {
+            match message {
+                proto::Message::Value(value) => {
+                    model.streams.append(&value);
+                }
+                proto::Message::Log(record) => {
+                    log::info!("received log message");
+                    model.logs.push(LogEntry::from_proto(&record));
+                }
+                _ => {
+                    log::warn!("Message not handled!");
+                }
+            };
+        }
+        Err(e) => {
+            log::warn!("error parsing message: {}", e);
+        }
+    }
+}

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bridge"
+version = "0.1.0"
+description = "A protocol-agnostic bridge to WebSocket server supporting Sockets and Simulation"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "websockets>=12.0",
+    "cbor2>=5.6.0",
+    "psutil>=5.9.0",
+    "click>=8.1.0",
+]
+
+[project.scripts]
+bridge = "bridge.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bridge"]

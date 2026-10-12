@@ -1,0 +1,53 @@
+Components
+==========
+
+.. arch:: blip frontend
+   :id: ARCH_BLIP
+   :status: implemented
+   :component: blip
+   :satisfies: REQ_VIS_PLOT, REQ_VIS_LOG, REQ_CONN_WS, REQ_PLAT_WEB, REQ_PLAT_NATIVE, REQ_PERSIST_STATE
+
+   egui/eframe application compiled to WebAssembly (served by Trunk) or to a
+   native binary. Main modules in ``blip/src``:
+
+   * ``app.rs`` -- application state, WebSocket connection handling and the
+     tiled pane layout (``egui_tiles``).
+   * ``app/proto_parser.rs`` -- decodes binary CBOR frames into ``proto``
+     messages and feeds the model.
+   * ``app/model`` -- data model: value ``streams`` and ``logs``.
+   * ``app/view`` -- views: time-series ``plot`` and ``log_table``.
+
+.. arch:: proto crate
+   :id: ARCH_PROTO
+   :status: implemented
+   :component: proto
+   :satisfies: REQ_PROTO_CBOR
+
+   Rust crate defining the serde-serialisable wire types. It is the single
+   source of truth for the message schema; the bridge mirrors it in
+   ``bridge/src/bridge/proto.py``.
+
+.. arch:: bridge
+   :id: ARCH_BRIDGE
+   :status: implemented
+   :component: bridge
+   :satisfies: REQ_BRIDGE_SERIAL, REQ_BRIDGE_SOCKET, REQ_BRIDGE_SIM, REQ_CONN_WS
+
+   Python package (``bridge/src/bridge``) managed with ``uv``:
+
+   * ``server.py`` -- ``BridgeServer``, an asyncio WebSocket server that
+     broadcasts protocol messages to all connected clients and forwards
+     client actions to the protocol backend.
+   * ``protocols/base.py`` -- ``BaseProtocol``, the extension point for new
+     device protocols.
+   * ``protocols/`` -- ``serial``, ``socket`` and ``simulator``
+     implementations.
+   * ``main.py`` -- ``click`` based command line entry point (``bridge``).
+
+Component traceability
+----------------------
+
+.. needflow::
+   :types: arch, req
+   :link_types: satisfies
+   :show_link_names:

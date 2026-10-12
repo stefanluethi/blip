@@ -1,0 +1,14 @@
+[project]
+name = "blip-docs"
+version = "0.1.0"
+description = "User documentation for blip: software architecture, usage guide and requirements"
+requires-python = ">=3.10"
+dependencies = [
+    "sphinx>=8.1",
+    "sphinx-needs[plotting]>=6.0",
+    "furo>=2024.8.6",
+    "sphinx-autobuild>=2024.10.3",
+]
+
+[tool.uv]
+package = false
