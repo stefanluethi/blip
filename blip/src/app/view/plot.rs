@@ -36,21 +36,12 @@ impl<'a> StreamTree<'a> {
     }
 }
 
-fn show_stream_button(ui: &mut Ui, label: &str, path: &str, selectors: &mut HashMap<String, bool>) {
+fn show_stream_checkbox(ui: &mut Ui, label: &str, path: &str, selectors: &mut HashMap<String, bool>) {
     let selected = selectors.entry(path.to_string()).or_insert(false);
-    if ui
-        .add_sized(
-            egui::Vec2::new(ui.available_width(), 20.0),
-            egui::Button::new(label).selected(*selected),
-        )
-        .on_hover_text(path)
-        .clicked()
-    {
-        *selected = !*selected;
-    }
+    ui.checkbox(selected, label).on_hover_text(path);
 }
 
-/// Shows the children of `node` as collapsible branches and stream buttons.
+/// Shows the children of `node` as collapsible branches and stream checkboxes.
 fn show_stream_tree(
     ui: &mut Ui,
     node: &StreamTree<'_>,
@@ -61,7 +52,7 @@ fn show_stream_tree(
         let child_prefix = format!("{prefix}/{segment}");
         if child.children.is_empty() {
             if let Some(path) = child.path {
-                show_stream_button(ui, segment, path, selectors);
+                show_stream_checkbox(ui, segment, path, selectors);
             }
         } else {
             egui::CollapsingHeader::new(*segment)
@@ -70,7 +61,7 @@ fn show_stream_tree(
                 .show(ui, |ui| {
                     // a stream can also be the prefix of other streams
                     if let Some(path) = child.path {
-                        show_stream_button(ui, segment, path, selectors);
+                        show_stream_checkbox(ui, segment, path, selectors);
                     }
                     show_stream_tree(ui, child, &child_prefix, selectors);
                 });
