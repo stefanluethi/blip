@@ -110,5 +110,9 @@ needs_links = {
     },
 }
 
+# Render needflow with graphviz (already required by sphinx.ext.graphviz);
+# the default plantuml engine is not installed.
+needs_flow_engine = "graphviz"
+
 # Write needs.json for traceability tooling / CI checks.
 needs_build_json = True
