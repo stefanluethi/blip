@@ -12,6 +12,10 @@ Simulator (no hardware required)::
 
    uv run bridge --protocol simulator --port 3000
 
+The simulator streams per-core CPU load and an accelerometer value, and emits
+log records from a few synthetic components at all severity levels. Sustained
+high CPU load on a core is reported as a warning.
+
 TCP endpoint::
 
    uv run bridge --protocol tcp --remote-host 127.0.0.1 --remote-port 9000
@@ -56,6 +60,9 @@ Options:
    * - ``--interval``
      - ``20``
      - Simulator sampling interval in milliseconds
+   * - ``--log-interval``
+     - ``500``
+     - Mean simulator log interval in milliseconds
    * - ``--verbose`` / ``-v``
      - off
      - Enable debug output
