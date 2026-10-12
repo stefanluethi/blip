@@ -25,7 +25,7 @@ graphviz_output_format = "svg"
 
 # -- HTML output -------------------------------------------------------------
 
-html_theme = "furo"
+html_theme = "shibuya"
 html_title = "blip documentation"
 html_static_path = ["_static"]
 
