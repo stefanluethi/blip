@@ -38,17 +38,17 @@ async def test_simulator_bridge():
             # 4. Test echo message
             test_payload = b"hello_bridge_test"
             await ws.send(test_payload)
-            echoed = await asyncio.wait_for(ws.recv(), timeout=2.0)
 
-            # Might be telemetry or echo, read until we get the echo payload
-            found_echo = False
-            for _ in range(10):
-                if echoed == test_payload:
-                    found_echo = True
-                    break
-                echoed = await asyncio.wait_for(ws.recv(), timeout=2.0)
+            # Interleaved with telemetry (one value per CPU core and tick), so
+            # read until the echo arrives instead of a fixed number of messages
+            async def wait_for_echo() -> None:
+                while await ws.recv() != test_payload:
+                    pass
 
-            assert found_echo is True, "Echo message was not received back from simulator"
+            try:
+                await asyncio.wait_for(wait_for_echo(), timeout=2.0)
+            except asyncio.TimeoutError:
+                raise AssertionError("Echo message was not received back from simulator")
 
     finally:
         await server.stop()
