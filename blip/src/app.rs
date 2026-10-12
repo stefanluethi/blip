@@ -14,6 +14,7 @@ pub struct State {
     stream_view: view::plot::Plot,
     log_view: view::log_table::LogTable,
 
+    #[serde(skip)]
     model: model::Model,
 
     target_address: String,
@@ -51,6 +52,7 @@ impl State {
         };
         let (sender, receiver) =
             ewebsock::connect_with_wakeup(self.target_address.clone(), options, wakeup).unwrap();
+        self.model = model::Model::default();
         self.ws_receiver = Some(receiver);
         self.ws_sender = Some(sender);
     }

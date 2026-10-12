@@ -42,7 +42,7 @@ impl LogLevel {
 }
 
 
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug)]
 pub struct LogEntry {
     pub timestamp: String,
     pub component: String,
@@ -89,8 +89,6 @@ impl LogEntry {
     }
 }
 
-#[derive(serde::Deserialize, serde::Serialize)]
-#[serde(default)]
 pub struct Logs {
     pub entries: VecDeque<LogEntry>,
     pub max_entries: usize,

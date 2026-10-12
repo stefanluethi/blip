@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 // todo: any
-#[derive(serde::Deserialize, serde::Serialize)]
 pub struct Value {
     pub timestamp: u64,
     pub value: f32,
@@ -16,8 +15,6 @@ impl From<&proto::Value> for Value {
     }
 }
 
-#[derive(serde::Deserialize, serde::Serialize)]
-#[serde(default)]
 pub struct Stream {
     pub path: String,
     pub values: Vec<Value>,
@@ -38,8 +35,6 @@ impl Stream {
     }
 }
 
-#[derive(serde::Deserialize, serde::Serialize)]
-#[serde(default)]
 pub struct Streams {
     map: HashMap<String, Stream>,
 }
