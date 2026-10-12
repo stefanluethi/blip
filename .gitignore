@@ -21,3 +21,6 @@ doc/_build/
 
 # Sphinx build output (doc)
 _build/
+
+# Claude Code local state
+.claude/
