@@ -1,5 +1,5 @@
 use super::Viewable;
-use crate::app::model::{Model, streams::Stream};
+use crate::app::model::{Model, streams::{Stream, Value}};
 use std::cmp::min;
 use std::collections::HashMap;
 use egui::Ui;
@@ -7,6 +7,8 @@ use egui::Ui;
 const MAX_PLOT_COUNT: usize = 6;
 const NANOS_PER_SECOND: f64 = 1.0e9;
 const SCAN_Y_MARGIN_FRACTION: f64 = 0.05;
+/// Upper bound of points drawn per curve within the visible x range.
+const MAX_POINTS_PER_CURVE: usize = 100_000;
 
 fn timestamp_to_seconds(timestamp: u64) -> f64 {
     timestamp as f64 / NANOS_PER_SECOND
@@ -137,18 +139,34 @@ impl Plot {
             });
     }
 
-    fn plot_stream_series(&self, stream: &Stream, plot_ui: &mut egui_plot::PlotUi<'_>) {
-        // todo: downsampling
-        let points = stream
-            .values
-            .iter()
-            .map(|v| [timestamp_to_seconds(v.timestamp), v.value as f64])
-            .collect::<Vec<[f64; 2]>>();
+    fn plot_stream_series(
+        &self,
+        stream: &Stream,
+        range_x: Option<(f64, f64)>,
+        plot_ui: &mut egui_plot::PlotUi<'_>,
+    ) {
+        let values = visible_values(&stream.values, range_x);
+        let points = downsample(values, MAX_POINTS_PER_CURVE);
 
         plot_ui.line(egui_plot::Line::new(
             format!("{} / {}", stream.path, "none"),
             egui_plot::PlotPoints::from(points),
         ));
+    }
+
+    /// The x range in seconds the plot shows this frame, or `None` if all data is needed,
+    /// e.g. while the bounds are fitted automatically to the data.
+    fn visible_range_x(&self, plot_ui: &egui_plot::PlotUi<'_>) -> Option<(f64, f64)> {
+        if let Some(range_x) = self.scan_range_x {
+            return Some(range_x);
+        }
+        if (self.reset_bounds && self.scope_mode == ScopeMode::Full) || plot_ui.auto_bounds().x {
+            return None;
+        }
+        let bounds = plot_ui.plot_bounds();
+        bounds
+            .is_valid_x()
+            .then(|| (bounds.min()[0], bounds.max()[0]))
     }
 
     fn latest_timestamp(model: &Model) -> Option<u64> {
@@ -306,11 +324,54 @@ impl Plot {
                 }
             }
 
+            let range_x = self.visible_range_x(plot_ui);
             for stream in self.selected_stream_iter(model, plot_index) {
-                self.plot_stream_series(stream, plot_ui);
+                self.plot_stream_series(stream, range_x, plot_ui);
             }
         })
     }
+}
+
+/// The values within `range_x` seconds, plus one neighbour on each side so the line
+/// continues to the plot edges. All values if `range_x` is `None`.
+fn visible_values(values: &[Value], range_x: Option<(f64, f64)>) -> &[Value] {
+    let Some((start, end)) = range_x else {
+        return values;
+    };
+    // values are appended in arrival order, so timestamps are ascending
+    let first = values.partition_point(|v| timestamp_to_seconds(v.timestamp) < start);
+    let last = values.partition_point(|v| timestamp_to_seconds(v.timestamp) <= end);
+    &values[first.saturating_sub(1)..min(last + 1, values.len())]
+}
+
+/// Reduces `values` to at most `max_points` points by keeping the minimum and maximum
+/// of equally sized buckets, so peaks stay visible.
+fn downsample(values: &[Value], max_points: usize) -> Vec<[f64; 2]> {
+    let to_point = |v: &Value| [timestamp_to_seconds(v.timestamp), v.value as f64];
+    if values.len() <= max_points {
+        return values.iter().map(to_point).collect();
+    }
+
+    let bucket_size = values.len().div_ceil((max_points / 2).max(1));
+    let mut points = Vec::with_capacity(max_points);
+    for bucket in values.chunks(bucket_size) {
+        let mut min_index = 0;
+        let mut max_index = 0;
+        for (i, v) in bucket.iter().enumerate() {
+            if v.value < bucket[min_index].value {
+                min_index = i;
+            }
+            if v.value > bucket[max_index].value {
+                max_index = i;
+            }
+        }
+        // keep the two extremes in time order
+        points.push(to_point(&bucket[min_index.min(max_index)]));
+        if min_index != max_index {
+            points.push(to_point(&bucket[min_index.max(max_index)]));
+        }
+    }
+    points
 }
 
 impl Viewable for Plot {
@@ -331,5 +392,45 @@ impl Viewable for Plot {
                 });
             });
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn values(count: u64) -> Vec<Value> {
+        (0..count)
+            .map(|i| Value {
+                timestamp: i * 1_000_000,
+                value: (i % 7) as f32,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn downsample_keeps_small_series() {
+        let values = values(10);
+        assert_eq!(downsample(&values, 100).len(), 10);
+    }
+
+    #[test]
+    fn downsample_limits_points_and_keeps_extremes() {
+        let values = values(1_000_003);
+        let points = downsample(&values, 1_000);
+        assert!(points.len() <= 1_000);
+        assert!(points.windows(2).all(|p| p[0][0] <= p[1][0]));
+        assert!(points.iter().any(|p| p[1] == 0.0));
+        assert!(points.iter().any(|p| p[1] == 6.0));
+    }
+
+    #[test]
+    fn visible_values_includes_neighbours() {
+        let values = values(100); // 1 ms apart
+        let visible = visible_values(&values, Some((0.0105, 0.0205)));
+        assert_eq!(visible.first().unwrap().timestamp, 10_000_000);
+        assert_eq!(visible.last().unwrap().timestamp, 21_000_000);
+        assert_eq!(visible_values(&values, None).len(), 100);
+        assert!(visible_values(&values, Some((1.0, 2.0))).len() <= 1);
     }
 }
