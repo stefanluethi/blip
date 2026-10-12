@@ -1,0 +1,7 @@
+/* Use Fira Sans for text and headings, Fira Code for code. */
+:root {
+  --sy-f-text: "Fira Sans", var(--sy-f-sys), var(--sy-f-cjk), sans-serif;
+  --sy-f-heading: "Fira Sans", var(--sy-f-sys), var(--sy-f-cjk), sans-serif;
+  --sy-f-mono: "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+}

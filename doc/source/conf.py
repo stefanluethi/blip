@@ -28,6 +28,14 @@ graphviz_output_format = "svg"
 html_theme = "shibuya"
 html_title = "blip documentation"
 html_static_path = ["_static"]
+# Fira Sans for text, Fira Code for code; fonts.css maps them onto shibuya's
+# font variables.
+html_css_files = [
+    "https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700"
+    "&family=Fira+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500"
+    "&display=swap",
+    "fonts.css",
+]
 
 # -- sphinx-needs ------------------------------------------------------------
 # Requirement hierarchy:
