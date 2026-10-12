@@ -5,6 +5,12 @@ use std::collections::HashMap;
 use egui::Ui;
 
 const MAX_PLOT_COUNT: usize = 6;
+const NANOS_PER_SECOND: f64 = 1.0e9;
+const SCAN_Y_MARGIN_FRACTION: f64 = 0.05;
+
+fn timestamp_to_seconds(timestamp: u64) -> f64 {
+    timestamp as f64 / NANOS_PER_SECOND
+}
 
 #[derive(serde::Deserialize, serde::Serialize, PartialEq, Debug, Clone, Copy)]
 pub enum ScopeMode {
@@ -20,6 +26,12 @@ pub struct Plot {
     selected_streams: [HashMap<String, bool>; MAX_PLOT_COUNT],
     scope_mode: ScopeMode,
     scan_window: f32,
+    #[serde(skip)]
+    reset_bounds: bool,
+    #[serde(skip)]
+    latest_timestamp: Option<u64>,
+    #[serde(skip)]
+    scan_range_x: Option<(f64, f64)>,
 }
 
 impl Default for Plot {
@@ -36,6 +48,9 @@ impl Plot {
             selected_streams: Self::init_selected_streams(),
             scope_mode: ScopeMode::Full,
             scan_window: 20.0,
+            reset_bounds: false,
+            latest_timestamp: None,
+            scan_range_x: None,
         }
     }
 
@@ -53,19 +68,23 @@ impl Plot {
             if ui.button("Clear Data").clicked() {
                 model.streams.clear();
             }
+            let previous_mode = self.scope_mode;
             egui::ComboBox::from_label("Mode")
                 .selected_text(format!("{:?}", self.scope_mode))
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut self.scope_mode, ScopeMode::Full, "Full");
                     ui.selectable_value(&mut self.scope_mode, ScopeMode::Scan, "Scan");
                 });
+            if self.scope_mode != previous_mode {
+                self.reset_bounds = true;
+            }
 
             if self.scope_mode == ScopeMode::Scan {
                 ui.separator();
                 ui.label("Scan window:");
                 ui.add(
                     egui::DragValue::new(&mut self.scan_window)
-                        .range(0.0..=1.0e6)
+                        .range(0.001..=1.0e6)
                         .suffix("s")
                         .speed(0.01),
                 );
@@ -119,27 +138,74 @@ impl Plot {
     }
 
     fn plot_stream_series(&self, stream: &Stream, plot_ui: &mut egui_plot::PlotUi<'_>) {
-        let subset = match self.scope_mode {
-            // todo: downsampling
-            ScopeMode::Full => stream
-                .values
-                .iter()
-                .map(|v| {[v.timestamp as f64, v.value as f64 ]})
-                .collect::<Vec<[f64; 2]>>(),
-            ScopeMode::Scan => {
-                let window_length = self.scan_window as usize;
-                let n_samples = min(stream.values.len(), window_length);
-                stream.values[(stream.values.len() - n_samples)..]
-                    .iter()
-                    .map(|v| {[v.timestamp as f64, v.value as f64 ]})
-                    .collect::<Vec<[f64; 2]>>()
-            }
-        };
+        // todo: downsampling
+        let points = stream
+            .values
+            .iter()
+            .map(|v| [timestamp_to_seconds(v.timestamp), v.value as f64])
+            .collect::<Vec<[f64; 2]>>();
 
         plot_ui.line(egui_plot::Line::new(
             format!("{} / {}", stream.path, "none"),
-            egui_plot::PlotPoints::from(subset),
+            egui_plot::PlotPoints::from(points),
         ));
+    }
+
+    fn latest_timestamp(model: &Model) -> Option<u64> {
+        model
+            .streams
+            .iter()
+            .filter_map(|stream| stream.values.last())
+            .map(|v| v.timestamp)
+            .max()
+    }
+
+    /// The scan viewport: the last `scan_window` seconds up to the newest sample.
+    /// Only returned when new data arrived, so the viewport can be moved freely otherwise.
+    fn scan_range_x(&self, latest_timestamp: Option<u64>) -> Option<(f64, f64)> {
+        if self.scope_mode != ScopeMode::Scan
+            || (latest_timestamp == self.latest_timestamp && !self.reset_bounds)
+        {
+            return None;
+        }
+        let end = timestamp_to_seconds(latest_timestamp?);
+        Some((end - self.scan_window as f64, end))
+    }
+
+    /// The y range covered by the selected streams of a plot within `[start, end]` seconds.
+    fn scan_range_y(&self, model: &Model, plot_index: usize, (start, end): (f64, f64)) -> Option<(f64, f64)> {
+        let mut range: Option<(f64, f64)> = None;
+        for stream in self.selected_stream_iter(model, plot_index) {
+            // values are appended in arrival order, so timestamps are ascending
+            let first = stream
+                .values
+                .partition_point(|v| timestamp_to_seconds(v.timestamp) < start);
+            let last = stream
+                .values
+                .partition_point(|v| timestamp_to_seconds(v.timestamp) <= end);
+            for v in &stream.values[first..last] {
+                let y = v.value as f64;
+                range = Some(match range {
+                    Some((low, high)) => (low.min(y), high.max(y)),
+                    None => (y, y),
+                });
+            }
+        }
+
+        range.map(|(low, high)| {
+            let margin = if high > low { (high - low) * SCAN_Y_MARGIN_FRACTION } else { 0.5 };
+            (low - margin, high + margin)
+        })
+    }
+
+    fn selected_stream_iter<'a>(
+        &'a self,
+        model: &'a Model,
+        plot_index: usize,
+    ) -> impl Iterator<Item = &'a Stream> {
+        model.streams.iter().filter(move |stream| {
+            *self.selected_streams[plot_index].get(&stream.path).unwrap_or(&false)
+        })
     }
 
     fn calculate_plot_height(&mut self, ui: &mut Ui) -> f32 {
@@ -159,10 +225,15 @@ impl Plot {
         let link_group_id = ui.id().with("stream_plot_group");
         let link_x = egui::Vec2b::new(true, false);
 
+        let latest_timestamp = Self::latest_timestamp(model);
+        self.scan_range_x = self.scan_range_x(latest_timestamp);
+
         self.selected_plot = min(self.selected_plot, self.number_of_plots - 1);
         for i in 0..self.number_of_plots {
             self.show_single_plot(model, ui, i, plot_height, link_group_id, link_x);
         }
+        self.reset_bounds = false;
+        self.latest_timestamp = latest_timestamp;
     }
 
     fn show_single_plot(
@@ -224,10 +295,19 @@ impl Plot {
         }
 
         plot.show(ui, |plot_ui| {
-            for stream in model.streams.iter() {
-                if *self.selected_streams[plot_index].get(&stream.path).unwrap_or(&false) {
-                    self.plot_stream_series(stream, plot_ui);
+            if self.reset_bounds && self.scope_mode == ScopeMode::Full {
+                plot_ui.set_auto_bounds(true);
+            }
+
+            if let Some(range_x) = self.scan_range_x {
+                plot_ui.set_plot_bounds_x(range_x.0..=range_x.1);
+                if let Some((min_y, max_y)) = self.scan_range_y(model, plot_index, range_x) {
+                    plot_ui.set_plot_bounds_y(min_y..=max_y);
                 }
+            }
+
+            for stream in self.selected_stream_iter(model, plot_index) {
+                self.plot_stream_series(stream, plot_ui);
             }
         })
     }
