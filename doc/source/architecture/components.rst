@@ -40,8 +40,9 @@ Components
      client actions to the protocol backend.
    * ``protocols/base.py`` -- ``BaseProtocol``, the extension point for new
      device protocols.
-   * ``protocols/`` -- ``socket`` (TCP/UDP) and ``simulator``
-     implementations.
+   * ``protocols/`` -- ``socket`` (TCP/UDP), ``simulator`` and ``robby``
+     (WebSocket client to the robby ESP32, translating robby messages to
+     blip messages) implementations.
    * ``main.py`` -- ``click`` based command line entry point (``bridge``).
 
 Component traceability

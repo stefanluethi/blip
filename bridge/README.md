@@ -7,6 +7,7 @@ A Python-based asynchronous bridge linking various data sources and protocols (T
 - **Protocol Agnostic Architecture**: Easily extendable base class for integrating new protocol handlers.
 - **Simulator Mode**: Streams CPU load, simulated sensor measurements and synthetic log records encoded via CBOR (`cbor2`), replicating the Rust simulator.
 - **Socket Bridge Mode**: TCP and UDP packet forwarding over WebSockets.
+- **Robby Mode**: Connects to the robby ESP32 WebSocket server and translates robby stream, log and thread table messages to blip messages.
 - **CBOR Serialization**: Native support for binary `proto` messages matching the Rust `proto` library schema.
 - **`uv` Integration**: Managed using `uv` and standard `pyproject.toml`.
 
@@ -37,6 +38,15 @@ Bridges a TCP endpoint to WebSockets:
 ```bash
 uv run bridge --protocol tcp --remote-host 127.0.0.1 --remote-port 9000
 ```
+
+#### Robby Mode
+Connects to the robby ESP32 at `ws://<remote-host>:80/ws/robby`:
+
+```bash
+uv run bridge --protocol robby --remote-host 192.168.1.70
+```
+
+Stream samples are scaled with the stream descriptor's scale factor and timestamped from its sampling time. Actions from blip are forwarded to robby unchanged.
 
 ## Protocol Data Schema (CBOR)
 

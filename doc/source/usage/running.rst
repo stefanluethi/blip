@@ -27,6 +27,28 @@ UDP endpoint::
 Add ``--listen`` to accept connections from the target instead of connecting
 to it.
 
+Robby (ESP32 communication module, ``ws://<ip>/ws/robby``)::
+
+   uv run bridge --protocol robby --remote-host 192.168.1.70
+
+The bridge connects to robby as a WebSocket client and translates robby's
+messages to blip messages:
+
+* Stream descriptors become value metadata; stream names like ``acc::x`` are
+  shown as ``acc/x``.
+* Stream frames become one value per sample, scaled with the descriptor's
+  scale factor. Sample timestamps are reconstructed from the sampling time,
+  anchored to the time the frame arrives. Frames received before the first
+  stream descriptor are dropped (robby resends descriptors every second).
+* Log records keep their level (fatal is shown as error) and get the
+  component ``robby`` and the time they arrive.
+* The thread table becomes ``threads/<name>/runtime`` and
+  ``threads/<name>/stack_usage`` values in percent.
+* Distance maps are not supported by blip and are ignored.
+
+Actions sent by blip are forwarded to robby unchanged. The bridge reconnects
+when the connection to robby is lost.
+
 Options:
 
 .. list-table::
@@ -38,7 +60,7 @@ Options:
      - Description
    * - ``--protocol`` / ``-p``
      - ``simulator``
-     - Data source: ``simulator``, ``tcp`` or ``udp``
+     - Data source: ``simulator``, ``tcp``, ``udp`` or ``robby``
    * - ``--host`` / ``-h``
      - ``127.0.0.1``
      - WebSocket server bind address
@@ -50,10 +72,13 @@ Options:
      - WebSocket endpoint path
    * - ``--remote-host``
      - ``127.0.0.1``
-     - Target host (TCP/UDP); bind address with ``--listen``
+     - Target host (TCP/UDP/robby); bind address with ``--listen``
    * - ``--remote-port``
-     - ``9000``
-     - Target port (TCP/UDP); listen port with ``--listen``
+     - ``9000`` (robby: ``80``)
+     - Target port (TCP/UDP/robby); listen port with ``--listen``
+   * - ``--remote-path``
+     - ``/ws/robby``
+     - WebSocket endpoint path of robby
    * - ``--listen``
      - off
      - Listen for the target instead of connecting (TCP/UDP)
