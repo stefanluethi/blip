@@ -138,7 +138,11 @@ impl Xy {
             _ => String::new(),
         };
         let mut plot = egui_plot::Plot::new(ui.id().with("xy"))
-            .legend(egui_plot::Legend::default())
+            .legend(
+                // the newest point is drawn first in full color, the trail fades out
+                egui_plot::Legend::default()
+                    .color_conflict_handling(egui_plot::ColorConflictHandling::PickFirst),
+            )
             .x_axis_label(x_label)
             .y_axis_label(y_label)
             .label_formatter(|hover| {

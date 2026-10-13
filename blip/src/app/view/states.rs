@@ -2,7 +2,7 @@
 //! stream, one band for each run of equal values.
 
 use super::time_axis::{self, index_at, visible_range};
-use super::{ViewContext, Viewable};
+use super::{ViewContext, Viewable, text_color_on};
 use crate::app::model::Model;
 use crate::app::model::streams::{NumberKind, Samples, Series};
 use crate::app::time::{TimeBase, TimeRange, timestamp_to_seconds};
@@ -196,11 +196,6 @@ impl States {
     ) {
         let seconds_per_point = plot_ui.transform().dvalue_dpos()[0].abs();
         let dark_mode = visuals.dark_mode;
-        let text_color = if dark_mode {
-            Color32::WHITE
-        } else {
-            Color32::BLACK
-        };
         let (top, bottom) = (y + BAND_HEIGHT / 2.0, y - BAND_HEIGHT / 2.0);
         for run in runs(samples, range, latest, MIN_RUN_WIDTH * seconds_per_point) {
             let start = run.start.max(range.0) - origin;
@@ -224,7 +219,7 @@ impl States {
                 let center = egui_plot::PlotPoint::new((start + end) / 2.0, y);
                 plot_ui.text(
                     egui_plot::Text::new("", center, label)
-                        .color(text_color)
+                        .color(text_color_on(fill))
                         .allow_hover(false),
                 );
             }
