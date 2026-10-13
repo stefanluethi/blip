@@ -62,9 +62,12 @@ impl Streams {
         stream.values.push(value.into());
     }
 
-    pub fn clear(&mut self) {
-        for stream in self.map.values_mut() {
-            stream.values.clear();
-        }
+    /// Timestamps of the first and the newest value of all streams.
+    pub fn time_span(&self) -> Option<(u64, u64)> {
+        self.map
+            .values()
+            // values are appended in arrival order, so timestamps are ascending
+            .filter_map(|stream| Some((stream.values.first()?.timestamp, stream.values.last()?.timestamp)))
+            .reduce(|(first_a, last_a), (first_b, last_b)| (first_a.min(first_b), last_a.max(last_b)))
     }
 }

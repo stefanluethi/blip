@@ -1,18 +1,20 @@
 mod proto_parser;
 mod view;
 mod model;
+mod time;
 
 
 use std::collections::BTreeMap;
 use eframe::Frame;
 use egui::Context;
-use view::Viewable;
+use view::{ViewContext, Viewable};
 
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct State {
     stream_view: view::plot::Plot,
     log_view: view::log_table::LogTable,
+    time: time::TimeRange,
 
     #[serde(skip)]
     model: model::Model,
@@ -34,6 +36,7 @@ impl Default for State {
             target_address: "ws://localhost/ws/simulator".to_owned(),
             stream_view: view::plot::Plot::new(),
             log_view: view::log_table::LogTable::new(),
+            time: time::TimeRange::default(),
             model: model::Model::default(),
             ws_receiver: None,
             ws_sender: None,
@@ -127,6 +130,14 @@ impl State {
                     self.websocket_disconnect();
                 }
             }
+            if ui.button("Clear Data").clicked() {
+                self.model = model::Model::default();
+            }
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                egui::widgets::global_theme_preference_buttons(ui);
+                egui::warn_if_debug_build(ui);
+            });
         });
     }
 }
@@ -197,12 +208,16 @@ impl egui_tiles::Behavior<Pane> for State {
         egui::Frame::NONE
             .inner_margin(egui::Margin::same(10))
             .show(ui, |ui| {
+                let mut context = ViewContext {
+                    model: &self.model,
+                    time: &mut self.time,
+                };
                 match pane {
                     Pane::Plots => {
-                        self.stream_view.view(ui, &mut self.model);
+                        self.stream_view.view(ui, &mut context);
                     }
                     Pane::TargetLogs => {
-                        self.log_view.view(ui, &mut self.model);
+                        self.log_view.view(ui, &mut context);
                     }
 
                 }
@@ -309,11 +324,10 @@ impl eframe::App for App {
             });
         });
 
+        self.state.time.update_span(&self.state.model);
+
         egui::Panel::bottom("bottom panel").show(ui, |ui| {
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                egui::widgets::global_theme_preference_buttons(ui);
-                egui::warn_if_debug_build(ui);
-            });
+            self.state.time.ui(ui);
         });
 
         egui::CentralPanel::default()

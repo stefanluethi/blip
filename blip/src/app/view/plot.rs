@@ -1,18 +1,14 @@
-use super::Viewable;
+use super::{ViewContext, Viewable};
 use crate::app::model::{Model, streams::{Stream, Value}};
+use crate::app::time::{TimeRange, timestamp_to_seconds};
 use std::cmp::min;
 use std::collections::{BTreeMap, HashMap};
 use egui::Ui;
 
 const MAX_PLOT_COUNT: usize = 6;
-const NANOS_PER_SECOND: f64 = 1.0e9;
-const SCAN_Y_MARGIN_FRACTION: f64 = 0.05;
+const Y_MARGIN_FRACTION: f64 = 0.05;
 /// Upper bound of points drawn per curve within the visible x range.
 const MAX_POINTS_PER_CURVE: usize = 100_000;
-
-fn timestamp_to_seconds(timestamp: u64) -> f64 {
-    timestamp as f64 / NANOS_PER_SECOND
-}
 
 /// Stream paths split into a tree at each "/".
 #[derive(Default)]
@@ -69,30 +65,12 @@ fn show_stream_tree(
     }
 }
 
-#[derive(serde::Deserialize, serde::Serialize, PartialEq, Debug, Clone, Copy)]
-pub enum ScopeMode {
-    Full,
-    Scan,
-}
-
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct Plot {
     number_of_plots: usize,
     selected_plot: usize,
     selected_streams: [HashMap<String, bool>; MAX_PLOT_COUNT],
-    scope_mode: ScopeMode,
-    scan_window: f32,
-    #[serde(skip)]
-    reset_bounds: bool,
-    #[serde(skip)]
-    latest_timestamp: Option<u64>,
-    #[serde(skip)]
-    scan_range_x: Option<(f64, f64)>,
-    /// Seconds subtracted from the sample times to get plot x coordinates. In scan mode
-    /// this is the newest sample, so the x axis shows the time before it.
-    #[serde(skip)]
-    x_offset: f64,
 }
 
 impl Default for Plot {
@@ -107,12 +85,6 @@ impl Plot {
             number_of_plots: 1,
             selected_plot: 0,
             selected_streams: Self::init_selected_streams(),
-            scope_mode: ScopeMode::Full,
-            scan_window: 20.0,
-            reset_bounds: false,
-            latest_timestamp: None,
-            scan_range_x: None,
-            x_offset: 0.0,
         }
     }
 
@@ -123,35 +95,6 @@ impl Plot {
             *item = HashMap::default();
         }
         array
-    }
-
-    fn show_plot_settings(&mut self, model: &mut Model, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            if ui.button("Clear Data").clicked() {
-                model.streams.clear();
-            }
-            let previous_mode = self.scope_mode;
-            egui::ComboBox::from_label("Mode")
-                .selected_text(format!("{:?}", self.scope_mode))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.scope_mode, ScopeMode::Full, "Full");
-                    ui.selectable_value(&mut self.scope_mode, ScopeMode::Scan, "Scan");
-                });
-            if self.scope_mode != previous_mode {
-                self.reset_bounds = true;
-            }
-
-            if self.scope_mode == ScopeMode::Scan {
-                ui.separator();
-                ui.label("Scan window:");
-                ui.add(
-                    egui::DragValue::new(&mut self.scan_window)
-                        .range(0.001..=1.0e6)
-                        .suffix("s")
-                        .speed(0.01),
-                );
-            }
-        });
     }
 
     fn show_stream_selection(&mut self, model: &Model, ui: &mut egui::Ui) {
@@ -187,14 +130,15 @@ impl Plot {
             });
     }
 
+    /// Draws the values of `stream` within `range_x` seconds, shifted by `origin` seconds.
     fn plot_stream_series(
-        &self,
         stream: &Stream,
         range_x: Option<(f64, f64)>,
+        origin: f64,
         plot_ui: &mut egui_plot::PlotUi<'_>,
     ) {
         let values = visible_values(&stream.values, range_x);
-        let points = downsample(values, self.x_offset, MAX_POINTS_PER_CURVE);
+        let points = downsample(values, origin, MAX_POINTS_PER_CURVE);
 
         plot_ui.line(egui_plot::Line::new(
             format!("{} / {}", stream.path, "none"),
@@ -202,45 +146,9 @@ impl Plot {
         ));
     }
 
-    /// The range of sample times in seconds the plot shows this frame, or `None` if all
-    /// data is needed, e.g. while the bounds are fitted automatically to the data.
-    fn visible_range_x(&self, plot_ui: &egui_plot::PlotUi<'_>) -> Option<(f64, f64)> {
-        if let Some((start, end)) = self.scan_range_x {
-            return Some((start + self.x_offset, end + self.x_offset));
-        }
-        if (self.reset_bounds && self.scope_mode == ScopeMode::Full) || plot_ui.auto_bounds().x {
-            return None;
-        }
-        let bounds = plot_ui.plot_bounds();
-        bounds
-            .is_valid_x()
-            .then(|| (bounds.min()[0] + self.x_offset, bounds.max()[0] + self.x_offset))
-    }
-
-    fn latest_timestamp(model: &Model) -> Option<u64> {
-        model
-            .streams
-            .iter()
-            .filter_map(|stream| stream.values.last())
-            .map(|v| v.timestamp)
-            .max()
-    }
-
-    /// The scan viewport in plot coordinates: the last `scan_window` seconds up to the
-    /// newest sample at 0. Only returned when new data arrived, so the viewport can be
-    /// moved freely otherwise.
-    fn scan_range_x(&self, latest_timestamp: Option<u64>) -> Option<(f64, f64)> {
-        if self.scope_mode != ScopeMode::Scan
-            || (latest_timestamp == self.latest_timestamp && !self.reset_bounds)
-        {
-            return None;
-        }
-        latest_timestamp.map(|_| (-self.scan_window as f64, 0.0))
-    }
-
     /// The y range covered by the selected streams of a plot within the sample times
     /// `[start, end]` seconds.
-    fn scan_range_y(&self, model: &Model, plot_index: usize, (start, end): (f64, f64)) -> Option<(f64, f64)> {
+    fn range_y(&self, model: &Model, plot_index: usize, (start, end): (f64, f64)) -> Option<(f64, f64)> {
         let mut range: Option<(f64, f64)> = None;
         for stream in self.selected_stream_iter(model, plot_index) {
             // values are appended in arrival order, so timestamps are ascending
@@ -260,7 +168,7 @@ impl Plot {
         }
 
         range.map(|(low, high)| {
-            let margin = if high > low { (high - low) * SCAN_Y_MARGIN_FRACTION } else { 0.5 };
+            let margin = if high > low { (high - low) * Y_MARGIN_FRACTION } else { 0.5 };
             (low - margin, high + margin)
         })
     }
@@ -286,35 +194,22 @@ impl Plot {
             .max(0.0)
     }
 
-    fn show_plot_stack(&mut self, model: &Model, ui: &mut egui::Ui) {
+    fn show_plot_stack(&mut self, model: &Model, time: &mut TimeRange, ui: &mut egui::Ui) {
         let plot_height = self.calculate_plot_height(ui);
-
-        let link_group_id = ui.id().with("stream_plot_group");
-        let link_x = egui::Vec2b::new(true, false);
-
-        let latest_timestamp = Self::latest_timestamp(model);
-        self.x_offset = match (self.scope_mode, latest_timestamp) {
-            (ScopeMode::Scan, Some(timestamp)) => timestamp_to_seconds(timestamp),
-            _ => 0.0,
-        };
-        self.scan_range_x = self.scan_range_x(latest_timestamp);
 
         self.selected_plot = min(self.selected_plot, self.number_of_plots - 1);
         for i in 0..self.number_of_plots {
-            self.show_single_plot(model, ui, i, plot_height, link_group_id, link_x);
+            self.show_single_plot(model, time, ui, i, plot_height);
         }
-        self.reset_bounds = false;
-        self.latest_timestamp = latest_timestamp;
     }
 
     fn show_single_plot(
         &mut self,
         model: &Model,
+        time: &mut TimeRange,
         ui: &mut egui::Ui,
         index: usize,
         plot_height: f32,
-        link_group_id: egui::Id,
-        link_x: egui::Vec2b,
     ) {
         let stroke = if self.selected_plot == index {
             egui::Stroke::new(1.0, ui.visuals().widgets.active.bg_fill)
@@ -335,7 +230,7 @@ impl Plot {
 
         frame.show(ui, |ui| {
             ui.set_height(plot_height);
-            let plot_response = self.show_plot_contents(model, ui, index, link_group_id, link_x);
+            let plot_response = self.show_plot_contents(model, time, ui, index);
 
             if plot_response.response.clicked() {
                 self.selected_plot = index;
@@ -343,58 +238,61 @@ impl Plot {
         });
     }
 
+    /// Shows the shared time range of `time`, and applies panning and zooming of the
+    /// plot to it.
     fn show_plot_contents(
         &self,
         model: &Model,
+        time: &mut TimeRange,
         ui: &mut egui::Ui,
         plot_index: usize,
-        link_group_id: egui::Id,
-        link_x: egui::Vec2b,
     ) -> egui_plot::PlotResponse<()> {
         let mut plot = egui_plot::Plot::new(format!("Stream View {}", plot_index))
-            .link_axis(link_group_id, link_x)
-            .link_cursor(link_group_id, link_x)
+            .link_cursor(egui::Id::new("stream_plot_cursor"), [true, false])
             .legend(egui_plot::Legend::default())
+            .allow_drag([true, false])
+            .allow_zoom([true, false])
+            .allow_scroll([true, false])
+            .allow_boxed_zoom(false)
+            .allow_double_click_reset(false)
             .custom_y_axes(vec![
                 egui_plot::AxisHints::new_y()
                     .placement(egui_plot::HPlacement::Left)
                     .min_thickness(50.0),
             ]);
 
-        if self.scope_mode == ScopeMode::Scan {
-            // x is the time relative to the newest sample, label it as seconds before it
-            plot = plot.x_axis_formatter(|mark, _range| {
-                let num_decimals = (-mark.step_size.log10().round()).max(0.0) as usize;
-                // `+ 0.0` turns -0 into 0
-                let seconds_before = -mark.value + 0.0;
-                egui::emath::format_with_decimals_in_range(seconds_before, num_decimals..=num_decimals)
-            });
-        }
         if plot_index + 1 == self.number_of_plots {
-            plot = plot.x_axis_label(match self.scope_mode {
-                ScopeMode::Full => "t / s",
-                ScopeMode::Scan => "t before latest / s",
-            });
+            plot = plot.x_axis_label("t / s");
         }
 
-        plot.show(ui, |plot_ui| {
-            if self.reset_bounds && self.scope_mode == ScopeMode::Full {
-                plot_ui.set_auto_bounds(true);
-            }
-
-            if let Some((start, end)) = self.scan_range_x {
-                plot_ui.set_plot_bounds_x(start..=end);
-                let sample_range = (start + self.x_offset, end + self.x_offset);
-                if let Some((min_y, max_y)) = self.scan_range_y(model, plot_index, sample_range) {
+        // x is the time since the first collected data
+        let origin = time.origin();
+        let range = time.range();
+        let response = plot.show(ui, |plot_ui| {
+            if let Some((start, end)) = range {
+                plot_ui.set_plot_bounds_x(start - origin..=end - origin);
+                if let Some((min_y, max_y)) = self.range_y(model, plot_index, (start, end)) {
                     plot_ui.set_plot_bounds_y(min_y..=max_y);
                 }
             }
 
-            let range_x = self.visible_range_x(plot_ui);
             for stream in self.selected_stream_iter(model, plot_index) {
-                self.plot_stream_series(stream, range_x, plot_ui);
+                Self::plot_stream_series(stream, range, origin, plot_ui);
             }
-        })
+        });
+
+        if let Some((start, end)) = range {
+            let bounds = response.transform.bounds();
+            let tolerance = (end - start) * 1.0e-6;
+            if (bounds.min()[0] - (start - origin)).abs() > tolerance
+                || (bounds.max()[0] - (end - origin)).abs() > tolerance
+            {
+                time.pan_zoom(bounds.min()[0] + origin, bounds.max()[0] + origin);
+                ui.ctx().request_repaint();
+            }
+        }
+
+        response
     }
 }
 
@@ -412,9 +310,9 @@ fn visible_values(values: &[Value], range_x: Option<(f64, f64)>) -> &[Value] {
 
 /// Reduces `values` to at most `max_points` points by keeping the minimum and maximum
 /// of equally sized buckets, so peaks stay visible. The x coordinates are the sample
-/// times in seconds minus `x_offset`.
-fn downsample(values: &[Value], x_offset: f64, max_points: usize) -> Vec<[f64; 2]> {
-    let to_point = |v: &Value| [timestamp_to_seconds(v.timestamp) - x_offset, v.value as f64];
+/// times in seconds minus `origin`.
+fn downsample(values: &[Value], origin: f64, max_points: usize) -> Vec<[f64; 2]> {
+    let to_point = |v: &Value| [timestamp_to_seconds(v.timestamp) - origin, v.value as f64];
     if values.len() <= max_points {
         return values.iter().map(to_point).collect();
     }
@@ -442,21 +340,12 @@ fn downsample(values: &[Value], x_offset: f64, max_points: usize) -> Vec<[f64; 2
 }
 
 impl Viewable for Plot {
-    fn view(&mut self, ui: &mut egui::Ui, model: &mut Model) {
-        ui.vertical(|ui| {
-            let available_size = ui.available_size();
-
-            ui.horizontal(|ui| {
-                ui.set_height(available_size.y);
-
-                self.show_stream_selection(model, ui);
-
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                    self.show_plot_settings(model, ui);
-                    ui.vertical(|ui| {
-                        self.show_plot_stack(model, ui);
-                    })
-                });
+    fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
+        ui.horizontal(|ui| {
+            ui.set_height(ui.available_height());
+            self.show_stream_selection(context.model, ui);
+            ui.vertical(|ui| {
+                self.show_plot_stack(context.model, context.time, ui);
             });
         });
     }

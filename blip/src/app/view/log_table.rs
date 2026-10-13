@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use egui_extras::{Column, TableBuilder};
 use crate::app::model::logs::{LogEntry, LogLevel, Logs};
-use crate::app::view::Viewable;
+use crate::app::view::{ViewContext, Viewable};
 
 #[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
 #[serde(default)]
@@ -374,8 +374,8 @@ impl LogTable {
 }
 
 impl Viewable for LogTable {
-    fn view(&mut self, ui: &mut egui::Ui, model: &mut crate::app::model::Model) {
-        self.ui(ui, &model.logs);
+    fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
+        self.ui(ui, &context.model.logs);
     }
 }
 

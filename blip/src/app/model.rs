@@ -17,3 +17,10 @@ impl Default for Model {
         }
     }
 }
+
+impl Model {
+    /// Timestamps of the first and the newest collected data.
+    pub fn time_span(&self) -> Option<(u64, u64)> {
+        self.streams.time_span()
+    }
+}
