@@ -262,11 +262,8 @@ impl Layout {
                 self.renaming = Some((tile_id, self.name(tile_id).to_owned()));
             }
             Action::FinishRename => {
-                if let Some((tile_id, name)) = self.renaming.take()
-                    && !name.trim().is_empty()
-                {
-                    self.set_name(tile_id, name.trim().to_owned());
-                }
+                let renamed = self.renaming.take();
+                self.finish_rename(renamed);
             }
             Action::CancelRename => self.renaming = None,
             Action::Remove(tile_id) => self.remove(tile_id),

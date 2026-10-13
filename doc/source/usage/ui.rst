@@ -59,7 +59,8 @@ by side.
   put both into a new group. A new group stacks its children across the
   direction of its parent group.
 * Right-click a row to rename or delete it, or to change the type of a group.
-  Double-clicking a row also renames it.
+  Double-clicking a row also renames it, as does clicking the title of a view
+  or the open tab in the center. Enter keeps the new name, Escape drops it.
 
 Time range
 ----------

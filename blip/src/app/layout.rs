@@ -31,6 +31,8 @@ pub struct Layout {
     selected: Option<TileId>,
     /// The view or group renamed in the layout panel and its new name.
     renaming: Option<(TileId, String)>,
+    /// The view or group renamed by clicking its title in the center and its new name.
+    renaming_title: Option<(TileId, String)>,
 }
 
 impl Default for Layout {
@@ -55,6 +57,7 @@ impl Layout {
             group_names,
             selected: None,
             renaming: None,
+            renaming_title: None,
         }
     }
 
@@ -96,6 +99,15 @@ impl Layout {
         match self.view(tile_id) {
             Some(view) => &view.name,
             None => self.group_names.get(&tile_id).map_or("", String::as_str),
+        }
+    }
+
+    /// Gives a view or group the name of `renamed`, unless the name is blank.
+    fn finish_rename(&mut self, renamed: Option<(TileId, String)>) {
+        if let Some((tile_id, name)) = renamed
+            && !name.trim().is_empty()
+        {
+            self.set_name(tile_id, name.trim().to_owned());
         }
     }
 
@@ -306,9 +318,26 @@ impl Layout {
             group_names: &self.group_names,
             selected: &mut self.selected,
             panes_in_tabs,
+            renaming: &mut self.renaming_title,
+            rename_ended: None,
         };
         self.tree.ui(&mut behavior, ui);
+        match behavior.rename_ended {
+            Some(RenameEnd::Keep) => {
+                let renamed = self.renaming_title.take();
+                self.finish_rename(renamed);
+            }
+            Some(RenameEnd::Cancel) => self.renaming_title = None,
+            None => {}
+        }
     }
+}
+
+/// How editing a title ended.
+#[derive(Clone, Copy)]
+enum RenameEnd {
+    Keep,
+    Cancel,
 }
 
 /// Shows the views of the layout in the center pane.
@@ -318,6 +347,36 @@ struct Behavior<'a, 'b> {
     selected: &'a mut Option<TileId>,
     /// Views shown as a tab, they get no title bar.
     panes_in_tabs: HashSet<TileId>,
+    /// The view or group whose title is edited and its new name.
+    renaming: &'a mut Option<(TileId, String)>,
+    /// Set when editing the title ends.
+    rename_ended: Option<RenameEnd>,
+}
+
+impl Behavior<'_, '_> {
+    /// Shows a field of at least `min_size` to edit the title of `tile_id` if it is
+    /// being edited, ending with Enter or a click elsewhere, or Escape to cancel.
+    /// Returns whether the field is shown.
+    fn rename_ui(&mut self, ui: &mut egui::Ui, tile_id: TileId, min_size: egui::Vec2) -> bool {
+        let Some((_, name)) = self.renaming.as_mut().filter(|(id, _)| *id == tile_id) else {
+            return false;
+        };
+        let field = egui::TextEdit::singleline(name)
+            .min_size(min_size)
+            .desired_width(min_size.x)
+            .margin(egui::Margin::symmetric(4, 0));
+        let response = ui.add(field);
+        if response.lost_focus() {
+            self.rename_ended = Some(if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                RenameEnd::Cancel
+            } else {
+                RenameEnd::Keep
+            });
+        } else {
+            response.request_focus();
+        }
+        true
+    }
 }
 
 impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
@@ -347,7 +406,20 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
                 .inner_margin(egui::Margin::symmetric(8, 3))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.strong(format!("{} {}", view.view_type().icon(), view.name));
+                        ui.strong(view.view_type().icon());
+                        let field_size = egui::vec2(ui.available_width(), 0.0);
+                        if !self.rename_ui(ui, tile_id, field_size) {
+                            let title = egui::Label::new(egui::RichText::new(&view.name).strong())
+                                .sense(egui::Sense::click());
+                            if ui
+                                .add(title)
+                                .on_hover_cursor(egui::CursorIcon::Text)
+                                .on_hover_text("Click to rename")
+                                .clicked()
+                            {
+                                *self.renaming = Some((tile_id, view.name.clone()));
+                            }
+                        }
                         ui.allocate_space(ui.available_size())
                     })
                 });
@@ -379,6 +451,39 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
                 .map_or("", String::as_str)
                 .into(),
         }
+    }
+
+    fn on_tab_button(
+        &mut self,
+        tiles: &mut egui_tiles::Tiles<View>,
+        tile_id: TileId,
+        response: egui::Response,
+    ) -> egui::Response {
+        // a click on an inactive tab opens it, a click on the open tab renames it
+        let is_open = || {
+            let parent = tiles.parent_of(tile_id)?;
+            match tiles.get_container(parent)? {
+                Container::Tabs(tabs) => Some(tabs.active == Some(tile_id)),
+                _ => None,
+            }
+        };
+        if response.clicked() && is_open() == Some(true) {
+            let name = self.tab_title_for_tile(tiles, tile_id).text().to_owned();
+            *self.renaming = Some((tile_id, name));
+        }
+
+        if self.renaming.as_ref().is_some_and(|(id, _)| *id == tile_id) {
+            // over the tab, which egui_tiles draws as a whole
+            let rect = response.rect;
+            egui::Area::new(response.id.with("rename"))
+                .order(egui::Order::Foreground)
+                .fixed_pos(rect.left_top())
+                .show(&response.ctx, |ui| {
+                    let min_size = egui::vec2(rect.width().max(120.0), rect.height());
+                    self.rename_ui(ui, tile_id, min_size);
+                });
+        }
+        response
     }
 
     fn paint_on_top_of_tile(
