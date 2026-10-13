@@ -47,7 +47,6 @@ pub fn plot<'a>(id: egui::Id, time: &TimeRange) -> egui_plot::Plot<'a> {
         .allow_scroll([true, false])
         .allow_boxed_zoom(false)
         .allow_double_click_reset(false)
-        .x_axis_label(base.axis_label())
         .x_axis_formatter(move |mark, _range| {
             let decimals = (-mark.step_size.log10().floor()).max(0.0) as usize;
             base.format(mark.value + origin, decimals)

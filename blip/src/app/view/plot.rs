@@ -2,7 +2,7 @@ use super::time_axis::{self, closest_index, visible_range, within};
 use super::{ViewContext, Viewable};
 use crate::app::model::{
     Model,
-    streams::{NumberKind, Samples, Series},
+    streams::{NumberKind, Series},
 };
 use crate::app::time::{TimeBase, TimeRange, timestamp_to_seconds};
 use std::cmp::min;
@@ -105,18 +105,10 @@ impl Plot {
             .num_columns(2)
             .show(ui, |ui| {
                 for (path, color) in self.selected_path_iter() {
-                    let value = if let Some(series) = model.streams.series(path) {
+                    let value = model.streams.series(path).and_then(|series| {
                         closest_index(series.timestamps, t)
                             .map(|index| series.kind.format(series.value(index)))
-                    } else if let Some(stream) = model.streams.get(path)
-                        && let Samples::Strings(values) = &stream.samples
-                    {
-                        // strings are not plotted, but shown here
-                        closest_index(&stream.timestamps, t)
-                            .map(|index| values[index].clone().unwrap_or_else(|| "null".to_owned()))
-                    } else {
-                        None
-                    };
+                    });
                     if let Some(value) = value {
                         ui.colored_label(color, path);
                         ui.label(value);

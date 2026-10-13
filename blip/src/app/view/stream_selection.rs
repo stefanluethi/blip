@@ -138,9 +138,6 @@ fn show_stream(ui: &mut Ui, label: &str, stream: &Stream, selection: &mut Select
     let icon = Some(type_icon(&stream.samples));
     let paths = stream_paths(stream, selection.view_type);
     let mut hover = format!("{}\n{}", stream.path, stream.samples.type_label());
-    if let Some(remark) = selection.view_type.remark(stream) {
-        hover.push_str(&format!("\n{remark}"));
-    }
     match selection.view_type.selectable(stream) {
         Selectable::Stream => {}
         Selectable::No(reason) => hover.push_str(&format!("\n{reason}")),
@@ -153,16 +150,29 @@ fn show_stream(ui: &mut Ui, label: &str, stream: &Stream, selection: &mut Select
                 .body(|ui| {
                     for path in &paths {
                         let label = &path[stream.path.len()..];
-                        show_checkbox(ui, label, None, std::slice::from_ref(path), selection)
-                            .on_hover_text(path);
+                        leaf_row(ui, |ui| {
+                            show_checkbox(ui, label, None, std::slice::from_ref(path), selection)
+                                .on_hover_text(path);
+                        });
                     }
                 });
             return;
         }
     }
-    show_checkbox(ui, label, icon, &paths, selection)
-        .on_hover_text(&hover)
-        .on_disabled_hover_text(hover);
+    leaf_row(ui, |ui| {
+        show_checkbox(ui, label, icon, &paths, selection)
+            .on_hover_text(&hover)
+            .on_disabled_hover_text(hover);
+    });
+}
+
+/// Shows the row added by `add` indented by the width of the collapse button of a
+/// branch, so its checkbox lines up with those of the branches next to it.
+fn leaf_row(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
+    ui.horizontal(|ui| {
+        ui.add_space(ui.spacing().indent);
+        add(ui);
+    });
 }
 
 /// Shows the children of `node` as collapsible branches and streams.

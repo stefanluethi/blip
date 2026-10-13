@@ -200,8 +200,13 @@ impl Xy {
 
 impl Viewable for Xy {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
-        self.options_ui(ui, context.model);
-        self.show_plot(ui, context.model, context.time);
+        let model = context.model;
+        super::settings_below(
+            ui,
+            self,
+            |xy, ui| xy.options_ui(ui, model),
+            |xy, ui| xy.show_plot(ui, model, context.time),
+        );
     }
 }
 

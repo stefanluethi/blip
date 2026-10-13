@@ -178,9 +178,9 @@ impl Heatmap {
         self.value_range.or(self.fitted_range).unwrap_or((0.0, 1.0))
     }
 
-    /// Shows the mode for a 1D array, the range of the values and the cursor time if
-    /// values at the cursor are shown.
-    fn options_ui(&mut self, ui: &mut egui::Ui, dimensions: usize, time: &TimeRange) {
+    /// Shows the mode for a 1D array, the range of the values and the cursor time
+    /// described by `cursor_label` if values at the cursor are shown.
+    fn options_ui(&mut self, ui: &mut egui::Ui, dimensions: usize, cursor_label: Option<String>) {
         ui.horizontal(|ui| {
             if dimensions == 1 {
                 ui.selectable_value(&mut self.mode, ArrayMode::OverTime, "Over time");
@@ -202,7 +202,7 @@ impl Heatmap {
                 ui.add(egui::DragValue::new(max).speed(speed));
             }
             let at_cursor = dimensions == 2 || self.mode == ArrayMode::AtCursor;
-            if at_cursor && let Some(label) = time.cursor_label() {
+            if at_cursor && let Some(label) = cursor_label {
                 ui.separator();
                 ui.weak(format!("at {label}"));
             }
@@ -487,19 +487,38 @@ impl Viewable for Heatmap {
             return;
         }
         let kind = kind.unwrap_or(NumberKind::Float);
-        self.options_ui(ui, shape.len(), context.time);
+        let cursor_label = context.time.cursor_label();
+        super::settings_below(
+            ui,
+            self,
+            |heatmap, ui| heatmap.options_ui(ui, shape.len(), cursor_label),
+            |heatmap, ui| heatmap.contents_ui(ui, stream, kind, shape, context.time),
+        );
+    }
+}
+
+impl Heatmap {
+    /// Shows the array stream of `shape` as chosen in the options.
+    fn contents_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        stream: &Stream,
+        kind: NumberKind,
+        shape: &[usize],
+        time: &mut TimeRange,
+    ) {
         if shape.len() == 1 && self.mode == ArrayMode::AtCursor {
-            self.line_ui(ui, stream, kind, context.time);
+            self.line_ui(ui, stream, kind, time);
             return;
         }
 
         let height = ui.available_height();
         let size = egui::vec2((ui.available_width() - COLOR_BAR_WIDTH).max(50.0), height);
         ui.horizontal(|ui| {
-            match *shape.as_slice() {
-                [len] => self.over_time_ui(ui, stream, kind, len, context.time, size),
+            match *shape {
+                [len] => self.over_time_ui(ui, stream, kind, len, time, size),
                 [rows, columns] => {
-                    self.grid_ui(ui, stream, kind, (rows, columns), context.time, size);
+                    self.grid_ui(ui, stream, kind, (rows, columns), time, size);
                 }
                 _ => {}
             }

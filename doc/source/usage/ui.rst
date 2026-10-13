@@ -38,8 +38,8 @@ Plot
    the plot is selected. Select a plot by clicking it or its row in the layout
    panel. Hovering a plot shows the values of its streams at the pointer.
    Numbers are drawn as lines and bools as steps between 0 and 1, both with
-   gaps where a ``null`` was received. Strings are only shown in the hover
-   values.
+   gaps where a ``null`` was received. Strings cannot be plotted, show them
+   in a states or table view.
 
 Logs
    Table of received ``Log`` records with timestamp, level, component and

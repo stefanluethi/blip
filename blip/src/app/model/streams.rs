@@ -201,7 +201,7 @@ impl Samples {
     }
 
     /// The `index`th sample written as text, arrays with at most `max_len` elements per
-    /// dimension, and floats with at most `digits` significant digits or all of them if
+    /// dimension and a line per row as in [`format_array`], and floats with at most `digits` significant digits or all of them if
     /// `digits` is `None`.
     pub fn format(&self, index: usize, max_len: usize, digits: Option<usize>) -> String {
         match self {
@@ -236,29 +236,81 @@ impl Samples {
     }
 }
 
-/// The `elements` of an array of `shape` written like `[[1, 2], [3, 4]]`, with at most
-/// `max_len` elements per dimension, each written by `format`.
+/// The `elements` of an array of `shape` written with at most `max_len` elements per
+/// dimension, each written by `format`. A 1D array is written on one line like
+/// `[1, 2]`, a larger one with a line per row and the columns aligned:
+///
+/// ```text
+/// [[ 1, 2],
+///  [10, 3]]
+/// ```
+///
+/// with an empty line between the 2D arrays of a 3D one, and so on.
 fn format_array(
     shape: &[usize],
     elements: &[f64],
     max_len: usize,
     format: &dyn Fn(f64) -> String,
 ) -> String {
+    let columns = shape.last().copied().unwrap_or(1);
+    let is_shown = |mut flat_index: usize| {
+        shape.iter().rev().all(|&len| {
+            let index = flat_index % len;
+            flat_index /= len;
+            index < max_len
+        })
+    };
+    let texts: Vec<Option<String>> = elements
+        .iter()
+        .enumerate()
+        .map(|(flat_index, &value)| is_shown(flat_index).then(|| format(value)))
+        .collect();
+    let mut widths = vec![0; columns.min(max_len)];
+    if shape.len() > 1 {
+        for (flat_index, text) in texts.iter().enumerate() {
+            if let (Some(text), Some(width)) = (text, widths.get_mut(flat_index % columns)) {
+                *width = (*width).max(text.chars().count());
+            }
+        }
+    }
+    format_nested(shape, &texts, max_len, &widths, 0)
+}
+
+/// The `texts` of the elements of a nested array of `shape` at `depth` written as in
+/// [`format_array`], with the elements padded to the `widths` of their columns.
+fn format_nested(
+    shape: &[usize],
+    texts: &[Option<String>],
+    max_len: usize,
+    widths: &[usize],
+    depth: usize,
+) -> String {
     let Some((&len, inner)) = shape.split_first() else {
-        return elements
-            .first()
-            .map_or_else(String::new, |&value| format(value));
+        return texts.first().cloned().flatten().unwrap_or_default();
     };
     let stride = inner.iter().product::<usize>();
-    let mut parts: Vec<String> = elements
+    let mut parts: Vec<String> = texts
         .chunks(stride.max(1))
         .take(len.min(max_len))
-        .map(|chunk| format_array(inner, chunk, max_len, format))
+        .enumerate()
+        .map(|(index, chunk)| {
+            let text = format_nested(inner, chunk, max_len, widths, depth + 1);
+            match widths.get(index).filter(|_| inner.is_empty()) {
+                Some(&width) => format!("{text:>width$}"),
+                None => text,
+            }
+        })
         .collect();
     if len > max_len {
         parts.push("…".to_owned());
     }
-    format!("[{}]", parts.join(", "))
+    let separator = if inner.is_empty() {
+        ", ".to_owned()
+    } else {
+        // as many line breaks as dimensions inside, so blocks of rows stand apart
+        format!(",{}{}", "\n".repeat(inner.len()), " ".repeat(depth + 1))
+    };
+    format!("[{}]", parts.join(&separator))
 }
 
 /// The dimensions of the nested arrays `data`, following the first elements.
@@ -747,8 +799,9 @@ mod tests {
             let samples = &streams.get(path).unwrap().samples;
             samples.format(index, max_len, digits)
         };
-        assert_eq!(format("m", 0, 8, None), "[[0.5, 1, 2], [3, 4, 5]]");
-        assert_eq!(format("m", 0, 2, None), "[[0.5, 1, …], [3, 4, …]]");
+        assert_eq!(format("m", 0, 8, None), "[[0.5, 1, 2],\n [  3, 4, 5]]");
+        assert_eq!(format("m", 0, 2, None), "[[0.5, 1, …],\n [  3, 4, …]]");
+        assert_eq!(format("m", 0, 1, None), "[[0.5, …],\n …]");
         assert_eq!(format("s", 0, 8, None), "on");
         assert_eq!(format("s", 1, 8, None), "null");
         assert_eq!(format("i", 0, 8, Some(2)), "7");
@@ -757,6 +810,20 @@ mod tests {
         let samples = &streams.get("m").unwrap().samples;
         assert_eq!(samples.array_sample(0).unwrap()[3], 3.0);
         assert!(samples.array_sample(1).is_none());
+    }
+
+    #[test]
+    fn arrays_are_formatted_with_a_line_per_row() {
+        let format = |value: f64| value.to_string();
+        assert_eq!(
+            format_array(&[3], &[1.0, 20.0, 3.0], 8, &format),
+            "[1, 20, 3]"
+        );
+        assert_eq!(
+            format_array(&[2, 2, 1], &[1.0, 2.0, 3.0, 40.0], 8, &format),
+            "[[[ 1],\n  [ 2]],\n\n [[ 3],\n  [40]]]"
+        );
+        assert_eq!(format_array(&[0], &[], 8, &format), "[]");
     }
 
     #[test]

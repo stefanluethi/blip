@@ -35,13 +35,6 @@ impl TimeBase {
         }
     }
 
-    pub fn axis_label(self) -> &'static str {
-        match self {
-            TimeBase::Unix => "time",
-            TimeBase::SinceBoot => "time since boot",
-        }
-    }
-
     /// Formats `seconds` as local time of day, or as hours, minutes and seconds since
     /// boot, with `decimals` decimals of the seconds.
     pub fn format(self, seconds: f64, decimals: usize) -> String {
@@ -69,7 +62,12 @@ impl TimeBase {
             },
             TimeBase::SinceBoot => {
                 let whole = whole.max(0.0) as u64;
-                format!("{}:{:02}:{:02}{fraction}", whole / 3600, whole / 60 % 60, whole % 60)
+                format!(
+                    "{}:{:02}:{:02}{fraction}",
+                    whole / 3600,
+                    whole / 60 % 60,
+                    whole % 60
+                )
             }
         }
     }
@@ -205,8 +203,9 @@ impl TimeRange {
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            let live_button = egui::Button::new(format!("{} Live", egui_phosphor::regular::BROADCAST))
-                .selected(self.is_live());
+            let live_button =
+                egui::Button::new(format!("{} Live", egui_phosphor::regular::BROADCAST))
+                    .selected(self.is_live());
             if ui
                 .add(live_button)
                 .on_hover_text("Follow the newest data")
@@ -249,19 +248,25 @@ impl TimeRange {
         }
 
         let Some((first, latest)) = self.span else {
-            ui.painter().rect_filled(rect, 3.0, ui.visuals().extreme_bg_color);
+            ui.painter()
+                .rect_filled(rect, 3.0, ui.visuals().extreme_bg_color);
             return;
         };
         let duration = (latest - first).max(MIN_WINDOW);
         let x_at = |t: f64| rect.left() + ((t - first) / duration) as f32 * rect.width();
         let thumb_at = |(start, end): (f64, f64)| {
-            let thumb = egui::Rect::from_x_y_ranges(x_at(start.max(first))..=x_at(end), rect.y_range());
-            thumb.expand2(egui::vec2(((MIN_THUMB_WIDTH - thumb.width()) / 2.0).max(0.0), 0.0))
+            let thumb =
+                egui::Rect::from_x_y_ranges(x_at(start.max(first))..=x_at(end), rect.y_range());
+            thumb.expand2(egui::vec2(
+                ((MIN_THUMB_WIDTH - thumb.width()) / 2.0).max(0.0),
+                0.0,
+            ))
         };
 
         if let (Some(pos), Some(range)) = (response.interact_pointer_pos(), self.range()) {
             let (_, end) = range;
-            let jump = (response.clicked() || response.drag_started()) && !thumb_at(range).contains(pos);
+            let jump =
+                (response.clicked() || response.drag_started()) && !thumb_at(range).contains(pos);
             if jump {
                 let t = first + ((pos.x - rect.left()) / rect.width()) as f64 * duration;
                 self.set_end(t + self.window / 2.0);
@@ -271,7 +276,8 @@ impl TimeRange {
         }
 
         let visuals = ui.visuals();
-        ui.painter().rect_filled(rect, 3.0, visuals.extreme_bg_color);
+        ui.painter()
+            .rect_filled(rect, 3.0, visuals.extreme_bg_color);
         if let Some(range) = self.range() {
             let thumb_visuals = ui.style().interact(&response);
             ui.painter().rect(

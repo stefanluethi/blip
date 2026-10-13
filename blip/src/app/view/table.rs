@@ -5,7 +5,7 @@ use super::stream_selection::{StreamTree, type_icon};
 use super::time_axis::index_at;
 use super::{ViewContext, Viewable};
 use crate::app::model::Model;
-use crate::app::model::streams::Stream;
+use crate::app::model::streams::{Samples, Stream};
 use crate::app::time::{TimeBase, timestamp_to_seconds};
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular::{BRACKETS_CURLY, CARET_DOWN, CARET_RIGHT};
@@ -66,6 +66,16 @@ fn rows<'a>(
     }
 }
 
+/// Shows `value` of `stream` without wrapping, in monospace for an array so its
+/// columns line up.
+fn value_label(ui: &mut egui::Ui, stream: &Stream, value: &str) -> egui::Response {
+    let text = match stream.samples {
+        Samples::Arrays { .. } => egui::RichText::new(value).monospace(),
+        _ => egui::RichText::new(value),
+    };
+    ui.add(egui::Label::new(text).extend())
+}
+
 impl Table {
     pub fn new() -> Self {
         Self::default()
@@ -109,59 +119,63 @@ impl Table {
         let mut table_rows = vec![];
         rows(&tree, "", 0, &self.collapsed, &mut table_rows);
 
+        // the sample of each row current at t, with its value written as text
+        let samples: Vec<Option<(&Stream, usize, String)>> = table_rows
+            .iter()
+            .map(|row| {
+                let stream = row.stream?;
+                let index = index_at(&stream.timestamps, t?)?;
+                let value = stream
+                    .samples
+                    .format(index, MAX_SHOWN_ELEMENTS, Some(SHOWN_DIGITS));
+                Some((stream, index, value))
+            })
+            .collect();
         let row_height = ui.spacing().interact_size.y;
+        let line_height = ui.text_style_height(&egui::TextStyle::Monospace);
+        // arrays take a line per row
+        let heights = samples.iter().map(|sample| {
+            let lines = sample
+                .as_ref()
+                .map_or(1, |(_, _, value)| value.lines().count());
+            row_height.max(lines as f32 * line_height)
+        });
+
         TableBuilder::new(ui)
             .striped(true)
             .resizable(true)
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
             .column(Column::initial(200.0).at_least(80.0).clip(true))
-            .column(Column::initial(200.0).at_least(60.0).clip(true))
-            .column(Column::initial(90.0).at_least(40.0).clip(true))
+            .column(Column::initial(300.0).at_least(60.0).clip(true))
             .column(Column::remainder().at_least(60.0))
             .header(row_height, |mut header| {
-                for title in ["Stream", "Value", "Type", "Time"] {
+                for title in ["Stream", "Value", "Time"] {
                     header.col(|ui| {
                         ui.strong(title);
                     });
                 }
             })
-            .body(|mut body| {
-                for row in &table_rows {
-                    let sample = row
-                        .stream
-                        .zip(t)
-                        .and_then(|(stream, t)| Some((stream, index_at(&stream.timestamps, t)?)));
-                    body.row(row_height, |mut table_row| {
-                        table_row.col(|ui| self.name_ui(ui, row));
-                        table_row.col(|ui| {
-                            if let Some((stream, index)) = sample {
-                                let value = stream.samples.format(
-                                    index,
-                                    MAX_SHOWN_ELEMENTS,
-                                    Some(SHOWN_DIGITS),
-                                );
-                                ui.label(value).on_hover_ui(|ui| {
-                                    ui.label(stream.samples.format(
-                                        index,
-                                        MAX_TOOLTIP_ELEMENTS,
-                                        None,
-                                    ));
-                                });
-                            }
-                        });
-                        table_row.col(|ui| {
-                            if let Some(stream) = row.stream {
-                                ui.weak(stream.samples.type_label());
-                            }
-                        });
-                        table_row.col(|ui| {
-                            if let Some((stream, index)) = sample {
-                                let time = timestamp_to_seconds(stream.timestamps[index]);
-                                ui.weak(base.format(time, 3));
-                            }
-                        });
+            .body(|body| {
+                body.heterogeneous_rows(heights, |mut table_row| {
+                    let row = &table_rows[table_row.index()];
+                    let sample = &samples[table_row.index()];
+                    table_row.col(|ui| self.name_ui(ui, row));
+                    table_row.col(|ui| {
+                        if let Some((stream, index, value)) = sample {
+                            value_label(ui, stream, value).on_hover_ui(|ui| {
+                                let value =
+                                    stream.samples.format(*index, MAX_TOOLTIP_ELEMENTS, None);
+                                value_label(ui, stream, &value);
+                            });
+                        }
                     });
-                }
+                    table_row.col(|ui| {
+                        if let Some((stream, index, _)) = sample {
+                            let time = timestamp_to_seconds(stream.timestamps[*index]);
+                            ui.weak(base.format(time, 3));
+                        }
+                    });
+                });
             });
     }
 }

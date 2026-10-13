@@ -1,11 +1,11 @@
 pub mod heatmap;
+pub mod log_table;
 pub mod plot;
 pub mod states;
-pub mod table;
-pub mod xy;
-pub mod log_table;
 pub mod stream_selection;
+pub mod table;
 pub mod time_axis;
+pub mod xy;
 
 use crate::app::model::Model;
 use crate::app::model::streams::{NumberKind, Samples, Stream};
@@ -97,34 +97,36 @@ impl ViewType {
     pub fn selectable(self, stream: &Stream) -> Selectable {
         match (self, &stream.samples) {
             (ViewType::Logs, _) => Selectable::No("Log views show no streams".to_owned()),
-            (ViewType::Plot, Samples::Arrays { shape, .. }) => elements(shape),
-            (ViewType::Plot, _) => Selectable::Stream,
-            (ViewType::States, Samples::Numbers { kind: NumberKind::Float, .. })
-            | (ViewType::States, Samples::Arrays { kind: Some(NumberKind::Float), .. }) => {
-                Selectable::No("States show strings, bools and integers".to_owned())
+            (ViewType::Plot | ViewType::Xy, Samples::Strings(_)) => {
+                Selectable::No("Plots show numbers".to_owned())
             }
+            (ViewType::Plot | ViewType::Xy, Samples::Arrays { shape, .. }) => elements(shape),
+            (ViewType::Plot | ViewType::Xy, _) => Selectable::Stream,
+            (
+                ViewType::States,
+                Samples::Numbers {
+                    kind: NumberKind::Float,
+                    ..
+                },
+            )
+            | (
+                ViewType::States,
+                Samples::Arrays {
+                    kind: Some(NumberKind::Float),
+                    ..
+                },
+            ) => Selectable::No("States show strings, bools and integers".to_owned()),
             (ViewType::States, Samples::Arrays { shape, .. }) => elements(shape),
             (ViewType::States, _) => Selectable::Stream,
             (ViewType::Table, _) => Selectable::Stream,
-            (ViewType::Xy, Samples::Strings(_)) => {
-                Selectable::No("XY plots show numbers".to_owned())
-            }
-            (ViewType::Xy, Samples::Arrays { shape, .. }) => elements(shape),
-            (ViewType::Xy, _) => Selectable::Stream,
-            (ViewType::Heatmap, Samples::Arrays { shape, .. }) if (1..=2).contains(&shape.len()) => {
+            (ViewType::Heatmap, Samples::Arrays { shape, .. })
+                if (1..=2).contains(&shape.len()) =>
+            {
                 Selectable::Stream
             }
             (ViewType::Heatmap, _) => {
                 Selectable::No("Heatmaps show arrays of one or two dimensions".to_owned())
             }
-        }
-    }
-
-    /// A remark on how a view of this type shows `stream`.
-    pub fn remark(self, stream: &Stream) -> Option<&'static str> {
-        match (self, &stream.samples) {
-            (ViewType::Plot, Samples::Strings(_)) => Some("Strings are shown in the plot tooltip only"),
-            _ => None,
         }
     }
 
@@ -144,6 +146,22 @@ pub fn text_color_on(background: egui::Color32) -> egui::Color32 {
     } else {
         egui::Color32::WHITE
     }
+}
+
+/// Shows the settings of `view` added by `settings` in a row at the bottom of `ui`, and
+/// the contents added by `contents` in the space above them.
+pub fn settings_below<T>(
+    ui: &mut egui::Ui,
+    view: &mut T,
+    settings: impl FnOnce(&mut T, &mut egui::Ui),
+    contents: impl FnOnce(&mut T, &mut egui::Ui),
+) {
+    ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+        settings(view, ui);
+        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+            contents(view, ui);
+        });
+    });
 }
 
 /// The elements of an array of `shape` if they are few enough to be listed.
