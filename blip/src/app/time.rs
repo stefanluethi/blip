@@ -13,6 +13,68 @@ pub fn timestamp_to_seconds(timestamp: u64) -> f64 {
     timestamp as f64 / NANOS_PER_SECOND
 }
 
+/// Timestamps after this many seconds are taken as Unix time (after 2001-09-09), earlier
+/// ones as time since the device booted.
+const UNIX_TIME_THRESHOLD: f64 = 1.0e9;
+
+/// What the timestamps count from, guessed from their value.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TimeBase {
+    /// Seconds since the Unix epoch, shown as local time.
+    Unix,
+    /// Seconds since the device booted.
+    SinceBoot,
+}
+
+impl TimeBase {
+    pub fn guess(seconds: f64) -> Self {
+        if seconds >= UNIX_TIME_THRESHOLD {
+            TimeBase::Unix
+        } else {
+            TimeBase::SinceBoot
+        }
+    }
+
+    pub fn axis_label(self) -> &'static str {
+        match self {
+            TimeBase::Unix => "local time",
+            TimeBase::SinceBoot => "time since boot",
+        }
+    }
+
+    /// Formats `seconds` as local time of day, or as hours, minutes and seconds since
+    /// boot, with `decimals` decimals of the seconds.
+    pub fn format(self, seconds: f64, decimals: usize) -> String {
+        let decimals = decimals.min(9);
+        let scale = 10f64.powi(decimals as i32);
+        // round the fraction alone, the whole seconds can be too large for exact decimals
+        let mut whole = seconds.floor();
+        let mut digits = ((seconds - whole) * scale).round();
+        if digits >= scale {
+            whole += 1.0;
+            digits = 0.0;
+        }
+        let fraction = if decimals > 0 {
+            format!(".{:0decimals$}", digits as u64)
+        } else {
+            String::new()
+        };
+        match self {
+            TimeBase::Unix => match chrono::DateTime::from_timestamp(whole as i64, 0) {
+                Some(utc) => {
+                    let local: chrono::DateTime<chrono::Local> = utc.into();
+                    format!("{}{fraction}", local.format("%H:%M:%S"))
+                }
+                None => format!("{seconds}"),
+            },
+            TimeBase::SinceBoot => {
+                let whole = whole.max(0.0) as u64;
+                format!("{}:{:02}:{:02}{fraction}", whole / 3600, whole / 60 % 60, whole % 60)
+            }
+        }
+    }
+}
+
 /// A window of `window` seconds shown by all views. It either follows the newest data
 /// (live) or ends at a fixed time.
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -51,6 +113,11 @@ impl TimeRange {
     /// Time of the first collected data in seconds, used as origin of the time axes.
     pub fn origin(&self) -> f64 {
         self.span.map_or(0.0, |(first, _)| first)
+    }
+
+    /// What the timestamps of the collected data count from.
+    pub fn base(&self) -> TimeBase {
+        TimeBase::guess(self.span.map_or(0.0, |(_, latest)| latest))
     }
 
     pub fn is_live(&self) -> bool {
@@ -179,6 +246,27 @@ mod tests {
             end: None,
             span: Some((first, latest)),
         }
+    }
+
+    #[test]
+    fn time_base_is_guessed_from_the_value() {
+        assert_eq!(TimeBase::guess(1.7e9), TimeBase::Unix);
+        assert_eq!(TimeBase::guess(3600.0), TimeBase::SinceBoot);
+    }
+
+    #[test]
+    fn time_since_boot_is_formatted_as_hours_minutes_seconds() {
+        assert_eq!(TimeBase::SinceBoot.format(3723.4567, 3), "1:02:03.457");
+        assert_eq!(TimeBase::SinceBoot.format(12.3, 1), "0:00:12.3");
+        assert_eq!(TimeBase::SinceBoot.format(59.96, 1), "0:01:00.0");
+        assert_eq!(TimeBase::SinceBoot.format(90000.0, 1), "25:00:00.0");
+    }
+
+    #[test]
+    fn unix_time_is_formatted_as_time_of_day() {
+        let text = TimeBase::Unix.format(1.7e9 + 0.25, 2);
+        assert_eq!(text.len(), "hh:mm:ss.25".len());
+        assert!(text.ends_with(":20.25"));
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use crate::app::time::{TimeBase, timestamp_to_seconds};
 use std::collections::VecDeque;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize, serde::Serialize)]
@@ -68,14 +69,8 @@ impl LogEntry {
         } else {
             chrono::Utc::now().timestamp_nanos_opt().map_or(0, |nanos| nanos as u64)
         };
-        let secs = (time / 1_000_000_000) as i64;
-        let nsecs = (time % 1_000_000_000) as u32;
-        let timestamp = if let Some(dt) = chrono::DateTime::from_timestamp(secs, nsecs) {
-            let local_dt: chrono::DateTime<chrono::Local> = chrono::DateTime::from(dt);
-            local_dt.format("%H:%M:%S%.3f").to_string()
-        } else {
-            format!("{}", time)
-        };
+        let seconds = timestamp_to_seconds(time);
+        let timestamp = TimeBase::guess(seconds).format(seconds, 3);
 
         let component = if record.component.is_empty() {
             "target".to_string()

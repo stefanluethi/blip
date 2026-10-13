@@ -67,6 +67,9 @@ All views show the same time range, set in the bottom panel:
   scroll over it to change the window. Moving the range to the end of the
   data returns to live mode.
 
+The time axes show the timestamps as local time of day, or as time since boot
+if they are too small to be a date (before 2001).
+
 Dragging a plot moves the range, and zooming a plot with :kbd:`Ctrl` and the
 mouse wheel changes the window. The y axes fit the data in the range.
 

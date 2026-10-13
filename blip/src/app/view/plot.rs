@@ -1,6 +1,6 @@
 use super::{ViewContext, Viewable};
 use crate::app::model::{Model, streams::{Stream, Value}};
-use crate::app::time::{TimeRange, timestamp_to_seconds};
+use crate::app::time::{TimeBase, TimeRange, timestamp_to_seconds};
 use std::cmp::min;
 use std::collections::BTreeSet;
 
@@ -74,8 +74,8 @@ impl Plot {
     }
 
     /// Shows the values of the shown streams at `t` seconds.
-    fn tooltip_ui(&self, ui: &mut egui::Ui, model: &Model, t: f64, origin: f64) {
-        ui.label(format!("t = {:.3} s", t - origin));
+    fn tooltip_ui(&self, ui: &mut egui::Ui, model: &Model, t: f64, base: TimeBase) {
+        ui.label(base.format(t, 3));
         egui::Grid::new("plot_tooltip").num_columns(2).show(ui, |ui| {
             for (stream, color) in self.selected_stream_iter(model) {
                 if let Some(value) = value_at(&stream.values, t) {
@@ -90,6 +90,9 @@ impl Plot {
     /// Shows the shared time range of `time`, and applies panning and zooming of the
     /// plot to it.
     fn show_plot(&self, model: &Model, time: &mut TimeRange, ui: &mut egui::Ui) {
+        // x is the time since the first collected data, labelled with the timestamps
+        let origin = time.origin();
+        let base = time.base();
         let plot = egui_plot::Plot::new(ui.id().with("plot"))
             .legend(egui_plot::Legend::default())
             // the values at the pointer are shown in a tooltip
@@ -100,15 +103,17 @@ impl Plot {
             .allow_scroll([true, false])
             .allow_boxed_zoom(false)
             .allow_double_click_reset(false)
-            .x_axis_label("t / s")
+            .x_axis_label(base.axis_label())
+            .x_axis_formatter(move |mark, _range| {
+                let decimals = (-mark.step_size.log10().floor()).max(0.0) as usize;
+                base.format(mark.value + origin, decimals)
+            })
             .custom_y_axes(vec![
                 egui_plot::AxisHints::new_y()
                     .placement(egui_plot::HPlacement::Left)
                     .min_thickness(50.0),
             ]);
 
-        // x is the time since the first collected data
-        let origin = time.origin();
         let range = time.range();
         let cursor_color = ui.visuals().weak_text_color();
         let response = plot.show(ui, |plot_ui| {
@@ -151,7 +156,7 @@ impl Plot {
         {
             response
                 .response
-                .on_hover_ui_at_pointer(|ui| self.tooltip_ui(ui, model, x + origin, origin));
+                .on_hover_ui_at_pointer(|ui| self.tooltip_ui(ui, model, x + origin, base));
         }
     }
 }
