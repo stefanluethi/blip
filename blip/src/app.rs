@@ -198,8 +198,7 @@ impl App {
         }
         egui::ScrollArea::vertical()
             .id_salt("streams")
-            .auto_shrink([false, true])
-            .max_height(ui.available_height() / 2.0)
+            .auto_shrink([false, false])
             .show(ui, |ui| {
                 view::stream_selection::show(ui, &self.state.model, view.and_then(view::View::streams_mut));
             });
@@ -229,8 +228,13 @@ impl eframe::App for App {
             .resizable(true)
             .default_size(220.0)
             .show(ui, |ui| {
-                self.streams_ui(ui);
-                ui.separator();
+                // the streams on top, resizable by dragging the border to the layout
+                egui::Panel::top("streams panel")
+                    .resizable(true)
+                    .default_size(250.0)
+                    .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(0, 4)))
+                    .show(ui, |ui| self.streams_ui(ui));
+                ui.add_space(4.0);
                 self.layout.panel_ui(ui);
             });
 

@@ -17,7 +17,8 @@ Top panel
 
 Left panel
    The **Streams** of the selected plot, as a tree that branches at each
-   ``/`` of the path, and the **Layout** of the views below.
+   ``/`` of the path, and the **Layout** of the views below. Drag the border
+   between them to resize them.
 
 Center
    The views, laid out as edited in the layout panel.
