@@ -311,7 +311,7 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
             *self.selected = Some(tile_id);
         }
         if *self.selected == Some(tile_id) {
-            ui.painter().rect_filled(ui.max_rect(), 4.0, ui.visuals().faint_bg_color);
+            ui.painter().rect_filled(ui.max_rect(), 0.0, ui.visuals().faint_bg_color);
         }
 
         if !self.panes_in_tabs.contains(&tile_id) {
@@ -354,7 +354,7 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
     fn paint_on_top_of_tile(&self, painter: &egui::Painter, style: &egui::Style, tile_id: TileId, rect: egui::Rect) {
         if *self.selected == Some(tile_id) {
             let stroke = egui::Stroke::new(1.0, style.visuals.widgets.active.bg_fill);
-            painter.rect_stroke(rect, 4.0, stroke, egui::StrokeKind::Inside);
+            painter.rect_stroke(rect, 0.0, stroke, egui::StrokeKind::Inside);
         }
     }
 
