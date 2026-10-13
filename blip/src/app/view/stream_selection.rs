@@ -42,6 +42,15 @@ impl<'a> StreamTree<'a> {
     fn is_record(&self) -> bool {
         self.children.keys().any(|segment| segment.starts_with('.'))
     }
+
+    /// The selectable paths of all streams at and below this node.
+    fn paths(&self) -> Vec<String> {
+        self.stream
+            .into_iter()
+            .flat_map(stream_paths)
+            .chain(self.children.values().flat_map(Self::paths))
+            .collect()
+    }
 }
 
 /// The icon of the type of `samples`.
@@ -53,24 +62,33 @@ fn type_icon(samples: &Samples) -> &'static str {
     }
 }
 
-/// Shows a checkbox labelled `label` after `icon` for selecting `path`.
+/// Shows a checkbox labelled `label` with a weak `icon` after it for selecting all
+/// `paths`: indeterminate if only some are selected, and disabled if there are none.
 fn show_checkbox(
     ui: &mut Ui,
-    icon: Option<RichText>,
     label: &str,
-    path: &str,
+    icon: Option<&str>,
+    paths: &[String],
     selection: &mut BTreeSet<String>,
 ) -> egui::Response {
-    let mut selected = selection.contains(path);
-    let response = match icon {
-        Some(icon) => ui.checkbox(&mut selected, (icon, label)),
-        None => ui.checkbox(&mut selected, label),
+    let selected_count = paths
+        .iter()
+        .filter(|path| selection.contains(*path))
+        .count();
+    let mut selected = !paths.is_empty() && selected_count == paths.len();
+    let checkbox = match icon {
+        Some(icon) => egui::Checkbox::new(&mut selected, (label, RichText::new(icon).weak())),
+        None => egui::Checkbox::new(&mut selected, label),
     };
+    let checkbox = checkbox.indeterminate(selected_count > 0 && selected_count < paths.len());
+    let response = ui.add_enabled(!paths.is_empty(), checkbox);
     if response.changed() {
-        if selected {
-            selection.insert(path.to_owned());
-        } else {
-            selection.remove(path);
+        for path in paths {
+            if selected {
+                selection.insert(path.clone());
+            } else {
+                selection.remove(path);
+            }
         }
     }
     response
@@ -87,46 +105,52 @@ fn element_indices(shape: &[usize], mut flat_index: usize) -> Vec<usize> {
     indices
 }
 
+/// The selectable paths of `stream`: its own, or for an array those of its elements,
+/// none if it has more than [`MAX_LISTED_ELEMENTS`].
+fn stream_paths(stream: &Stream) -> Vec<String> {
+    let Samples::Arrays { shape, .. } = &stream.samples else {
+        return vec![stream.path.clone()];
+    };
+    let element_count: usize = shape.iter().product();
+    if element_count > MAX_LISTED_ELEMENTS {
+        return vec![];
+    }
+    (0..element_count)
+        .map(|flat_index| element_path(&stream.path, &element_indices(shape, flat_index)))
+        .collect()
+}
+
 /// Shows `stream` labelled `label` with the icon of its type: a checkbox, or for an
 /// array a collapsible list of checkboxes for its elements.
 fn show_stream(ui: &mut Ui, label: &str, stream: &Stream, selection: &mut BTreeSet<String>) {
-    let icon = RichText::new(type_icon(&stream.samples)).weak();
-    let hover = format!("{}\n{}", stream.path, stream.samples.type_label());
-    let Samples::Arrays { shape, .. } = &stream.samples else {
-        let hover = match stream.samples {
-            Samples::Strings(_) => format!("{hover}\nStrings are shown in the plot tooltip only"),
-            _ => hover,
-        };
-        show_checkbox(ui, Some(icon), label, &stream.path, selection).on_hover_text(hover);
-        return;
-    };
-
-    let element_count: usize = shape.iter().product();
-    if element_count > MAX_LISTED_ELEMENTS {
-        ui.horizontal(|ui| {
-            ui.label(icon);
-            ui.label(label);
-        })
-        .response
-        .on_hover_text(format!(
-            "{hover}\nArrays of more than {MAX_LISTED_ELEMENTS} elements cannot be plotted yet"
-        ));
-        return;
+    let icon = Some(type_icon(&stream.samples));
+    let paths = stream_paths(stream);
+    let mut hover = format!("{}\n{}", stream.path, stream.samples.type_label());
+    match &stream.samples {
+        Samples::Empty | Samples::Numbers { .. } => {}
+        Samples::Strings(_) => hover.push_str("\nStrings are shown in the plot tooltip only"),
+        Samples::Arrays { .. } if paths.is_empty() => hover.push_str(&format!(
+            "\nArrays of more than {MAX_LISTED_ELEMENTS} elements cannot be plotted yet"
+        )),
+        Samples::Arrays { .. } => {
+            let id = ui.make_persistent_id(("stream_array", &stream.path));
+            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false)
+                .show_header(ui, |ui| {
+                    show_checkbox(ui, label, icon, &paths, selection).on_hover_text(hover);
+                })
+                .body(|ui| {
+                    for path in &paths {
+                        let label = &path[stream.path.len()..];
+                        show_checkbox(ui, label, None, std::slice::from_ref(path), selection)
+                            .on_hover_text(path);
+                    }
+                });
+            return;
+        }
     }
-    let id = ui.make_persistent_id(("stream_array", &stream.path));
-    egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false)
-        .show_header(ui, |ui| {
-            ui.label(icon);
-            ui.label(label).on_hover_text(hover);
-        })
-        .body(|ui| {
-            for flat_index in 0..element_count {
-                let indices = element_indices(shape, flat_index);
-                let path = element_path(&stream.path, &indices);
-                let label = element_path("", &indices);
-                show_checkbox(ui, None, &label, &path, selection).on_hover_text(&path);
-            }
-        });
+    show_checkbox(ui, label, icon, &paths, selection)
+        .on_hover_text(&hover)
+        .on_disabled_hover_text(hover);
 }
 
 /// Shows the children of `node` as collapsible branches and streams.
@@ -144,13 +168,12 @@ fn show_stream_tree(
                 show_stream(ui, label, stream, selection);
             }
         } else {
+            let icon = child.is_record().then_some(BRACKETS_CURLY);
+            let paths = child.paths();
             let id = ui.make_persistent_id(("stream_tree", &child_prefix));
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
                 .show_header(ui, |ui| {
-                    if child.is_record() {
-                        ui.weak(BRACKETS_CURLY);
-                    }
-                    ui.label(label);
+                    show_checkbox(ui, label, icon, &paths, selection);
                 })
                 .body(|ui| {
                     // a stream can also be the prefix of other streams
@@ -232,6 +255,29 @@ mod tests {
                 .stream
                 .map(|stream| stream.path.as_str()),
             Some("sensors/imu.acc.z")
+        );
+    }
+
+    #[test]
+    fn stream_tree_paths_list_array_elements() {
+        let array = |path: &str, len| {
+            let mut stream = Stream::new(path.to_owned(), Some(3));
+            stream.samples = Samples::Arrays {
+                shape: vec![len],
+                kind: None,
+                values: vec![],
+            };
+            stream
+        };
+        let streams = [
+            array("imu.acc", 2),
+            array("imu.big", MAX_LISTED_ELEMENTS + 1),
+            Stream::new("imu.ok".to_owned(), Some(3)),
+        ];
+        let tree = StreamTree::build(streams.iter());
+        assert_eq!(
+            tree.children["imu"].paths(),
+            ["imu.acc[0]", "imu.acc[1]", "imu.ok"]
         );
     }
 
