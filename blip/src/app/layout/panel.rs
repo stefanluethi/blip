@@ -40,12 +40,18 @@ impl Layout {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.menu_button(egui_phosphor::regular::PLUS, |ui| {
                     for view_type in ViewType::ALL {
-                        if ui.button(format!("{} {}", view_type.icon(), view_type.name())).clicked() {
+                        if ui
+                            .button(format!("{} {}", view_type.icon(), view_type.name()))
+                            .clicked()
+                        {
                             actions.push(Action::AddView(view_type));
                         }
                     }
                     ui.separator();
-                    if ui.button(format!("{} Tab", GroupKind::Tabs.icon())).clicked() {
+                    if ui
+                        .button(format!("{} Tab", GroupKind::Tabs.icon()))
+                        .clicked()
+                    {
                         actions.push(Action::AddTab);
                     }
                 })
@@ -116,15 +122,19 @@ impl Layout {
                 let kind = GroupKind::of(container);
                 let children = container.children_vec();
                 let id = ui.make_persistent_id(("layout_group", tile_id));
-                egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
-                    .show_header(ui, |ui| {
-                        self.row_ui(ui, tile_id, kind.icon(), Some(kind), rows);
-                    })
-                    .body(|ui| {
-                        for child in children {
-                            self.tile_ui(ui, child, rows);
-                        }
-                    });
+                egui::collapsing_header::CollapsingState::load_with_default_open(
+                    ui.ctx(),
+                    id,
+                    true,
+                )
+                .show_header(ui, |ui| {
+                    self.row_ui(ui, tile_id, kind.icon(), Some(kind), rows);
+                })
+                .body(|ui| {
+                    for child in children {
+                        self.tile_ui(ui, child, rows);
+                    }
+                });
             }
             None => {}
         }
@@ -184,10 +194,16 @@ impl Layout {
                 }
                 ui.separator();
             }
-            if ui.button(format!("{} Rename", egui_phosphor::regular::PENCIL_SIMPLE)).clicked() {
+            if ui
+                .button(format!("{} Rename", egui_phosphor::regular::PENCIL_SIMPLE))
+                .clicked()
+            {
                 actions.push(Action::StartRename(tile_id));
             }
-            if ui.button(format!("{} Delete", egui_phosphor::regular::TRASH)).clicked() {
+            if ui
+                .button(format!("{} Delete", egui_phosphor::regular::TRASH))
+                .clicked()
+            {
                 actions.push(Action::Remove(tile_id));
             }
         });
@@ -195,8 +211,18 @@ impl Layout {
 
     /// Where `dragged` would be dropped on the row `row` of `target` with the pointer at
     /// its current position, and marks that in the row.
-    fn drop_at(&self, ui: &egui::Ui, row: egui::Rect, dragged: TileId, target: TileId, is_group: bool) -> Option<Drop> {
-        let pos = ui.ctx().pointer_interact_pos().filter(|&pos| row.contains(pos))?;
+    fn drop_at(
+        &self,
+        ui: &egui::Ui,
+        row: egui::Rect,
+        dragged: TileId,
+        target: TileId,
+        is_group: bool,
+    ) -> Option<Drop> {
+        let pos = ui
+            .ctx()
+            .pointer_interact_pos()
+            .filter(|&pos| row.contains(pos))?;
         if !self.can_drop(dragged, target) {
             return None;
         }
@@ -217,7 +243,9 @@ impl Layout {
         match drop {
             Drop::Before => painter.hline(row.x_range(), row.top(), stroke),
             Drop::After => painter.hline(row.x_range(), row.bottom(), stroke),
-            Drop::Into | Drop::Group => painter.rect_stroke(row, 2.0, stroke, egui::StrokeKind::Inside),
+            Drop::Into | Drop::Group => {
+                painter.rect_stroke(row, 2.0, stroke, egui::StrokeKind::Inside)
+            }
         };
         Some(drop)
     }

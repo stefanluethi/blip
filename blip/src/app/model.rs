@@ -24,6 +24,8 @@ impl Model {
         [self.streams.time_span(), self.logs.time_span()]
             .into_iter()
             .flatten()
-            .reduce(|(first_a, last_a), (first_b, last_b)| (first_a.min(first_b), last_a.max(last_b)))
+            .reduce(|(first_a, last_a), (first_b, last_b)| {
+                (first_a.min(first_b), last_a.max(last_b))
+            })
     }
 }

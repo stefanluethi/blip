@@ -1,7 +1,9 @@
 use crate::app::time::{TimeBase, timestamp_to_seconds};
 use std::collections::VecDeque;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize, serde::Serialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize, serde::Serialize,
+)]
 pub enum LogLevel {
     Trace,
     Debug,
@@ -12,7 +14,6 @@ pub enum LogLevel {
 
 #[allow(dead_code)]
 impl LogLevel {
-
     pub fn as_index(&self) -> usize {
         match self {
             LogLevel::Trace => 0,
@@ -42,7 +43,6 @@ impl LogLevel {
     ];
 }
 
-
 #[derive(Clone, Debug)]
 pub struct LogEntry {
     /// Nanoseconds since the Unix epoch.
@@ -67,7 +67,9 @@ impl LogEntry {
         let time = if record.timestamp > 0 {
             record.timestamp
         } else {
-            chrono::Utc::now().timestamp_nanos_opt().map_or(0, |nanos| nanos as u64)
+            chrono::Utc::now()
+                .timestamp_nanos_opt()
+                .map_or(0, |nanos| nanos as u64)
         };
         let seconds = timestamp_to_seconds(time);
         let timestamp = TimeBase::guess(seconds).format(seconds, 3);

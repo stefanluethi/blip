@@ -1,8 +1,8 @@
-use std::collections::BTreeSet;
-use egui_extras::{Column, TableBuilder};
 use crate::app::model::logs::{LogEntry, LogLevel, Logs};
 use crate::app::time::{TimeRange, timestamp_to_seconds};
 use crate::app::view::{ViewContext, Viewable};
+use egui_extras::{Column, TableBuilder};
+use std::collections::BTreeSet;
 
 #[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
 #[serde(default)]
@@ -139,18 +139,21 @@ impl LogTable {
                     .striped(true)
                     .resizable(true)
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                    .column(Column::initial(80.0).at_least(80.0))  // Timestamp
+                    .column(Column::initial(80.0).at_least(80.0)) // Timestamp
                     .column(Column::initial(100.0).at_least(40.0)) // Log Component
-                    .column(Column::initial(50.0).at_least(30.0))   // Log Level
-                    .column(Column::remainder().at_least(150.0));   // Message
+                    .column(Column::initial(50.0).at_least(30.0)) // Log Level
+                    .column(Column::remainder().at_least(150.0)); // Message
 
                 let range = time.range();
                 let in_range = |entry: &LogEntry| {
-                    range.is_none_or(|(start, end)| (start..=end).contains(&timestamp_to_seconds(entry.time)))
+                    range.is_none_or(|(start, end)| {
+                        (start..=end).contains(&timestamp_to_seconds(entry.time))
+                    })
                 };
                 if time.is_live() {
                     if self.filter.auto_scroll && !filtered_entries.is_empty() {
-                        builder = builder.scroll_to_row(filtered_entries.len() - 1, Some(egui::Align::Max));
+                        builder = builder
+                            .scroll_to_row(filtered_entries.len() - 1, Some(egui::Align::Max));
                     }
                 } else if range != self.last_range
                     && let Some((_, end)) = range
@@ -169,7 +172,11 @@ impl LogTable {
                         let shown = in_range(entry);
                         let text = |text: &str, ui: &egui::Ui| {
                             let text = egui::RichText::new(text).monospace();
-                            if shown { text } else { text.color(ui.visuals().weak_text_color()) }
+                            if shown {
+                                text
+                            } else {
+                                text.color(ui.visuals().weak_text_color())
+                            }
                         };
                         row.col(|ui| {
                             ui.label(text(&entry.timestamp, ui));
@@ -185,7 +192,11 @@ impl LogTable {
                                 LogLevel::Debug => (egui::Color32::from_rgb(45, 156, 219), "DEBUG"),
                                 LogLevel::Trace => (egui::Color32::from_rgb(155, 81, 224), "TRACE"),
                             };
-                            let color = if shown { color } else { color.gamma_multiply(0.4) };
+                            let color = if shown {
+                                color
+                            } else {
+                                color.gamma_multiply(0.4)
+                            };
                             ui.colored_label(color, egui::RichText::new(level_str).monospace());
                         });
                         row.col(|ui| {
@@ -199,40 +210,33 @@ impl LogTable {
         ui.add_space(2.0);
 
         // Footer showing entries count below table
-        egui::Frame::default()
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    let auto_scroll_btn = egui::Button::new(
-                        egui_phosphor::regular::ARROW_LINE_DOWN)
-                        .selected(self.filter.auto_scroll);
+        egui::Frame::default().show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let auto_scroll_btn = egui::Button::new(egui_phosphor::regular::ARROW_LINE_DOWN)
+                    .selected(self.filter.auto_scroll);
 
-                    if ui
-                        .add(auto_scroll_btn)
-                        .on_hover_text("Toggle autoscroll")
-                        .clicked()
-                    {
-                        self.filter.auto_scroll = !self.filter.auto_scroll;
-                    }
+                if ui
+                    .add(auto_scroll_btn)
+                    .on_hover_text("Toggle autoscroll")
+                    .clicked()
+                {
+                    self.filter.auto_scroll = !self.filter.auto_scroll;
+                }
 
-
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "Showing {} / {} entries",
-                            filtered_entries.len(),
-                            logs.entries.len()
-                        ))
-                            .small()
-                            .color(ui.visuals().weak_text_color()),
-                    );
-                });
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Showing {} / {} entries",
+                        filtered_entries.len(),
+                        logs.entries.len()
+                    ))
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+                );
             });
+        });
     }
 
-    fn show_controls(
-        &mut self,
-        ui: &mut egui::Ui,
-        logs: &Logs,
-    ) {
+    fn show_controls(&mut self, ui: &mut egui::Ui, logs: &Logs) {
         egui::Frame::default()
             .fill(ui.visuals().faint_bg_color)
             .corner_radius(4.0)
@@ -246,7 +250,10 @@ impl LogTable {
 
                         ui.add(
                             egui::TextEdit::singleline(&mut self.filter.message_regex)
-                                .hint_text(format!("{} Search logs (regex)...", egui_phosphor::regular::MAGNIFYING_GLASS))
+                                .hint_text(format!(
+                                    "{} Search logs (regex)...",
+                                    egui_phosphor::regular::MAGNIFYING_GLASS
+                                ))
                                 .font(egui::TextStyle::Monospace)
                                 .desired_width(200.0),
                         );
@@ -255,14 +262,21 @@ impl LogTable {
                         let cs_text = egui::RichText::new("Aa").monospace();
                         let cs_btn =
                             egui::Button::new(cs_text).selected(self.filter.case_sensitive);
-                        if ui.add(cs_btn).on_hover_text("Toggle Case Sensitivity").clicked() {
+                        if ui
+                            .add(cs_btn)
+                            .on_hover_text("Toggle Case Sensitivity")
+                            .clicked()
+                        {
                             self.filter.case_sensitive = !self.filter.case_sensitive;
                         }
 
                         if is_regex_err {
                             if let Some(Err(ref err_msg)) = self.compiled_regex {
-                                ui.label(egui::RichText::new(egui_phosphor::regular::WARNING).color(egui::Color32::RED))
-                                    .on_hover_text(format!("Invalid Regex Syntax:\n{}", err_msg));
+                                ui.label(
+                                    egui::RichText::new(egui_phosphor::regular::WARNING)
+                                        .color(egui::Color32::RED),
+                                )
+                                .on_hover_text(format!("Invalid Regex Syntax:\n{}", err_msg));
                             }
                         }
 
@@ -275,7 +289,8 @@ impl LogTable {
                         ui.separator();
 
                         // 2. Filter Dropdown Toggle Button
-                        let active_dropdown_filters = (self.filter.min_level != LogLevel::Trace) as usize
+                        let active_dropdown_filters = (self.filter.min_level != LogLevel::Trace)
+                            as usize
                             + (!self.filter.component.is_empty()) as usize;
 
                         let filter_icon = egui_phosphor::regular::FUNNEL;
@@ -288,9 +303,7 @@ impl LogTable {
                         let filter_title = if active_dropdown_filters > 0 {
                             format!(
                                 "{} Filter ({}) {}",
-                                filter_icon,
-                                active_dropdown_filters,
-                                caret_icon
+                                filter_icon, active_dropdown_filters, caret_icon
                             )
                         } else {
                             format!("{} Filter {}", filter_icon, caret_icon)
@@ -304,8 +317,6 @@ impl LogTable {
 
                         // 3. Right-aligned Controls
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-
-
                             let is_filtered = self.filter.min_level != LogLevel::Trace
                                 || !self.filter.component.is_empty()
                                 || !self.filter.message_regex.is_empty()
@@ -379,11 +390,8 @@ impl LogTable {
                                                 self.filter.component.clear();
                                             }
                                             for comp in unique_components {
-                                                let is_selected =
-                                                    self.filter.component == comp;
-                                                if ui
-                                                    .selectable_label(is_selected, comp)
-                                                    .clicked()
+                                                let is_selected = self.filter.component == comp;
+                                                if ui.selectable_label(is_selected, comp).clicked()
                                                 {
                                                     self.filter.component = comp.to_string();
                                                 }
@@ -396,7 +404,6 @@ impl LogTable {
                 });
             });
     }
-
 }
 
 impl Viewable for LogTable {
@@ -461,7 +468,11 @@ mod tests {
     #[test]
     fn test_regex_filter() {
         let mut table = LogTable::default();
-        let entry1 = create_entry(LogLevel::Info, "ws", "connection established to ws://localhost");
+        let entry1 = create_entry(
+            LogLevel::Info,
+            "ws",
+            "connection established to ws://localhost",
+        );
         let entry2 = create_entry(LogLevel::Warn, "ws", "failed connection retrying");
 
         table.filter.message_regex = r"^connection.*".to_string();

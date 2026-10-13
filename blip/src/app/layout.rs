@@ -143,7 +143,8 @@ impl Layout {
         let tab = self.tree.tiles.insert_vertical_tile(vec![]);
         self.group_names.insert(tab, name);
         let root = self.root();
-        self.tree.move_tile_to_container(tab, root, usize::MAX, true);
+        self.tree
+            .move_tile_to_container(tab, root, usize::MAX, true);
         self.select(tab);
         tab
     }
@@ -151,7 +152,10 @@ impl Layout {
     /// Adds a new view next to the selected view, or into the selected group, or into the
     /// shown tab.
     fn add_view(&mut self, view_type: ViewType) {
-        let (container, index) = match self.selected.filter(|&id| self.tree.tiles.get(id).is_some()) {
+        let (container, index) = match self
+            .selected
+            .filter(|&id| self.tree.tiles.get(id).is_some())
+        {
             Some(selected) if self.container(selected).is_some() => (selected, usize::MAX),
             Some(selected) => {
                 let parent = self.parent(selected).unwrap_or(self.root());
@@ -175,7 +179,8 @@ impl Layout {
 
         let name = self.unique_name(view_type.name());
         let view = self.tree.tiles.insert_pane(View::new(view_type, name));
-        self.tree.move_tile_to_container(view, container, index, true);
+        self.tree
+            .move_tile_to_container(view, container, index, true);
         self.select(view);
     }
 
@@ -191,8 +196,12 @@ impl Layout {
             return;
         }
         self.tree.remove_recursively(tile_id);
-        self.group_names.retain(|&id, _| self.tree.tiles.get(id).is_some());
-        if self.selected.is_some_and(|id| self.tree.tiles.get(id).is_none()) {
+        self.group_names
+            .retain(|&id, _| self.tree.tiles.get(id).is_some());
+        if self
+            .selected
+            .is_some_and(|id| self.tree.tiles.get(id).is_none())
+        {
             self.selected = None;
         }
         self.remove_empty_groups();
@@ -235,9 +244,12 @@ impl Layout {
                     .container(parent)
                     .and_then(|container| container.children().position(|&id| id == target))
                     .map_or(usize::MAX, |index| index + usize::from(drop == Drop::After));
-                self.tree.move_tile_to_container(dragged, parent, index, true);
+                self.tree
+                    .move_tile_to_container(dragged, parent, index, true);
             }
-            Drop::Into => self.tree.move_tile_to_container(dragged, target, usize::MAX, true),
+            Drop::Into => self
+                .tree
+                .move_tile_to_container(dragged, target, usize::MAX, true),
             Drop::Group => {
                 if let Some(old_parent) = self.parent(dragged)
                     && let Some(container) = self.container_mut(old_parent)
@@ -250,7 +262,11 @@ impl Layout {
                     Some(GroupKind::Vertical) => GroupKind::Horizontal,
                     _ => GroupKind::Vertical,
                 };
-                let name = self.unique_name(if parent == self.root() { "Tab" } else { "Group" });
+                let name = self.unique_name(if parent == self.root() {
+                    "Tab"
+                } else {
+                    "Group"
+                });
                 let group = self
                     .tree
                     .tiles
@@ -305,13 +321,19 @@ struct Behavior<'a, 'b> {
 }
 
 impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
-    fn pane_ui(&mut self, ui: &mut egui::Ui, tile_id: TileId, view: &mut View) -> egui_tiles::UiResponse {
+    fn pane_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        tile_id: TileId,
+        view: &mut View,
+    ) -> egui_tiles::UiResponse {
         // select the view on any click into it, also on clicks handled by its contents
         if ui.input(|i| i.pointer.primary_pressed()) && ui.rect_contains_pointer(ui.max_rect()) {
             *self.selected = Some(tile_id);
         }
         if *self.selected == Some(tile_id) {
-            ui.painter().rect_filled(ui.max_rect(), 0.0, ui.visuals().faint_bg_color);
+            ui.painter()
+                .rect_filled(ui.max_rect(), 0.0, ui.visuals().faint_bg_color);
         }
 
         if !self.panes_in_tabs.contains(&tile_id) {
@@ -344,14 +366,28 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
         view.name.as_str().into()
     }
 
-    fn tab_title_for_tile(&mut self, tiles: &egui_tiles::Tiles<View>, tile_id: TileId) -> egui::WidgetText {
+    fn tab_title_for_tile(
+        &mut self,
+        tiles: &egui_tiles::Tiles<View>,
+        tile_id: TileId,
+    ) -> egui::WidgetText {
         match tiles.get(tile_id) {
             Some(Tile::Pane(view)) => self.tab_title_for_pane(view),
-            _ => self.group_names.get(&tile_id).map_or("", String::as_str).into(),
+            _ => self
+                .group_names
+                .get(&tile_id)
+                .map_or("", String::as_str)
+                .into(),
         }
     }
 
-    fn paint_on_top_of_tile(&self, painter: &egui::Painter, style: &egui::Style, tile_id: TileId, rect: egui::Rect) {
+    fn paint_on_top_of_tile(
+        &self,
+        painter: &egui::Painter,
+        style: &egui::Style,
+        tile_id: TileId,
+        rect: egui::Rect,
+    ) {
         if *self.selected == Some(tile_id) {
             let stroke = egui::Stroke::new(1.0, style.visuals.widgets.active.bg_fill);
             painter.rect_stroke(rect, 0.0, stroke, egui::StrokeKind::Inside);

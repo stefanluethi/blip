@@ -85,7 +85,10 @@ impl LayoutFile {
             Some(Node::Group(group)) => group,
             _ => Group::tabs(vec![]),
         };
-        Self { version: VERSION, root }
+        Self {
+            version: VERSION,
+            root,
+        }
     }
 
     /// Restores the tiles, returns the tree and the group names.
@@ -109,14 +112,24 @@ impl Group {
     }
 }
 
-fn save_node(tiles: &Tiles<View>, tile_id: TileId, group_names: &HashMap<TileId, String>) -> Option<Node> {
+fn save_node(
+    tiles: &Tiles<View>,
+    tile_id: TileId,
+    group_names: &HashMap<TileId, String>,
+) -> Option<Node> {
     match tiles.get(tile_id)? {
         Tile::Pane(view) => Some(Node::View(view.clone())),
         Tile::Container(container) => {
             let child_ids = container.children_vec();
             let (shares, active) = match container {
-                Container::Linear(linear) => (child_ids.iter().map(|&id| linear.shares[id]).collect(), None),
-                Container::Tabs(tabs) => (vec![], child_ids.iter().position(|&id| Some(id) == tabs.active)),
+                Container::Linear(linear) => (
+                    child_ids.iter().map(|&id| linear.shares[id]).collect(),
+                    None,
+                ),
+                Container::Tabs(tabs) => (
+                    vec![],
+                    child_ids.iter().position(|&id| Some(id) == tabs.active),
+                ),
                 Container::Grid(_) => (vec![], None),
             };
             Some(Node::Group(Group {
@@ -133,7 +146,11 @@ fn save_node(tiles: &Tiles<View>, tile_id: TileId, group_names: &HashMap<TileId,
     }
 }
 
-fn load_group(tiles: &mut Tiles<View>, group_names: &mut HashMap<TileId, String>, group: Group) -> TileId {
+fn load_group(
+    tiles: &mut Tiles<View>,
+    group_names: &mut HashMap<TileId, String>,
+    group: Group,
+) -> TileId {
     let children: Vec<TileId> = group
         .children
         .into_iter()
@@ -174,29 +191,31 @@ mod tests {
             root: Group {
                 active: Some(0),
                 ..Group::tabs(vec![Node::Group(Group {
-                name: "Main".to_owned(),
-                kind: GroupKind::Vertical,
-                children: vec![
-                    Node::View(View::new(ViewType::Plot, "Plot 1".to_owned())),
-                    Node::Group(Group {
-                        name: "Side by side".to_owned(),
-                        kind: GroupKind::Horizontal,
-                        children: vec![
-                            Node::View(View::new(ViewType::Plot, "Plot 2".to_owned())),
-                            Node::View(View::new(ViewType::Logs, "Logs".to_owned())),
-                        ],
-                        shares: vec![2.0, 1.0],
-                        active: None,
-                    }),
-                ],
-                shares: vec![1.0, 1.0],
-                active: None,
-            })])
+                    name: "Main".to_owned(),
+                    kind: GroupKind::Vertical,
+                    children: vec![
+                        Node::View(View::new(ViewType::Plot, "Plot 1".to_owned())),
+                        Node::Group(Group {
+                            name: "Side by side".to_owned(),
+                            kind: GroupKind::Horizontal,
+                            children: vec![
+                                Node::View(View::new(ViewType::Plot, "Plot 2".to_owned())),
+                                Node::View(View::new(ViewType::Logs, "Logs".to_owned())),
+                            ],
+                            shares: vec![2.0, 1.0],
+                            active: None,
+                        }),
+                    ],
+                    shares: vec![1.0, 1.0],
+                    active: None,
+                })])
             },
         };
         let bytes = serde_cbor_2::to_vec(&file).unwrap();
 
-        let (tree, group_names) = serde_cbor_2::from_slice::<LayoutFile>(&bytes).unwrap().load();
+        let (tree, group_names) = serde_cbor_2::from_slice::<LayoutFile>(&bytes)
+            .unwrap()
+            .load();
         let saved = LayoutFile::new(&tree, tree.root().unwrap(), &group_names);
         assert_eq!(serde_cbor_2::to_vec(&saved).unwrap(), bytes);
     }

@@ -1,4 +1,4 @@
-use crate::app::model::{logs::LogEntry, Model};
+use crate::app::model::{Model, logs::LogEntry};
 
 pub fn parse_message(message: Vec<u8>, model: &mut Model) {
     log::info!("received {}B", message.len());

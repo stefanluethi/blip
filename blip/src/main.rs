@@ -28,7 +28,6 @@ fn main() -> eframe::Result {
 fn main() {
     eframe::WebLogger::init(log::LevelFilter::Debug).ok();
 
-
     use eframe::wasm_bindgen::JsCast as _;
 
     let web_options = eframe::WebOptions::default();

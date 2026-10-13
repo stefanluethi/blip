@@ -1,13 +1,12 @@
 mod layout;
-mod proto_parser;
-mod view;
 mod model;
+mod proto_parser;
 mod time;
+mod view;
 
-
-use std::collections::BTreeMap;
 use eframe::Frame;
 use egui::Context;
+use std::collections::BTreeMap;
 use view::ViewContext;
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -37,7 +36,6 @@ impl Default for State {
         }
     }
 }
-
 
 impl State {
     fn websocket_connect(&mut self, ctx: egui::Context) {
@@ -98,7 +96,10 @@ impl State {
     fn websocket_send(&mut self, command: proto::Action) {
         if let Some(sender) = self.ws_sender.as_mut() {
             let command_packet = serde_cbor_2::to_vec(&command).unwrap();
-            log::debug!("send command {}", hex_string::HexString::from_bytes(&command_packet).as_string());
+            log::debug!(
+                "send command {}",
+                hex_string::HexString::from_bytes(&command_packet).as_string()
+            );
             sender.send(ewebsock::WsMessage::Binary(command_packet));
         }
     }
@@ -134,8 +135,6 @@ impl State {
         });
     }
 }
-
-
 
 //--------------------------------------------------------------------------------------------------
 
@@ -200,7 +199,11 @@ impl App {
             .id_salt("streams")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                view::stream_selection::show(ui, &self.state.model, view.and_then(view::View::selection_mut));
+                view::stream_selection::show(
+                    ui,
+                    &self.state.model,
+                    view.and_then(view::View::selection_mut),
+                );
             });
     }
 }
@@ -260,9 +263,21 @@ fn theme_button(ui: &mut egui::Ui) {
     use egui::ThemePreference;
     let preference = ui.ctx().options(|options| options.theme_preference);
     let (icon, hint, next) = match preference {
-        ThemePreference::Light => (egui_phosphor::regular::SUN, "Light theme", ThemePreference::Dark),
-        ThemePreference::Dark => (egui_phosphor::regular::MOON, "Dark theme", ThemePreference::System),
-        ThemePreference::System => (egui_phosphor::regular::CIRCLE_HALF, "System theme", ThemePreference::Light),
+        ThemePreference::Light => (
+            egui_phosphor::regular::SUN,
+            "Light theme",
+            ThemePreference::Dark,
+        ),
+        ThemePreference::Dark => (
+            egui_phosphor::regular::MOON,
+            "Dark theme",
+            ThemePreference::System,
+        ),
+        ThemePreference::System => (
+            egui_phosphor::regular::CIRCLE_HALF,
+            "System theme",
+            ThemePreference::Light,
+        ),
     };
     if ui.button(icon).on_hover_text(hint).clicked() {
         ui.ctx().set_theme(next);
