@@ -12,8 +12,10 @@ Simulator (no hardware required)::
 
    uv run bridge --protocol simulator --port 3000
 
-The simulator streams per-core CPU load and an accelerometer value, and emits
-log records from a few synthetic components at all severity levels. Sustained
+The simulator streams per-core CPU load and an accelerometer value, an ``imu``
+record of two 3-element arrays, a ``motor`` record of an integer, a bool and a
+string, and a temperature that is ``null`` now and then. It also emits log
+records from a few synthetic components at all severity levels. Sustained
 high CPU load on a core is reported as a warning.
 
 TCP endpoint::

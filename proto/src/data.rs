@@ -276,4 +276,41 @@ mod tests {
             message
         );
     }
+
+    #[test]
+    fn decodes_values_of_the_python_bridge() {
+        let value = |hex: &str| {
+            let bytes: Vec<u8> = (0..hex.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+                .collect();
+            match serde_cbor_2::from_slice(&bytes).unwrap() {
+                crate::Message::Value(value) => value.value,
+                message => panic!("not a value: {message:?}"),
+            }
+        };
+        // bridge.proto.Message.create_value(...).encode_cbor() of cbor2 5.x
+        let motor = "a16556616c7565a36974696d657374616d70016470617468656d6f746f726576616c7565a3\
+                     6973706565645f72706d1905dc67656e61626c6564f56573746174656772756e6e696e67";
+        assert_eq!(
+            value(motor),
+            Data::Record(vec![
+                ("speed_rpm".to_owned(), Data::Uint(1500)),
+                ("enabled".to_owned(), Data::Bool(true)),
+                ("state".to_owned(), Data::from("running")),
+            ])
+        );
+        let imu = "a16556616c7565a36974696d657374616d7002647061746863696d756576616c7565a16361\
+                   636383fb3fe0000000000000fbbff0000000000000fb40239eb851eb851f";
+        assert_eq!(
+            value(imu),
+            Data::Record(vec![(
+                "acc".to_owned(),
+                Data::Array(vec![Data::Float(0.5), Data::Float(-1.0), Data::Float(9.81)])
+            )])
+        );
+        let temperature = "a16556616c7565a36974696d657374616d700364706174687273656e736f722f74656d\
+                           70657261747572656576616c7565f6";
+        assert_eq!(value(temperature), Data::Null);
+    }
 }

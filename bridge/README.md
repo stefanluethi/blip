@@ -24,7 +24,7 @@ uv sync
 ### Running the Bridge
 
 #### Simulator Mode (Default)
-Starts the WebSocket server on `ws://127.0.0.1:3000/ws/bridge` with simulated CPU and accelerometer telemetry and log records:
+Starts the WebSocket server on `ws://127.0.0.1:3000/ws/bridge` with simulated CPU, accelerometer, IMU (record of arrays), motor (integer, bool and string) and temperature (with nulls) telemetry and log records:
 
 ```bash
 uv run bridge --protocol simulator --port 3000

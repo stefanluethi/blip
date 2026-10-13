@@ -85,7 +85,41 @@ async def test_simulator_bridge_logs():
         await server.stop()
 
 
+async def test_simulator_bridge_typed_values():
+    proto = SimulatorProtocol(interval_ms=10)
+    server = BridgeServer(protocol=proto, host="127.0.0.1", port=3995, path="/ws/test")
+    await server.start()
+
+    await asyncio.sleep(0.05)
+
+    try:
+        async with websockets.connect("ws://127.0.0.1:3995/ws/test") as ws:
+            # Collect the first value of each typed stream
+            values = {}
+            for _ in range(500):
+                data = decode_cbor_message(await asyncio.wait_for(ws.recv(), timeout=2.0))
+                assert data is not None
+                if "Value" in data and data["Value"]["path"] in ("imu", "motor", "sensor/temperature"):
+                    values.setdefault(data["Value"]["path"], data["Value"]["value"])
+                    if len(values) == 3:
+                        break
+
+            # Records and arrays arrive as plain CBOR maps and arrays
+            assert set(values["imu"]) == {"acc", "gyro"}
+            assert len(values["imu"]["acc"]) == 3
+            assert all(isinstance(v, float) for v in values["imu"]["acc"])
+            motor = values["motor"]
+            assert isinstance(motor["speed_rpm"], int) and not isinstance(motor["speed_rpm"], bool)
+            assert isinstance(motor["enabled"], bool)
+            assert isinstance(motor["state"], str)
+            assert values["sensor/temperature"] is None or isinstance(values["sensor/temperature"], float)
+
+    finally:
+        await server.stop()
+
+
 if __name__ == "__main__":
     asyncio.run(test_simulator_bridge())
     asyncio.run(test_simulator_bridge_logs())
+    asyncio.run(test_simulator_bridge_typed_values())
     print("ALL TESTS PASSED SUCCESSFULLY!")

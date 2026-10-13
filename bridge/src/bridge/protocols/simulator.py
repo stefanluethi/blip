@@ -22,6 +22,12 @@ CPU_HIGH_THRESHOLD = 90.0
 CPU_NORMAL_THRESHOLD = 70.0
 CPU_SMOOTHING_SEC = 2.0
 
+# Probability that the simulated temperature sensor fails to deliver a sample, which
+# is sent as null
+SENSOR_DROPOUT_PROBABILITY = 0.05
+
+MOTOR_STATES = ["idle", "accelerating", "running", "braking"]
+
 # Background log messages: (weight, level, component, message template)
 _RANDOM_LOGS = [
     (30, TRACE, "sensor", "accelerometer sample {accel:.3f} m/s^2"),
@@ -48,6 +54,7 @@ class SimulatorProtocol(BaseProtocol):
         self._seq = 0
         self._cpu_avg: dict[int, float] = {}
         self._cpu_high: set[int] = set()
+        self._motor_state = 0
 
     async def start(self) -> None:
         """Start simulator telemetry stream task."""
@@ -93,7 +100,17 @@ class SimulatorProtocol(BaseProtocol):
                     await self.send_to_websocket(cpu_msg.encode_cbor())
                 await self._log_cpu_transitions(cpu_percentages)
 
-                # 3. Random background logs, at a jittered rate
+                # 3. Typed values: a record with arrays, a record with an integer,
+                # a bool and a string, and a sensor that sometimes delivers no value
+                await self.send_to_websocket(self._imu_message().encode_cbor())
+                await self.send_to_websocket(self._motor_message().encode_cbor())
+                temperature = None
+                if random.random() >= SENSOR_DROPOUT_PROBABILITY:
+                    temperature = 25.0 + random.gauss(0.0, 0.2)
+                temperature_msg = Message.create_value("sensor/temperature", temperature)
+                await self.send_to_websocket(temperature_msg.encode_cbor())
+
+                # 4. Random background logs, at a jittered rate
                 now = time.monotonic()
                 if now >= next_log:
                     await self._send_random_log(accel_val)
@@ -105,6 +122,23 @@ class SimulatorProtocol(BaseProtocol):
             except Exception as e:
                 logger.error(f"Error in simulator loop: {e}")
                 await asyncio.sleep(0.1)
+
+    def _imu_message(self) -> Message:
+        """An IMU sample as a record of two vector arrays."""
+        acc = [random.gauss(0.0, 0.1), random.gauss(0.0, 0.1), 9.81 + random.gauss(0.0, 0.1)]
+        gyro = [random.gauss(0.0, 0.01) for _ in range(3)]
+        return Message.create_value("imu", {"acc": acc, "gyro": gyro})
+
+    def _motor_message(self) -> Message:
+        """A motor sample as a record of an integer, a bool and a string."""
+        if random.random() < 0.02:
+            self._motor_state = (self._motor_state + 1) % len(MOTOR_STATES)
+        state = MOTOR_STATES[self._motor_state]
+        enabled = state != "idle"
+        speed_rpm = random.randrange(1400, 1600) if enabled else 0
+        return Message.create_value(
+            "motor", {"speed_rpm": speed_rpm, "enabled": enabled, "state": state}
+        )
 
     async def _send_log(self, level: int, component: str, message: str) -> None:
         """Broadcast a single log record."""

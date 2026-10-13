@@ -149,7 +149,7 @@ class RobbyTranslator:
         for raw_value in values:
             messages.append(Message.create_value(
                 stream.path,
-                raw_value * stream.scale_factor,
+                float(raw_value * stream.scale_factor),
                 timestamp_ns=int(stream.next_timestamp_ns),
             ))
             stream.next_timestamp_ns += stream.sampling_time_ns
@@ -170,7 +170,7 @@ class RobbyTranslator:
             for field in ("runtime", "stack_usage"):
                 path = f"threads/{thread['name']}/{field}"
                 messages.append(Message.create_metadata(path, "%"))
-                messages.append(Message.create_value(path, thread[field], timestamp_ns=timestamp_ns))
+                messages.append(Message.create_value(path, float(thread[field]), timestamp_ns=timestamp_ns))
         return messages
 
 
