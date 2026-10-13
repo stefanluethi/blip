@@ -1,8 +1,12 @@
 use super::{ViewContext, Viewable};
-use crate::app::model::{Model, streams::{Stream, Value}};
+use crate::app::model::{
+    Model,
+    streams::{NumberKind, Samples, Series},
+};
 use crate::app::time::{TimeBase, TimeRange, timestamp_to_seconds};
 use std::cmp::min;
 use std::collections::BTreeSet;
+use std::ops::Range;
 
 const Y_MARGIN_FRACTION: f64 = 0.05;
 /// Upper bound of points drawn per curve within the visible x range.
@@ -21,36 +25,44 @@ impl Plot {
         Self::default()
     }
 
-    /// Draws the values of `stream` within `range_x` seconds, shifted by `origin` seconds.
-    fn plot_stream_series(
-        stream: &Stream,
+    /// Draws the values of `series` within `range_x` seconds, shifted by `origin`
+    /// seconds, with gaps at nulls.
+    fn plot_series(
+        name: &str,
+        series: Series<'_>,
         color: egui::Color32,
         range_x: Option<(f64, f64)>,
         origin: f64,
         plot_ui: &mut egui_plot::PlotUi<'_>,
     ) {
-        let values = visible_values(&stream.values, range_x);
-        let points = downsample(values, origin, MAX_POINTS_PER_CURVE);
-
-        plot_ui.line(
-            egui_plot::Line::new(stream.path.as_str(), egui_plot::PlotPoints::from(points)).color(color),
-        );
+        let visible = series.slice(visible_range(series.timestamps, range_x));
+        let points = downsample(visible, origin, MAX_POINTS_PER_CURVE);
+        // lines of the same name share one legend entry
+        for segment in points
+            .split(|point| point[1].is_nan())
+            .filter(|segment| !segment.is_empty())
+        {
+            let segment = if series.kind == NumberKind::Bool {
+                steps(segment)
+            } else {
+                segment.to_vec()
+            };
+            plot_ui.line(
+                egui_plot::Line::new(name, egui_plot::PlotPoints::from(segment)).color(color),
+            );
+        }
     }
 
     /// The y range covered by the shown streams within the sample times `[start, end]`
     /// seconds.
-    fn range_y(&self, model: &Model, (start, end): (f64, f64)) -> Option<(f64, f64)> {
+    fn range_y(&self, model: &Model, range_x: (f64, f64)) -> Option<(f64, f64)> {
         let mut range: Option<(f64, f64)> = None;
-        for (stream, _) in self.selected_stream_iter(model) {
-            // values are appended in arrival order, so timestamps are ascending
-            let first = stream
-                .values
-                .partition_point(|v| timestamp_to_seconds(v.timestamp) < start);
-            let last = stream
-                .values
-                .partition_point(|v| timestamp_to_seconds(v.timestamp) <= end);
-            for v in &stream.values[first..last] {
-                let y = v.value as f64;
+        for (_, series, _) in self.selected_series_iter(model) {
+            let visible = within(series.timestamps, range_x);
+            for y in visible
+                .map(|index| series.value(index))
+                .filter(|y| !y.is_nan())
+            {
                 range = Some(match range {
                     Some((low, high)) => (low.min(y), high.max(y)),
                     None => (y, y),
@@ -59,32 +71,59 @@ impl Plot {
         }
 
         range.map(|(low, high)| {
-            let margin = if high > low { (high - low) * Y_MARGIN_FRACTION } else { 0.5 };
+            let margin = if high > low {
+                (high - low) * Y_MARGIN_FRACTION
+            } else {
+                0.5
+            };
             (low - margin, high + margin)
         })
     }
 
-    /// The shown streams that were received, with their curve colors.
-    fn selected_stream_iter<'a>(&'a self, model: &'a Model) -> impl Iterator<Item = (&'a Stream, egui::Color32)> {
+    /// The shown paths with their curve colors.
+    fn selected_path_iter(&self) -> impl Iterator<Item = (&str, egui::Color32)> {
         // colors follow the order of the selection, so they do not change as streams arrive
         self.streams
             .iter()
             .enumerate()
-            .filter_map(|(index, path)| Some((model.streams.get(path)?, curve_color(index))))
+            .map(|(index, path)| (path.as_str(), curve_color(index)))
+    }
+
+    /// The shown numeric series that were received, with their curve colors.
+    fn selected_series_iter<'a>(
+        &'a self,
+        model: &'a Model,
+    ) -> impl Iterator<Item = (&'a str, Series<'a>, egui::Color32)> {
+        self.selected_path_iter()
+            .filter_map(|(path, color)| Some((path, model.streams.series(path)?, color)))
     }
 
     /// Shows the values of the shown streams at `t` seconds.
     fn tooltip_ui(&self, ui: &mut egui::Ui, model: &Model, t: f64, base: TimeBase) {
         ui.label(base.format(t, 3));
-        egui::Grid::new("plot_tooltip").num_columns(2).show(ui, |ui| {
-            for (stream, color) in self.selected_stream_iter(model) {
-                if let Some(value) = value_at(&stream.values, t) {
-                    ui.colored_label(color, &stream.path);
-                    ui.label(value.value.to_string());
-                    ui.end_row();
+        egui::Grid::new("plot_tooltip")
+            .num_columns(2)
+            .show(ui, |ui| {
+                for (path, color) in self.selected_path_iter() {
+                    let value = if let Some(series) = model.streams.series(path) {
+                        closest_index(series.timestamps, t)
+                            .map(|index| series.kind.format(series.value(index)))
+                    } else if let Some(stream) = model.streams.get(path)
+                        && let Samples::Strings(values) = &stream.samples
+                    {
+                        // strings are not plotted, but shown here
+                        closest_index(&stream.timestamps, t)
+                            .map(|index| values[index].clone().unwrap_or_else(|| "null".to_owned()))
+                    } else {
+                        None
+                    };
+                    if let Some(value) = value {
+                        ui.colored_label(color, path);
+                        ui.label(value);
+                        ui.end_row();
+                    }
                 }
-            }
-        });
+            });
     }
 
     /// Shows the shared time range of `time`, and applies panning and zooming of the
@@ -124,8 +163,8 @@ impl Plot {
                 }
             }
 
-            for (stream, color) in self.selected_stream_iter(model) {
-                Self::plot_stream_series(stream, color, range, origin, plot_ui);
+            for (path, series, color) in self.selected_series_iter(model) {
+                Self::plot_series(path, series, color, range, origin, plot_ui);
             }
 
             let hovered_x = plot_ui
@@ -167,62 +206,103 @@ fn curve_color(index: usize) -> egui::Color32 {
     egui::ecolor::Hsva::new(index as f32 * golden_ratio, 0.85, 0.5, 1.0).into()
 }
 
-/// The value with the timestamp closest to `t` seconds.
-fn value_at(values: &[Value], t: f64) -> Option<&Value> {
-    // values are appended in arrival order, so timestamps are ascending
-    let next = values.partition_point(|v| timestamp_to_seconds(v.timestamp) < t);
+/// Index of the timestamp closest to `t` seconds.
+fn closest_index(timestamps: &[u64], t: f64) -> Option<usize> {
+    // timestamps are ascending
+    let next = timestamps.partition_point(|&timestamp| timestamp_to_seconds(timestamp) < t);
     let candidates = [next.checked_sub(1), Some(next)];
     candidates
         .into_iter()
         .flatten()
-        .filter_map(|index| values.get(index))
-        .min_by(|a, b| {
-            let distance = |v: &Value| (timestamp_to_seconds(v.timestamp) - t).abs();
+        .filter(|&index| index < timestamps.len())
+        .min_by(|&a, &b| {
+            let distance = |index: usize| (timestamp_to_seconds(timestamps[index]) - t).abs();
             distance(a).total_cmp(&distance(b))
         })
 }
 
-/// The values within `range_x` seconds, plus one neighbour on each side so the line
-/// continues to the plot edges. All values if `range_x` is `None`.
-fn visible_values(values: &[Value], range_x: Option<(f64, f64)>) -> &[Value] {
-    let Some((start, end)) = range_x else {
-        return values;
-    };
-    // values are appended in arrival order, so timestamps are ascending
-    let first = values.partition_point(|v| timestamp_to_seconds(v.timestamp) < start);
-    let last = values.partition_point(|v| timestamp_to_seconds(v.timestamp) <= end);
-    &values[first.saturating_sub(1)..min(last + 1, values.len())]
+/// Indices of the timestamps within `[start, end]` seconds.
+fn within(timestamps: &[u64], (start, end): (f64, f64)) -> Range<usize> {
+    // timestamps are ascending
+    let first = timestamps.partition_point(|&timestamp| timestamp_to_seconds(timestamp) < start);
+    let last = timestamps.partition_point(|&timestamp| timestamp_to_seconds(timestamp) <= end);
+    first..last.max(first)
 }
 
-/// Reduces `values` to at most `max_points` points by keeping the minimum and maximum
+/// Indices of the timestamps within `range_x` seconds, plus one neighbour on each side
+/// so the line continues to the plot edges. All indices if `range_x` is `None`.
+fn visible_range(timestamps: &[u64], range_x: Option<(f64, f64)>) -> Range<usize> {
+    let Some(range_x) = range_x else {
+        return 0..timestamps.len();
+    };
+    let Range { start, end } = within(timestamps, range_x);
+    start.saturating_sub(1)..min(end + 1, timestamps.len())
+}
+
+/// Reduces `series` to at most `max_points` points by keeping the minimum and maximum
 /// of equally sized buckets, so peaks stay visible. The x coordinates are the sample
-/// times in seconds minus `origin`.
-fn downsample(values: &[Value], origin: f64, max_points: usize) -> Vec<[f64; 2]> {
-    let to_point = |v: &Value| [timestamp_to_seconds(v.timestamp) - origin, v.value as f64];
-    if values.len() <= max_points {
-        return values.iter().map(to_point).collect();
+/// times in seconds minus `origin`. Nulls are kept as points with NaN y to mark gaps.
+fn downsample(series: Series<'_>, origin: f64, max_points: usize) -> Vec<[f64; 2]> {
+    let to_point = |index: usize| {
+        [
+            timestamp_to_seconds(series.timestamps[index]) - origin,
+            series.value(index),
+        ]
+    };
+    if series.len() <= max_points {
+        return (0..series.len()).map(to_point).collect();
     }
 
-    let bucket_size = values.len().div_ceil((max_points / 2).max(1));
+    // a bucket adds up to three points: a gap and its two extremes
+    let bucket_size = series.len().div_ceil((max_points / 3).max(1));
     let mut points = Vec::with_capacity(max_points);
-    for bucket in values.chunks(bucket_size) {
-        let mut min_index = 0;
-        let mut max_index = 0;
-        for (i, v) in bucket.iter().enumerate() {
-            if v.value < bucket[min_index].value {
-                min_index = i;
+    for bucket_start in (0..series.len()).step_by(bucket_size) {
+        let mut gap = None;
+        let mut extremes: Option<(usize, usize)> = None;
+        for index in bucket_start..min(bucket_start + bucket_size, series.len()) {
+            let value = series.value(index);
+            if value.is_nan() {
+                gap.get_or_insert(index);
+                continue;
             }
-            if v.value > bucket[max_index].value {
-                max_index = i;
-            }
+            extremes = Some(match extremes {
+                Some((min_index, max_index)) => (
+                    if value < series.value(min_index) {
+                        index
+                    } else {
+                        min_index
+                    },
+                    if value > series.value(max_index) {
+                        index
+                    } else {
+                        max_index
+                    },
+                ),
+                None => (index, index),
+            });
         }
-        // keep the two extremes in time order
-        points.push(to_point(&bucket[min_index.min(max_index)]));
-        if min_index != max_index {
-            points.push(to_point(&bucket[min_index.max(max_index)]));
+        let mut indices: Vec<usize> = gap.into_iter().collect();
+        if let Some((min_index, max_index)) = extremes {
+            indices.extend([min_index, max_index]);
         }
+        // keep the points in time order
+        indices.sort_unstable();
+        indices.dedup();
+        points.extend(indices.into_iter().map(to_point));
     }
     points
+}
+
+/// The line through `points` as steps that hold each value until the next point.
+fn steps(points: &[[f64; 2]]) -> Vec<[f64; 2]> {
+    let mut stepped = Vec::with_capacity(points.len() * 2);
+    for (index, &point) in points.iter().enumerate() {
+        if index > 0 {
+            stepped.push([point[0], points[index - 1][1]]);
+        }
+        stepped.push(point);
+    }
+    stepped
 }
 
 impl Viewable for Plot {
@@ -234,26 +314,37 @@ impl Viewable for Plot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::model::streams::Streams;
 
-    fn values(count: u64) -> Vec<Value> {
-        (0..count)
-            .map(|i| Value {
+    /// A float stream `a` of `count` values 1 ms apart, with a null every 7th value if
+    /// `with_nulls`.
+    fn streams(count: u64, with_nulls: bool) -> Streams {
+        let mut streams = Streams::new();
+        for i in 0..count {
+            let value = if with_nulls && i % 7 == 3 {
+                proto::Data::Null
+            } else {
+                proto::Data::Float((i % 7) as f64)
+            };
+            streams.append(&proto::Value {
                 timestamp: i * 1_000_000,
-                value: (i % 7) as f32,
-            })
-            .collect()
+                path: "a".to_owned(),
+                value,
+            });
+        }
+        streams
     }
 
     #[test]
     fn downsample_keeps_small_series() {
-        let values = values(10);
-        assert_eq!(downsample(&values, 0.0, 100).len(), 10);
+        let streams = streams(10, false);
+        assert_eq!(downsample(streams.series("a").unwrap(), 0.0, 100).len(), 10);
     }
 
     #[test]
     fn downsample_limits_points_and_keeps_extremes() {
-        let values = values(1_000_003);
-        let points = downsample(&values, 0.0, 1_000);
+        let streams = streams(1_000_003, false);
+        let points = downsample(streams.series("a").unwrap(), 0.0, 1_000);
         assert!(points.len() <= 1_000);
         assert!(points.windows(2).all(|p| p[0][0] <= p[1][0]));
         assert!(points.iter().any(|p| p[1] == 0.0));
@@ -261,21 +352,39 @@ mod tests {
     }
 
     #[test]
-    fn value_at_picks_the_closest_value() {
-        let values = values(10); // 1 ms apart
-        assert_eq!(value_at(&values, 0.0024).unwrap().timestamp, 2_000_000);
-        assert_eq!(value_at(&values, 0.0026).unwrap().timestamp, 3_000_000);
-        assert_eq!(value_at(&values, 1.0).unwrap().timestamp, 9_000_000);
-        assert!(value_at(&[], 1.0).is_none());
+    fn downsample_keeps_gaps() {
+        let streams = streams(1_000_003, true);
+        let points = downsample(streams.series("a").unwrap(), 0.0, 1_000);
+        assert!(points.len() <= 1_000);
+        assert!(points.windows(2).all(|p| p[0][0] <= p[1][0]));
+        assert!(points.iter().any(|p| p[1].is_nan()));
+        assert!(points.iter().any(|p| p[1] == 6.0));
     }
 
     #[test]
-    fn visible_values_includes_neighbours() {
-        let values = values(100); // 1 ms apart
-        let visible = visible_values(&values, Some((0.0105, 0.0205)));
-        assert_eq!(visible.first().unwrap().timestamp, 10_000_000);
-        assert_eq!(visible.last().unwrap().timestamp, 21_000_000);
-        assert_eq!(visible_values(&values, None).len(), 100);
-        assert!(visible_values(&values, Some((1.0, 2.0))).len() <= 1);
+    fn steps_hold_each_value() {
+        let stepped = steps(&[[0.0, 1.0], [1.0, 0.0], [3.0, 1.0]]);
+        assert_eq!(
+            stepped,
+            [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [3.0, 0.0], [3.0, 1.0]]
+        );
+    }
+
+    #[test]
+    fn closest_index_picks_the_closest_timestamp() {
+        let timestamps: Vec<u64> = (0..10).map(|i| i * 1_000_000).collect(); // 1 ms apart
+        assert_eq!(closest_index(&timestamps, 0.0024), Some(2));
+        assert_eq!(closest_index(&timestamps, 0.0026), Some(3));
+        assert_eq!(closest_index(&timestamps, 1.0), Some(9));
+        assert!(closest_index(&[], 1.0).is_none());
+    }
+
+    #[test]
+    fn visible_range_includes_neighbours() {
+        let timestamps: Vec<u64> = (0..100).map(|i| i * 1_000_000).collect(); // 1 ms apart
+        assert_eq!(visible_range(&timestamps, Some((0.0105, 0.0205))), 10..22);
+        assert_eq!(visible_range(&timestamps, None), 0..100);
+        assert!(visible_range(&timestamps, Some((1.0, 2.0))).len() <= 1);
+        assert!(within(&timestamps, (1.0, 2.0)).is_empty());
     }
 }

@@ -1,41 +1,112 @@
 use crate::app::model::Model;
+use crate::app::model::streams::{Samples, Stream, element_path};
 use egui::Ui;
 use std::collections::{BTreeMap, BTreeSet};
+
+/// Arrays with up to this many elements list each element for selection.
+const MAX_LISTED_ELEMENTS: usize = 16;
 
 /// Stream paths split into a tree at each "/".
 #[derive(Default)]
 struct StreamTree<'a> {
-    /// Full stream path if a stream ends at this node.
-    path: Option<&'a str>,
+    /// The stream if one ends at this node.
+    stream: Option<&'a Stream>,
     children: BTreeMap<&'a str, StreamTree<'a>>,
 }
 
 impl<'a> StreamTree<'a> {
-    fn build(paths: impl Iterator<Item = &'a str>) -> Self {
+    fn build(streams: impl Iterator<Item = &'a Stream>) -> Self {
         let mut root = Self::default();
-        for path in paths {
+        for stream in streams {
             let mut node = &mut root;
-            for segment in path.split('/').filter(|segment| !segment.is_empty()) {
+            for segment in stream.path.split('/').filter(|segment| !segment.is_empty()) {
                 node = node.children.entry(segment).or_default();
             }
-            node.path = Some(path);
+            node.stream = Some(stream);
         }
         root
     }
 }
 
-fn show_stream_checkbox(ui: &mut Ui, label: &str, path: &str, selection: &mut BTreeSet<String>) {
+fn show_checkbox(
+    ui: &mut Ui,
+    label: &str,
+    path: &str,
+    selection: &mut BTreeSet<String>,
+) -> egui::Response {
     let mut selected = selection.contains(path);
-    if ui.checkbox(&mut selected, label).on_hover_text(path).changed() {
+    let response = ui.checkbox(&mut selected, label);
+    if response.changed() {
         if selected {
             selection.insert(path.to_owned());
         } else {
             selection.remove(path);
         }
     }
+    response
 }
 
-/// Shows the children of `node` as collapsible branches and stream checkboxes.
+/// The indices of the element at `flat_index` of an array of `shape`, in row-major
+/// order.
+fn element_indices(shape: &[usize], mut flat_index: usize) -> Vec<usize> {
+    let mut indices = vec![0; shape.len()];
+    for (index, len) in indices.iter_mut().zip(shape).rev() {
+        *index = flat_index % len;
+        flat_index /= len;
+    }
+    indices
+}
+
+/// Shows `stream` labelled `label` with its type: a checkbox, or for an array a
+/// collapsible list of checkboxes for its elements.
+fn show_stream(ui: &mut Ui, label: &str, stream: &Stream, selection: &mut BTreeSet<String>) {
+    let type_label = stream.samples.type_label();
+    let Samples::Arrays { shape, .. } = &stream.samples else {
+        ui.horizontal(|ui| {
+            let response = show_checkbox(ui, label, &stream.path, selection);
+            ui.weak(type_label);
+            let hover = match stream.samples {
+                Samples::Strings(_) => format!(
+                    "{}\nStrings are shown in the plot tooltip only",
+                    stream.path
+                ),
+                _ => stream.path.clone(),
+            };
+            response.on_hover_text(hover);
+        });
+        return;
+    };
+
+    let element_count: usize = shape.iter().product();
+    if element_count > MAX_LISTED_ELEMENTS {
+        ui.horizontal(|ui| {
+            ui.label(label);
+            ui.weak(type_label);
+        })
+        .response
+        .on_hover_text(format!(
+            "{}\nArrays of more than {MAX_LISTED_ELEMENTS} elements cannot be plotted yet",
+            stream.path
+        ));
+        return;
+    }
+    let id = ui.make_persistent_id(("stream_array", &stream.path));
+    egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false)
+        .show_header(ui, |ui| {
+            ui.label(label).on_hover_text(&stream.path);
+            ui.weak(type_label);
+        })
+        .body(|ui| {
+            for flat_index in 0..element_count {
+                let indices = element_indices(shape, flat_index);
+                let path = element_path(&stream.path, &indices);
+                let label = element_path("", &indices);
+                show_checkbox(ui, &label, &path, selection).on_hover_text(&path);
+            }
+        });
+}
+
+/// Shows the children of `node` as collapsible branches and streams.
 fn show_stream_tree(
     ui: &mut Ui,
     node: &StreamTree<'_>,
@@ -45,8 +116,8 @@ fn show_stream_tree(
     for (segment, child) in &node.children {
         let child_prefix = format!("{prefix}/{segment}");
         if child.children.is_empty() {
-            if let Some(path) = child.path {
-                show_stream_checkbox(ui, segment, path, selection);
+            if let Some(stream) = child.stream {
+                show_stream(ui, segment, stream, selection);
             }
         } else {
             egui::CollapsingHeader::new(*segment)
@@ -54,8 +125,8 @@ fn show_stream_tree(
                 .default_open(true)
                 .show(ui, |ui| {
                     // a stream can also be the prefix of other streams
-                    if let Some(path) = child.path {
-                        show_stream_checkbox(ui, segment, path, selection);
+                    if let Some(stream) = child.stream {
+                        show_stream(ui, segment, stream, selection);
                     }
                     show_stream_tree(ui, child, &child_prefix, selection);
                 });
@@ -66,7 +137,7 @@ fn show_stream_tree(
 /// Shows all streams of `model` as a tree with checkboxes for the streams in
 /// `selection`, disabled if there is no selection to edit.
 pub fn show(ui: &mut Ui, model: &Model, selection: Option<&mut BTreeSet<String>>) {
-    let tree = StreamTree::build(model.streams.iter().map(|stream| stream.path.as_str()));
+    let tree = StreamTree::build(model.streams.iter());
     if tree.children.is_empty() {
         ui.weak("No streams received");
         return;
@@ -83,12 +154,34 @@ mod tests {
 
     #[test]
     fn stream_tree_branches_at_slashes() {
-        let tree = StreamTree::build(["acc/x", "acc/y", "/cpu", "acc"].into_iter());
-        assert_eq!(tree.children.keys().copied().collect::<Vec<_>>(), ["acc", "cpu"]);
+        let streams: Vec<Stream> = ["acc/x", "acc/y", "/cpu", "acc"]
+            .into_iter()
+            .map(|path| Stream::new(path.to_owned()))
+            .collect();
+        let tree = StreamTree::build(streams.iter());
+        assert_eq!(
+            tree.children.keys().copied().collect::<Vec<_>>(),
+            ["acc", "cpu"]
+        );
         let acc = &tree.children["acc"];
-        assert_eq!(acc.path, Some("acc"));
+        assert_eq!(acc.stream.map(|stream| stream.path.as_str()), Some("acc"));
         assert_eq!(acc.children.keys().copied().collect::<Vec<_>>(), ["x", "y"]);
-        assert_eq!(acc.children["x"].path, Some("acc/x"));
-        assert_eq!(tree.children["cpu"].path, Some("/cpu"));
+        assert_eq!(
+            acc.children["x"].stream.map(|stream| stream.path.as_str()),
+            Some("acc/x")
+        );
+        assert_eq!(
+            tree.children["cpu"]
+                .stream
+                .map(|stream| stream.path.as_str()),
+            Some("/cpu")
+        );
+    }
+
+    #[test]
+    fn element_indices_are_row_major() {
+        assert_eq!(element_indices(&[2, 3], 0), [0, 0]);
+        assert_eq!(element_indices(&[2, 3], 4), [1, 1]);
+        assert_eq!(element_indices(&[4], 3), [3]);
     }
 }

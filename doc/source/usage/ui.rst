@@ -17,8 +17,10 @@ Top panel
 
 Left panel
    The **Streams** of the selected plot, as a tree that branches at each
-   ``/`` of the path, and the **Layout** of the views below. Drag the border
-   between them to resize them.
+   ``/`` of the path and at the fields of records, with the type of each
+   stream, and the **Layout** of the views below. Drag the border between them
+   to resize them. Arrays list their elements, e.g. ``adc[0]``, if they have
+   at most 16; larger arrays cannot be plotted yet.
 
 Center
    The views, laid out as edited in the layout panel.
@@ -33,6 +35,9 @@ Plot
    Time-series plot of the ``Value`` streams checked in the left panel while
    the plot is selected. Select a plot by clicking it or its row in the layout
    panel. Hovering a plot shows the values of its streams at the pointer.
+   Numbers are drawn as lines and bools as steps between 0 and 1, both with
+   gaps where a ``null`` was received. Strings are only shown in the hover
+   values.
 
 Logs
    Table of received ``Log`` records with timestamp, level, component and
