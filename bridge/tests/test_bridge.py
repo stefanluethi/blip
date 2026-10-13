@@ -95,13 +95,14 @@ async def test_simulator_bridge_typed_values():
     try:
         async with websockets.connect("ws://127.0.0.1:3995/ws/test") as ws:
             # Collect the first value of each typed stream
+            typed_paths = ("imu", "motor", "robot/pose", "sensor/temperature")
             values = {}
             for _ in range(500):
                 data = decode_cbor_message(await asyncio.wait_for(ws.recv(), timeout=2.0))
                 assert data is not None
-                if "Value" in data and data["Value"]["path"] in ("imu", "motor", "sensor/temperature"):
+                if "Value" in data and data["Value"]["path"] in typed_paths:
                     values.setdefault(data["Value"]["path"], data["Value"]["value"])
-                    if len(values) == 3:
+                    if len(values) == len(typed_paths):
                         break
 
             # Records and arrays arrive as plain CBOR maps and arrays
@@ -112,6 +113,9 @@ async def test_simulator_bridge_typed_values():
             assert isinstance(motor["speed_rpm"], int) and not isinstance(motor["speed_rpm"], bool)
             assert isinstance(motor["enabled"], bool)
             assert isinstance(motor["state"], str)
+            pose = values["robot/pose"]
+            assert set(pose) == {"x", "y", "heading"}
+            assert all(isinstance(v, float) for v in pose.values())
             assert values["sensor/temperature"] is None or isinstance(values["sensor/temperature"], float)
 
     finally:

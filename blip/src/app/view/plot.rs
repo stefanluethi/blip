@@ -160,7 +160,7 @@ impl Plot {
 }
 
 /// Color of the `index`th curve, picked like egui_plot picks its colors.
-fn curve_color(index: usize) -> egui::Color32 {
+pub fn curve_color(index: usize) -> egui::Color32 {
     let golden_ratio = (5.0_f32.sqrt() - 1.0) / 2.0;
     egui::ecolor::Hsva::new(index as f32 * golden_ratio, 0.85, 0.5, 1.0).into()
 }

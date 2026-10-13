@@ -1,6 +1,7 @@
 """Simulator protocol implementation matching Rust simulator app."""
 
 import asyncio
+import math
 import random
 import logging
 import time
@@ -27,6 +28,10 @@ CPU_SMOOTHING_SEC = 2.0
 SENSOR_DROPOUT_PROBABILITY = 0.05
 
 MOTOR_STATES = ["idle", "accelerating", "running", "braking"]
+
+# The simulated robot drives a figure eight of this size (m) in this time (s)
+POSE_EXTENT_M = 2.0
+POSE_PERIOD_SEC = 20.0
 
 # Background log messages: (weight, level, component, message template)
 _RANDOM_LOGS = [
@@ -55,6 +60,7 @@ class SimulatorProtocol(BaseProtocol):
         self._cpu_avg: dict[int, float] = {}
         self._cpu_high: set[int] = set()
         self._motor_state = 0
+        self._pose_time = 0.0
 
     async def start(self) -> None:
         """Start simulator telemetry stream task."""
@@ -104,6 +110,7 @@ class SimulatorProtocol(BaseProtocol):
                 # a bool and a string, and a sensor that sometimes delivers no value
                 await self.send_to_websocket(self._imu_message().encode_cbor())
                 await self.send_to_websocket(self._motor_message().encode_cbor())
+                await self.send_to_websocket(self._pose_message().encode_cbor())
                 temperature = None
                 if random.random() >= SENSOR_DROPOUT_PROBABILITY:
                     temperature = 25.0 + random.gauss(0.0, 0.2)
@@ -138,6 +145,18 @@ class SimulatorProtocol(BaseProtocol):
         speed_rpm = random.randrange(1400, 1600) if enabled else 0
         return Message.create_value(
             "motor", {"speed_rpm": speed_rpm, "enabled": enabled, "state": state}
+        )
+
+    def _pose_message(self) -> Message:
+        """The position (m) and heading (rad) of a robot driving a figure eight."""
+        self._pose_time += self.interval_sec
+        angle = 2.0 * math.pi * self._pose_time / POSE_PERIOD_SEC
+        x = POSE_EXTENT_M * math.sin(angle)
+        y = POSE_EXTENT_M / 2.0 * math.sin(2.0 * angle)
+        heading = math.atan2(math.cos(2.0 * angle), math.cos(angle))
+        noise = lambda: random.gauss(0.0, 0.01)  # noqa: E731
+        return Message.create_value(
+            "robot/pose", {"x": x + noise(), "y": y + noise(), "heading": heading}
         )
 
     async def _send_log(self, level: int, component: str, message: str) -> None:

@@ -1,6 +1,7 @@
 pub mod plot;
 pub mod states;
 pub mod table;
+pub mod xy;
 pub mod log_table;
 pub mod stream_selection;
 pub mod time_axis;
@@ -33,6 +34,7 @@ pub enum ViewKind {
     Plot(plot::Plot),
     States(states::States),
     Table(table::Table),
+    Xy(xy::Xy),
     Logs(log_table::LogTable),
 }
 
@@ -42,6 +44,7 @@ pub enum ViewType {
     Plot,
     States,
     Table,
+    Xy,
     Logs,
 }
 
@@ -56,10 +59,11 @@ pub enum Selectable {
 }
 
 impl ViewType {
-    pub const ALL: [ViewType; 4] = [
+    pub const ALL: [ViewType; 5] = [
         ViewType::Plot,
         ViewType::States,
         ViewType::Table,
+        ViewType::Xy,
         ViewType::Logs,
     ];
 
@@ -68,6 +72,7 @@ impl ViewType {
             ViewType::Plot => "Plot",
             ViewType::States => "States",
             ViewType::Table => "Table",
+            ViewType::Xy => "XY",
             ViewType::Logs => "Logs",
         }
     }
@@ -77,6 +82,7 @@ impl ViewType {
             ViewType::Plot => egui_phosphor::regular::CHART_LINE,
             ViewType::States => egui_phosphor::regular::CHART_BAR_HORIZONTAL,
             ViewType::Table => egui_phosphor::regular::TABLE,
+            ViewType::Xy => egui_phosphor::regular::CHART_SCATTER,
             ViewType::Logs => egui_phosphor::regular::LIST_BULLETS,
         }
     }
@@ -94,6 +100,11 @@ impl ViewType {
             (ViewType::States, Samples::Arrays { shape, .. }) => elements(shape),
             (ViewType::States, _) => Selectable::Stream,
             (ViewType::Table, _) => Selectable::Stream,
+            (ViewType::Xy, Samples::Strings(_)) => {
+                Selectable::No("XY plots show numbers".to_owned())
+            }
+            (ViewType::Xy, Samples::Arrays { shape, .. }) => elements(shape),
+            (ViewType::Xy, _) => Selectable::Stream,
         }
     }
 
@@ -128,6 +139,7 @@ impl View {
             ViewType::Plot => ViewKind::Plot(plot::Plot::new()),
             ViewType::States => ViewKind::States(states::States::new()),
             ViewType::Table => ViewKind::Table(table::Table::new()),
+            ViewType::Xy => ViewKind::Xy(xy::Xy::new()),
             ViewType::Logs => ViewKind::Logs(log_table::LogTable::new()),
         };
         Self { name, kind }
@@ -138,6 +150,7 @@ impl View {
             ViewKind::Plot(_) => ViewType::Plot,
             ViewKind::States(_) => ViewType::States,
             ViewKind::Table(_) => ViewType::Table,
+            ViewKind::Xy(_) => ViewType::Xy,
             ViewKind::Logs(_) => ViewType::Logs,
         }
     }
@@ -154,6 +167,7 @@ impl View {
             ViewKind::Plot(plot) => &mut plot.streams,
             ViewKind::States(states) => &mut states.streams,
             ViewKind::Table(table) => &mut table.streams,
+            ViewKind::Xy(xy) => &mut xy.streams,
             ViewKind::Logs(_) => return None,
         };
         Some((paths, view_type))
@@ -166,6 +180,7 @@ impl Viewable for View {
             ViewKind::Plot(plot) => plot.view(ui, context),
             ViewKind::States(states) => states.view(ui, context),
             ViewKind::Table(table) => table.view(ui, context),
+            ViewKind::Xy(xy) => xy.view(ui, context),
             ViewKind::Logs(logs) => logs.view(ui, context),
         }
     }
