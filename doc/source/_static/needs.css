@@ -1,0 +1,28 @@
+/* Dark mode for sphinx-needs. sphinx-needs only defines light colors, so
+   map its variables onto shibuya's theme colors when shibuya is dark. */
+.dark {
+  --sn-color-bg-gray: var(--sy-c-surface);
+  --sn-color-bg-lightgray: var(--sy-c-overlay);
+  --sn-color-border-lightgray: var(--sy-c-border);
+
+  --sn-color-need-border: var(--sy-c-border);
+  --sn-color-need-row-border: var(--sy-c-divider);
+  --sn-color-need-bg: var(--sy-c-surface);
+  --sn-color-need-bg-head: var(--sy-c-overlay);
+
+  --sn-color-complete-bg-head: var(--sy-c-overlay);
+  --sn-color-complete-bg-foot: var(--sy-c-overlay);
+
+  --sn-color-datatable-label: var(--sy-c-text);
+  --sn-color-datatable-btn-border: var(--sy-c-border);
+
+  --sn-color-debug-btn-border: var(--sy-c-text);
+}
+
+/* needflow and needpie images have a transparent background (see conf.py)
+   but black lines and labels; invert them and rotate the hues back so the
+   node and wedge colors keep their hue. */
+.dark img[src*="/needflow-"],
+.dark img[src*="/need_pie_"] {
+  filter: invert(1) hue-rotate(180deg);
+}

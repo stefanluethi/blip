@@ -33,6 +33,7 @@ Status overview
 
 .. needpie:: Requirements by status
    :labels: draft, approved, implemented, verified
+   :style: transparent
 
    type == "req" and status == "draft"
    type == "req" and status == "approved"
