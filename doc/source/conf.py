@@ -35,8 +35,9 @@ html_static_path = ["_static"]
 # Fira Sans for text, Fira Code for code; fonts.css self-hosts them (no Google
 # Fonts, for GDPR) and maps them onto shibuya's font variables.
 # _templates/partials/webfonts.html drops shibuya's own Google Fonts link.
-# needs.css adapts sphinx-needs to shibuya's dark mode.
-html_css_files = ["fonts.css", "needs.css"]
+# theme.css puts shibuya's font sizes and spacing on one scale; needs.css
+# adapts sphinx-needs to shibuya's colors and to that scale.
+html_css_files = ["fonts.css", "theme.css", "needs.css"]
 
 
 def _drop_cdn_fonts(app, exception):

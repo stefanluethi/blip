@@ -1,27 +1,93 @@
-/* Dark mode for sphinx-needs. sphinx-needs only defines light colors, so
-   map its variables onto shibuya's theme colors when shibuya is dark. */
-.dark {
+/* Colors for sphinx-needs. sphinx-needs brings its own grays, which match
+   neither shibuya's light nor its dark theme, so map its variables onto
+   shibuya's theme colors. These follow shibuya's light and dark mode. */
+:root {
   --sn-color-bg-gray: var(--sy-c-surface);
   --sn-color-bg-lightgray: var(--sy-c-overlay);
   --sn-color-border-lightgray: var(--sy-c-border);
 
-  --sn-color-need-border: var(--sy-c-border);
-  --sn-color-need-row-border: var(--sy-c-divider);
-  --sn-color-need-bg: var(--sy-c-surface);
-  --sn-color-need-bg-head: var(--sy-c-overlay);
+  --sn-color-need-border: var(--yue-c-table-border);
+  --sn-color-need-row-border: var(--yue-c-td-border);
+  --sn-color-need-bg: var(--sy-c-background);
+  --sn-color-need-bg-head: var(--yue-c-th-background);
 
-  --sn-color-complete-bg-head: var(--sy-c-overlay);
-  --sn-color-complete-bg-foot: var(--sy-c-overlay);
+  --sn-color-complete-bg-head: var(--yue-c-th-background);
+  --sn-color-complete-bg-foot: var(--yue-c-th-background);
 
   --sn-color-datatable-label: var(--sy-c-text);
   --sn-color-datatable-btn-border: var(--sy-c-border);
 
   --sn-color-debug-btn-border: var(--sy-c-text);
+
+  --sn-width-need-border-radius: 6px;
+}
+
+/* Need boxes: like a shibuya table, on the type scale in theme.css. The
+   paddings are in rem so that the rows line up although their font sizes
+   differ. */
+table.need.need.need {
+  margin-top: 1.5rem;
+  margin-bottom: 1.5rem;
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+
+table.need.need.need > tbody > tr > td {
+  padding: 0.625rem 1rem;
+}
+
+table.need.need.need > tbody > tr.head > td {
+  border-radius: 5px 5px 0 0;
+}
+
+table.need.need.need > tbody > tr.meta {
+  font-size: inherit;
+  color: var(--sy-c-light);
+}
+
+table.need.need.need > tbody > tr.content > td {
+  font-size: 1rem;
+  line-height: 1.65;
+}
+
+table.need.need.need > tbody > tr.content > td > p {
+  margin: 0;
+}
+
+table.need.need.need > tbody > tr.content > td > p + * {
+  margin-top: 0.75rem;
+}
+
+/* The collapse arrow of the metadata, sized to the title line. */
+table.need.need.need span.needs_collapse svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+/* needtables: framed like the other tables, scrolling inside the frame. */
+div.needstable_wrapper {
+  margin-top: 1.5rem;
+  margin-bottom: 1.5rem;
+  border: 1px solid var(--yue-c-table-border);
+  border-radius: 6px;
+}
+
+.yue div.needstable_wrapper table {
+  margin: 0;
+}
+
+.yue div.needstable_wrapper th {
+  background-color: var(--yue-c-th-background);
+}
+
+.yue div.needstable_wrapper th,
+.yue div.needstable_wrapper td {
+  padding: 0.5rem 0.75rem;
 }
 
 /* needflow and needpie images have a transparent background (see conf.py)
-   but black lines and labels; invert them and rotate the hues back so the
-   node and wedge colors keep their hue. */
+   but black lines and labels; invert them in dark mode and rotate the hues
+   back so the node and wedge colors keep their hue. */
 .dark img[src*="/needflow-"],
 .dark img[src*="/need_pie_"] {
   filter: invert(1) hue-rotate(180deg);
