@@ -1,7 +1,7 @@
 //! The layout panel: the groups and views of the layout as a tree, to select, add,
-//! rename and remove them.
+//! rename, move and remove them.
 
-use super::{GroupKind, Layout};
+use super::{Drop, GroupKind, Layout};
 use crate::app::view::ViewType;
 use egui_tiles::{Tile, TileId};
 
@@ -15,6 +15,20 @@ enum Action {
     FinishRename,
     CancelRename,
     Remove(TileId),
+    Drop(TileId, TileId, Drop),
+}
+
+/// Fraction of the row height at the top and bottom of a row to drop before or after it.
+const DROP_EDGE_FRACTION: f32 = 0.25;
+
+/// What is collected while showing the rows.
+struct RowsState {
+    renaming: Option<(TileId, String)>,
+    actions: Vec<Action>,
+    /// The dragged view or group.
+    dragged: Option<TileId>,
+    /// The row the dragged view or group is over and where it would be dropped.
+    drop_target: Option<(TileId, Drop)>,
 }
 
 impl Layout {
@@ -40,35 +54,62 @@ impl Layout {
             });
         });
 
-        let mut renaming = self.renaming.take();
+        let mut rows = RowsState {
+            renaming: self.renaming.take(),
+            actions,
+            dragged: egui::DragAndDrop::payload::<TileId>(ui.ctx()).map(|dragged| *dragged),
+            drop_target: None,
+        };
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 let top_level = self.container(self.root()).map(|root| root.children_vec());
                 for tile_id in top_level.unwrap_or_default() {
-                    self.tile_ui(ui, tile_id, &mut renaming, &mut actions);
+                    self.tile_ui(ui, tile_id, &mut rows);
                 }
             });
-        self.renaming = renaming;
+        self.renaming = rows.renaming;
+        let mut actions = rows.actions;
+
+        if let Some(dragged) = rows.dragged {
+            self.dragged_ui(ui, dragged);
+            if let Some((target, drop)) = rows.drop_target
+                && ui.input(|i| i.pointer.any_released())
+            {
+                egui::DragAndDrop::clear_payload(ui.ctx());
+                actions.push(Action::Drop(dragged, target, drop));
+            }
+        }
 
         for action in actions {
             self.apply(action);
         }
     }
 
-    fn tile_ui(
-        &self,
-        ui: &mut egui::Ui,
-        tile_id: TileId,
-        renaming: &mut Option<(TileId, String)>,
-        actions: &mut Vec<Action>,
-    ) {
+    /// Shows the name of the dragged view or group at the pointer.
+    fn dragged_ui(&self, ui: &egui::Ui, dragged: TileId) {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        let Some(pos) = ui.ctx().pointer_interact_pos() else {
+            return;
+        };
+        egui::Area::new(egui::Id::new("layout_dragged"))
+            .order(egui::Order::Tooltip)
+            .fixed_pos(pos + egui::vec2(12.0, 0.0))
+            .interactable(false)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.label(self.name(dragged));
+                });
+            });
+    }
+
+    fn tile_ui(&self, ui: &mut egui::Ui, tile_id: TileId, rows: &mut RowsState) {
         match self.tree.tiles.get(tile_id) {
             Some(Tile::Pane(view)) => {
                 ui.horizontal(|ui| {
                     // align with the group rows, which start with a collapse button
                     ui.add_space(ui.spacing().icon_width + ui.spacing().item_spacing.x);
-                    self.row_ui(ui, tile_id, view.view_type().icon(), None, renaming, actions);
+                    self.row_ui(ui, tile_id, view.view_type().icon(), None, rows);
                 });
             }
             Some(Tile::Container(container)) => {
@@ -77,11 +118,11 @@ impl Layout {
                 let id = ui.make_persistent_id(("layout_group", tile_id));
                 egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
                     .show_header(ui, |ui| {
-                        self.row_ui(ui, tile_id, kind.icon(), Some(kind), renaming, actions);
+                        self.row_ui(ui, tile_id, kind.icon(), Some(kind), rows);
                     })
                     .body(|ui| {
                         for child in children {
-                            self.tile_ui(ui, child, renaming, actions);
+                            self.tile_ui(ui, child, rows);
                         }
                     });
             }
@@ -96,10 +137,10 @@ impl Layout {
         tile_id: TileId,
         icon: &str,
         group_kind: Option<GroupKind>,
-        renaming: &mut Option<(TileId, String)>,
-        actions: &mut Vec<Action>,
+        rows: &mut RowsState,
     ) {
-        if let Some((_, name)) = renaming.as_mut().filter(|(id, _)| *id == tile_id) {
+        let actions = &mut rows.actions;
+        if let Some((_, name)) = rows.renaming.as_mut().filter(|(id, _)| *id == tile_id) {
             ui.label(icon);
             let response = ui.add(egui::TextEdit::singleline(name).desired_width(f32::INFINITY));
             if response.lost_focus() {
@@ -115,7 +156,16 @@ impl Layout {
         }
 
         let selected = self.selected == Some(tile_id);
-        let response = ui.selectable_label(selected, format!("{icon} {}", self.name(tile_id)));
+        let label = egui::Button::selectable(selected, format!("{icon} {}", self.name(tile_id)))
+            .sense(egui::Sense::click_and_drag());
+        let response = ui.add(label);
+        response.dnd_set_drag_payload(tile_id);
+        if let Some(dragged) = rows.dragged {
+            let row = egui::Rect::from_x_y_ranges(ui.max_rect().x_range(), response.rect.y_range());
+            if let Some(drop) = self.drop_at(ui, row, dragged, tile_id, group_kind.is_some()) {
+                rows.drop_target = Some((tile_id, drop));
+            }
+        }
         if response.clicked() {
             actions.push(Action::Select(tile_id));
         }
@@ -143,6 +193,35 @@ impl Layout {
         });
     }
 
+    /// Where `dragged` would be dropped on the row `row` of `target` with the pointer at
+    /// its current position, and marks that in the row.
+    fn drop_at(&self, ui: &egui::Ui, row: egui::Rect, dragged: TileId, target: TileId, is_group: bool) -> Option<Drop> {
+        let pos = ui.ctx().pointer_interact_pos().filter(|&pos| row.contains(pos))?;
+        if !self.can_drop(dragged, target) {
+            return None;
+        }
+
+        let fraction = (pos.y - row.top()) / row.height();
+        let drop = if fraction < DROP_EDGE_FRACTION {
+            Drop::Before
+        } else if fraction > 1.0 - DROP_EDGE_FRACTION {
+            Drop::After
+        } else if is_group {
+            Drop::Into
+        } else {
+            Drop::Group
+        };
+
+        let stroke = egui::Stroke::new(2.0, ui.visuals().selection.stroke.color);
+        let painter = ui.painter();
+        match drop {
+            Drop::Before => painter.hline(row.x_range(), row.top(), stroke),
+            Drop::After => painter.hline(row.x_range(), row.bottom(), stroke),
+            Drop::Into | Drop::Group => painter.rect_stroke(row, 2.0, stroke, egui::StrokeKind::Inside),
+        };
+        Some(drop)
+    }
+
     fn apply(&mut self, action: Action) {
         match action {
             Action::Select(tile_id) => self.select(tile_id),
@@ -163,6 +242,7 @@ impl Layout {
             }
             Action::CancelRename => self.renaming = None,
             Action::Remove(tile_id) => self.remove(tile_id),
+            Action::Drop(dragged, target, drop) => self.drop_tile(dragged, target, drop),
         }
     }
 }

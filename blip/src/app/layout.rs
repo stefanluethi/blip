@@ -11,6 +11,18 @@ use crate::app::view::{View, ViewContext, ViewType, Viewable};
 use egui_tiles::{Container, Tile, TileId, Tree};
 use std::collections::{HashMap, HashSet};
 
+/// Where a view or group dragged in the layout panel is dropped, relative to the row it
+/// is dropped on.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Drop {
+    Before,
+    After,
+    /// Into the group dropped on, as its last child.
+    Into,
+    /// Into a new group together with the view dropped on.
+    Group,
+}
+
 pub struct Layout {
     tree: Tree<View>,
     /// Names of the groups, the views carry their own names.
@@ -199,6 +211,61 @@ impl Layout {
         }
     }
 
+    /// Whether `ancestor` is `tile_id` or contains it.
+    fn contains(&self, ancestor: TileId, tile_id: TileId) -> bool {
+        std::iter::successors(Some(tile_id), |&id| self.parent(id)).any(|id| id == ancestor)
+    }
+
+    /// Whether `dragged` can be dropped on `target`, i.e. not into itself.
+    fn can_drop(&self, dragged: TileId, target: TileId) -> bool {
+        !self.contains(dragged, target)
+    }
+
+    /// Moves `dragged` relative to `target`.
+    fn drop_tile(&mut self, dragged: TileId, target: TileId, drop: Drop) {
+        if !self.can_drop(dragged, target) {
+            return;
+        }
+        let Some(parent) = self.parent(target) else {
+            return;
+        };
+        match drop {
+            Drop::Before | Drop::After => {
+                let index = self
+                    .container(parent)
+                    .and_then(|container| container.children().position(|&id| id == target))
+                    .map_or(usize::MAX, |index| index + usize::from(drop == Drop::After));
+                self.tree.move_tile_to_container(dragged, parent, index, true);
+            }
+            Drop::Into => self.tree.move_tile_to_container(dragged, target, usize::MAX, true),
+            Drop::Group => {
+                if let Some(old_parent) = self.parent(dragged)
+                    && let Some(container) = self.container_mut(old_parent)
+                {
+                    container.remove_child(dragged);
+                }
+                // alternate the direction at each level, the groups at the top level are
+                // tabs stacking their views vertically
+                let kind = match self.container(parent).map(GroupKind::of) {
+                    Some(GroupKind::Vertical) => GroupKind::Horizontal,
+                    _ => GroupKind::Vertical,
+                };
+                let name = self.unique_name(if parent == self.root() { "Tab" } else { "Group" });
+                let group = self
+                    .tree
+                    .tiles
+                    .insert_container(Container::new(kind.container_kind(), vec![target, dragged]));
+                self.group_names.insert(group, name);
+                if let Some(container) = self.container_mut(parent) {
+                    // `target` is a child of `parent`, so it is always replaced
+                    let _ = container.replace_child(target, group);
+                }
+            }
+        }
+        self.remove_empty_groups();
+        self.select(dragged);
+    }
+
     /// Shows the views in the center pane.
     pub fn ui(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         if self.container(self.root()).is_none_or(Container::is_empty) {
@@ -295,5 +362,87 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
     fn simplification_options(&self) -> egui_tiles::SimplificationOptions {
         // the layout keeps the groups as the user made them
         egui_tiles::SimplificationOptions::OFF
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn children(layout: &Layout, tile_id: TileId) -> Vec<TileId> {
+        layout.container(tile_id).unwrap().children_vec()
+    }
+
+    fn kind(layout: &Layout, tile_id: TileId) -> GroupKind {
+        GroupKind::of(layout.container(tile_id).unwrap())
+    }
+
+    /// The default layout with its tab, plot and log view.
+    fn default_layout() -> (Layout, TileId, TileId, TileId) {
+        let layout = Layout::default();
+        let tab = children(&layout, layout.root())[0];
+        let views = children(&layout, tab);
+        (layout, tab, views[0], views[1])
+    }
+
+    #[test]
+    fn default_layout_has_a_tab_with_a_plot_and_logs() {
+        let (layout, tab, plot, logs) = default_layout();
+        assert_eq!(kind(&layout, tab), GroupKind::Vertical);
+        assert_eq!(layout.view(plot).unwrap().view_type(), ViewType::Plot);
+        assert_eq!(layout.view(logs).unwrap().view_type(), ViewType::Logs);
+    }
+
+    #[test]
+    fn dropping_on_a_view_groups_them_across_the_direction_of_the_parent() {
+        let (mut layout, tab, plot, logs) = default_layout();
+        layout.drop_tile(logs, plot, Drop::Group);
+        let group = children(&layout, tab)[0];
+        assert_eq!(children(&layout, tab), [group]);
+        assert_eq!(kind(&layout, group), GroupKind::Horizontal);
+        assert_eq!(children(&layout, group), [plot, logs]);
+
+        layout.add_view(ViewType::Plot);
+        let new_plot = children(&layout, group)[2];
+        layout.drop_tile(new_plot, logs, Drop::Group);
+        let inner = children(&layout, group)[1];
+        assert_eq!(kind(&layout, inner), GroupKind::Vertical);
+        assert_eq!(children(&layout, inner), [logs, new_plot]);
+    }
+
+    #[test]
+    fn dropping_before_and_after_reorders() {
+        let (mut layout, tab, plot, logs) = default_layout();
+        layout.drop_tile(logs, plot, Drop::Before);
+        assert_eq!(children(&layout, tab), [logs, plot]);
+        layout.drop_tile(logs, plot, Drop::After);
+        assert_eq!(children(&layout, tab), [plot, logs]);
+    }
+
+    #[test]
+    fn moving_the_last_view_out_of_a_group_removes_the_group() {
+        let (mut layout, tab, plot, logs) = default_layout();
+        let new_tab = layout.add_tab();
+        layout.drop_tile(plot, new_tab, Drop::Into);
+        layout.drop_tile(logs, new_tab, Drop::Into);
+        assert_eq!(children(&layout, layout.root()), [new_tab]);
+        assert!(layout.tree.tiles.get(tab).is_none());
+    }
+
+    #[test]
+    fn a_group_cannot_be_dropped_into_itself() {
+        let (mut layout, tab, plot, logs) = default_layout();
+        layout.drop_tile(tab, plot, Drop::Group);
+        layout.drop_tile(tab, tab, Drop::Into);
+        assert_eq!(children(&layout, layout.root()), [tab]);
+        assert_eq!(children(&layout, tab), [plot, logs]);
+    }
+
+    #[test]
+    fn removing_a_group_removes_its_views() {
+        let (mut layout, tab, plot, _) = default_layout();
+        layout.remove(tab);
+        assert!(children(&layout, layout.root()).is_empty());
+        assert!(layout.view(plot).is_none());
     }
 }
