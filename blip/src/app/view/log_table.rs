@@ -25,7 +25,7 @@ impl Default for LogFilter {
     }
 }
 
-#[derive(serde::Deserialize, serde::Serialize, Default)]
+#[derive(serde::Deserialize, serde::Serialize, Clone, Default)]
 #[serde(default)]
 pub struct LogTable {
     pub filter: LogFilter,

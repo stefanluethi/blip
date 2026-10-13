@@ -1,3 +1,4 @@
+mod layout;
 mod proto_parser;
 mod view;
 mod model;
@@ -7,13 +8,11 @@ mod time;
 use std::collections::BTreeMap;
 use eframe::Frame;
 use egui::Context;
-use view::{ViewContext, Viewable};
+use view::ViewContext;
 
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct State {
-    stream_view: view::plot::Plot,
-    log_view: view::log_table::LogTable,
     time: time::TimeRange,
 
     #[serde(skip)]
@@ -25,22 +24,16 @@ pub struct State {
     ws_receiver: Option<ewebsock::WsReceiver>,
     #[serde(skip)]
     ws_sender: Option<ewebsock::WsSender>,
-
-    #[serde(skip)]
-    panes_in_tabs: std::collections::HashSet<egui_tiles::TileId>,
 }
 
 impl Default for State {
     fn default() -> Self {
         Self {
             target_address: "ws://localhost/ws/simulator".to_owned(),
-            stream_view: view::plot::Plot::new(),
-            log_view: view::log_table::LogTable::new(),
             time: time::TimeRange::default(),
             model: model::Model::default(),
             ws_receiver: None,
             ws_sender: None,
-            panes_in_tabs: std::collections::HashSet::new(),
         }
     }
 }
@@ -146,118 +139,18 @@ impl State {
 
 //--------------------------------------------------------------------------------------------------
 
-#[derive(serde::Deserialize, serde::Serialize)]
-enum Pane {
-    Plots,
-    TargetLogs,
-}
+/// Storage key of the layout, saved apart from the app state in its own versioned format.
+const LAYOUT_KEY: &str = "layout";
 
-impl From<&Pane> for &str {
-    fn from(value: &Pane) -> Self {
-        match value {
-            Pane::Plots => "Data Streams",
-            Pane::TargetLogs => "Target Logs",
-        }
-    }
-}
-
-impl From<&mut Pane> for &str {
-    fn from(value: &mut Pane) -> Self {
-        (value as &Pane).into()
-    }
-}
-
-impl egui_tiles::Behavior<Pane> for State {
-    fn pane_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        _tile_id: egui_tiles::TileId,
-        pane: &mut Pane,
-    ) -> egui_tiles::UiResponse {
-        let title: &str = pane.into();
-        let mut drag_response = egui_tiles::UiResponse::None;
-
-        let is_tab = self.panes_in_tabs.contains(&_tile_id);
-
-        if !is_tab {
-            let title_bar_color = if ui.visuals().dark_mode {
-                ui.visuals().extreme_bg_color
-            } else {
-                ui.visuals().widgets.inactive.bg_fill
-            };
-            let title_bar_response = egui::Frame::NONE
-                .fill(title_bar_color)
-                .inner_margin(egui::Margin::symmetric(8, 3))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.strong(title);
-                        ui.allocate_space(ui.available_size())
-                    })
-                        .response
-                })
-                .inner;
-
-            if title_bar_response
-                .interact(egui::Sense::click_and_drag())
-                .dragged()
-            {
-                drag_response = egui_tiles::UiResponse::DragStarted;
-            }
-        }
-
-        egui::Frame::NONE
-            .inner_margin(egui::Margin::same(10))
-            .show(ui, |ui| {
-                let mut context = ViewContext {
-                    model: &self.model,
-                    time: &mut self.time,
-                };
-                match pane {
-                    Pane::Plots => {
-                        self.stream_view.view(ui, &mut context);
-                    }
-                    Pane::TargetLogs => {
-                        self.log_view.view(ui, &mut context);
-                    }
-
-                }
-            });
-
-        drag_response
-    }
-
-    fn tab_title_for_pane(&mut self, pane: &Pane) -> egui::WidgetText {
-        Into::<&str>::into(pane).into()
-    }
-}
-
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(serde::Deserialize, serde::Serialize, Default)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct App {
     state: State,
-    pane_tree: egui_tiles::Tree<Pane>,
-}
-
-impl Default for App {
-    fn default() -> Self {
-        Self {
-            state: Default::default(),
-            pane_tree: App::create_tree(),
-        }
-    }
+    #[serde(skip)]
+    layout: layout::Layout,
 }
 
 impl App {
-    fn create_tree() -> egui_tiles::Tree<Pane> {
-        let mut tiles = egui_tiles::Tiles::default();
-        let plots = tiles.insert_pane(Pane::Plots);
-        let target_logs = tiles.insert_pane(Pane::TargetLogs);
-
-        let root = tiles.insert_horizontal_tile(vec![plots, target_logs]);
-
-        egui_tiles::Tree::new("main_tree", root, tiles)
-    }
-
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         // This is also where you can customize the look and feel of egui using
@@ -280,22 +173,36 @@ impl App {
 
         // Load previous app state (if any).
         // Note that you must enable the `persistence` feature for this to work.
-        let mut app: Self = if let Some(storage) = cc.storage {
-            eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default()
-        } else {
-            Default::default()
+        let Some(storage) = cc.storage else {
+            return Default::default();
         };
-
-        if app.pane_tree.root.is_none() {
-            app.pane_tree = App::create_tree();
+        let mut app: Self = eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
+        if let Some(layout) = eframe::get_value::<layout::LayoutFile>(storage, LAYOUT_KEY)
+            .and_then(layout::Layout::migrate)
+        {
+            app.layout = layout;
         }
-
-        // renew tree if new panes have been added
-        // if !app.pane_tree.inactive_tiles().is_empty() {
-        //    app.pane_tree = App::create_tree();
-        // }
-
         app
+    }
+
+    fn streams_ui(&mut self, ui: &mut egui::Ui) {
+        ui.strong("Streams");
+        let view = self.layout.selected_view_mut();
+        let hint = match &view {
+            None => Some("Select a plot to choose its streams"),
+            Some(view) if !view.shows_streams() => Some("The selected view shows no streams"),
+            Some(_) => None,
+        };
+        if let Some(hint) = hint {
+            ui.weak(hint);
+        }
+        egui::ScrollArea::vertical()
+            .id_salt("streams")
+            .auto_shrink([false, true])
+            .max_height(ui.available_height() / 2.0)
+            .show(ui, |ui| {
+                view::stream_selection::show(ui, &self.state.model, view.and_then(view::View::streams_mut));
+            });
     }
 }
 
@@ -306,18 +213,6 @@ impl eframe::App for App {
         }
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // todo: find viable solution!!!
-        self.state.panes_in_tabs.clear();
-        for (_, tile) in self.pane_tree.tiles.iter() {
-            if let egui_tiles::Tile::Container(c) = tile {
-                if c.kind() == egui_tiles::ContainerKind::Tabs {
-                    for &child in c.children() {
-                        self.state.panes_in_tabs.insert(child);
-                    }
-                }
-            }
-        }
-
         egui::Panel::top("top panel").show(ui, |ui| {
             ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
                 self.state.settings_ui(ui);
@@ -330,16 +225,29 @@ impl eframe::App for App {
             self.state.time.ui(ui);
         });
 
+        egui::Panel::left("left panel")
+            .resizable(true)
+            .default_size(220.0)
+            .show(ui, |ui| {
+                self.streams_ui(ui);
+                ui.separator();
+                self.layout.panel_ui(ui);
+            });
+
         egui::CentralPanel::default()
             .frame(egui::Frame::central_panel(ui.style()).inner_margin(egui::Margin::ZERO))
             .show(ui, |ui| {
-            self.pane_tree.ui(&mut self.state, ui);
-        });
-
+                let mut context = ViewContext {
+                    model: &self.state.model,
+                    time: &mut self.state.time,
+                };
+                self.layout.ui(ui, &mut context);
+            });
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);
+        eframe::set_value(storage, LAYOUT_KEY, &self.layout.to_file());
     }
 }
 
