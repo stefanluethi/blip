@@ -135,6 +135,12 @@ impl TimeRange {
         self.hovered
     }
 
+    /// The time in seconds of the values shown by views that show one sample per
+    /// stream: the hovered time, or else the end of the window.
+    pub fn cursor(&self) -> Option<f64> {
+        self.hovered.or_else(|| self.range().map(|(_, end)| end))
+    }
+
     /// Time of the newest collected data in seconds.
     pub fn latest(&self) -> Option<f64> {
         self.span.map(|(_, latest)| latest)
@@ -322,6 +328,14 @@ mod tests {
         time.pan_zoom(135.0, 145.0);
         assert!(time.is_live());
         assert_eq!(time.range(), Some((140.0, 150.0)));
+    }
+
+    #[test]
+    fn cursor_is_the_hovered_time_or_the_window_end() {
+        let mut time = time_range(100.0, 150.0, 20.0);
+        assert_eq!(time.cursor(), Some(150.0));
+        time.hovered = Some(140.0);
+        assert_eq!(time.cursor(), Some(140.0));
     }
 
     #[test]

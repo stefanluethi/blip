@@ -153,6 +153,29 @@ impl Samples {
         Ok(())
     }
 
+    /// The elements of the `index`th sample of an array stream, in row-major order.
+    pub fn array_sample(&self, index: usize) -> Option<&[f64]> {
+        let Self::Arrays { shape, values, .. } = self else {
+            return None;
+        };
+        let len = shape.iter().product::<usize>();
+        values.get(index * len..(index + 1) * len)
+    }
+
+    /// The `index`th sample written as text, arrays with at most `max_len` elements per
+    /// dimension.
+    pub fn format(&self, index: usize, max_len: usize) -> String {
+        match self {
+            Self::Empty => "null".to_owned(),
+            Self::Numbers { kind, values } => kind.format(values[index]),
+            Self::Strings(values) => values[index].clone().unwrap_or_else(|| "null".to_owned()),
+            Self::Arrays { shape, kind, .. } => {
+                let elements = self.array_sample(index).unwrap_or_default();
+                format_array(shape, kind.unwrap_or(NumberKind::Float), elements, max_len)
+            }
+        }
+    }
+
     /// The type of the samples, e.g. `float` or `int[2×3]`.
     pub fn type_label(&self) -> String {
         match self {
@@ -169,6 +192,26 @@ impl Samples {
             }
         }
     }
+}
+
+/// The `elements` of an array of `shape` written like `[[1, 2], [3, 4]]`, with at most
+/// `max_len` elements per dimension.
+fn format_array(shape: &[usize], kind: NumberKind, elements: &[f64], max_len: usize) -> String {
+    let Some((&len, inner)) = shape.split_first() else {
+        return elements
+            .first()
+            .map_or_else(String::new, |&value| kind.format(value));
+    };
+    let stride = inner.iter().product::<usize>();
+    let mut parts: Vec<String> = elements
+        .chunks(stride.max(1))
+        .take(len.min(max_len))
+        .map(|chunk| format_array(inner, kind, chunk, max_len))
+        .collect();
+    if len > max_len {
+        parts.push("…".to_owned());
+    }
+    format!("[{}]", parts.join(", "))
 }
 
 /// The dimensions of the nested arrays `data`, following the first elements.
@@ -641,6 +684,29 @@ mod tests {
         let slice = streams.series("a[1]").unwrap().slice(1..3);
         assert_eq!(slice.timestamps, [1, 2]);
         assert_eq!((slice.value(0), slice.value(1)), (3.0, 5.0));
+    }
+
+    #[test]
+    fn samples_are_formatted_as_text() {
+        let matrix = Data::Array(vec![array(&[0.5, 1.0, 2.0]), array(&[3.0, 4.0, 5.0])]);
+        let streams = streams(&[
+            ("m", matrix),
+            ("s", Data::from("on")),
+            ("s", Data::Null),
+            ("i", Data::Uint(7)),
+        ]);
+        let format = |path, index, max_len| {
+            let samples = &streams.get(path).unwrap().samples;
+            samples.format(index, max_len)
+        };
+        assert_eq!(format("m", 0, 8), "[[0.5, 1, 2], [3, 4, 5]]");
+        assert_eq!(format("m", 0, 2), "[[0.5, 1, …], [3, 4, …]]");
+        assert_eq!(format("s", 0, 8), "on");
+        assert_eq!(format("s", 1, 8), "null");
+        assert_eq!(format("i", 0, 8), "7");
+        let samples = &streams.get("m").unwrap().samples;
+        assert_eq!(samples.array_sample(0).unwrap()[3], 3.0);
+        assert!(samples.array_sample(1).is_none());
     }
 
     #[test]

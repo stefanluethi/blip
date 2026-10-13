@@ -11,15 +11,15 @@ pub const MAX_LISTED_ELEMENTS: usize = 16;
 /// Stream paths split into a tree at each "/", and at each "." between the fields of
 /// a record.
 #[derive(Default)]
-struct StreamTree<'a> {
+pub struct StreamTree<'a> {
     /// The stream if one ends at this node.
-    stream: Option<&'a Stream>,
+    pub stream: Option<&'a Stream>,
     /// Children by path segment, record fields with their leading ".", e.g. ".acc".
-    children: BTreeMap<&'a str, StreamTree<'a>>,
+    pub children: BTreeMap<&'a str, StreamTree<'a>>,
 }
 
 impl<'a> StreamTree<'a> {
-    fn build(streams: impl Iterator<Item = &'a Stream>) -> Self {
+    pub fn build(streams: impl Iterator<Item = &'a Stream>) -> Self {
         let mut root = Self::default();
         for stream in streams {
             let path = stream.path.as_str();
@@ -40,7 +40,7 @@ impl<'a> StreamTree<'a> {
         root
     }
 
-    fn is_record(&self) -> bool {
+    pub fn is_record(&self) -> bool {
         self.children.keys().any(|segment| segment.starts_with('.'))
     }
 
@@ -60,7 +60,7 @@ impl<'a> StreamTree<'a> {
 }
 
 /// The icon of the type of `samples`.
-fn type_icon(samples: &Samples) -> &'static str {
+pub fn type_icon(samples: &Samples) -> &'static str {
     match samples {
         Samples::Empty | Samples::Numbers { .. } => HASH,
         Samples::Strings(_) => TEXT_AA,

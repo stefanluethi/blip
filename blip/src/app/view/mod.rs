@@ -1,5 +1,6 @@
 pub mod plot;
 pub mod states;
+pub mod table;
 pub mod log_table;
 pub mod stream_selection;
 pub mod time_axis;
@@ -31,6 +32,7 @@ pub struct View {
 pub enum ViewKind {
     Plot(plot::Plot),
     States(states::States),
+    Table(table::Table),
     Logs(log_table::LogTable),
 }
 
@@ -39,6 +41,7 @@ pub enum ViewKind {
 pub enum ViewType {
     Plot,
     States,
+    Table,
     Logs,
 }
 
@@ -53,12 +56,18 @@ pub enum Selectable {
 }
 
 impl ViewType {
-    pub const ALL: [ViewType; 3] = [ViewType::Plot, ViewType::States, ViewType::Logs];
+    pub const ALL: [ViewType; 4] = [
+        ViewType::Plot,
+        ViewType::States,
+        ViewType::Table,
+        ViewType::Logs,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             ViewType::Plot => "Plot",
             ViewType::States => "States",
+            ViewType::Table => "Table",
             ViewType::Logs => "Logs",
         }
     }
@@ -67,6 +76,7 @@ impl ViewType {
         match self {
             ViewType::Plot => egui_phosphor::regular::CHART_LINE,
             ViewType::States => egui_phosphor::regular::CHART_BAR_HORIZONTAL,
+            ViewType::Table => egui_phosphor::regular::TABLE,
             ViewType::Logs => egui_phosphor::regular::LIST_BULLETS,
         }
     }
@@ -83,6 +93,7 @@ impl ViewType {
             }
             (ViewType::States, Samples::Arrays { shape, .. }) => elements(shape),
             (ViewType::States, _) => Selectable::Stream,
+            (ViewType::Table, _) => Selectable::Stream,
         }
     }
 
@@ -116,6 +127,7 @@ impl View {
         let kind = match view_type {
             ViewType::Plot => ViewKind::Plot(plot::Plot::new()),
             ViewType::States => ViewKind::States(states::States::new()),
+            ViewType::Table => ViewKind::Table(table::Table::new()),
             ViewType::Logs => ViewKind::Logs(log_table::LogTable::new()),
         };
         Self { name, kind }
@@ -125,6 +137,7 @@ impl View {
         match self.kind {
             ViewKind::Plot(_) => ViewType::Plot,
             ViewKind::States(_) => ViewType::States,
+            ViewKind::Table(_) => ViewType::Table,
             ViewKind::Logs(_) => ViewType::Logs,
         }
     }
@@ -140,6 +153,7 @@ impl View {
         let paths = match &mut self.kind {
             ViewKind::Plot(plot) => &mut plot.streams,
             ViewKind::States(states) => &mut states.streams,
+            ViewKind::Table(table) => &mut table.streams,
             ViewKind::Logs(_) => return None,
         };
         Some((paths, view_type))
@@ -151,6 +165,7 @@ impl Viewable for View {
         match &mut self.kind {
             ViewKind::Plot(plot) => plot.view(ui, context),
             ViewKind::States(states) => states.view(ui, context),
+            ViewKind::Table(table) => table.view(ui, context),
             ViewKind::Logs(logs) => logs.view(ui, context),
         }
     }
