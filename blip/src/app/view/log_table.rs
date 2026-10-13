@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use egui_extras::{Column, TableBuilder};
 use crate::app::model::logs::{LogEntry, LogLevel, Logs};
+use crate::app::time::{TimeRange, timestamp_to_seconds};
 use crate::app::view::{ViewContext, Viewable};
 
 #[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
@@ -38,6 +39,9 @@ pub struct LogTable {
     last_case_sensitive: bool,
     #[serde(skip)]
     filter_menu_open: bool,
+    /// The time range shown in the last frame, to scroll to it when it moves.
+    #[serde(skip)]
+    last_range: Option<(f64, f64)>,
 }
 
 impl LogTable {
@@ -107,7 +111,8 @@ impl LogTable {
         true
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui, logs: &Logs) {
+    /// Shows the entries, the ones outside the shown time range greyed out.
+    pub fn ui(&mut self, ui: &mut egui::Ui, logs: &Logs, time: &TimeRange) {
         self.update_regex_cache();
 
         let filtered_entries: Vec<&LogEntry> = logs
@@ -139,18 +144,38 @@ impl LogTable {
                     .column(Column::initial(50.0).at_least(30.0))   // Log Level
                     .column(Column::remainder().at_least(150.0));   // Message
 
-                if self.filter.auto_scroll && !filtered_entries.is_empty() {
-                    builder = builder.scroll_to_row(filtered_entries.len() - 1, Some(egui::Align::Max));
+                let range = time.range();
+                let in_range = |entry: &LogEntry| {
+                    range.is_none_or(|(start, end)| (start..=end).contains(&timestamp_to_seconds(entry.time)))
+                };
+                if time.is_live() {
+                    if self.filter.auto_scroll && !filtered_entries.is_empty() {
+                        builder = builder.scroll_to_row(filtered_entries.len() - 1, Some(egui::Align::Max));
+                    }
+                } else if range != self.last_range
+                    && let Some((_, end)) = range
+                {
+                    // scroll to the newest entry in the moved range
+                    let last_in_range = filtered_entries
+                        .partition_point(|entry| timestamp_to_seconds(entry.time) <= end)
+                        .saturating_sub(1);
+                    builder = builder.scroll_to_row(last_in_range, Some(egui::Align::Max));
                 }
+                self.last_range = range;
 
                 builder.body(|body| {
                     body.rows(text_height + 6.0, filtered_entries.len(), |mut row| {
                         let entry = filtered_entries[row.index()];
+                        let shown = in_range(entry);
+                        let text = |text: &str, ui: &egui::Ui| {
+                            let text = egui::RichText::new(text).monospace();
+                            if shown { text } else { text.color(ui.visuals().weak_text_color()) }
+                        };
                         row.col(|ui| {
-                            ui.label(egui::RichText::new(&entry.timestamp).monospace());
+                            ui.label(text(&entry.timestamp, ui));
                         });
                         row.col(|ui| {
-                            ui.label(egui::RichText::new(&entry.component).monospace());
+                            ui.label(text(&entry.component, ui));
                         });
                         row.col(|ui| {
                             let (color, level_str) = match entry.level {
@@ -160,10 +185,11 @@ impl LogTable {
                                 LogLevel::Debug => (egui::Color32::from_rgb(45, 156, 219), "DEBUG"),
                                 LogLevel::Trace => (egui::Color32::from_rgb(155, 81, 224), "TRACE"),
                             };
+                            let color = if shown { color } else { color.gamma_multiply(0.4) };
                             ui.colored_label(color, egui::RichText::new(level_str).monospace());
                         });
                         row.col(|ui| {
-                            ui.label(egui::RichText::new(&entry.message).monospace());
+                            ui.label(text(&entry.message, ui));
                         });
                     });
                 });
@@ -375,7 +401,7 @@ impl LogTable {
 
 impl Viewable for LogTable {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
-        self.ui(ui, &context.model.logs);
+        self.ui(ui, &context.model.logs, context.time);
     }
 }
 
@@ -385,6 +411,7 @@ mod tests {
 
     fn create_entry(level: LogLevel, component: &str, message: &str) -> LogEntry {
         LogEntry {
+            time: 0,
             timestamp: "12:00:00.000".to_string(),
             component: component.to_string(),
             level,

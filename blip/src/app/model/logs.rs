@@ -44,6 +44,8 @@ impl LogLevel {
 
 #[derive(Clone, Debug)]
 pub struct LogEntry {
+    /// Nanoseconds since the Unix epoch.
+    pub time: u64,
     pub timestamp: String,
     pub component: String,
     pub level: LogLevel,
@@ -61,17 +63,18 @@ impl LogEntry {
             _ => LogLevel::Trace,
         };
 
-        let timestamp = if record.timestamp > 0 {
-            let secs = (record.timestamp / 1_000_000_000) as i64;
-            let nsecs = (record.timestamp % 1_000_000_000) as u32;
-            if let Some(dt) = chrono::DateTime::from_timestamp(secs, nsecs) {
-                let local_dt: chrono::DateTime<chrono::Local> = chrono::DateTime::from(dt);
-                local_dt.format("%H:%M:%S%.3f").to_string()
-            } else {
-                format!("{}", record.timestamp)
-            }
+        let time = if record.timestamp > 0 {
+            record.timestamp
         } else {
-            chrono::Local::now().format("%H:%M:%S%.3f").to_string()
+            chrono::Utc::now().timestamp_nanos_opt().map_or(0, |nanos| nanos as u64)
+        };
+        let secs = (time / 1_000_000_000) as i64;
+        let nsecs = (time % 1_000_000_000) as u32;
+        let timestamp = if let Some(dt) = chrono::DateTime::from_timestamp(secs, nsecs) {
+            let local_dt: chrono::DateTime<chrono::Local> = chrono::DateTime::from(dt);
+            local_dt.format("%H:%M:%S%.3f").to_string()
+        } else {
+            format!("{}", time)
         };
 
         let component = if record.component.is_empty() {
@@ -81,6 +84,7 @@ impl LogEntry {
         };
 
         Self {
+            time,
             timestamp,
             component,
             level,
@@ -113,5 +117,10 @@ impl Logs {
             self.entries.pop_front();
         }
         self.entries.push_back(entry);
+    }
+
+    /// Times of the first and the newest entry.
+    pub fn time_span(&self) -> Option<(u64, u64)> {
+        Some((self.entries.front()?.time, self.entries.back()?.time))
     }
 }

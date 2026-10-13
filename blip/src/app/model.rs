@@ -21,6 +21,9 @@ impl Default for Model {
 impl Model {
     /// Timestamps of the first and the newest collected data.
     pub fn time_span(&self) -> Option<(u64, u64)> {
-        self.streams.time_span()
+        [self.streams.time_span(), self.logs.time_span()]
+            .into_iter()
+            .flatten()
+            .reduce(|(first_a, last_a), (first_b, last_b)| (first_a.min(first_b), last_a.max(last_b)))
     }
 }
