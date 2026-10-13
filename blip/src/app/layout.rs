@@ -310,6 +310,9 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
         if ui.input(|i| i.pointer.primary_pressed()) && ui.rect_contains_pointer(ui.max_rect()) {
             *self.selected = Some(tile_id);
         }
+        if *self.selected == Some(tile_id) {
+            ui.painter().rect_filled(ui.max_rect(), 4.0, ui.visuals().faint_bg_color);
+        }
 
         if !self.panes_in_tabs.contains(&tile_id) {
             let title_bar_color = if ui.visuals().dark_mode {
@@ -350,7 +353,8 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
 
     fn paint_on_top_of_tile(&self, painter: &egui::Painter, style: &egui::Style, tile_id: TileId, rect: egui::Rect) {
         if *self.selected == Some(tile_id) {
-            painter.rect_stroke(rect, 0.0, style.visuals.selection.stroke, egui::StrokeKind::Inside);
+            let stroke = egui::Stroke::new(1.0, style.visuals.widgets.active.bg_fill);
+            painter.rect_stroke(rect, 4.0, stroke, egui::StrokeKind::Inside);
         }
     }
 
