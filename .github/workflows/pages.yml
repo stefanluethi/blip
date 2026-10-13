@@ -52,9 +52,19 @@ jobs:
 
       - name: Build blip
         working-directory: blip
+        # base_path is empty with a custom domain, which an expression `||`
+        # would treat as unset, so pick the fallback by the step outcome.
         env:
-          BASE_PATH: ${{ steps.pages.outputs.base_path || format('/{0}', github.event.repository.name) }}
-        run: trunk build --release --public-url "${BASE_PATH}/" --dist ../site
+          PAGES_OUTCOME: ${{ steps.pages.outcome }}
+          PAGES_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          if [ "$PAGES_OUTCOME" = success ]; then
+            base_path="$PAGES_BASE_PATH"
+          else
+            base_path="/$REPO_NAME"
+          fi
+          trunk build --release --public-url "${base_path}/" --dist ../site
 
       # -- documentation -----------------------------------------------------
 
