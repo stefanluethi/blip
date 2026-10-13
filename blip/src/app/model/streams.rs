@@ -52,6 +52,44 @@ impl NumberKind {
             Self::Bool => (value != 0.0).to_string(),
         }
     }
+
+    /// `value` written as a value of this kind, a float with at most `digits`
+    /// significant digits or all of them if `digits` is `None`.
+    pub fn format_digits(self, value: f64, digits: Option<usize>) -> String {
+        match (self, digits) {
+            (Self::Float, Some(digits)) => format_significant(value, digits),
+            _ => self.format(value),
+        }
+    }
+}
+
+/// `value` with at most `digits` significant digits and no trailing zeros, e.g.
+/// `0.0123`. Integer digits are kept, large and small values are written with an
+/// exponent.
+pub fn format_significant(value: f64, digits: usize) -> String {
+    if value == 0.0 || !value.is_finite() {
+        return value.to_string();
+    }
+    let digits = digits.max(1);
+    let magnitude = value.abs().log10().floor() as i32;
+    if magnitude >= digits.max(6) as i32 || magnitude < -4 {
+        let text = format!("{:.*e}", digits - 1, value);
+        return match text.split_once('e') {
+            Some((mantissa, exponent)) => format!("{}e{exponent}", trim_zeros(mantissa)),
+            None => text,
+        };
+    }
+    let decimals = (digits as i32 - 1 - magnitude).max(0) as usize;
+    trim_zeros(&format!("{value:.decimals$}")).to_owned()
+}
+
+/// `number` without trailing zeros after its decimal point.
+fn trim_zeros(number: &str) -> &str {
+    if number.contains('.') {
+        number.trim_end_matches('0').trim_end_matches('.')
+    } else {
+        number
+    }
 }
 
 fn data_kind_name(data: &Data) -> &'static str {
@@ -163,15 +201,19 @@ impl Samples {
     }
 
     /// The `index`th sample written as text, arrays with at most `max_len` elements per
-    /// dimension.
-    pub fn format(&self, index: usize, max_len: usize) -> String {
+    /// dimension, and floats with at most `digits` significant digits or all of them if
+    /// `digits` is `None`.
+    pub fn format(&self, index: usize, max_len: usize, digits: Option<usize>) -> String {
         match self {
             Self::Empty => "null".to_owned(),
-            Self::Numbers { kind, values } => kind.format(values[index]),
+            Self::Numbers { kind, values } => kind.format_digits(values[index], digits),
             Self::Strings(values) => values[index].clone().unwrap_or_else(|| "null".to_owned()),
             Self::Arrays { shape, kind, .. } => {
                 let elements = self.array_sample(index).unwrap_or_default();
-                format_array(shape, kind.unwrap_or(NumberKind::Float), elements, max_len)
+                let kind = kind.unwrap_or(NumberKind::Float);
+                format_array(shape, elements, max_len, &|value| {
+                    kind.format_digits(value, digits)
+                })
             }
         }
     }
@@ -195,18 +237,23 @@ impl Samples {
 }
 
 /// The `elements` of an array of `shape` written like `[[1, 2], [3, 4]]`, with at most
-/// `max_len` elements per dimension.
-fn format_array(shape: &[usize], kind: NumberKind, elements: &[f64], max_len: usize) -> String {
+/// `max_len` elements per dimension, each written by `format`.
+fn format_array(
+    shape: &[usize],
+    elements: &[f64],
+    max_len: usize,
+    format: &dyn Fn(f64) -> String,
+) -> String {
     let Some((&len, inner)) = shape.split_first() else {
         return elements
             .first()
-            .map_or_else(String::new, |&value| kind.format(value));
+            .map_or_else(String::new, |&value| format(value));
     };
     let stride = inner.iter().product::<usize>();
     let mut parts: Vec<String> = elements
         .chunks(stride.max(1))
         .take(len.min(max_len))
-        .map(|chunk| format_array(inner, kind, chunk, max_len))
+        .map(|chunk| format_array(inner, chunk, max_len, format))
         .collect();
     if len > max_len {
         parts.push("…".to_owned());
@@ -694,19 +741,35 @@ mod tests {
             ("s", Data::from("on")),
             ("s", Data::Null),
             ("i", Data::Uint(7)),
+            ("f", Data::Float(0.031_414_634_623_640_13)),
         ]);
-        let format = |path, index, max_len| {
+        let format = |path, index, max_len, digits| {
             let samples = &streams.get(path).unwrap().samples;
-            samples.format(index, max_len)
+            samples.format(index, max_len, digits)
         };
-        assert_eq!(format("m", 0, 8), "[[0.5, 1, 2], [3, 4, 5]]");
-        assert_eq!(format("m", 0, 2), "[[0.5, 1, …], [3, 4, …]]");
-        assert_eq!(format("s", 0, 8), "on");
-        assert_eq!(format("s", 1, 8), "null");
-        assert_eq!(format("i", 0, 8), "7");
+        assert_eq!(format("m", 0, 8, None), "[[0.5, 1, 2], [3, 4, 5]]");
+        assert_eq!(format("m", 0, 2, None), "[[0.5, 1, …], [3, 4, …]]");
+        assert_eq!(format("s", 0, 8, None), "on");
+        assert_eq!(format("s", 1, 8, None), "null");
+        assert_eq!(format("i", 0, 8, Some(2)), "7");
+        assert_eq!(format("f", 0, 8, Some(6)), "0.0314146");
+        assert_eq!(format("f", 0, 8, None), "0.03141463462364013");
         let samples = &streams.get("m").unwrap().samples;
         assert_eq!(samples.array_sample(0).unwrap()[3], 3.0);
         assert!(samples.array_sample(1).is_none());
+    }
+
+    #[test]
+    fn floats_are_shortened_to_significant_digits() {
+        assert_eq!(format_significant(22.024_154_775, 6), "22.0242");
+        assert_eq!(format_significant(25.1234, 3), "25.1");
+        assert_eq!(format_significant(0.012_345, 3), "0.0123");
+        assert_eq!(format_significant(1234.4, 3), "1234");
+        assert_eq!(format_significant(-60.0, 3), "-60");
+        assert_eq!(format_significant(9.996, 3), "10");
+        assert_eq!(format_significant(1.0e7, 3), "1e7");
+        assert_eq!(format_significant(1.234_5e-6, 3), "1.23e-6");
+        assert_eq!(format_significant(0.0, 3), "0");
     }
 
     #[test]

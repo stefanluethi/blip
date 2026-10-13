@@ -14,6 +14,9 @@ use std::collections::BTreeSet;
 /// Arrays show at most this many elements per dimension in the table, and more in the
 /// tooltip.
 const MAX_SHOWN_ELEMENTS: usize = 8;
+/// Floats show at most this many significant digits in the table, and all in the
+/// tooltip.
+const SHOWN_DIGITS: usize = 6;
 const MAX_TOOLTIP_ELEMENTS: usize = 64;
 /// Indentation of a level of the tree in points.
 const INDENT: f32 = 14.0;
@@ -132,9 +135,17 @@ impl Table {
                         table_row.col(|ui| self.name_ui(ui, row));
                         table_row.col(|ui| {
                             if let Some((stream, index)) = sample {
-                                let value = stream.samples.format(index, MAX_SHOWN_ELEMENTS);
+                                let value = stream.samples.format(
+                                    index,
+                                    MAX_SHOWN_ELEMENTS,
+                                    Some(SHOWN_DIGITS),
+                                );
                                 ui.label(value).on_hover_ui(|ui| {
-                                    ui.label(stream.samples.format(index, MAX_TOOLTIP_ELEMENTS));
+                                    ui.label(stream.samples.format(
+                                        index,
+                                        MAX_TOOLTIP_ELEMENTS,
+                                        None,
+                                    ));
                                 });
                             }
                         });
@@ -162,19 +173,10 @@ impl Viewable for Table {
             return;
         }
         let time = &context.time;
-        let base = time.base();
-        let t = time.cursor();
-        if let Some(t) = t {
-            let at = if time.hovered().is_some() {
-                "hovered"
-            } else if time.is_live() {
-                "newest"
-            } else {
-                "window end"
-            };
-            ui.weak(format!("Values at {} ({at})", base.format(t, 3)));
+        if let Some(label) = time.cursor_label() {
+            ui.weak(format!("Values at {label}"));
         }
-        self.show_table(ui, context.model, t, base);
+        self.show_table(ui, context.model, time.cursor(), time.base());
     }
 }
 

@@ -1,3 +1,4 @@
+pub mod heatmap;
 pub mod plot;
 pub mod states;
 pub mod table;
@@ -35,6 +36,7 @@ pub enum ViewKind {
     States(states::States),
     Table(table::Table),
     Xy(xy::Xy),
+    Heatmap(heatmap::Heatmap),
     Logs(log_table::LogTable),
 }
 
@@ -45,6 +47,7 @@ pub enum ViewType {
     States,
     Table,
     Xy,
+    Heatmap,
     Logs,
 }
 
@@ -59,11 +62,12 @@ pub enum Selectable {
 }
 
 impl ViewType {
-    pub const ALL: [ViewType; 5] = [
+    pub const ALL: [ViewType; 6] = [
         ViewType::Plot,
         ViewType::States,
         ViewType::Table,
         ViewType::Xy,
+        ViewType::Heatmap,
         ViewType::Logs,
     ];
 
@@ -73,6 +77,7 @@ impl ViewType {
             ViewType::States => "States",
             ViewType::Table => "Table",
             ViewType::Xy => "XY",
+            ViewType::Heatmap => "Heatmap",
             ViewType::Logs => "Logs",
         }
     }
@@ -83,6 +88,7 @@ impl ViewType {
             ViewType::States => egui_phosphor::regular::CHART_BAR_HORIZONTAL,
             ViewType::Table => egui_phosphor::regular::TABLE,
             ViewType::Xy => egui_phosphor::regular::CHART_SCATTER,
+            ViewType::Heatmap => egui_phosphor::regular::GRID_NINE,
             ViewType::Logs => egui_phosphor::regular::LIST_BULLETS,
         }
     }
@@ -105,6 +111,12 @@ impl ViewType {
             }
             (ViewType::Xy, Samples::Arrays { shape, .. }) => elements(shape),
             (ViewType::Xy, _) => Selectable::Stream,
+            (ViewType::Heatmap, Samples::Arrays { shape, .. }) if (1..=2).contains(&shape.len()) => {
+                Selectable::Stream
+            }
+            (ViewType::Heatmap, _) => {
+                Selectable::No("Heatmaps show arrays of one or two dimensions".to_owned())
+            }
         }
     }
 
@@ -118,7 +130,19 @@ impl ViewType {
 
     /// Whether a view of this type shows one stream only.
     pub fn shows_one_stream(self) -> bool {
-        false
+        self == ViewType::Heatmap
+    }
+}
+
+/// A text colour readable on `background`.
+pub fn text_color_on(background: egui::Color32) -> egui::Color32 {
+    let luminance = 0.299 * f32::from(background.r())
+        + 0.587 * f32::from(background.g())
+        + 0.114 * f32::from(background.b());
+    if luminance > 140.0 {
+        egui::Color32::BLACK
+    } else {
+        egui::Color32::WHITE
     }
 }
 
@@ -140,6 +164,7 @@ impl View {
             ViewType::States => ViewKind::States(states::States::new()),
             ViewType::Table => ViewKind::Table(table::Table::new()),
             ViewType::Xy => ViewKind::Xy(xy::Xy::new()),
+            ViewType::Heatmap => ViewKind::Heatmap(heatmap::Heatmap::new()),
             ViewType::Logs => ViewKind::Logs(log_table::LogTable::new()),
         };
         Self { name, kind }
@@ -151,6 +176,7 @@ impl View {
             ViewKind::States(_) => ViewType::States,
             ViewKind::Table(_) => ViewType::Table,
             ViewKind::Xy(_) => ViewType::Xy,
+            ViewKind::Heatmap(_) => ViewType::Heatmap,
             ViewKind::Logs(_) => ViewType::Logs,
         }
     }
@@ -168,6 +194,7 @@ impl View {
             ViewKind::States(states) => &mut states.streams,
             ViewKind::Table(table) => &mut table.streams,
             ViewKind::Xy(xy) => &mut xy.streams,
+            ViewKind::Heatmap(heatmap) => &mut heatmap.streams,
             ViewKind::Logs(_) => return None,
         };
         Some((paths, view_type))
@@ -181,6 +208,7 @@ impl Viewable for View {
             ViewKind::States(states) => states.view(ui, context),
             ViewKind::Table(table) => table.view(ui, context),
             ViewKind::Xy(xy) => xy.view(ui, context),
+            ViewKind::Heatmap(heatmap) => heatmap.view(ui, context),
             ViewKind::Logs(logs) => logs.view(ui, context),
         }
     }

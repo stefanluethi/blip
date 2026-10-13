@@ -33,6 +33,15 @@ MOTOR_STATES = ["idle", "accelerating", "running", "braking"]
 POSE_EXTENT_M = 2.0
 POSE_PERIOD_SEC = 20.0
 
+# A spectrum of this many bins with a peak sweeping across them in this time (s)
+SPECTRUM_BINS = 64
+SPECTRUM_SWEEP_SEC = 10.0
+
+# A thermal camera frame of this many rows and columns with a hot spot circling in
+# this time (s)
+THERMAL_SIZE = 8
+THERMAL_PERIOD_SEC = 8.0
+
 # Background log messages: (weight, level, component, message template)
 _RANDOM_LOGS = [
     (30, TRACE, "sensor", "accelerometer sample {accel:.3f} m/s^2"),
@@ -60,7 +69,8 @@ class SimulatorProtocol(BaseProtocol):
         self._cpu_avg: dict[int, float] = {}
         self._cpu_high: set[int] = set()
         self._motor_state = 0
-        self._pose_time = 0.0
+        # Simulated time (s), advanced by the sampling interval
+        self._sim_time = 0.0
 
     async def start(self) -> None:
         """Start simulator telemetry stream task."""
@@ -93,6 +103,8 @@ class SimulatorProtocol(BaseProtocol):
 
         while self._running:
             try:
+                self._sim_time += self.interval_sec
+
                 # 1. Accelerometer simulation
                 accel_val = random.uniform(-10.0, 10.0)
                 accel_msg = Message.create_value("accelerometer", accel_val)
@@ -111,6 +123,8 @@ class SimulatorProtocol(BaseProtocol):
                 await self.send_to_websocket(self._imu_message().encode_cbor())
                 await self.send_to_websocket(self._motor_message().encode_cbor())
                 await self.send_to_websocket(self._pose_message().encode_cbor())
+                await self.send_to_websocket(self._spectrum_message().encode_cbor())
+                await self.send_to_websocket(self._thermal_message().encode_cbor())
                 temperature = None
                 if random.random() >= SENSOR_DROPOUT_PROBABILITY:
                     temperature = 25.0 + random.gauss(0.0, 0.2)
@@ -149,8 +163,7 @@ class SimulatorProtocol(BaseProtocol):
 
     def _pose_message(self) -> Message:
         """The position (m) and heading (rad) of a robot driving a figure eight."""
-        self._pose_time += self.interval_sec
-        angle = 2.0 * math.pi * self._pose_time / POSE_PERIOD_SEC
+        angle = 2.0 * math.pi * self._sim_time / POSE_PERIOD_SEC
         x = POSE_EXTENT_M * math.sin(angle)
         y = POSE_EXTENT_M / 2.0 * math.sin(2.0 * angle)
         heading = math.atan2(math.cos(2.0 * angle), math.cos(angle))
@@ -158,6 +171,36 @@ class SimulatorProtocol(BaseProtocol):
         return Message.create_value(
             "robot/pose", {"x": x + noise(), "y": y + noise(), "heading": heading}
         )
+
+    def _spectrum_message(self) -> Message:
+        """A spectrum (dB) as an array of bins, with a peak sweeping back and forth."""
+        phase = math.sin(2.0 * math.pi * self._sim_time / SPECTRUM_SWEEP_SEC)
+        peak = (SPECTRUM_BINS - 1) / 2.0 * (1.0 + 0.7 * phase)
+        bins = [
+            -60.0 + 50.0 * math.exp(-(((i - peak) / 3.0) ** 2)) + random.gauss(0.0, 2.0)
+            for i in range(SPECTRUM_BINS)
+        ]
+        return Message.create_value("audio/spectrum", bins)
+
+    def _thermal_message(self) -> Message:
+        """A thermal camera frame (°C) as rows of pixels, with a hot spot circling."""
+        angle = 2.0 * math.pi * self._sim_time / THERMAL_PERIOD_SEC
+        center = (THERMAL_SIZE - 1) / 2.0
+        spot_row = center + 2.5 * math.sin(angle)
+        spot_column = center + 2.5 * math.cos(angle)
+        frame = [
+            [
+                round(
+                    22.0
+                    + 13.0 * math.exp(-((row - spot_row) ** 2 + (column - spot_column) ** 2) / 2.0)
+                    + random.gauss(0.0, 0.1),
+                    2,
+                )
+                for column in range(THERMAL_SIZE)
+            ]
+            for row in range(THERMAL_SIZE)
+        ]
+        return Message.create_value("thermal/frame", frame)
 
     async def _send_log(self, level: int, component: str, message: str) -> None:
         """Broadcast a single log record."""

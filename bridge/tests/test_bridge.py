@@ -95,10 +95,20 @@ async def test_simulator_bridge_typed_values():
     try:
         async with websockets.connect("ws://127.0.0.1:3995/ws/test") as ws:
             # Collect the first value of each typed stream
-            typed_paths = ("imu", "motor", "robot/pose", "sensor/temperature")
+            typed_paths = (
+                "imu",
+                "motor",
+                "robot/pose",
+                "audio/spectrum",
+                "thermal/frame",
+                "sensor/temperature",
+            )
             values = {}
             for _ in range(500):
-                data = decode_cbor_message(await asyncio.wait_for(ws.recv(), timeout=2.0))
+                msg_bytes = await asyncio.wait_for(ws.recv(), timeout=2.0)
+                # blip accepts frames of up to 2048 bytes
+                assert len(msg_bytes) <= 2048
+                data = decode_cbor_message(msg_bytes)
                 assert data is not None
                 if "Value" in data and data["Value"]["path"] in typed_paths:
                     values.setdefault(data["Value"]["path"], data["Value"]["value"])
@@ -116,6 +126,9 @@ async def test_simulator_bridge_typed_values():
             pose = values["robot/pose"]
             assert set(pose) == {"x", "y", "heading"}
             assert all(isinstance(v, float) for v in pose.values())
+            assert len(values["audio/spectrum"]) == 64
+            frame = values["thermal/frame"]
+            assert len(frame) == 8 and all(len(row) == 8 for row in frame)
             assert values["sensor/temperature"] is None or isinstance(values["sensor/temperature"], float)
 
     finally:

@@ -27,6 +27,8 @@ impl TimeAxis {
 pub struct TimePlotResponse {
     /// The time in seconds hovered in this plot.
     pub hovered: Option<f64>,
+    /// The y coordinate hovered in this plot.
+    pub hovered_y: Option<f64>,
     pub response: egui::Response,
     pub axis: TimeAxis,
 }
@@ -71,16 +73,18 @@ pub fn show<'a>(
         }
         build(plot_ui, axis);
 
-        let hovered_x = plot_ui
+        let hovered = plot_ui
             .response()
             .hovered()
             .then(|| plot_ui.pointer_coordinate())
-            .flatten()
-            .map(|point| point.x);
-        if let Some(x) = hovered_x.or(hovered_elsewhere.map(|t| t - origin)) {
+            .flatten();
+        let x = hovered
+            .map(|point| point.x)
+            .or(hovered_elsewhere.map(|t| t - origin));
+        if let Some(x) = x {
             plot_ui.vline(egui_plot::VLine::new("", x).color(cursor_color).width(1.0));
         }
-        hovered_x
+        hovered
     });
 
     if let Some((start, end)) = axis.range {
@@ -94,12 +98,13 @@ pub fn show<'a>(
         }
     }
 
-    let hovered = response.inner.map(|x| x + origin);
+    let hovered = response.inner.map(|point| point.x + origin);
     if let Some(t) = hovered {
         time.hover(t);
     }
     TimePlotResponse {
         hovered,
+        hovered_y: response.inner.map(|point| point.y),
         response: response.response,
         axis,
     }
