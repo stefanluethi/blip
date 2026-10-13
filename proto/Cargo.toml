@@ -1,6 +1,6 @@
 [package]
 name = "proto"
-description = "Wire protocol shared between blip and embedded targets"
+description = "Wire protocol between the bridge and blip"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -10,6 +10,9 @@ publish.workspace = true
 
 [dependencies]
 serde.workspace = true
+
+[dev-dependencies]
+serde_cbor_2 = "0.13.0"
 
 [lints]
 workspace = true

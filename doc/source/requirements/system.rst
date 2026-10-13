@@ -43,6 +43,16 @@ Connectivity
    Messages shall be encoded as CBOR according to the types defined in the
    ``proto`` crate.
 
+.. req:: Typed stream values
+   :id: REQ_PROTO_TYPES
+   :status: implemented
+   :component: proto
+   :satisfies: STK_LIVE_OBSERVE
+
+   A ``Value`` shall carry an integer, float, bool, string, array or record,
+   or ``null`` for no value, encoded as a plain CBOR data item without type
+   tags.
+
 .. req:: Send actions to the target
    :id: REQ_CTRL_ACTION
    :status: draft

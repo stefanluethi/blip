@@ -1,5 +1,9 @@
 use serde::{Serialize, Deserialize};
 
+mod data;
+
+pub use data::Data;
+
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct ValueMetadata {
     pub path: String,
@@ -11,7 +15,7 @@ pub struct ValueMetadata {
 pub struct Value {
     pub timestamp: u64,
     pub path: String,
-    pub value: f32,   // todo: any value type or structure
+    pub value: Data,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]

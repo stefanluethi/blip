@@ -2342,6 +2342,7 @@ name = "proto"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_cbor_2",
 ]
 
 [[package]]

@@ -52,7 +52,7 @@ Stream samples are scaled with the stream descriptor's scale factor and timestam
 
 Messages sent in binary WebSocket frames match the following Rust `proto` structure:
 
-- **Value**: `{ timestamp: int (ns), path: str, value: float }`
+- **Value**: `{ timestamp: int (ns), path: str, value: any }`, where `value` is a plain CBOR item: `None`, `int`, `float`, `bool`, `str`, a `list` of fixed length or a `dict` with `str` keys, nested freely (see `doc/source/architecture/protocol.rst`)
 - **ValueMetadata**: `{ path: str, unit: str }`
 - **LogRecord**: `{ timestamp: int (ns), level: int, component: str, message: str }`
 - **Message**: Tagged CBOR enum `Value`, `ValueMetadata`, or `Log`

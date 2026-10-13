@@ -6,12 +6,20 @@ pub struct Value {
     pub value: f32,
 }
 
-impl From<&proto::Value> for Value {
-    fn from(value: &proto::Value) -> Self {
-        Self {
+impl Value {
+    /// The sample `value` if it is a number or null, which is stored as NaN.
+    fn from_proto(value: &proto::Value) -> Option<Self> {
+        let number = match value.value {
+            proto::Data::Null => f32::NAN,
+            proto::Data::Uint(number) => number as f32,
+            proto::Data::Int(number) => number as f32,
+            proto::Data::Float(number) => number as f32,
+            _ => return None,
+        };
+        Some(Self {
             timestamp: value.timestamp,
-            value: value.value,
-        }
+            value: number,
+        })
     }
 }
 
@@ -59,11 +67,15 @@ impl Streams {
     }
 
     pub fn append(&mut self, value: &proto::Value) {
-        if !self.map.contains_key(&value.path) {
-            self.map.insert(value.path.clone(), Stream::new(value.path.clone()));
-        }
-        let stream = self.map.get_mut(&value.path).unwrap();
-        stream.values.push(value.into());
+        let Some(sample) = Value::from_proto(value) else {
+            log::warn!("{}: only numbers are supported yet", value.path);
+            return;
+        };
+        self.map
+            .entry(value.path.clone())
+            .or_insert_with(|| Stream::new(value.path.clone()))
+            .values
+            .push(sample);
     }
 
     /// Timestamps of the first and the newest value of all streams.
