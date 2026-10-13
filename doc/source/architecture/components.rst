@@ -11,11 +11,16 @@ Components
    native binary. Main modules in ``blip/src``:
 
    * ``app.rs`` -- application state, WebSocket connection handling and the
-     tiled pane layout (``egui_tiles``).
+     panels of the window.
    * ``app/proto_parser.rs`` -- decodes binary CBOR frames into ``proto``
      messages and feeds the model.
    * ``app/model`` -- data model: value ``streams`` and ``logs``.
-   * ``app/view`` -- views: time-series ``plot`` and ``log_table``.
+   * ``app/time.rs`` -- the time range shared by all views.
+   * ``app/layout`` -- the layout of the views as a tree of groups, shown
+     with ``egui_tiles``, the layout panel to edit it and its versioned
+     saved form.
+   * ``app/view`` -- views: time-series ``plot`` and ``log_table``, and the
+     ``stream_selection`` of the selected plot.
 
 .. arch:: proto crate
    :id: ARCH_PROTO

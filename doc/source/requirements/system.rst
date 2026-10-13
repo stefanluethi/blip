@@ -76,7 +76,8 @@ Platforms
    :status: implemented
    :component: blip
 
-   blip shall persist the pane layout and the target address across restarts.
+   blip shall persist the layout of the views and the target address across
+   restarts.
 
 Bridge
 ------
