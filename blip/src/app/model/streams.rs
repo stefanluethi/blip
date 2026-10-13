@@ -54,6 +54,10 @@ impl Streams {
         self.map.values()
     }
 
+    pub fn get(&self, path: &str) -> Option<&Stream> {
+        self.map.get(path)
+    }
+
     pub fn append(&mut self, value: &proto::Value) {
         if !self.map.contains_key(&value.path) {
             self.map.insert(value.path.clone(), Stream::new(value.path.clone()));

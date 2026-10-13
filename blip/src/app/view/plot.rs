@@ -24,6 +24,7 @@ impl Plot {
     /// Draws the values of `stream` within `range_x` seconds, shifted by `origin` seconds.
     fn plot_stream_series(
         stream: &Stream,
+        color: egui::Color32,
         range_x: Option<(f64, f64)>,
         origin: f64,
         plot_ui: &mut egui_plot::PlotUi<'_>,
@@ -31,17 +32,16 @@ impl Plot {
         let values = visible_values(&stream.values, range_x);
         let points = downsample(values, origin, MAX_POINTS_PER_CURVE);
 
-        plot_ui.line(egui_plot::Line::new(
-            stream.path.as_str(),
-            egui_plot::PlotPoints::from(points),
-        ));
+        plot_ui.line(
+            egui_plot::Line::new(stream.path.as_str(), egui_plot::PlotPoints::from(points)).color(color),
+        );
     }
 
     /// The y range covered by the shown streams within the sample times `[start, end]`
     /// seconds.
     fn range_y(&self, model: &Model, (start, end): (f64, f64)) -> Option<(f64, f64)> {
         let mut range: Option<(f64, f64)> = None;
-        for stream in self.selected_stream_iter(model) {
+        for (stream, _) in self.selected_stream_iter(model) {
             // values are appended in arrival order, so timestamps are ascending
             let first = stream
                 .values
@@ -64,19 +64,37 @@ impl Plot {
         })
     }
 
-    fn selected_stream_iter<'a>(&'a self, model: &'a Model) -> impl Iterator<Item = &'a Stream> {
-        model
-            .streams
+    /// The shown streams that were received, with their curve colors.
+    fn selected_stream_iter<'a>(&'a self, model: &'a Model) -> impl Iterator<Item = (&'a Stream, egui::Color32)> {
+        // colors follow the order of the selection, so they do not change as streams arrive
+        self.streams
             .iter()
-            .filter(move |stream| self.streams.contains(&stream.path))
+            .enumerate()
+            .filter_map(|(index, path)| Some((model.streams.get(path)?, curve_color(index))))
+    }
+
+    /// Shows the values of the shown streams at `t` seconds.
+    fn tooltip_ui(&self, ui: &mut egui::Ui, model: &Model, t: f64, origin: f64) {
+        ui.label(format!("t = {:.3} s", t - origin));
+        egui::Grid::new("plot_tooltip").num_columns(2).show(ui, |ui| {
+            for (stream, color) in self.selected_stream_iter(model) {
+                if let Some(value) = value_at(&stream.values, t) {
+                    ui.colored_label(color, &stream.path);
+                    ui.label(value.value.to_string());
+                    ui.end_row();
+                }
+            }
+        });
     }
 
     /// Shows the shared time range of `time`, and applies panning and zooming of the
     /// plot to it.
     fn show_plot(&self, model: &Model, time: &mut TimeRange, ui: &mut egui::Ui) {
         let plot = egui_plot::Plot::new(ui.id().with("plot"))
-            .link_cursor(egui::Id::new("stream_plot_cursor"), [true, false])
             .legend(egui_plot::Legend::default())
+            // the values at the pointer are shown in a tooltip
+            .show_x(false)
+            .show_y(false)
             .allow_drag([true, false])
             .allow_zoom([true, false])
             .allow_scroll([true, false])
@@ -92,6 +110,7 @@ impl Plot {
         // x is the time since the first collected data
         let origin = time.origin();
         let range = time.range();
+        let cursor_color = ui.visuals().weak_text_color();
         let response = plot.show(ui, |plot_ui| {
             if let Some((start, end)) = range {
                 plot_ui.set_plot_bounds_x(start - origin..=end - origin);
@@ -100,9 +119,20 @@ impl Plot {
                 }
             }
 
-            for stream in self.selected_stream_iter(model) {
-                Self::plot_stream_series(stream, range, origin, plot_ui);
+            for (stream, color) in self.selected_stream_iter(model) {
+                Self::plot_stream_series(stream, color, range, origin, plot_ui);
             }
+
+            let hovered_x = plot_ui
+                .response()
+                .hovered()
+                .then(|| plot_ui.pointer_coordinate())
+                .flatten()
+                .map(|point| point.x);
+            if let Some(x) = hovered_x {
+                plot_ui.vline(egui_plot::VLine::new("", x).color(cursor_color).width(1.0));
+            }
+            hovered_x
         });
 
         if let Some((start, end)) = range {
@@ -115,7 +145,36 @@ impl Plot {
                 ui.ctx().request_repaint();
             }
         }
+
+        if let Some(x) = response.inner
+            && !self.streams.is_empty()
+        {
+            response
+                .response
+                .on_hover_ui_at_pointer(|ui| self.tooltip_ui(ui, model, x + origin, origin));
+        }
     }
+}
+
+/// Color of the `index`th curve, picked like egui_plot picks its colors.
+fn curve_color(index: usize) -> egui::Color32 {
+    let golden_ratio = (5.0_f32.sqrt() - 1.0) / 2.0;
+    egui::ecolor::Hsva::new(index as f32 * golden_ratio, 0.85, 0.5, 1.0).into()
+}
+
+/// The value with the timestamp closest to `t` seconds.
+fn value_at(values: &[Value], t: f64) -> Option<&Value> {
+    // values are appended in arrival order, so timestamps are ascending
+    let next = values.partition_point(|v| timestamp_to_seconds(v.timestamp) < t);
+    let candidates = [next.checked_sub(1), Some(next)];
+    candidates
+        .into_iter()
+        .flatten()
+        .filter_map(|index| values.get(index))
+        .min_by(|a, b| {
+            let distance = |v: &Value| (timestamp_to_seconds(v.timestamp) - t).abs();
+            distance(a).total_cmp(&distance(b))
+        })
 }
 
 /// The values within `range_x` seconds, plus one neighbour on each side so the line
@@ -194,6 +253,15 @@ mod tests {
         assert!(points.windows(2).all(|p| p[0][0] <= p[1][0]));
         assert!(points.iter().any(|p| p[1] == 0.0));
         assert!(points.iter().any(|p| p[1] == 6.0));
+    }
+
+    #[test]
+    fn value_at_picks_the_closest_value() {
+        let values = values(10); // 1 ms apart
+        assert_eq!(value_at(&values, 0.0024).unwrap().timestamp, 2_000_000);
+        assert_eq!(value_at(&values, 0.0026).unwrap().timestamp, 3_000_000);
+        assert_eq!(value_at(&values, 1.0).unwrap().timestamp, 9_000_000);
+        assert!(value_at(&[], 1.0).is_none());
     }
 
     #[test]

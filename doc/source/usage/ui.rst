@@ -31,7 +31,7 @@ Views
 Plot
    Time-series plot of the ``Value`` streams checked in the left panel while
    the plot is selected. Select a plot by clicking it or its row in the layout
-   panel.
+   panel. Hovering a plot shows the values of its streams at the pointer.
 
 Logs
    Table of received ``Log`` records with timestamp, level, component and
