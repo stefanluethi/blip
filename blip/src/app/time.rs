@@ -37,7 +37,7 @@ impl TimeBase {
 
     pub fn axis_label(self) -> &'static str {
         match self {
-            TimeBase::Unix => "local time",
+            TimeBase::Unix => "time",
             TimeBase::SinceBoot => "time since boot",
         }
     }
