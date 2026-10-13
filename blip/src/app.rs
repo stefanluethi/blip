@@ -189,7 +189,7 @@ impl App {
         ui.strong("Streams");
         let view = self.layout.selected_view_mut();
         let hint = match &view {
-            None => Some("Select a plot to choose its streams"),
+            None => Some("Select a view to choose its streams"),
             Some(view) if !view.shows_streams() => Some("The selected view shows no streams"),
             Some(_) => None,
         };
@@ -200,7 +200,7 @@ impl App {
             .id_salt("streams")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                view::stream_selection::show(ui, &self.state.model, view.and_then(view::View::streams_mut));
+                view::stream_selection::show(ui, &self.state.model, view.and_then(view::View::selection_mut));
             });
     }
 }
@@ -218,7 +218,7 @@ impl eframe::App for App {
             });
         });
 
-        self.state.time.update_span(&self.state.model);
+        self.state.time.update(&self.state.model, ui.ctx());
 
         egui::Panel::bottom("bottom panel").show(ui, |ui| {
             self.state.time.ui(ui);

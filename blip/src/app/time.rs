@@ -87,6 +87,12 @@ pub struct TimeRange {
     /// Times of the first and the newest collected data in seconds.
     #[serde(skip)]
     span: Option<(f64, f64)>,
+    /// Time in seconds hovered in a view in the last frame, shown by all views.
+    #[serde(skip)]
+    hovered: Option<f64>,
+    /// Time in seconds hovered in a view in this frame.
+    #[serde(skip)]
+    next_hovered: Option<f64>,
 }
 
 impl Default for TimeRange {
@@ -95,19 +101,43 @@ impl Default for TimeRange {
             window: 20.0,
             end: None,
             span: None,
+            hovered: None,
+            next_hovered: None,
         }
     }
 }
 
 impl TimeRange {
-    /// Updates the span of the collected data, call once per frame before the views.
-    pub fn update_span(&mut self, model: &Model) {
+    /// Updates the span of the collected data and the hovered time, call once per frame
+    /// before the views.
+    pub fn update(&mut self, model: &Model, ctx: &egui::Context) {
         self.span = model
             .time_span()
             .map(|(first, latest)| (timestamp_to_seconds(first), timestamp_to_seconds(latest)));
         if self.span.is_none() {
             self.end = None;
         }
+        let hovered = self.next_hovered.take();
+        if hovered != self.hovered {
+            // the views drawn before the hovering one show it in the next frame
+            ctx.request_repaint();
+        }
+        self.hovered = hovered;
+    }
+
+    /// Marks `t` seconds as hovered, for the other views to show it too.
+    pub fn hover(&mut self, t: f64) {
+        self.next_hovered = Some(t);
+    }
+
+    /// The time in seconds hovered in a view, if any.
+    pub fn hovered(&self) -> Option<f64> {
+        self.hovered
+    }
+
+    /// Time of the newest collected data in seconds.
+    pub fn latest(&self) -> Option<f64> {
+        self.span.map(|(_, latest)| latest)
     }
 
     /// Time of the first collected data in seconds, used as origin of the time axes.
@@ -243,8 +273,8 @@ mod tests {
     fn time_range(first: f64, latest: f64, window: f64) -> TimeRange {
         TimeRange {
             window,
-            end: None,
             span: Some((first, latest)),
+            ..TimeRange::default()
         }
     }
 

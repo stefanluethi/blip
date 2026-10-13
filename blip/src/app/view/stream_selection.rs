@@ -1,11 +1,12 @@
 use crate::app::model::Model;
 use crate::app::model::streams::{Samples, Stream, element_path};
+use crate::app::view::{Selectable, ViewType};
 use egui::{RichText, Ui};
 use egui_phosphor::regular::{BRACKETS_CURLY, BRACKETS_SQUARE, HASH, TEXT_AA};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Arrays with up to this many elements list each element for selection.
-const MAX_LISTED_ELEMENTS: usize = 16;
+pub const MAX_LISTED_ELEMENTS: usize = 16;
 
 /// Stream paths split into a tree at each "/", and at each "." between the fields of
 /// a record.
@@ -43,12 +44,17 @@ impl<'a> StreamTree<'a> {
         self.children.keys().any(|segment| segment.starts_with('.'))
     }
 
-    /// The selectable paths of all streams at and below this node.
-    fn paths(&self) -> Vec<String> {
+    /// The paths of all streams at and below this node that a view of `view_type` can
+    /// show.
+    fn paths(&self, view_type: ViewType) -> Vec<String> {
         self.stream
             .into_iter()
-            .flat_map(stream_paths)
-            .chain(self.children.values().flat_map(Self::paths))
+            .flat_map(|stream| stream_paths(stream, view_type))
+            .chain(
+                self.children
+                    .values()
+                    .flat_map(|child| child.paths(view_type)),
+            )
             .collect()
     }
 }
@@ -62,6 +68,12 @@ fn type_icon(samples: &Samples) -> &'static str {
     }
 }
 
+/// The streams selected for a view.
+struct Selection<'a> {
+    paths: &'a mut BTreeSet<String>,
+    view_type: ViewType,
+}
+
 /// Shows a checkbox labelled `label` with a weak `icon` after it for selecting all
 /// `paths`: indeterminate if only some are selected, and disabled if there are none.
 fn show_checkbox(
@@ -69,11 +81,11 @@ fn show_checkbox(
     label: &str,
     icon: Option<&str>,
     paths: &[String],
-    selection: &mut BTreeSet<String>,
+    selection: &mut Selection<'_>,
 ) -> egui::Response {
     let selected_count = paths
         .iter()
-        .filter(|path| selection.contains(*path))
+        .filter(|path| selection.paths.contains(*path))
         .count();
     let mut selected = !paths.is_empty() && selected_count == paths.len();
     let checkbox = match icon {
@@ -83,11 +95,14 @@ fn show_checkbox(
     let checkbox = checkbox.indeterminate(selected_count > 0 && selected_count < paths.len());
     let response = ui.add_enabled(!paths.is_empty(), checkbox);
     if response.changed() {
+        if selected && selection.view_type.shows_one_stream() {
+            selection.paths.clear();
+        }
         for path in paths {
             if selected {
-                selection.insert(path.clone());
+                selection.paths.insert(path.clone());
             } else {
-                selection.remove(path);
+                selection.paths.remove(path);
             }
         }
     }
@@ -105,34 +120,31 @@ fn element_indices(shape: &[usize], mut flat_index: usize) -> Vec<usize> {
     indices
 }
 
-/// The selectable paths of `stream`: its own, or for an array those of its elements,
-/// none if it has more than [`MAX_LISTED_ELEMENTS`].
-fn stream_paths(stream: &Stream) -> Vec<String> {
-    let Samples::Arrays { shape, .. } = &stream.samples else {
-        return vec![stream.path.clone()];
-    };
-    let element_count: usize = shape.iter().product();
-    if element_count > MAX_LISTED_ELEMENTS {
-        return vec![];
+/// The paths of `stream` that a view of `view_type` can show: its own, those of its
+/// elements, or none.
+pub fn stream_paths(stream: &Stream, view_type: ViewType) -> Vec<String> {
+    match (view_type.selectable(stream), &stream.samples) {
+        (Selectable::Elements, Samples::Arrays { shape, .. }) => (0..shape.iter().product())
+            .map(|flat_index| element_path(&stream.path, &element_indices(shape, flat_index)))
+            .collect(),
+        (Selectable::No(_), _) => vec![],
+        _ => vec![stream.path.clone()],
     }
-    (0..element_count)
-        .map(|flat_index| element_path(&stream.path, &element_indices(shape, flat_index)))
-        .collect()
 }
 
-/// Shows `stream` labelled `label` with the icon of its type: a checkbox, or for an
-/// array a collapsible list of checkboxes for its elements.
-fn show_stream(ui: &mut Ui, label: &str, stream: &Stream, selection: &mut BTreeSet<String>) {
+/// Shows `stream` labelled `label` with the icon of its type: a checkbox, or a
+/// collapsible list of checkboxes for its elements.
+fn show_stream(ui: &mut Ui, label: &str, stream: &Stream, selection: &mut Selection<'_>) {
     let icon = Some(type_icon(&stream.samples));
-    let paths = stream_paths(stream);
+    let paths = stream_paths(stream, selection.view_type);
     let mut hover = format!("{}\n{}", stream.path, stream.samples.type_label());
-    match &stream.samples {
-        Samples::Empty | Samples::Numbers { .. } => {}
-        Samples::Strings(_) => hover.push_str("\nStrings are shown in the plot tooltip only"),
-        Samples::Arrays { .. } if paths.is_empty() => hover.push_str(&format!(
-            "\nArrays of more than {MAX_LISTED_ELEMENTS} elements cannot be plotted yet"
-        )),
-        Samples::Arrays { .. } => {
+    if let Some(remark) = selection.view_type.remark(stream) {
+        hover.push_str(&format!("\n{remark}"));
+    }
+    match selection.view_type.selectable(stream) {
+        Selectable::Stream => {}
+        Selectable::No(reason) => hover.push_str(&format!("\n{reason}")),
+        Selectable::Elements => {
             let id = ui.make_persistent_id(("stream_array", &stream.path));
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false)
                 .show_header(ui, |ui| {
@@ -158,7 +170,7 @@ fn show_stream_tree(
     ui: &mut Ui,
     node: &StreamTree<'_>,
     prefix: &str,
-    selection: &mut BTreeSet<String>,
+    selection: &mut Selection<'_>,
 ) {
     for (segment, child) in &node.children {
         let child_prefix = format!("{prefix}/{segment}");
@@ -169,11 +181,19 @@ fn show_stream_tree(
             }
         } else {
             let icon = child.is_record().then_some(BRACKETS_CURLY);
-            let paths = child.paths();
             let id = ui.make_persistent_id(("stream_tree", &child_prefix));
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
                 .show_header(ui, |ui| {
-                    show_checkbox(ui, label, icon, &paths, selection);
+                    if selection.view_type.shows_one_stream() {
+                        // a branch cannot be selected as one stream
+                        match icon {
+                            Some(icon) => ui.label(format!("{label} {icon}")),
+                            None => ui.label(label),
+                        };
+                    } else {
+                        let paths = child.paths(selection.view_type);
+                        show_checkbox(ui, label, icon, &paths, selection);
+                    }
                 })
                 .body(|ui| {
                     // a stream can also be the prefix of other streams
@@ -186,9 +206,9 @@ fn show_stream_tree(
     }
 }
 
-/// Shows all streams of `model` as a tree with checkboxes for the streams in
-/// `selection`, disabled if there is no selection to edit.
-pub fn show(ui: &mut Ui, model: &Model, selection: Option<&mut BTreeSet<String>>) {
+/// Shows all streams of `model` as a tree with checkboxes for the streams selected for
+/// a view of the given type, disabled if there is no selection to edit.
+pub fn show(ui: &mut Ui, model: &Model, selection: Option<(&mut BTreeSet<String>, ViewType)>) {
     let tree = StreamTree::build(model.streams.iter());
     if tree.children.is_empty() {
         ui.weak("No streams received");
@@ -196,8 +216,11 @@ pub fn show(ui: &mut Ui, model: &Model, selection: Option<&mut BTreeSet<String>>
     }
     let mut unselectable = BTreeSet::new();
     let enabled = selection.is_some();
-    let selection = selection.unwrap_or(&mut unselectable);
-    ui.add_enabled_ui(enabled, |ui| show_stream_tree(ui, &tree, "", selection));
+    let (paths, view_type) = selection.unwrap_or((&mut unselectable, ViewType::Plot));
+    let mut selection = Selection { paths, view_type };
+    ui.add_enabled_ui(enabled, |ui| {
+        show_stream_tree(ui, &tree, "", &mut selection);
+    });
 }
 
 #[cfg(test)]
@@ -276,7 +299,7 @@ mod tests {
         ];
         let tree = StreamTree::build(streams.iter());
         assert_eq!(
-            tree.children["imu"].paths(),
+            tree.children["imu"].paths(ViewType::Plot),
             ["imu.acc[0]", "imu.acc[1]", "imu.ok"]
         );
     }
