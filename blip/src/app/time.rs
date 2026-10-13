@@ -6,6 +6,8 @@ const NANOS_PER_SECOND: f64 = 1.0e9;
 const MIN_WINDOW: f64 = 1.0e-3;
 const MAX_WINDOW: f64 = 1.0e6;
 const MIN_THUMB_WIDTH: f32 = 6.0;
+/// Relative change of the window length per scrolled point.
+const WINDOW_SCROLL_SPEED: f32 = 0.005;
 
 pub fn timestamp_to_seconds(timestamp: u64) -> f64 {
     timestamp as f64 / NANOS_PER_SECOND
@@ -110,31 +112,25 @@ impl TimeRange {
                     .speed(speed),
             );
 
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(self.position_text());
-                self.timeline_ui(ui);
-            });
+            self.timeline_ui(ui);
         });
     }
 
-    /// The window and the span of the collected data relative to the first data.
-    fn position_text(&self) -> String {
-        match (self.span, self.range()) {
-            (Some((first, latest)), Some((start, end))) => format!(
-                "{:.1} – {:.1} s of {:.1} s",
-                (start - first).max(0.0),
-                end - first,
-                latest - first
-            ),
-            _ => "no data".to_owned(),
-        }
-    }
-
     /// A track over the collected data with a thumb for the shown window. Dragging the
-    /// thumb moves the window, clicking the track centers the window there.
+    /// thumb moves the window, clicking the track centers the window there, and
+    /// scrolling over it changes the window length.
     fn timeline_ui(&mut self, ui: &mut egui::Ui) {
         let size = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
+
+        if response.hovered() {
+            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
+            if scroll != 0.0 {
+                // scrolling up shows a shorter window
+                self.window = (self.window * f64::from(-scroll * WINDOW_SCROLL_SPEED).exp())
+                    .clamp(MIN_WINDOW, MAX_WINDOW);
+            }
+        }
 
         let Some((first, latest)) = self.span else {
             ui.painter().rect_filled(rect, 3.0, ui.visuals().extreme_bg_color);

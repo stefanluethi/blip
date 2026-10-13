@@ -62,8 +62,9 @@ All views show the same time range, set in the bottom panel:
   current time.
 * **Window** sets the length of the range.
 * The timeline spans all collected data, its thumb shows the range. Drag the
-  thumb to move the range, or click the timeline to center the range there.
-  Moving the range to the end of the data returns to live mode.
+  thumb to move the range, click the timeline to center the range there, or
+  scroll over it to change the window. Moving the range to the end of the
+  data returns to live mode.
 
 Dragging a plot moves the range, and zooming a plot with :kbd:`Ctrl` and the
 mouse wheel changes the window. The y axes fit the data in the range.
