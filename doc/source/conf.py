@@ -1,6 +1,8 @@
 """Sphinx configuration for the blip user documentation."""
 
+import re
 from datetime import date
+from pathlib import Path
 
 import matplotlib.style
 
@@ -30,15 +32,29 @@ graphviz_output_format = "svg"
 html_theme = "shibuya"
 html_title = "blip documentation"
 html_static_path = ["_static"]
-# Fira Sans for text, Fira Code for code; fonts.css maps them onto shibuya's
-# font variables. needs.css adapts sphinx-needs to shibuya's dark mode.
-html_css_files = [
-    "https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700"
-    "&family=Fira+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500"
-    "&display=swap",
-    "fonts.css",
-    "needs.css",
-]
+# Fira Sans for text, Fira Code for code; fonts.css self-hosts them (no Google
+# Fonts, for GDPR) and maps them onto shibuya's font variables.
+# _templates/partials/webfonts.html drops shibuya's own Google Fonts link.
+# needs.css adapts sphinx-needs to shibuya's dark mode.
+html_css_files = ["fonts.css", "needs.css"]
+
+
+def _drop_cdn_fonts(app, exception):
+    """Remove shibuya's flag emoji @font-face, which loads from jsdelivr."""
+    if exception or app.builder.format != "html":
+        return
+    css = Path(app.outdir, "_static", "shibuya.css")
+    if css.exists():
+        text = css.read_text(encoding="utf-8")
+        css.write_text(
+            re.sub(r"@font-face\{[^}]*cdn\.jsdelivr\.net[^}]*\}", "", text),
+            encoding="utf-8",
+        )
+
+
+def setup(app):
+    app.connect("build-finished", _drop_cdn_fonts)
+
 
 # -- sphinx-needs ------------------------------------------------------------
 # Requirement hierarchy:
