@@ -1,6 +1,7 @@
 use crate::app::model::Model;
 use crate::app::model::streams::{Samples, Stream, element_path};
-use egui::Ui;
+use egui::{RichText, Ui};
+use egui_phosphor::regular::{BRACKETS_CURLY, BRACKETS_SQUARE, HASH, TEXT_AA};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Arrays with up to this many elements list each element for selection.
@@ -43,14 +44,28 @@ impl<'a> StreamTree<'a> {
     }
 }
 
+/// The icon of the type of `samples`.
+fn type_icon(samples: &Samples) -> &'static str {
+    match samples {
+        Samples::Empty | Samples::Numbers { .. } => HASH,
+        Samples::Strings(_) => TEXT_AA,
+        Samples::Arrays { .. } => BRACKETS_SQUARE,
+    }
+}
+
+/// Shows a checkbox labelled `label` after `icon` for selecting `path`.
 fn show_checkbox(
     ui: &mut Ui,
+    icon: Option<RichText>,
     label: &str,
     path: &str,
     selection: &mut BTreeSet<String>,
 ) -> egui::Response {
     let mut selected = selection.contains(path);
-    let response = ui.checkbox(&mut selected, label);
+    let response = match icon {
+        Some(icon) => ui.checkbox(&mut selected, (icon, label)),
+        None => ui.checkbox(&mut selected, label),
+    };
     if response.changed() {
         if selected {
             selection.insert(path.to_owned());
@@ -72,51 +87,44 @@ fn element_indices(shape: &[usize], mut flat_index: usize) -> Vec<usize> {
     indices
 }
 
-/// Shows `stream` labelled `label` with its type: a checkbox, or for an array a
-/// collapsible list of checkboxes for its elements.
+/// Shows `stream` labelled `label` with the icon of its type: a checkbox, or for an
+/// array a collapsible list of checkboxes for its elements.
 fn show_stream(ui: &mut Ui, label: &str, stream: &Stream, selection: &mut BTreeSet<String>) {
-    let type_label = stream.samples.type_label();
+    let icon = RichText::new(type_icon(&stream.samples)).weak();
+    let hover = format!("{}\n{}", stream.path, stream.samples.type_label());
     let Samples::Arrays { shape, .. } = &stream.samples else {
-        ui.horizontal(|ui| {
-            let response = show_checkbox(ui, label, &stream.path, selection);
-            ui.weak(type_label);
-            let hover = match stream.samples {
-                Samples::Strings(_) => format!(
-                    "{}\nStrings are shown in the plot tooltip only",
-                    stream.path
-                ),
-                _ => stream.path.clone(),
-            };
-            response.on_hover_text(hover);
-        });
+        let hover = match stream.samples {
+            Samples::Strings(_) => format!("{hover}\nStrings are shown in the plot tooltip only"),
+            _ => hover,
+        };
+        show_checkbox(ui, Some(icon), label, &stream.path, selection).on_hover_text(hover);
         return;
     };
 
     let element_count: usize = shape.iter().product();
     if element_count > MAX_LISTED_ELEMENTS {
         ui.horizontal(|ui| {
+            ui.label(icon);
             ui.label(label);
-            ui.weak(type_label);
         })
         .response
         .on_hover_text(format!(
-            "{}\nArrays of more than {MAX_LISTED_ELEMENTS} elements cannot be plotted yet",
-            stream.path
+            "{hover}\nArrays of more than {MAX_LISTED_ELEMENTS} elements cannot be plotted yet"
         ));
         return;
     }
     let id = ui.make_persistent_id(("stream_array", &stream.path));
     egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false)
         .show_header(ui, |ui| {
-            ui.label(label).on_hover_text(&stream.path);
-            ui.weak(type_label);
+            ui.label(icon);
+            ui.label(label).on_hover_text(hover);
         })
         .body(|ui| {
             for flat_index in 0..element_count {
                 let indices = element_indices(shape, flat_index);
                 let path = element_path(&stream.path, &indices);
                 let label = element_path("", &indices);
-                show_checkbox(ui, &label, &path, selection).on_hover_text(&path);
+                show_checkbox(ui, None, &label, &path, selection).on_hover_text(&path);
             }
         });
 }
@@ -130,23 +138,24 @@ fn show_stream_tree(
 ) {
     for (segment, child) in &node.children {
         let child_prefix = format!("{prefix}/{segment}");
+        let label = segment.strip_prefix('.').unwrap_or(segment);
         if child.children.is_empty() {
             if let Some(stream) = child.stream {
-                show_stream(ui, segment, stream, selection);
+                show_stream(ui, label, stream, selection);
             }
         } else {
             let id = ui.make_persistent_id(("stream_tree", &child_prefix));
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
                 .show_header(ui, |ui| {
-                    ui.label(*segment);
                     if child.is_record() {
-                        ui.weak("record");
+                        ui.weak(BRACKETS_CURLY);
                     }
+                    ui.label(label);
                 })
                 .body(|ui| {
                     // a stream can also be the prefix of other streams
                     if let Some(stream) = child.stream {
-                        show_stream(ui, segment, stream, selection);
+                        show_stream(ui, label, stream, selection);
                     }
                     show_stream_tree(ui, child, &child_prefix, selection);
                 });
