@@ -1,0 +1,95 @@
+# Builds the blip web app (trunk) and the Sphinx documentation and publishes
+# them together on GitHub Pages: the app at the site root, the docs under /docs/.
+#
+# Pull requests only build (to catch breakage); pushes to main also deploy.
+# One-time setup: Settings → Pages → Build and deployment → Source: GitHub Actions.
+
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TRUNK_VERSION: v0.21.14
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v6
+        # Fails on pull requests from forks or before Pages is enabled; the
+        # base path then falls back to "/<repo>" below.
+        continue-on-error: true
+
+      # -- blip web app ------------------------------------------------------
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --target wasm32-unknown-unknown
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install trunk
+        run: |
+          curl -sSfL "https://github.com/trunk-rs/trunk/releases/download/${TRUNK_VERSION}/trunk-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar -xz -C "$HOME/.cargo/bin"
+          trunk --version
+
+      - name: Build blip
+        working-directory: blip
+        env:
+          BASE_PATH: ${{ steps.pages.outputs.base_path || format('/{0}', github.event.repository.name) }}
+        run: trunk build --release --public-url "${BASE_PATH}/" --dist ../site
+
+      # -- documentation -----------------------------------------------------
+
+      - name: Install Graphviz
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends graphviz
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          working-directory: doc
+          enable-cache: true
+
+      - name: Build documentation
+        working-directory: doc
+        run: make html
+
+      - name: Assemble site
+        run: cp -r doc/_build/html site/docs
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages-deploy
+      cancel-in-progress: false
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

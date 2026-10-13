@@ -7,6 +7,9 @@ browser (WASM) or as a native app, built with [egui](https://github.com/emilk/eg
 A small Python bridge connects an embedded target (or a simulator) to blip over
 a WebSocket, using CBOR-encoded messages.
 
+Try the web app at <https://stefanluethi.github.io/blip/> and read the
+documentation at <https://stefanluethi.github.io/blip/docs/>.
+
 ```
 embedded target  <-- TCP / UDP -->  bridge (Python)  <-- WebSocket / CBOR -->  blip (Rust)
 ```
