@@ -128,7 +128,7 @@ impl State {
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                egui::widgets::global_theme_preference_buttons(ui);
+                theme_button(ui);
                 egui::warn_if_debug_build(ui);
             });
         });
@@ -248,6 +248,20 @@ impl eframe::App for App {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);
         eframe::set_value(storage, LAYOUT_KEY, &self.layout.to_file());
+    }
+}
+
+/// A button showing the theme preference, clicking it switches to the next one.
+fn theme_button(ui: &mut egui::Ui) {
+    use egui::ThemePreference;
+    let preference = ui.ctx().options(|options| options.theme_preference);
+    let (icon, hint, next) = match preference {
+        ThemePreference::Light => (egui_phosphor::regular::SUN, "Light theme", ThemePreference::Dark),
+        ThemePreference::Dark => (egui_phosphor::regular::MOON, "Dark theme", ThemePreference::System),
+        ThemePreference::System => (egui_phosphor::regular::CIRCLE_HALF, "System theme", ThemePreference::Light),
+    };
+    if ui.button(icon).on_hover_text(hint).clicked() {
+        ui.ctx().set_theme(next);
     }
 }
 
