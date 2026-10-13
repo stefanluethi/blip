@@ -32,6 +32,16 @@ Test Cases
    records, arrays, integers, bools, strings and nulls arrive as plain CBOR
    items.
 
+.. test:: Views compute what they show
+   :id: TEST_BLIP_VIEWS
+   :status: implemented
+   :component: blip
+   :verifies: REQ_VIS_STATES, REQ_VIS_TABLE, REQ_VIS_XY, REQ_VIS_HEATMAP
+
+   ``blip/src/app/view`` unit tests -- merge equal values into state runs
+   with gaps at nulls, hide collapsed rows of the table, pair samples with the
+   current sample of the x stream, and sample arrays over time for heatmaps.
+
 .. test:: Stream values encode as plain CBOR
    :id: TEST_PROTO_DATA
    :status: implemented

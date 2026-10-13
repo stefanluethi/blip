@@ -22,6 +22,42 @@ Visualisation
    blip shall display received ``Log`` messages in a table showing timestamp,
    level, component and message.
 
+.. req:: Show states over time
+   :id: REQ_VIS_STATES
+   :status: implemented
+   :component: blip
+   :satisfies: STK_LIVE_OBSERVE
+
+   blip shall display string, bool and integer streams over time as a row of
+   coloured bands, one band for each run of equal values.
+
+.. req:: Show values in a table
+   :id: REQ_VIS_TABLE
+   :status: implemented
+   :component: blip
+   :satisfies: STK_LIVE_OBSERVE
+
+   blip shall display the values of streams of any type in a table, at the
+   time hovered in another view or else at the end of the shown time range.
+
+.. req:: Plot streams against each other
+   :id: REQ_VIS_XY
+   :status: implemented
+   :component: blip
+   :satisfies: STK_LIVE_OBSERVE
+
+   blip shall plot numeric streams against another numeric stream, pairing
+   each sample with the sample of the other stream current at its time.
+
+.. req:: Show arrays as heatmaps
+   :id: REQ_VIS_HEATMAP
+   :status: implemented
+   :component: blip
+   :satisfies: STK_LIVE_OBSERVE
+
+   blip shall display array streams of one dimension as heatmaps over time
+   and arrays of two dimensions as heatmaps at a point in time.
+
 Connectivity
 ------------
 

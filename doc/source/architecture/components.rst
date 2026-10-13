@@ -5,7 +5,7 @@ Components
    :id: ARCH_BLIP
    :status: implemented
    :component: blip
-   :satisfies: REQ_VIS_PLOT, REQ_VIS_LOG, REQ_CONN_WS, REQ_PLAT_WEB, REQ_PLAT_NATIVE, REQ_PERSIST_STATE
+   :satisfies: REQ_VIS_PLOT, REQ_VIS_LOG, REQ_VIS_STATES, REQ_VIS_TABLE, REQ_VIS_XY, REQ_VIS_HEATMAP, REQ_CONN_WS, REQ_PLAT_WEB, REQ_PLAT_NATIVE, REQ_PERSIST_STATE
 
    egui/eframe application compiled to WebAssembly (served by Trunk) or to a
    native binary. Main modules in ``blip/src``:
@@ -19,8 +19,10 @@ Components
    * ``app/layout`` -- the layout of the views as a tree of groups, shown
      with ``egui_tiles``, the layout panel to edit it and its versioned
      saved form.
-   * ``app/view`` -- views: time-series ``plot`` and ``log_table``, and the
-     ``stream_selection`` of the selected plot.
+   * ``app/view`` -- views: time-series ``plot``, ``states`` over time,
+     ``table`` of values, ``xy`` plot, ``heatmap`` of arrays and
+     ``log_table``; ``time_axis`` shared by the views over time, and the
+     ``stream_selection`` of the selected view.
 
 .. arch:: proto crate
    :id: ARCH_PROTO
