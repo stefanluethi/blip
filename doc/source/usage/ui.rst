@@ -17,10 +17,12 @@ Top panel
 
 Left panel
    The **Streams** of the selected plot, as a tree that branches at each
-   ``/`` of the path and at the fields of records, with the type of each
-   stream, and the **Layout** of the views below. Drag the border between them
-   to resize them. Arrays list their elements, e.g. ``adc[0]``, if they have
-   at most 16; larger arrays cannot be plotted yet.
+   ``/`` of the path, with the type of each stream, and the **Layout** of the
+   views below. Drag the border between them to resize them. The fields of a
+   record are separate streams joined to its path with ``.``, e.g.
+   ``imu.acc``, listed below the record as ``.acc``. Arrays list their
+   elements, e.g. ``imu.acc[0]``, if they have at most 16; larger arrays
+   cannot be plotted yet.
 
 Center
    The views, laid out as edited in the layout panel.

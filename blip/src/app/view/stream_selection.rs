@@ -6,11 +6,13 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Arrays with up to this many elements list each element for selection.
 const MAX_LISTED_ELEMENTS: usize = 16;
 
-/// Stream paths split into a tree at each "/".
+/// Stream paths split into a tree at each "/", and at each "." between the fields of
+/// a record.
 #[derive(Default)]
 struct StreamTree<'a> {
     /// The stream if one ends at this node.
     stream: Option<&'a Stream>,
+    /// Children by path segment, record fields with their leading ".", e.g. ".acc".
     children: BTreeMap<&'a str, StreamTree<'a>>,
 }
 
@@ -18,13 +20,26 @@ impl<'a> StreamTree<'a> {
     fn build(streams: impl Iterator<Item = &'a Stream>) -> Self {
         let mut root = Self::default();
         for stream in streams {
+            let path = stream.path.as_str();
+            let (name, fields) = path.split_at(stream.fields_start.unwrap_or(path.len()));
+            let field_starts = fields.match_indices('.').map(|(start, _)| start);
+            let field_ends = field_starts.clone().skip(1).chain([fields.len()]);
+            let field_segments = field_starts
+                .zip(field_ends)
+                .map(|(start, end)| &fields[start..end]);
+
             let mut node = &mut root;
-            for segment in stream.path.split('/').filter(|segment| !segment.is_empty()) {
+            let segments = name.split('/').filter(|segment| !segment.is_empty());
+            for segment in segments.chain(field_segments) {
                 node = node.children.entry(segment).or_default();
             }
             node.stream = Some(stream);
         }
         root
+    }
+
+    fn is_record(&self) -> bool {
+        self.children.keys().any(|segment| segment.starts_with('.'))
     }
 }
 
@@ -120,10 +135,15 @@ fn show_stream_tree(
                 show_stream(ui, segment, stream, selection);
             }
         } else {
-            egui::CollapsingHeader::new(*segment)
-                .id_salt(("stream_tree", &child_prefix))
-                .default_open(true)
-                .show(ui, |ui| {
+            let id = ui.make_persistent_id(("stream_tree", &child_prefix));
+            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
+                .show_header(ui, |ui| {
+                    ui.label(*segment);
+                    if child.is_record() {
+                        ui.weak("record");
+                    }
+                })
+                .body(|ui| {
                     // a stream can also be the prefix of other streams
                     if let Some(stream) = child.stream {
                         show_stream(ui, segment, stream, selection);
@@ -156,7 +176,7 @@ mod tests {
     fn stream_tree_branches_at_slashes() {
         let streams: Vec<Stream> = ["acc/x", "acc/y", "/cpu", "acc"]
             .into_iter()
-            .map(|path| Stream::new(path.to_owned()))
+            .map(|path| Stream::new(path.to_owned(), None))
             .collect();
         let tree = StreamTree::build(streams.iter());
         assert_eq!(
@@ -175,6 +195,34 @@ mod tests {
                 .stream
                 .map(|stream| stream.path.as_str()),
             Some("/cpu")
+        );
+    }
+
+    #[test]
+    fn stream_tree_branches_at_record_fields() {
+        let streams = [
+            Stream::new("sensors/imu.acc.z".to_owned(), Some(11)),
+            Stream::new("sensors/imu.ok".to_owned(), Some(11)),
+            Stream::new("sensors/v1.2".to_owned(), None),
+        ];
+        let tree = StreamTree::build(streams.iter());
+        let sensors = &tree.children["sensors"];
+        assert_eq!(
+            sensors.children.keys().copied().collect::<Vec<_>>(),
+            ["imu", "v1.2"]
+        );
+        let imu = &sensors.children["imu"];
+        assert!(imu.is_record());
+        assert!(!sensors.is_record());
+        assert_eq!(
+            imu.children.keys().copied().collect::<Vec<_>>(),
+            [".acc", ".ok"]
+        );
+        assert_eq!(
+            imu.children[".acc"].children[".z"]
+                .stream
+                .map(|stream| stream.path.as_str()),
+            Some("sensors/imu.acc.z")
         );
     }
 

@@ -230,14 +230,18 @@ pub struct Stream {
     /// Ascending, as values are appended in arrival order.
     pub timestamps: Vec<u64>,
     pub samples: Samples,
+    /// For a field of a record, the index of the `.` in `path` before the first field
+    /// name, e.g. 3 for `imu.acc.z`.
+    pub fields_start: Option<usize>,
     /// Whether a dropped sample was reported, so it is only reported once.
     warned: bool,
 }
 
 impl Stream {
-    pub fn new(path: String) -> Self {
+    pub fn new(path: String, fields_start: Option<usize>) -> Self {
         Self {
             path,
+            fields_start,
             timestamps: vec![],
             samples: Samples::Empty,
             warned: false,
@@ -381,12 +385,13 @@ impl Streams {
     }
 
     pub fn append(&mut self, value: &proto::Value) {
-        self.insert(&value.path, value.timestamp, &value.value);
+        self.insert(&value.path, None, value.timestamp, &value.value);
     }
 
     /// Appends `data` to the stream at `path`, or to the streams of its fields if it is
-    /// a record.
-    fn insert(&mut self, path: &str, timestamp: u64, data: &Data) {
+    /// a record. The fields of a record are joined to its path with `.`, e.g. `imu.acc`.
+    /// `fields_start` is the [`Stream::fields_start`] of a new stream.
+    fn insert(&mut self, path: &str, fields_start: Option<usize>, timestamp: u64, data: &Data) {
         match data {
             Data::Record(fields)
                 if self
@@ -396,8 +401,14 @@ impl Streams {
             {
                 // a stream that only received nulls so far turns out to be a record
                 self.map.remove(path);
+                let fields_start = fields_start.unwrap_or(path.len());
                 for (name, value) in fields {
-                    self.insert(&format!("{path}/{name}"), timestamp, value);
+                    self.insert(
+                        &format!("{path}.{name}"),
+                        Some(fields_start),
+                        timestamp,
+                        value,
+                    );
                 }
             }
             Data::Null
@@ -406,14 +417,14 @@ impl Streams {
                 // a missing record leaves a gap in all its fields
                 let fields: Vec<String> = self.field_paths(path).map(str::to_owned).collect();
                 for field in fields {
-                    self.insert(&field, timestamp, data);
+                    self.insert(&field, None, timestamp, data);
                 }
             }
             _ => {
                 let stream = self
                     .map
                     .entry(path.to_owned())
-                    .or_insert_with(|| Stream::new(path.to_owned()));
+                    .or_insert_with(|| Stream::new(path.to_owned(), fields_start));
                 if let Err(error) = stream.push(timestamp, data)
                     && !stream.warned
                 {
@@ -426,9 +437,9 @@ impl Streams {
         }
     }
 
-    /// The paths of the streams below `path`, e.g. the fields of a record.
+    /// The paths of the fields of the record at `path`, also of nested records.
     fn field_paths(&self, path: &str) -> impl Iterator<Item = &str> {
-        let prefix = format!("{path}/");
+        let prefix = format!("{path}.");
         self.map
             .range(prefix.clone()..)
             .map(|(path, _)| path.as_str())
@@ -499,12 +510,22 @@ mod tests {
         ]);
         let streams = streams(&[("imu", imu)]);
         let paths: Vec<&str> = streams.iter().map(|stream| stream.path.as_str()).collect();
-        assert_eq!(paths, ["imu/acc/z", "imu/x"]);
-        assert_values(values(&streams, "imu/x"), &[0.5]);
+        assert_eq!(paths, ["imu.acc.z", "imu.x"]);
+        assert_values(values(&streams, "imu.x"), &[0.5]);
         assert_eq!(
-            streams.series("imu/acc/z").unwrap().kind,
+            streams.series("imu.acc.z").unwrap().kind,
             NumberKind::Integer
         );
+    }
+
+    #[test]
+    fn fields_start_marks_where_record_fields_begin() {
+        let imu = record(&[("acc", record(&[("z", Data::Uint(9))]))]);
+        let streams = streams(&[("sensors/imu", imu), ("v1.2", Data::Float(1.0))]);
+        let fields_start = |path| streams.get(path).unwrap().fields_start;
+        assert_eq!(fields_start("sensors/imu.acc.z"), Some(11));
+        // a dot in a path that is not a record is part of the name
+        assert_eq!(fields_start("v1.2"), None);
     }
 
     #[test]
@@ -538,7 +559,7 @@ mod tests {
             ("a", Data::Float(1.0)),
             ("a", record(&[("x", Data::Float(2.0))])),
         ]);
-        assert!(streams.get("a/x").is_none());
+        assert!(streams.get("a.x").is_none());
         assert!(streams.get("a").unwrap().warned);
     }
 
@@ -565,8 +586,8 @@ mod tests {
         let streams = streams(&[("imu", Data::Null), ("imu", imu), ("imu", Data::Null)]);
         // the leading null is dropped with the stream it created
         assert!(streams.get("imu").is_none());
-        assert_values(values(&streams, "imu/x"), &[1.0, f64::NAN]);
-        assert_values(values(&streams, "imu/y"), &[2.0, f64::NAN]);
+        assert_values(values(&streams, "imu.x"), &[1.0, f64::NAN]);
+        assert_values(values(&streams, "imu.y"), &[2.0, f64::NAN]);
     }
 
     #[test]
