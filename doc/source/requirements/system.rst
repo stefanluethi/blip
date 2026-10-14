@@ -38,7 +38,7 @@ Visualisation
    :satisfies: STK_LIVE_OBSERVE
 
    blip shall display the values of streams of any type in a table, at the
-   time hovered in another view or else at the end of the shown time range.
+   time of the time cursor.
 
 .. req:: Plot streams against each other
    :id: REQ_VIS_XY
@@ -57,6 +57,15 @@ Visualisation
 
    blip shall display array streams of one dimension as heatmaps over time
    and arrays of two dimensions as heatmaps at a point in time.
+
+.. req:: Time cursor
+   :id: REQ_VIS_CURSOR
+   :status: implemented
+   :component: blip
+   :satisfies: STK_LIVE_OBSERVE
+
+   blip shall show one time cursor in all views over time, which the user can
+   set and drag, and which stays at the end of the shown time range until set.
 
 Connectivity
 ------------

@@ -124,7 +124,8 @@ impl Plot {
     /// Shows the shared time range of `time`, and applies panning and zooming of the
     /// plot to it.
     fn show_plot(&self, model: &Model, time: &mut TimeRange, ui: &mut egui::Ui) {
-        let plot = time_axis::plot(ui.id().with("plot"), time)
+        let id = ui.id().with("plot");
+        let plot = time_axis::plot(id, time)
             .legend(egui_plot::Legend::default())
             .custom_y_axes(vec![
                 egui_plot::AxisHints::new_y()
@@ -132,7 +133,7 @@ impl Plot {
                     .min_thickness(50.0),
             ]);
 
-        let response = time_axis::show(plot, ui, time, |plot_ui, axis| {
+        let response = time_axis::show(id, plot, ui, time, |plot_ui, axis| {
             if let Some(range) = axis.range
                 && let Some((min_y, max_y)) = self.range_y(model, range)
             {

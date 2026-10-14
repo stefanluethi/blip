@@ -166,7 +166,7 @@ impl Xy {
             .as_deref()
             .and_then(|path| model.streams.series(path));
         let range = time.range();
-        let hovered = time.hovered();
+        let cursor = time.cursor();
         let ring_color = ui.visuals().strong_text_color();
         plot.show(ui, |plot_ui| {
             let (Some(x), Some(range)) = (x, range) else {
@@ -180,12 +180,12 @@ impl Xy {
                 let points = thin_out(pair(x, y, within(y.timestamps, range)), MAX_POINTS);
                 Self::plot_trail(name, &points, color, plot_ui);
 
-                // where the stream was at the time hovered in another view
-                let at_hovered = hovered
+                // where the stream was at the cursor
+                let at_cursor = cursor
                     .and_then(|t| index_at(y.timestamps, t))
                     .map(|index| pair(x, y, index..index + 1)[0])
                     .filter(is_point);
-                if let Some(point) = at_hovered {
+                if let Some(point) = at_cursor {
                     plot_ui.points(
                         egui_plot::Points::new("", vec![point])
                             .color(ring_color)

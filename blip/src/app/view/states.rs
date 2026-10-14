@@ -254,7 +254,8 @@ impl States {
         let rows = names.len();
         // the first stream is the top row
         let row_y = move |row: usize| (rows - 1 - row) as f64;
-        let plot = time_axis::plot(ui.id().with("states"), time)
+        let id = ui.id().with("states");
+        let plot = time_axis::plot(id, time)
             .show_grid([true, false])
             .y_grid_spacer(move |_input| {
                 (0..rows)
@@ -280,7 +281,7 @@ impl States {
 
         let latest = time.latest();
         let visuals = ui.visuals().clone();
-        let response = time_axis::show(plot, ui, time, |plot_ui, axis| {
+        let response = time_axis::show(id, plot, ui, time, |plot_ui, axis| {
             plot_ui.set_plot_bounds_y(-0.5..=rows.max(1) as f64 - 0.5);
             let (Some(range), Some(latest)) = (axis.range, latest) else {
                 return;

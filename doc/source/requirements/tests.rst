@@ -42,6 +42,16 @@ Test Cases
    with gaps at nulls, hide collapsed rows of the table, pair samples with the
    current sample of the x stream, and sample arrays over time for heatmaps.
 
+.. test:: Time cursor is set and dragged
+   :id: TEST_BLIP_CURSOR
+   :status: implemented
+   :component: blip
+   :verifies: REQ_VIS_CURSOR
+
+   ``blip/src/app/time.rs`` and ``blip/src/app/view/time_axis.rs`` tests --
+   keep the cursor at the end of the range until set, stop live mode when it
+   is set, and click and drag it in a plot without panning the plot.
+
 .. test:: Stream values encode as plain CBOR
    :id: TEST_PROTO_DATA
    :status: implemented

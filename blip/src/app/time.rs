@@ -8,6 +8,10 @@ const MAX_WINDOW: f64 = 1.0e6;
 const MIN_THUMB_WIDTH: f32 = 6.0;
 /// Relative change of the window length per scrolled point.
 const WINDOW_SCROLL_SPEED: f32 = 0.005;
+/// Distance in points from the cursor line within which it can be grabbed.
+const CURSOR_GRAB_DISTANCE: f32 = 5.0;
+/// Width and height of the handle on top of the cursor line in points.
+const CURSOR_HANDLE_SIZE: egui::Vec2 = egui::vec2(10.0, 6.0);
 
 pub fn timestamp_to_seconds(timestamp: u64) -> f64 {
     timestamp as f64 / NANOS_PER_SECOND
@@ -85,12 +89,9 @@ pub struct TimeRange {
     /// Times of the first and the newest collected data in seconds.
     #[serde(skip)]
     span: Option<(f64, f64)>,
-    /// Time in seconds hovered in a view in the last frame, shown by all views.
+    /// Time of the cursor in seconds, or `None` to keep it at the end of the window.
     #[serde(skip)]
-    hovered: Option<f64>,
-    /// Time in seconds hovered in a view in this frame.
-    #[serde(skip)]
-    next_hovered: Option<f64>,
+    cursor: Option<f64>,
 }
 
 impl Default for TimeRange {
@@ -99,44 +100,46 @@ impl Default for TimeRange {
             window: 20.0,
             end: None,
             span: None,
-            hovered: None,
-            next_hovered: None,
+            cursor: None,
         }
     }
 }
 
 impl TimeRange {
-    /// Updates the span of the collected data and the hovered time, call once per frame
-    /// before the views.
-    pub fn update(&mut self, model: &Model, ctx: &egui::Context) {
+    /// Updates the span of the collected data, call once per frame before the views.
+    pub fn update(&mut self, model: &Model) {
         self.span = model
             .time_span()
             .map(|(first, latest)| (timestamp_to_seconds(first), timestamp_to_seconds(latest)));
         if self.span.is_none() {
             self.end = None;
+            self.cursor = None;
         }
-        let hovered = self.next_hovered.take();
-        if hovered != self.hovered {
-            // the views drawn before the hovering one show it in the next frame
-            ctx.request_repaint();
-        }
-        self.hovered = hovered;
     }
 
-    /// Marks `t` seconds as hovered, for the other views to show it too.
-    pub fn hover(&mut self, t: f64) {
-        self.next_hovered = Some(t);
-    }
-
-    /// The time in seconds hovered in a view, if any.
-    pub fn hovered(&self) -> Option<f64> {
-        self.hovered
-    }
-
-    /// The time in seconds of the values shown by views that show one sample per
-    /// stream: the hovered time, or else the end of the window.
+    /// The time of the cursor in seconds, shown by all views and the time of the values
+    /// of views that show one sample per stream: where the user put it, or else the end
+    /// of the window.
     pub fn cursor(&self) -> Option<f64> {
-        self.hovered.or_else(|| self.range().map(|(_, end)| end))
+        self.cursor.or_else(|| self.range().map(|(_, end)| end))
+    }
+
+    /// Puts the cursor at `t` seconds within the collected data. This stops following
+    /// the newest data, so the cursor stays in the window.
+    pub fn set_cursor(&mut self, t: f64) {
+        let Some((first, latest)) = self.span else {
+            return;
+        };
+        if self.is_live() {
+            self.end = Some(latest);
+        }
+        self.cursor = Some(t.clamp(first, latest));
+    }
+
+    /// Follows the newest data with the window and the cursor.
+    fn go_live(&mut self) {
+        self.end = None;
+        self.cursor = None;
     }
 
     /// Time of the newest collected data in seconds.
@@ -178,14 +181,15 @@ impl TimeRange {
     }
 
     /// Moves the end of the window to `end` seconds, switches to live mode if that is
-    /// at or after the newest data.
+    /// at or after the newest data and the cursor is not set.
     fn set_end(&mut self, end: f64) {
-        self.end = match self.span {
+        match self.span {
             Some((first, latest)) if end < latest => {
-                Some(end.max(first + self.window.min(latest - first)))
+                self.end = Some(end.max(first + self.window.min(latest - first)));
             }
-            _ => None,
-        };
+            Some((_, latest)) if self.cursor.is_some() => self.end = Some(latest),
+            _ => self.go_live(),
+        }
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
@@ -198,11 +202,11 @@ impl TimeRange {
                 .on_hover_text("Follow the newest data")
                 .clicked()
             {
-                self.end = if self.is_live() {
-                    self.span.map(|(_, latest)| latest)
+                if self.is_live() {
+                    self.end = self.span.map(|(_, latest)| latest);
                 } else {
-                    None
-                };
+                    self.go_live();
+                }
             }
 
             ui.label("Window:");
@@ -218,11 +222,14 @@ impl TimeRange {
         });
     }
 
-    /// A track over the collected data with a thumb for the shown window. Dragging the
-    /// thumb moves the window, clicking the track centers the window there, and
-    /// scrolling over it changes the window length.
+    /// A track over the collected data with a thumb for the shown window and the
+    /// cursor. Dragging the thumb moves the window, dragging the cursor moves the cursor,
+    /// clicking the track centers the window there, and scrolling over it changes the
+    /// window length.
     fn timeline_ui(&mut self, ui: &mut egui::Ui) {
         let size = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
+        let id = ui.id().with("timeline");
+        let cursor_grabbed = cursor_grabbed(ui, id);
         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
 
         if response.hovered() {
@@ -250,13 +257,17 @@ impl TimeRange {
             ))
         };
 
-        if let (Some(pos), Some(range)) = (response.interact_pointer_pos(), self.range()) {
+        let t_at = |x: f32| first + ((x - rect.left()) / rect.width()) as f64 * duration;
+        if cursor_grabbed {
+            if let Some(pos) = ui.ctx().pointer_interact_pos() {
+                self.set_cursor(t_at(pos.x));
+            }
+        } else if let (Some(pos), Some(range)) = (response.interact_pointer_pos(), self.range()) {
             let (_, end) = range;
             let jump =
                 (response.clicked() || response.drag_started()) && !thumb_at(range).contains(pos);
             if jump {
-                let t = first + ((pos.x - rect.left()) / rect.width()) as f64 * duration;
-                self.set_end(t + self.window / 2.0);
+                self.set_end(t_at(pos.x) + self.window / 2.0);
             } else if response.dragged() {
                 self.set_end(end + (response.drag_delta().x / rect.width()) as f64 * duration);
             }
@@ -275,7 +286,89 @@ impl TimeRange {
                 egui::StrokeKind::Inside,
             );
         }
+        let cursor_x = self.cursor().map(x_at);
+        show_cursor(ui, id, rect, cursor_x, cursor_grabbed);
     }
+}
+
+/// Where the cursor line of a time plot or the timeline was shown, to grab it.
+#[derive(Clone, Copy)]
+struct CursorLine {
+    /// The rect of the plot or the timeline.
+    rect: egui::Rect,
+    x: Option<f32>,
+    /// Whether the line is dragged.
+    grabbed: bool,
+}
+
+impl CursorLine {
+    fn is_near(&self, pos: egui::Pos2) -> bool {
+        self.rect.contains(pos)
+            && self
+                .x
+                .is_some_and(|x| (pos.x - x).abs() <= CURSOR_GRAB_DISTANCE)
+    }
+}
+
+/// Whether the cursor line shown with [`show_cursor`] under `id` is dragged: from a
+/// press near it until the release. Call before the plot or timeline handles the
+/// pointer, so it does not also pan.
+pub fn cursor_grabbed(ui: &egui::Ui, id: egui::Id) -> bool {
+    let Some(mut line) = ui.data(|data| data.get_temp::<CursorLine>(id)) else {
+        return false;
+    };
+    let (pressed, down, origin) = ui.input(|input| {
+        let pointer = &input.pointer;
+        (
+            pointer.primary_pressed(),
+            pointer.primary_down(),
+            pointer.press_origin(),
+        )
+    });
+    if pressed {
+        line.grabbed = origin.is_some_and(|origin| line.is_near(origin))
+            // not on a popup above it
+            && origin
+                .and_then(|origin| ui.ctx().layer_id_at(origin))
+                .is_none_or(|layer| layer == ui.layer_id());
+    } else if !down {
+        line.grabbed = false;
+    }
+    ui.data_mut(|data| data.insert_temp(id, line));
+    line.grabbed
+}
+
+/// Draws the cursor line at `x` in `rect` with a handle on top, and remembers it under
+/// `id` for [`cursor_grabbed`].
+pub fn show_cursor(ui: &egui::Ui, id: egui::Id, rect: egui::Rect, x: Option<f32>, grabbed: bool) {
+    let x = x.filter(|x| rect.x_range().contains(*x));
+    let line = CursorLine { rect, x, grabbed };
+    ui.data_mut(|data| data.insert_temp(id, line));
+    let Some(x) = x else {
+        return;
+    };
+    let hovered = ui
+        .ctx()
+        .pointer_hover_pos()
+        .is_some_and(|pos| line.is_near(pos) && ui.rect_contains_pointer(rect));
+    if grabbed || hovered {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+    }
+
+    let color = ui.visuals().selection.stroke.color;
+    let width = if grabbed || hovered { 2.0 } else { 1.5 };
+    let painter = ui.painter_at(rect);
+    painter.vline(x, rect.y_range(), egui::Stroke::new(width, color));
+    let (half_width, height) = (CURSOR_HANDLE_SIZE.x / 2.0, CURSOR_HANDLE_SIZE.y);
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            egui::pos2(x - half_width, rect.top()),
+            egui::pos2(x + half_width, rect.top()),
+            egui::pos2(x, rect.top() + height),
+        ],
+        color,
+        egui::Stroke::NONE,
+    ));
 }
 
 #[cfg(test)]
@@ -337,11 +430,35 @@ mod tests {
     }
 
     #[test]
-    fn cursor_is_the_hovered_time_or_the_window_end() {
+    fn cursor_is_at_the_window_end_until_set() {
         let mut time = time_range(100.0, 150.0, 20.0);
         assert_eq!(time.cursor(), Some(150.0));
-        time.hovered = Some(140.0);
+        time.pan_zoom(120.0, 140.0);
         assert_eq!(time.cursor(), Some(140.0));
+        time.set_cursor(125.0);
+        assert_eq!(time.cursor(), Some(125.0));
+        time.set_cursor(10.0);
+        assert_eq!(time.cursor(), Some(100.0));
+    }
+
+    #[test]
+    fn setting_the_cursor_stops_live_mode_until_going_live() {
+        let mut time = time_range(100.0, 150.0, 20.0);
+        time.set_cursor(140.0);
+        assert!(!time.is_live());
+        assert_eq!(time.range(), Some((130.0, 150.0)));
+        // newer data does not move the window away from the cursor
+        time.span = Some((100.0, 160.0));
+        assert_eq!(time.range(), Some((130.0, 150.0)));
+        assert_eq!(time.cursor(), Some(140.0));
+
+        // until going live, also by panning to the end
+        time.pan_zoom(145.0, 165.0);
+        assert!(!time.is_live());
+        assert_eq!(time.range(), Some((140.0, 160.0)));
+        time.go_live();
+        assert!(time.is_live());
+        assert_eq!(time.cursor(), Some(160.0));
     }
 
     #[test]

@@ -76,6 +76,13 @@ All views show the same time range, set in the bottom panel:
   scroll over it to change the window. Moving the range to the end of the
   data returns to live mode.
 
+The time cursor is a vertical line with a handle on top, shown in all plots
+over time and on the timeline. The table, the heatmap at the cursor and the
+marker of the XY view show the values at its time. It stays at the end of the
+range until it is set: click a plot to put it there, or drag it in a plot or
+on the timeline. Setting it stops live mode until **Live** is pressed, which
+returns the cursor to the end of the range.
+
 The time axes show the timestamps as local time of day, or as time since boot
 if they are too small to be a date (before 2001).
 

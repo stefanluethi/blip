@@ -246,14 +246,15 @@ impl Heatmap {
         self.fitted_range = value_range(&values);
         let texture = (!values.is_empty()).then(|| self.texture(ui.ctx(), [columns, len], &values));
 
-        let plot = time_axis::plot(ui.id().with("heatmap"), time)
+        let id = ui.id().with("heatmap");
+        let plot = time_axis::plot(id, time)
             .width(size.x)
             .height(size.y)
             .show_grid(false)
             .y_axis_label("index")
             .y_grid_spacer(index_spacer)
             .y_axis_formatter(index_formatter(false));
-        let response = time_axis::show(plot, ui, time, move |plot_ui, axis| {
+        let response = time_axis::show(id, plot, ui, time, move |plot_ui, axis| {
             plot_ui.set_plot_bounds_y(-0.5..=len as f64 - 0.5);
             if let (Some(texture), Some((start, end))) = (texture, axis.range) {
                 let center = egui_plot::PlotPoint::new(

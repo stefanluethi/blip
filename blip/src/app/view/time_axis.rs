@@ -1,6 +1,6 @@
 //! Plots with the shared time range on the x axis, and finding samples by time.
 
-use crate::app::time::{TimeBase, TimeRange, timestamp_to_seconds};
+use crate::app::time::{self, TimeBase, TimeRange, timestamp_to_seconds};
 use std::cmp::min;
 use std::ops::Range;
 
@@ -34,7 +34,7 @@ pub struct TimePlotResponse {
 }
 
 /// A plot with the time on the x axis that can only be panned and zoomed along it, to
-/// show with [`show`].
+/// show with [`show`] under the same `id`.
 pub fn plot<'a>(id: egui::Id, time: &TimeRange) -> egui_plot::Plot<'a> {
     let origin = time.origin();
     let base = time.base();
@@ -53,10 +53,12 @@ pub fn plot<'a>(id: egui::Id, time: &TimeRange) -> egui_plot::Plot<'a> {
         })
 }
 
-/// Shows `plot` over the shared window of `time` with the contents added by `build`,
-/// applies panning and zooming of the plot to `time`, and marks the time hovered in
-/// any view with a vertical line.
+/// Shows `plot` made with [`plot`] under `id` over the shared window of `time` with
+/// the contents added by `build`, and applies panning and zooming of the plot to
+/// `time`. Shows the cursor of `time` as a vertical line, which a click in the plot puts
+/// there and which can be dragged.
 pub fn show<'a>(
+    id: egui::Id,
     plot: egui_plot::Plot<'a>,
     ui: &mut egui::Ui,
     time: &mut TimeRange,
@@ -64,30 +66,25 @@ pub fn show<'a>(
 ) -> TimePlotResponse {
     let axis = TimeAxis::of(time);
     let origin = axis.origin;
-    let hovered_elsewhere = time.hovered();
-    let cursor_color = ui.visuals().weak_text_color();
+    let cursor_id = id.with("cursor");
+    let cursor_grabbed = time::cursor_grabbed(ui, cursor_id);
+    // dragging the cursor does not pan the plot
+    let plot = plot.allow_drag([!cursor_grabbed, false]);
     let response = plot.show(ui, move |plot_ui| {
         if let Some((start, end)) = axis.range {
             plot_ui.set_plot_bounds_x(start - origin..=end - origin);
         }
         build(plot_ui, axis);
-
-        let hovered = plot_ui
+        plot_ui
             .response()
             .hovered()
             .then(|| plot_ui.pointer_coordinate())
-            .flatten();
-        let x = hovered
-            .map(|point| point.x)
-            .or(hovered_elsewhere.map(|t| t - origin));
-        if let Some(x) = x {
-            plot_ui.vline(egui_plot::VLine::new("", x).color(cursor_color).width(1.0));
-        }
-        hovered
+            .flatten()
     });
+    let transform = response.transform;
 
     if let Some((start, end)) = axis.range {
-        let bounds = response.transform.bounds();
+        let bounds = transform.bounds();
         let tolerance = (end - start) * 1.0e-6;
         if (bounds.min()[0] - (start - origin)).abs() > tolerance
             || (bounds.max()[0] - (end - origin)).abs() > tolerance
@@ -97,12 +94,24 @@ pub fn show<'a>(
         }
     }
 
-    let hovered = response.inner.map(|point| point.x + origin);
-    if let Some(t) = hovered {
-        time.hover(t);
+    let set_at = (cursor_grabbed || response.response.clicked())
+        .then(|| ui.ctx().pointer_interact_pos())
+        .flatten();
+    if let Some(pos) = set_at {
+        let cursor = time.cursor();
+        time.set_cursor(transform.value_from_position(pos).x + origin);
+        if time.cursor() != cursor {
+            // the views shown before this one show it in the next frame
+            ui.ctx().request_repaint();
+        }
     }
+    let cursor_x = time
+        .cursor()
+        .map(|t| transform.position_from_point_x(t - origin));
+    time::show_cursor(ui, cursor_id, *transform.frame(), cursor_x, cursor_grabbed);
+
     TimePlotResponse {
-        hovered,
+        hovered: response.inner.map(|point| point.x + origin),
         hovered_y: response.inner.map(|point| point.y),
         response: response.response,
         axis,
@@ -154,6 +163,87 @@ pub fn visible_range(timestamps: &[u64], range_x: Option<(f64, f64)>) -> Range<u
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::model::Model;
+    use crate::app::model::streams::Streams;
+    use egui_kittest::Harness;
+
+    /// A harness showing a time plot of data from 0 to 40 seconds, its state is the
+    /// shared time range.
+    fn time_plot_harness() -> Harness<'static, TimeRange> {
+        let mut streams = Streams::new();
+        for second in 0..=40 {
+            streams.append(&proto::Value {
+                timestamp: second * 1_000_000_000,
+                path: "a".to_owned(),
+                value: proto::Data::Float(1.0),
+            });
+        }
+        let model = Model {
+            streams,
+            ..Model::default()
+        };
+        Harness::builder()
+            .with_size(egui::vec2(400.0, 200.0))
+            .build_ui_state(
+                move |ui, time: &mut TimeRange| {
+                    time.update(&model);
+                    let id = ui.id().with("plot");
+                    show(id, plot(id, time), ui, time, |_, _| {});
+                },
+                TimeRange::default(),
+            )
+    }
+
+    /// Drags the pointer from `from` to `to` in steps.
+    fn drag(harness: &mut Harness<'_, TimeRange>, from: egui::Pos2, to: egui::Pos2) {
+        harness.hover_at(from);
+        harness.run();
+        harness.drag_at(from);
+        harness.run();
+        for step in 1..=5 {
+            harness.hover_at(from + (to - from) * step as f32 / 5.0);
+            harness.run();
+        }
+        harness.drop_at(to);
+        harness.run();
+    }
+
+    #[test]
+    fn clicking_a_time_plot_sets_the_cursor_which_can_be_dragged() {
+        let mut harness = time_plot_harness();
+        harness.run();
+        assert!(harness.state().is_live());
+        assert_eq!(harness.state().cursor(), Some(40.0));
+
+        // the window from 20 to 40 seconds spans the plot
+        let click = egui::pos2(300.0, 100.0);
+        harness.drag_at(click);
+        harness.run();
+        harness.drop_at(click);
+        harness.run();
+        let time = harness.state();
+        assert!(!time.is_live());
+        let clicked = time.cursor().unwrap();
+        assert!((30.0..40.0).contains(&clicked), "{clicked}");
+        let range = time.range();
+
+        // dragging the cursor moves it and not the window
+        drag(&mut harness, click, egui::pos2(350.0, 100.0));
+        let time = harness.state();
+        assert!(time.cursor().unwrap() > clicked + 1.0);
+        assert_eq!(time.range(), range);
+
+        // dragging elsewhere pans the window and leaves the cursor
+        let cursor = time.cursor();
+        drag(
+            &mut harness,
+            egui::pos2(100.0, 100.0),
+            egui::pos2(150.0, 100.0),
+        );
+        let time = harness.state();
+        assert_eq!(time.cursor(), cursor);
+        assert_ne!(time.range(), range);
+    }
 
     #[test]
     fn closest_index_picks_the_closest_timestamp() {

@@ -1,5 +1,4 @@
-//! A table of the values of streams at one time: the hovered time, or else the end of
-//! the shown window.
+//! A table of the values of streams at the time of the cursor.
 
 use super::stream_selection::{StreamTree, type_icon};
 use super::time_axis::index_at;

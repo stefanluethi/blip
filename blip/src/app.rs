@@ -221,7 +221,7 @@ impl eframe::App for App {
             });
         });
 
-        self.state.time.update(&self.state.model, ui.ctx());
+        self.state.time.update(&self.state.model);
 
         egui::Panel::bottom("bottom panel").show(ui, |ui| {
             self.state.time.ui(ui);
