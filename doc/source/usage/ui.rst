@@ -57,9 +57,13 @@ layout.
 
 * A group has its name and how it arranges its children.
 * A view has its name and type, the sections of its type, e.g. the y axis,
-  lines and legend of a plot, and its **Streams**: the unit of each stream as
-  sent by the bridge, and how its numbers are written in the view (decimal,
-  hex, binary or scientific). Hex and binary apply to whole numbers only.
+  lines and legend of a plot, and the **Number format** of its streams: how
+  their numbers are written in the view (decimal, hex, binary or scientific),
+  next to their unit as sent by the bridge. Hex and binary apply to whole
+  numbers only, strings and bools have no format.
+* An XY view plots the streams selected in the left panel against one of them.
+  Its **Axes** set which stream is on the x axis, the others are on the y
+  axis.
 * Number fields left empty show *auto*: the value is fitted to the data.
 
 Log views keep their search and filters in the view.

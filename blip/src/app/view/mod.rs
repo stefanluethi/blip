@@ -384,27 +384,29 @@ impl Viewable for View {
             ViewKind::Heatmap(heatmap) => heatmap.properties_ui(ui, model),
             ViewKind::Logs(logs) => logs.properties_ui(ui, model),
         }
-        self.streams_ui(ui, model);
+        self.number_format_ui(ui, model);
     }
 }
 
 impl View {
-    /// Shows the unit of each shown stream and, if the view writes the values of the
-    /// streams, their display format.
-    fn streams_ui(&mut self, ui: &mut egui::Ui, model: &Model) {
-        let writes_values = self.view_type().writes_values();
+    /// Shows the number format of each shown stream with its unit, if the view writes
+    /// the values of its streams.
+    fn number_format_ui(&mut self, ui: &mut egui::Ui, model: &Model) {
+        if !self.view_type().writes_values() {
+            return;
+        }
         let paths: Vec<String> = match self.selection_mut() {
             Some((paths, _)) if !paths.is_empty() => paths.iter().cloned().collect(),
             _ => return,
         };
         let names = short_names(paths.iter().map(String::as_str));
-        properties_section(ui, "Streams", |ui| {
+        properties_section(ui, "Number format", |ui| {
             for (path, name) in paths.iter().zip(names) {
                 ui.label(name).on_hover_text(path);
                 ui.horizontal(|ui| {
-                    if writes_values && has_numbers(model, path) {
-                        let current = self.formats.of(path);
-                        egui::ComboBox::from_id_salt(("display format", path))
+                    let current = self.formats.of(path);
+                    ui.add_enabled_ui(has_numbers(model, path), |ui| {
+                        egui::ComboBox::from_id_salt(("number format", path))
                             .selected_text(current.name())
                             .width(90.0)
                             .show_ui(ui, |ui| {
@@ -418,8 +420,9 @@ impl View {
                                 }
                             })
                             .response
-                            .on_hover_text("How the values are written");
-                    }
+                            .on_hover_text("How the numbers of the stream are written")
+                            .on_disabled_hover_text("Only numbers have a format");
+                    });
                     if let Some(unit) = model.streams.unit(path) {
                         ui.weak(unit);
                     }
@@ -444,8 +447,11 @@ fn has_numbers(model: &Model, path: &str) -> bool {
 }
 
 /// The unit of the streams at `paths` if they all have the same.
-pub fn common_unit<'a>(model: &'a Model, paths: &BTreeSet<String>) -> Option<&'a str> {
-    let mut units = paths.iter().map(|path| model.streams.unit(path));
+pub fn common_unit<'a, 'b>(
+    model: &'a Model,
+    paths: impl IntoIterator<Item = &'b str>,
+) -> Option<&'a str> {
+    let mut units = paths.into_iter().map(|path| model.streams.unit(path));
     let first = units.next()??;
     units.all(|unit| unit == Some(first)).then_some(first)
 }

@@ -68,8 +68,7 @@ impl Layout {
 
     /// Restores a saved layout, or returns `None` if it was saved in an unknown format.
     pub fn migrate(file: LayoutFile) -> Option<Self> {
-        // migrations of older versions go here
-        (file.version == file::VERSION).then(|| Self::from_file(file))
+        file.migrate().map(Self::from_file)
     }
 
     pub fn to_file(&self) -> LayoutFile {

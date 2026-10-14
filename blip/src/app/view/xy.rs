@@ -1,9 +1,8 @@
 //! An XY plot: streams plotted against another stream instead of against time, e.g. a
 //! position as a path.
 
-use super::stream_selection::stream_paths;
 use super::time_axis::{index_at, within};
-use super::{ViewContext, ViewType, Viewable, short_names};
+use super::{ViewContext, Viewable, short_names};
 use crate::app::model::Model;
 use crate::app::model::streams::Series;
 use crate::app::time::TimeRange;
@@ -17,13 +16,14 @@ const FADE_STEPS: usize = 8;
 /// Opacity of the oldest part of the trail.
 const MIN_OPACITY: f32 = 0.15;
 
-/// Streams plotted against the stream `x` within the shown window.
+/// The shown streams plotted against one of them, the x stream, within the shown
+/// window.
 #[derive(serde::Deserialize, serde::Serialize, Clone, Default)]
 #[serde(default)]
 pub struct Xy {
-    /// Path of the stream on the x axis.
+    /// Path of the stream on the x axis, see [`Xy::x_path`].
     pub x: Option<String>,
-    /// Paths of the streams on the y axis.
+    /// Paths of the shown streams, the x stream and the streams on the y axis.
     pub streams: BTreeSet<String>,
     /// Whether a unit has the same length on both axes, e.g. for positions.
     pub equal_axes: bool,
@@ -75,6 +75,31 @@ impl Xy {
         Self::default()
     }
 
+    /// Before layout version 2, the x stream was not one of the shown streams.
+    pub fn migrate_v1(&mut self) {
+        if let Some(x) = &self.x {
+            self.streams.insert(x.clone());
+        }
+    }
+
+    /// Path of the stream on the x axis: the chosen one if it is shown, else the first
+    /// shown stream.
+    pub fn x_path(&self) -> Option<&str> {
+        self.x
+            .as_deref()
+            .filter(|x| self.streams.contains(*x))
+            .or_else(|| self.streams.first().map(String::as_str))
+    }
+
+    /// Paths of the streams on the y axis: the shown streams but the x stream.
+    fn y_paths(&self) -> impl Iterator<Item = &str> {
+        let x = self.x_path();
+        self.streams
+            .iter()
+            .map(String::as_str)
+            .filter(move |&path| Some(path) != x)
+    }
+
     /// Draws `points` as a line fading out towards the first points, and the last point
     /// as a dot.
     fn plot_trail(
@@ -109,16 +134,18 @@ impl Xy {
     }
 
     fn show_plot(&self, ui: &mut egui::Ui, model: &Model, time: &TimeRange) {
-        let names = short_names(self.streams.iter().map(String::as_str));
+        let x_path = self.x_path();
+        let y_paths: Vec<&str> = self.y_paths().collect();
+        let names = short_names(y_paths.iter().copied());
         // an axis is labelled with the name of its stream and the unit of its streams
         let label = |name: &str, unit: Option<&str>| match unit {
             Some(unit) if name.is_empty() => format!("[{unit}]"),
             Some(unit) => format!("{name} [{unit}]"),
             None => name.to_owned(),
         };
-        let x_unit = self.x.as_deref().and_then(|x| model.streams.unit(x));
-        let x_label = label(&short_names(self.x.as_deref()).concat(), x_unit);
-        let y_unit = super::common_unit(model, &self.streams);
+        let x_unit = x_path.and_then(|x| model.streams.unit(x));
+        let x_label = label(&short_names(x_path).concat(), x_unit);
+        let y_unit = super::common_unit(model, y_paths.iter().copied());
         let y_label = match names[..] {
             [name] => label(name, y_unit),
             _ => label("", y_unit),
@@ -146,10 +173,7 @@ impl Xy {
             plot = plot.data_aspect(1.0);
         }
 
-        let x = self
-            .x
-            .as_deref()
-            .and_then(|path| model.streams.series(path));
+        let x = x_path.and_then(|path| model.streams.series(path));
         let range = time.range();
         let cursor = time.cursor();
         let ring_color = ui.visuals().strong_text_color();
@@ -157,7 +181,7 @@ impl Xy {
             let (Some(x), Some(range)) = (x, range) else {
                 return;
             };
-            for (index, (path, name)) in self.streams.iter().zip(&names).enumerate() {
+            for (index, (path, name)) in y_paths.iter().zip(&names).enumerate() {
                 let Some(y) = model.streams.series(path) else {
                     continue;
                 };
@@ -186,31 +210,32 @@ impl Xy {
 
 impl Viewable for Xy {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
-        if self.x.is_none() {
-            ui.weak("Select the x stream in the properties panel");
+        if self.streams.len() < 2 {
+            ui.weak("Select an x and a y stream in the streams panel");
             return;
         }
         self.show_plot(ui, context.model, context.time);
     }
 
-    fn properties_ui(&mut self, ui: &mut egui::Ui, model: &Model) {
+    fn properties_ui(&mut self, ui: &mut egui::Ui, _model: &Model) {
+        let x_path = self.x_path().map(str::to_owned);
+        let paths: Vec<String> = self.streams.iter().cloned().collect();
+        let names = short_names(paths.iter().map(String::as_str));
         super::properties_section(ui, "Axes", |ui| {
-            ui.label("X stream");
-            let selected = self.x.as_deref().unwrap_or("Select a stream");
-            egui::ComboBox::from_id_salt("xy_x")
-                .selected_text(selected)
-                .width(ui.available_width())
-                .show_ui(ui, |ui| {
-                    for stream in model.streams.iter() {
-                        for path in stream_paths(stream, ViewType::Xy) {
-                            let checked = self.x.as_ref() == Some(&path);
-                            if ui.selectable_label(checked, &path).clicked() {
-                                self.x = Some(path);
-                            }
-                        }
+            for (path, name) in paths.iter().zip(names) {
+                ui.label(name).on_hover_text(path);
+                let is_x = x_path.as_ref() == Some(path);
+                ui.horizontal(|ui| {
+                    if ui.selectable_label(is_x, "X").clicked() {
+                        self.x = Some(path.clone());
+                    }
+                    if ui.selectable_label(!is_x, "Y").clicked() && is_x {
+                        // another stream becomes the x stream
+                        self.x = paths.iter().find(|other| *other != path).cloned();
                     }
                 });
-            ui.end_row();
+                ui.end_row();
+            }
             ui.label("Equal axes");
             ui.checkbox(&mut self.equal_axes, "")
                 .on_hover_text("Give a unit the same length on both axes");
@@ -256,6 +281,21 @@ mod tests {
         assert_eq!(points[3][0], 2.0);
         assert!(!is_point(&points[3]));
         assert_eq!(pair(x, y, 2..3), [[1.0, 30.0]]);
+    }
+
+    #[test]
+    fn the_x_stream_is_the_chosen_or_else_the_first_shown_stream() {
+        let mut xy = Xy {
+            streams: ["a", "b", "c"].map(str::to_owned).into(),
+            ..Xy::default()
+        };
+        assert_eq!(xy.x_path(), Some("a"));
+        assert_eq!(xy.y_paths().collect::<Vec<_>>(), ["b", "c"]);
+        xy.x = Some("b".to_owned());
+        assert_eq!(xy.x_path(), Some("b"));
+        assert_eq!(xy.y_paths().collect::<Vec<_>>(), ["a", "c"]);
+        xy.streams.remove("b");
+        assert_eq!(xy.x_path(), Some("a"));
     }
 
     #[test]

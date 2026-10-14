@@ -1,12 +1,13 @@
 //! The saved form of a layout. It is versioned, so layouts saved by older versions of
 //! blip can be migrated when the format changes.
 
-use crate::app::view::View;
+use crate::app::view::{View, ViewKind};
 use egui_tiles::{Container, ContainerKind, Tile, TileId, Tiles, Tree};
 use std::collections::HashMap;
 
-/// Version of the format written by [`LayoutFile::new`].
-pub const VERSION: u32 = 1;
+/// Version of the format written by [`LayoutFile::new`]. Since version 2, the x stream
+/// of an XY view is one of its streams.
+pub const VERSION: u32 = 2;
 
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct LayoutFile {
@@ -91,6 +92,19 @@ impl LayoutFile {
         }
     }
 
+    /// The layout in the current format, or `None` if its version cannot be migrated.
+    pub fn migrate(mut self) -> Option<Self> {
+        if self.version == 1 {
+            self.root.for_each_view(&mut |view| {
+                if let ViewKind::Xy(xy) = &mut view.kind {
+                    xy.migrate_v1();
+                }
+            });
+            self.version = 2;
+        }
+        (self.version == VERSION).then_some(self)
+    }
+
     /// Restores the tiles, returns the tree and the group names.
     pub fn load(self) -> (Tree<View>, HashMap<TileId, String>) {
         let mut tiles = Tiles::default();
@@ -101,6 +115,16 @@ impl LayoutFile {
 }
 
 impl Group {
+    /// Calls `f` with each view in the group and the groups in it.
+    fn for_each_view(&mut self, f: &mut impl FnMut(&mut View)) {
+        for child in &mut self.children {
+            match child {
+                Node::Group(group) => group.for_each_view(f),
+                Node::View(view) => f(view),
+            }
+        }
+    }
+
     pub fn tabs(children: Vec<Node>) -> Self {
         Self {
             name: String::new(),
@@ -218,5 +242,43 @@ mod tests {
             .load();
         let saved = LayoutFile::new(&tree, tree.root().unwrap(), &group_names);
         assert_eq!(serde_cbor_2::to_vec(&saved).unwrap(), bytes);
+    }
+
+    #[test]
+    fn version_1_xy_views_get_their_x_stream_as_one_of_their_streams() {
+        let mut view = View::new(ViewType::Xy, "XY".to_owned());
+        let ViewKind::Xy(xy) = &mut view.kind else {
+            unreachable!()
+        };
+        xy.x = Some("pose.x".to_owned());
+        xy.streams.insert("pose.y".to_owned());
+        let file = LayoutFile {
+            version: 1,
+            root: Group::tabs(vec![Node::Group(Group::tabs(vec![Node::View(view)]))]),
+        };
+
+        let file = file.migrate().unwrap();
+        assert_eq!(file.version, VERSION);
+        let Node::Group(tab) = &file.root.children[0] else {
+            panic!("the tab is missing")
+        };
+        let Node::View(View {
+            kind: ViewKind::Xy(xy),
+            ..
+        }) = &tab.children[0]
+        else {
+            panic!("the XY view is missing")
+        };
+        assert_eq!(xy.x_path(), Some("pose.x"));
+        assert!(xy.streams.contains("pose.y"));
+    }
+
+    #[test]
+    fn unknown_versions_are_not_migrated() {
+        let file = LayoutFile {
+            version: VERSION + 1,
+            root: Group::tabs(vec![]),
+        };
+        assert!(file.migrate().is_none());
     }
 }

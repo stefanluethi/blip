@@ -253,7 +253,7 @@ impl Plot {
             .placement(egui_plot::HPlacement::Left)
             .min_thickness(50.0);
         let label = match self.y_label.as_str() {
-            "" => super::common_unit(model, &self.streams),
+            "" => super::common_unit(model, self.streams.iter().map(String::as_str)),
             label => Some(label),
         };
         if let Some(label) = label {
@@ -371,7 +371,7 @@ impl Viewable for Plot {
     }
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, model: &Model) {
-        let unit = super::common_unit(model, &self.streams)
+        let unit = super::common_unit(model, self.streams.iter().map(String::as_str))
             .unwrap_or_default()
             .to_owned();
         super::properties_section(ui, "Y axis", |ui| {

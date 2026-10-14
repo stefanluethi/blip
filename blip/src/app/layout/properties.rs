@@ -155,28 +155,36 @@ mod tests {
     }
 
     #[test]
-    fn streams_show_their_unit_and_take_a_display_format() {
+    fn numbers_take_a_format_and_other_streams_do_not() {
         let mut model = Model::default();
-        model.streams.append(&proto::Value {
-            timestamp: 0,
-            path: "motor/errors".to_owned(),
-            value: proto::Data::Uint(3),
-        });
+        for (path, value) in [
+            ("motor/errors", proto::Data::Uint(3)),
+            ("motor/state", proto::Data::from("on")),
+        ] {
+            model.streams.append(&proto::Value {
+                timestamp: 0,
+                path: path.to_owned(),
+                value,
+            });
+        }
         model.streams.set_unit("motor/errors", "count");
         let mut harness = harness_with(model, |_, views| views[0]);
         let view = harness.state_mut().selected_view_mut().unwrap();
-        view.selection_mut()
-            .unwrap()
-            .0
-            .insert("motor/errors".to_owned());
+        let selection = view.selection_mut().unwrap().0;
+        selection.insert("motor/errors".to_owned());
+        selection.insert("motor/state".to_owned());
         harness.run();
         harness.get_by_label("count");
-        harness
-            .get_by(|node| {
+        // a format for the number, a disabled one for the string
+        let format = |disabled: bool| {
+            move |node: &egui_kittest::kittest::AccessKitNode<'_>| {
                 node.role() == egui::accesskit::Role::ComboBox
                     && node.value().as_deref() == Some("Default")
-            })
-            .click();
+                    && node.is_disabled() == disabled
+            }
+        };
+        assert_eq!(harness.get_all_by(format(true)).count(), 1);
+        harness.get_by(format(false)).click();
         harness.run();
         harness.get_by_label("Hex").click();
         harness.run();
