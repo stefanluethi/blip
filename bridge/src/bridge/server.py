@@ -39,7 +39,8 @@ class BridgeServer:
 
         # Prepare send tasks for active clients
         to_remove = set()
-        for client in self.connected_clients:
+        # a copy, as clients may disconnect while a message is sent
+        for client in list(self.connected_clients):
             try:
                 await client.send(message)
             except websockets.ConnectionClosed:
