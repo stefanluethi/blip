@@ -15,7 +15,7 @@ class ValueMetadata:
         return asdict(self)
 
 
-# A stream value as sent to blip: None (no value), int, float, bool, str, a list of
+# A trace value as sent to blip: None (no value), int, float, bool, str, a list of
 # fixed length or a dict with str keys, nested freely. It is encoded as a plain CBOR
 # item, e.g. a dict becomes a CBOR map.
 Data = Union[None, int, float, bool, str, list, dict]
@@ -57,8 +57,8 @@ class Message:
 
     @classmethod
     def create_value(cls, path: str, value: Data, timestamp_ns: Optional[int] = None) -> "Message":
-        """Create a stream sample. Python ints encode as CBOR integers, so pass a float
-        for a float stream (blip accepts integers in float streams anyway)."""
+        """Create a trace sample. Python ints encode as CBOR integers, so pass a float
+        for a float trace (blip accepts integers in float traces anyway)."""
         if timestamp_ns is None:
             timestamp_ns = int(time.time() * 1e9)
         return cls(

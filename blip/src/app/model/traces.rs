@@ -2,7 +2,7 @@ use proto::Data;
 use std::collections::BTreeMap;
 use std::ops::Range;
 
-/// How the numbers of a stream are written.
+/// How the numbers of a trace are written.
 #[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
 pub enum DisplayFormat {
     /// As decimals, bools as `true` and `false`.
@@ -34,7 +34,7 @@ impl DisplayFormat {
     }
 }
 
-/// The kind of the numbers of a stream or of the elements of an array stream, all
+/// The kind of the numbers of a trace or of the elements of an array trace, all
 /// stored as `f64` with NaN for null.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NumberKind {
@@ -56,9 +56,9 @@ impl NumberKind {
         }
     }
 
-    /// The kind of a stream of this kind after receiving a number of kind `other`, or
+    /// The kind of a trace of this kind after receiving a number of kind `other`, or
     /// `None` if they do not mix. Integer and float mix, so a producer may send `0` in a
-    /// float stream.
+    /// float trace.
     fn merge(self, other: Self) -> Option<Self> {
         match (self, other) {
             _ if self == other => Some(self),
@@ -161,7 +161,7 @@ fn data_kind_name(data: &Data) -> &'static str {
     }
 }
 
-/// The sample values of a stream, one per timestamp.
+/// The sample values of a trace, one per timestamp.
 #[derive(Debug, PartialEq)]
 pub enum Samples {
     /// Only nulls so far, so the kind is not known yet.
@@ -198,7 +198,7 @@ impl Samples {
             }
             _ => {
                 let (_, kind) = NumberKind::of(data)
-                    .ok_or_else(|| format!("a stream cannot hold a {}", data_kind_name(data)))?;
+                    .ok_or_else(|| format!("a trace cannot hold a {}", data_kind_name(data)))?;
                 Self::Numbers {
                     kind,
                     values: vec![f64::NAN; count],
@@ -248,7 +248,7 @@ impl Samples {
         Ok(())
     }
 
-    /// The elements of the `index`th sample of an array stream, in row-major order.
+    /// The elements of the `index`th sample of an array trace, in row-major order.
     pub fn array_sample(&self, index: usize) -> Option<&[f64]> {
         let Self::Arrays { shape, values, .. } = self else {
             return None;
@@ -430,7 +430,7 @@ fn flatten(
     Ok(())
 }
 
-pub struct Stream {
+pub struct Trace {
     pub path: String,
     /// Ascending, as values are appended in arrival order.
     pub timestamps: Vec<u64>,
@@ -442,7 +442,7 @@ pub struct Stream {
     warned: bool,
 }
 
-impl Stream {
+impl Trace {
     pub fn new(path: String, fields_start: Option<usize>) -> Self {
         Self {
             path,
@@ -463,7 +463,7 @@ impl Stream {
         Ok(())
     }
 
-    /// The numbers of a numeric stream.
+    /// The numbers of a numeric trace.
     fn series(&self) -> Option<Series<'_>> {
         let Samples::Numbers { kind, values } = &self.samples else {
             return None;
@@ -478,7 +478,7 @@ impl Stream {
     }
 }
 
-/// The numbers of a numeric stream or of one element of an array stream.
+/// The numbers of a numeric trace or of one element of an array trace.
 #[derive(Clone, Copy)]
 pub struct Series<'a> {
     pub timestamps: &'a [u64],
@@ -510,14 +510,14 @@ impl Series<'_> {
     }
 }
 
-/// The path of an element of an array stream, e.g. `adc[1][0]`.
+/// The path of an element of an array trace, e.g. `adc[1][0]`.
 pub fn element_path(path: &str, indices: &[usize]) -> String {
     indices
         .iter()
         .fold(path.to_owned(), |path, index| format!("{path}[{index}]"))
 }
 
-/// The stream path and the indices of an element path written by [`element_path`].
+/// The trace path and the indices of an element path written by [`element_path`].
 fn parse_element_path(path: &str) -> Option<(&str, Vec<usize>)> {
     let segment_start = path.rfind('/').map_or(0, |slash| slash + 1);
     let open = segment_start + path[segment_start..].find('[')?;
@@ -529,21 +529,21 @@ fn parse_element_path(path: &str) -> Option<(&str, Vec<usize>)> {
     Some((&path[..open], indices))
 }
 
-pub struct Streams {
-    /// Sorted, so the streams of a record follow each other.
-    map: BTreeMap<String, Stream>,
-    /// The units of the streams by their paths, as received in their metadata, also
-    /// for streams without samples yet.
+pub struct Traces {
+    /// Sorted, so the traces of a record follow each other.
+    map: BTreeMap<String, Trace>,
+    /// The units of the traces by their paths, as received in their metadata, also
+    /// for traces without samples yet.
     units: BTreeMap<String, String>,
 }
 
-impl Default for Streams {
+impl Default for Traces {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Streams {
+impl Traces {
     pub fn new() -> Self {
         Self {
             map: BTreeMap::new(),
@@ -551,11 +551,11 @@ impl Streams {
         }
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &Stream> {
+    pub fn iter(&self) -> impl Iterator<Item = &Trace> {
         self.map.values()
     }
 
-    /// Sets the unit of the stream at `path`, an empty `unit` for none.
+    /// Sets the unit of the trace at `path`, an empty `unit` for none.
     pub fn set_unit(&mut self, path: &str, unit: &str) {
         if unit.is_empty() {
             self.units.remove(path);
@@ -564,7 +564,7 @@ impl Streams {
         }
     }
 
-    /// The unit of the stream at `path`, or of the array stream of an element written by
+    /// The unit of the trace at `path`, or of the array trace of an element written by
     /// [`element_path`].
     pub fn unit(&self, path: &str) -> Option<&str> {
         let unit = match self.units.get(path) {
@@ -574,23 +574,23 @@ impl Streams {
         unit.map(String::as_str)
     }
 
-    pub fn get(&self, path: &str) -> Option<&Stream> {
+    pub fn get(&self, path: &str) -> Option<&Trace> {
         self.map.get(path)
     }
 
-    /// The numbers shown for `path`: a numeric stream, or an element of an array
-    /// stream written by [`element_path`].
+    /// The numbers shown for `path`: a numeric trace, or an element of an array
+    /// trace written by [`element_path`].
     pub fn series(&self, path: &str) -> Option<Series<'_>> {
-        if let Some(stream) = self.map.get(path) {
-            return stream.series();
+        if let Some(trace) = self.map.get(path) {
+            return trace.series();
         }
         let (path, indices) = parse_element_path(path)?;
-        let stream = self.map.get(path)?;
+        let trace = self.map.get(path)?;
         let Samples::Arrays {
             shape,
             kind,
             values,
-        } = &stream.samples
+        } = &trace.samples
         else {
             return None;
         };
@@ -604,7 +604,7 @@ impl Streams {
             .zip(shape)
             .fold(0, |offset, (index, len)| offset * len + index);
         Some(Series {
-            timestamps: &stream.timestamps,
+            timestamps: &trace.timestamps,
             values,
             stride: shape.iter().product(),
             offset,
@@ -616,18 +616,18 @@ impl Streams {
         self.insert(&value.path, None, value.timestamp, &value.value);
     }
 
-    /// Appends `data` to the stream at `path`, or to the streams of its fields if it is
+    /// Appends `data` to the trace at `path`, or to the traces of its fields if it is
     /// a record. The fields of a record are joined to its path with `.`, e.g. `imu.acc`.
-    /// `fields_start` is the [`Stream::fields_start`] of a new stream.
+    /// `fields_start` is the [`Trace::fields_start`] of a new trace.
     fn insert(&mut self, path: &str, fields_start: Option<usize>, timestamp: u64, data: &Data) {
         match data {
             Data::Record(fields)
                 if self
                     .map
                     .get(path)
-                    .is_none_or(|stream| stream.samples == Samples::Empty) =>
+                    .is_none_or(|trace| trace.samples == Samples::Empty) =>
             {
-                // a stream that only received nulls so far turns out to be a record
+                // a trace that only received nulls so far turns out to be a record
                 self.map.remove(path);
                 let fields_start = fields_start.unwrap_or(path.len());
                 for (name, value) in fields {
@@ -649,14 +649,14 @@ impl Streams {
                 }
             }
             _ => {
-                let stream = self
+                let trace = self
                     .map
                     .entry(path.to_owned())
-                    .or_insert_with(|| Stream::new(path.to_owned(), fields_start));
-                if let Err(error) = stream.push(timestamp, data)
-                    && !stream.warned
+                    .or_insert_with(|| Trace::new(path.to_owned(), fields_start));
+                if let Err(error) = trace.push(timestamp, data)
+                    && !trace.warned
                 {
-                    stream.warned = true;
+                    trace.warned = true;
                     log::warn!(
                         "{path}: dropped a sample, {error} (further ones are dropped silently)"
                     );
@@ -674,11 +674,11 @@ impl Streams {
             .take_while(move |path| path.starts_with(&prefix))
     }
 
-    /// Timestamps of the first and the newest value of all streams.
+    /// Timestamps of the first and the newest value of all traces.
     pub fn time_span(&self) -> Option<(u64, u64)> {
         self.map
             .values()
-            .filter_map(|stream| Some((*stream.timestamps.first()?, *stream.timestamps.last()?)))
+            .filter_map(|trace| Some((*trace.timestamps.first()?, *trace.timestamps.last()?)))
             .reduce(|(first_a, last_a), (first_b, last_b)| {
                 (first_a.min(first_b), last_a.max(last_b))
             })
@@ -702,20 +702,20 @@ mod tests {
         Data::Array(elements.iter().copied().map(Data::Float).collect())
     }
 
-    fn streams(samples: &[(&str, Data)]) -> Streams {
-        let mut streams = Streams::new();
+    fn traces(samples: &[(&str, Data)]) -> Traces {
+        let mut traces = Traces::new();
         for (timestamp, (path, value)) in samples.iter().enumerate() {
-            streams.append(&proto::Value {
+            traces.append(&proto::Value {
                 timestamp: timestamp as u64,
                 path: path.to_string(),
                 value: value.clone(),
             });
         }
-        streams
+        traces
     }
 
-    fn values(streams: &Streams, path: &str) -> Vec<f64> {
-        let series = streams.series(path).unwrap();
+    fn values(traces: &Traces, path: &str) -> Vec<f64> {
+        let series = traces.series(path).unwrap();
         (0..series.len()).map(|index| series.value(index)).collect()
     }
 
@@ -731,17 +731,17 @@ mod tests {
     }
 
     #[test]
-    fn records_split_into_field_streams() {
+    fn records_split_into_field_traces() {
         let imu = record(&[
             ("x", Data::Float(0.5)),
             ("acc", record(&[("z", Data::Uint(9))])),
         ]);
-        let streams = streams(&[("imu", imu)]);
-        let paths: Vec<&str> = streams.iter().map(|stream| stream.path.as_str()).collect();
+        let traces = traces(&[("imu", imu)]);
+        let paths: Vec<&str> = traces.iter().map(|trace| trace.path.as_str()).collect();
         assert_eq!(paths, ["imu.acc.z", "imu.x"]);
-        assert_values(values(&streams, "imu.x"), &[0.5]);
+        assert_values(values(&traces, "imu.x"), &[0.5]);
         assert_eq!(
-            streams.series("imu.acc.z").unwrap().kind,
+            traces.series("imu.acc.z").unwrap().kind,
             NumberKind::Integer
         );
     }
@@ -749,51 +749,51 @@ mod tests {
     #[test]
     fn fields_start_marks_where_record_fields_begin() {
         let imu = record(&[("acc", record(&[("z", Data::Uint(9))]))]);
-        let streams = streams(&[("sensors/imu", imu), ("v1.2", Data::Float(1.0))]);
-        let fields_start = |path| streams.get(path).unwrap().fields_start;
+        let traces = traces(&[("sensors/imu", imu), ("v1.2", Data::Float(1.0))]);
+        let fields_start = |path| traces.get(path).unwrap().fields_start;
         assert_eq!(fields_start("sensors/imu.acc.z"), Some(11));
         // a dot in a path that is not a record is part of the name
         assert_eq!(fields_start("v1.2"), None);
     }
 
     #[test]
-    fn integer_streams_switch_to_float() {
-        let streams = streams(&[
+    fn integer_traces_switch_to_float() {
+        let traces = traces(&[
             ("a", Data::Uint(0)),
             ("a", Data::Int(-1)),
             ("a", Data::Float(0.5)),
         ]);
-        let series = streams.series("a").unwrap();
+        let series = traces.series("a").unwrap();
         assert_eq!(series.kind, NumberKind::Float);
-        assert_values(values(&streams, "a"), &[0.0, -1.0, 0.5]);
+        assert_values(values(&traces, "a"), &[0.0, -1.0, 0.5]);
     }
 
     #[test]
     fn samples_of_another_kind_are_dropped() {
-        let streams = streams(&[
+        let traces = traces(&[
             ("a", Data::Float(1.0)),
             ("a", Data::from("text")),
             ("a", Data::Bool(true)),
             ("a", Data::Float(2.0)),
         ]);
-        assert_values(values(&streams, "a"), &[1.0, 2.0]);
-        assert_eq!(streams.get("a").unwrap().timestamps, [0, 3]);
-        assert!(streams.get("a").unwrap().warned);
+        assert_values(values(&traces, "a"), &[1.0, 2.0]);
+        assert_eq!(traces.get("a").unwrap().timestamps, [0, 3]);
+        assert!(traces.get("a").unwrap().warned);
     }
 
     #[test]
-    fn a_scalar_stream_does_not_turn_into_a_record() {
-        let streams = streams(&[
+    fn a_scalar_trace_does_not_turn_into_a_record() {
+        let traces = traces(&[
             ("a", Data::Float(1.0)),
             ("a", record(&[("x", Data::Float(2.0))])),
         ]);
-        assert!(streams.get("a.x").is_none());
-        assert!(streams.get("a").unwrap().warned);
+        assert!(traces.get("a.x").is_none());
+        assert!(traces.get("a").unwrap().warned);
     }
 
     #[test]
     fn null_is_a_gap() {
-        let bools = streams(&[
+        let bools = traces(&[
             ("a", Data::Null),
             ("a", Data::Bool(true)),
             ("a", Data::Null),
@@ -801,7 +801,7 @@ mod tests {
         assert_eq!(bools.series("a").unwrap().kind, NumberKind::Bool);
         assert_values(values(&bools, "a"), &[f64::NAN, 1.0, f64::NAN]);
 
-        let strings = streams(&[("s", Data::Null), ("s", Data::from("on"))]);
+        let strings = traces(&[("s", Data::Null), ("s", Data::from("on"))]);
         assert_eq!(
             strings.get("s").unwrap().samples,
             Samples::Strings(vec![None, Some("on".to_owned())])
@@ -811,43 +811,43 @@ mod tests {
     #[test]
     fn a_null_record_is_a_gap_in_all_fields() {
         let imu = record(&[("x", Data::Float(1.0)), ("y", Data::Float(2.0))]);
-        let streams = streams(&[("imu", Data::Null), ("imu", imu), ("imu", Data::Null)]);
-        // the leading null is dropped with the stream it created
-        assert!(streams.get("imu").is_none());
-        assert_values(values(&streams, "imu.x"), &[1.0, f64::NAN]);
-        assert_values(values(&streams, "imu.y"), &[2.0, f64::NAN]);
+        let traces = traces(&[("imu", Data::Null), ("imu", imu), ("imu", Data::Null)]);
+        // the leading null is dropped with the trace it created
+        assert!(traces.get("imu").is_none());
+        assert_values(values(&traces, "imu.x"), &[1.0, f64::NAN]);
+        assert_values(values(&traces, "imu.y"), &[2.0, f64::NAN]);
     }
 
     #[test]
     fn arrays_keep_their_shape() {
         let matrix = |a: f64| Data::Array(vec![array(&[a, 1.0, 2.0]), array(&[3.0, 4.0, 5.0])]);
-        let streams = streams(&[
+        let traces = traces(&[
             ("m", Data::Null),
             ("m", matrix(0.0)),
             ("m", Data::Array(vec![array(&[0.0])])),
             ("m", Data::Array(vec![array(&[0.0, 1.0, 2.0]), Data::Null])),
             ("m", matrix(10.0)),
         ]);
-        let stream = streams.get("m").unwrap();
-        assert_eq!(stream.samples.type_label(), "float[2×3]");
-        assert_eq!(stream.timestamps, [0, 1, 3, 4]);
-        assert_values(values(&streams, "m[0][0]"), &[f64::NAN, 0.0, 0.0, 10.0]);
-        assert_values(values(&streams, "m[1][2]"), &[f64::NAN, 5.0, f64::NAN, 5.0]);
-        assert!(streams.series("m[2][0]").is_none());
-        assert!(streams.series("m[0]").is_none());
-        assert!(streams.series("m").is_none());
+        let trace = traces.get("m").unwrap();
+        assert_eq!(trace.samples.type_label(), "float[2×3]");
+        assert_eq!(trace.timestamps, [0, 1, 3, 4]);
+        assert_values(values(&traces, "m[0][0]"), &[f64::NAN, 0.0, 0.0, 10.0]);
+        assert_values(values(&traces, "m[1][2]"), &[f64::NAN, 5.0, f64::NAN, 5.0]);
+        assert!(traces.series("m[2][0]").is_none());
+        assert!(traces.series("m[0]").is_none());
+        assert!(traces.series("m").is_none());
     }
 
     #[test]
     fn arrays_hold_numbers_or_bools_only() {
-        let streams = streams(&[
+        let traces = traces(&[
             ("a", Data::Array(vec![Data::Uint(1), Data::Null])),
             ("a", Data::Array(vec![Data::Float(0.5), Data::Uint(2)])),
             ("a", Data::Array(vec![Data::Bool(true), Data::Uint(2)])),
             ("a", Data::Array(vec![Data::from("x"), Data::Uint(2)])),
         ]);
-        assert_eq!(streams.get("a").unwrap().samples.type_label(), "float[2]");
-        assert_values(values(&streams, "a[1]"), &[f64::NAN, 2.0]);
+        assert_eq!(traces.get("a").unwrap().samples.type_label(), "float[2]");
+        assert_values(values(&traces, "a[1]"), &[f64::NAN, 2.0]);
     }
 
     #[test]
@@ -861,12 +861,12 @@ mod tests {
 
     #[test]
     fn series_slices_keep_the_element() {
-        let streams = streams(&[
+        let traces = traces(&[
             ("a", array(&[0.0, 1.0])),
             ("a", array(&[2.0, 3.0])),
             ("a", array(&[4.0, 5.0])),
         ]);
-        let slice = streams.series("a[1]").unwrap().slice(1..3);
+        let slice = traces.series("a[1]").unwrap().slice(1..3);
         assert_eq!(slice.timestamps, [1, 2]);
         assert_eq!((slice.value(0), slice.value(1)), (3.0, 5.0));
     }
@@ -874,7 +874,7 @@ mod tests {
     #[test]
     fn samples_are_formatted_as_text() {
         let matrix = Data::Array(vec![array(&[0.5, 1.0, 2.0]), array(&[3.0, 4.0, 5.0])]);
-        let streams = streams(&[
+        let traces = traces(&[
             ("m", matrix),
             ("s", Data::from("on")),
             ("s", Data::Null),
@@ -882,7 +882,7 @@ mod tests {
             ("f", Data::Float(0.031_414_634_623_640_13)),
         ]);
         let format = |path, index, max_len, digits| {
-            let samples = &streams.get(path).unwrap().samples;
+            let samples = &traces.get(path).unwrap().samples;
             samples.format(index, max_len, digits, DisplayFormat::Default)
         };
         assert_eq!(format("m", 0, 8, None), "[[0.5, 1, 2],\n [  3, 4, 5]]");
@@ -893,7 +893,7 @@ mod tests {
         assert_eq!(format("i", 0, 8, Some(2)), "7");
         assert_eq!(format("f", 0, 8, Some(6)), "0.0314146");
         assert_eq!(format("f", 0, 8, None), "0.03141463462364013");
-        let samples = &streams.get("m").unwrap().samples;
+        let samples = &traces.get("m").unwrap().samples;
         assert_eq!(samples.array_sample(0).unwrap()[3], 3.0);
         assert!(samples.array_sample(1).is_none());
     }
@@ -914,20 +914,20 @@ mod tests {
             "1.23e-4"
         );
         assert_eq!(NumberKind::Bool.format_as(1.0, None, Binary), "true");
-        let streams = streams(&[("a", Data::Array(vec![Data::Uint(10), Data::Uint(255)]))]);
-        let samples = &streams.get("a").unwrap().samples;
+        let traces = traces(&[("a", Data::Array(vec![Data::Uint(10), Data::Uint(255)]))]);
+        let samples = &traces.get("a").unwrap().samples;
         assert_eq!(samples.format(0, 8, None, Hex), "[0xa, 0xff]");
     }
 
     #[test]
     fn elements_have_the_unit_of_their_array() {
-        let mut streams = Streams::new();
-        streams.set_unit("imu.acc", "m/s²");
-        streams.set_unit("speed", "");
-        assert_eq!(streams.unit("imu.acc"), Some("m/s²"));
-        assert_eq!(streams.unit("imu.acc[2]"), Some("m/s²"));
-        assert_eq!(streams.unit("imu.gyro"), None);
-        assert_eq!(streams.unit("speed"), None);
+        let mut traces = Traces::new();
+        traces.set_unit("imu.acc", "m/s²");
+        traces.set_unit("speed", "");
+        assert_eq!(traces.unit("imu.acc"), Some("m/s²"));
+        assert_eq!(traces.unit("imu.acc[2]"), Some("m/s²"));
+        assert_eq!(traces.unit("imu.gyro"), None);
+        assert_eq!(traces.unit("speed"), None);
     }
 
     #[test]

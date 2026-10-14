@@ -1,11 +1,11 @@
-//! A heatmap of an array stream: a 1D array over time, each element a row of colours,
+//! A heatmap of an array trace: a 1D array over time, each element a row of colours,
 //! or a 2D array as a grid of coloured cells at the cursor time. A 1D array can also
 //! be shown at the cursor time as a line over its indices.
 
 use super::time_axis::{self, index_at};
 use super::{ViewContext, Viewable, text_color_on, with_unit};
 use crate::app::model::Model;
-use crate::app::model::streams::{DisplayFormat, NumberKind, Samples, Stream, format_significant};
+use crate::app::model::traces::{DisplayFormat, NumberKind, Samples, Trace, format_significant};
 use crate::app::time::TimeRange;
 use egui::Color32;
 use std::collections::BTreeSet;
@@ -40,12 +40,13 @@ pub enum ArrayMode {
     AtCursor,
 }
 
-/// The selected array stream as a heatmap.
+/// The selected array trace as a heatmap.
 #[derive(serde::Deserialize, serde::Serialize, Clone, Default)]
 #[serde(default)]
 pub struct Heatmap {
-    /// Path of the shown stream, at most one.
-    pub streams: BTreeSet<String>,
+    /// Path of the shown trace, at most one.
+    #[serde(alias = "streams")] // the name before layout version 3
+    pub traces: BTreeSet<String>,
     pub mode: ArrayMode,
     /// The values at the ends of the colour scale, or `None` to fit the shown values.
     pub value_range: Option<(f64, f64)>,
@@ -112,12 +113,12 @@ impl ValueText<'_> {
     }
 }
 
-/// The values of an array stream of `len` elements within `(start, end)` seconds as a
+/// The values of an array trace of `len` elements within `(start, end)` seconds as a
 /// grid of `columns` columns, each with the sample current at its middle, and a row per
 /// element with element 0 in the bottom row. NaN where there is no sample, also after
 /// `latest` seconds.
 fn over_time(
-    stream: &Stream,
+    trace: &Trace,
     len: usize,
     (start, end): (f64, f64),
     latest: f64,
@@ -131,7 +132,7 @@ fn over_time(
             break;
         }
         let Some(elements) =
-            index_at(&stream.timestamps, t).and_then(|index| stream.samples.array_sample(index))
+            index_at(&trace.timestamps, t).and_then(|index| trace.samples.array_sample(index))
         else {
             continue;
         };
@@ -218,11 +219,11 @@ impl Heatmap {
         }
     }
 
-    /// Shows the elements of a 1D array stream over the shared window of `time`.
+    /// Shows the elements of a 1D array trace over the shared window of `time`.
     fn over_time_ui(
         &mut self,
         ui: &mut egui::Ui,
-        stream: &Stream,
+        trace: &Trace,
         text: ValueText<'_>,
         len: usize,
         time: &mut TimeRange,
@@ -230,7 +231,7 @@ impl Heatmap {
     ) {
         let columns = (size.x.max(1.0) as usize).min(MAX_COLUMNS);
         let values = match (time.range(), time.latest()) {
-            (Some(range), Some(latest)) => over_time(stream, len, range, latest, columns),
+            (Some(range), Some(latest)) => over_time(trace, len, range, latest, columns),
             _ => vec![],
         };
         self.fitted_range = value_range(&values);
@@ -259,8 +260,8 @@ impl Heatmap {
 
         if let (Some(t), Some(y)) = (response.hovered, response.hovered_y) {
             let element = y.round();
-            let value = index_at(&stream.timestamps, t)
-                .and_then(|index| stream.samples.array_sample(index))
+            let value = index_at(&trace.timestamps, t)
+                .and_then(|index| trace.samples.array_sample(index))
                 .filter(|_| element >= 0.0)
                 .and_then(|elements| elements.get(element as usize).copied());
             let base = response.axis.base;
@@ -273,12 +274,12 @@ impl Heatmap {
         }
     }
 
-    /// Shows the elements of a 2D array stream of `rows` × `columns` at the cursor time
+    /// Shows the elements of a 2D array trace of `rows` × `columns` at the cursor time
     /// as a grid of cells, row 0 at the top.
     fn grid_ui(
         &mut self,
         ui: &mut egui::Ui,
-        stream: &Stream,
+        trace: &Trace,
         text: ValueText<'_>,
         (rows, columns): (usize, usize),
         time: &TimeRange,
@@ -286,8 +287,8 @@ impl Heatmap {
     ) {
         let values: Vec<f64> = time
             .cursor()
-            .and_then(|t| index_at(&stream.timestamps, t))
-            .and_then(|index| stream.samples.array_sample(index))
+            .and_then(|t| index_at(&trace.timestamps, t))
+            .and_then(|index| trace.samples.array_sample(index))
             .map(<[f64]>::to_vec)
             .unwrap_or_default();
         self.fitted_range = value_range(&values);
@@ -353,19 +354,13 @@ impl Heatmap {
         }
     }
 
-    /// Shows the elements of a 1D array stream at the cursor time as a line over their
+    /// Shows the elements of a 1D array trace at the cursor time as a line over their
     /// indices.
-    fn line_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        stream: &Stream,
-        text: ValueText<'_>,
-        time: &TimeRange,
-    ) {
+    fn line_ui(&mut self, ui: &mut egui::Ui, trace: &Trace, text: ValueText<'_>, time: &TimeRange) {
         let values: Vec<f64> = time
             .cursor()
-            .and_then(|t| index_at(&stream.timestamps, t))
-            .and_then(|index| stream.samples.array_sample(index))
+            .and_then(|t| index_at(&trace.timestamps, t))
+            .and_then(|index| trace.samples.array_sample(index))
             .map(<[f64]>::to_vec)
             .unwrap_or_default();
         self.fitted_range = value_range(&values);
@@ -392,7 +387,7 @@ impl Heatmap {
                 plot_ui.set_plot_bounds_y(min..=max);
             }
             for segment in points.split(|point| point[1].is_nan()) {
-                plot_ui.line(egui_plot::Line::new(&stream.path, segment.to_vec()).color(color));
+                plot_ui.line(egui_plot::Line::new(&trace.path, segment.to_vec()).color(color));
             }
             let markers: Vec<[f64; 2]> = points
                 .iter()
@@ -400,7 +395,7 @@ impl Heatmap {
                 .filter(|point| !point[1].is_nan())
                 .collect();
             plot_ui.points(
-                egui_plot::Points::new(&stream.path, markers)
+                egui_plot::Points::new(&trace.path, markers)
                     .color(color)
                     .radius(2.5),
             );
@@ -454,15 +449,15 @@ impl Heatmap {
 impl Viewable for Heatmap {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         let model: &Model = context.model;
-        let Some(path) = self.streams.first() else {
-            ui.weak("Select an array stream in the streams panel");
+        let Some(path) = self.traces.first() else {
+            ui.weak("Select an array trace in the traces panel");
             return;
         };
-        let Some(stream) = model.streams.get(path) else {
+        let Some(trace) = model.traces.get(path) else {
             ui.weak(format!("{path} has not been received"));
             return;
         };
-        let Samples::Arrays { shape, kind, .. } = &stream.samples else {
+        let Samples::Arrays { shape, kind, .. } = &trace.samples else {
             ui.weak(format!("{path} is not an array"));
             return;
         };
@@ -475,17 +470,17 @@ impl Viewable for Heatmap {
         let text = ValueText {
             kind: kind.unwrap_or(NumberKind::Float),
             format: context.formats.of(path),
-            unit: model.streams.unit(path),
+            unit: model.traces.unit(path),
         };
-        self.contents_ui(ui, stream, text, shape, context.time);
+        self.contents_ui(ui, trace, text, shape, context.time);
     }
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, model: &Model) {
         let dimensions = self
-            .streams
+            .traces
             .first()
-            .and_then(|path| model.streams.get(path))
-            .and_then(|stream| match &stream.samples {
+            .and_then(|path| model.traces.get(path))
+            .and_then(|trace| match &trace.samples {
                 Samples::Arrays { shape, .. } => Some(shape.len()),
                 _ => None,
             });
@@ -511,17 +506,17 @@ impl Viewable for Heatmap {
 }
 
 impl Heatmap {
-    /// Shows the array stream of `shape` as chosen in the options.
+    /// Shows the array trace of `shape` as chosen in the options.
     fn contents_ui(
         &mut self,
         ui: &mut egui::Ui,
-        stream: &Stream,
+        trace: &Trace,
         text: ValueText<'_>,
         shape: &[usize],
         time: &mut TimeRange,
     ) {
         if shape.len() == 1 && self.mode == ArrayMode::AtCursor {
-            self.line_ui(ui, stream, text, time);
+            self.line_ui(ui, trace, text, time);
             return;
         }
 
@@ -529,9 +524,9 @@ impl Heatmap {
         let size = egui::vec2((ui.available_width() - COLOR_BAR_WIDTH).max(50.0), height);
         ui.horizontal(|ui| {
             match *shape {
-                [len] => self.over_time_ui(ui, stream, text, len, time, size),
+                [len] => self.over_time_ui(ui, trace, text, len, time, size),
                 [rows, columns] => {
-                    self.grid_ui(ui, stream, text, (rows, columns), time, size);
+                    self.grid_ui(ui, trace, text, (rows, columns), time, size);
                 }
                 _ => {}
             }
@@ -543,7 +538,7 @@ impl Heatmap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::model::streams::Streams;
+    use crate::app::model::traces::Traces;
     use proto::Data;
 
     #[test]
@@ -564,17 +559,17 @@ mod tests {
 
     #[test]
     fn over_time_holds_each_sample_until_the_next() {
-        let mut streams = Streams::new();
+        let mut traces = Traces::new();
         for (second, elements) in [(1, [1.0, 2.0]), (3, [3.0, 4.0])] {
-            streams.append(&proto::Value {
+            traces.append(&proto::Value {
                 timestamp: second * 1_000_000_000,
                 path: "a".to_owned(),
                 value: Data::Array(elements.iter().copied().map(Data::Float).collect()),
             });
         }
-        let stream = streams.get("a").unwrap();
+        let trace = traces.get("a").unwrap();
         // columns centered at 0.5, 1.5, ... 5.5 seconds
-        let grid = over_time(stream, 2, (0.0, 6.0), 4.0, 6);
+        let grid = over_time(trace, 2, (0.0, 6.0), 4.0, 6);
         let bits = |values: &[f64]| {
             values
                 .iter()

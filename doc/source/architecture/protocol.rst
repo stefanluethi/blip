@@ -32,8 +32,8 @@ Values: ``Data``
 ~~~~~~~~~~~~~~~~
 
 A ``value`` is a plain CBOR data item without any type tag, so a value costs no
-more than its CBOR encoding, also in stored traces. The CBOR major type decides
-the kind of the value:
+more than its CBOR encoding, also in stored recordings. The CBOR major type
+decides the kind of the value:
 
 .. list-table::
    :header-rows: 1
@@ -59,7 +59,7 @@ the kind of the value:
    * - array
      - array
      - Elements of any kind. An array keeps the same shape in every sample of
-       a stream.
+       a trace.
    * - record
      - map with text string keys
      - Fields of any kind, field names are unique.
@@ -69,8 +69,8 @@ the kind of the value:
 
 Byte strings, maps with other keys and other simple values are rejected.
 
-The kind of a stream is set by its first value other than ``null``. Integer
-and float are compatible, a stream switches to float when its first float
+The kind of a trace is set by its first value other than ``null``. Integer
+and float are compatible, a trace switches to float when its first float
 arrives. A sample of any other kind is dropped with a warning.
 
 Example of a record with an array field::

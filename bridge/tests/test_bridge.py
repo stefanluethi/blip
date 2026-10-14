@@ -94,7 +94,7 @@ async def test_simulator_bridge_typed_values():
 
     try:
         async with websockets.connect("ws://127.0.0.1:3995/ws/test") as ws:
-            # Collect the first value of each typed stream
+            # Collect the first value of each typed trace
             typed_paths = (
                 "imu",
                 "motor",

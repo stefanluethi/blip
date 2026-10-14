@@ -2,31 +2,31 @@ pub mod heatmap;
 pub mod log_table;
 pub mod plot;
 pub mod states;
-pub mod stream_selection;
 pub mod table;
 pub mod time_axis;
+pub mod trace_selection;
 pub mod xy;
 
 use crate::app::model::Model;
-use crate::app::model::streams::{DisplayFormat, NumberKind, Samples, Stream};
+use crate::app::model::traces::{DisplayFormat, NumberKind, Samples, Trace};
 use crate::app::time::TimeRange;
 use std::collections::{BTreeMap, BTreeSet};
-use stream_selection::MAX_LISTED_ELEMENTS;
+use trace_selection::MAX_LISTED_ELEMENTS;
 
 /// What views get from the app to show their contents.
 pub struct ViewContext<'a> {
     pub model: &'a Model,
     pub time: &'a mut TimeRange,
-    /// The display formats of the streams of the shown view.
+    /// The display formats of the traces of the shown view.
     pub formats: &'a Formats,
 }
 
-/// The display formats of the streams of a view by their paths, the default format for
-/// streams without one.
+/// The display formats of the traces of a view by their paths, the default format for
+/// traces without one.
 #[derive(serde::Deserialize, serde::Serialize, Clone, Default)]
 pub struct Formats(BTreeMap<String, DisplayFormat>);
 
-/// The formats of a view whose streams all have the default format.
+/// The formats of a view whose traces all have the default format.
 pub static NO_FORMATS: Formats = Formats(BTreeMap::new());
 
 impl Formats {
@@ -80,11 +80,11 @@ pub enum ViewType {
     Logs,
 }
 
-/// What a view can show of a stream.
+/// What a view can show of a trace.
 pub enum Selectable {
-    /// The stream as a whole.
-    Stream,
-    /// Each element of an array stream on its own.
+    /// The trace as a whole.
+    Trace,
+    /// Each element of an array trace on its own.
     Elements,
     /// Nothing, for the given reason.
     No(String),
@@ -122,15 +122,15 @@ impl ViewType {
         }
     }
 
-    /// What a view of this type can show of `stream`.
-    pub fn selectable(self, stream: &Stream) -> Selectable {
-        match (self, &stream.samples) {
-            (ViewType::Logs, _) => Selectable::No("Log views show no streams".to_owned()),
+    /// What a view of this type can show of `trace`.
+    pub fn selectable(self, trace: &Trace) -> Selectable {
+        match (self, &trace.samples) {
+            (ViewType::Logs, _) => Selectable::No("Log views show no traces".to_owned()),
             (ViewType::Plot | ViewType::Xy, Samples::Strings(_)) => {
                 Selectable::No("Plots show numbers".to_owned())
             }
             (ViewType::Plot | ViewType::Xy, Samples::Arrays { shape, .. }) => elements(shape),
-            (ViewType::Plot | ViewType::Xy, _) => Selectable::Stream,
+            (ViewType::Plot | ViewType::Xy, _) => Selectable::Trace,
             (
                 ViewType::States,
                 Samples::Numbers {
@@ -146,12 +146,12 @@ impl ViewType {
                 },
             ) => Selectable::No("States show strings, bools and integers".to_owned()),
             (ViewType::States, Samples::Arrays { shape, .. }) => elements(shape),
-            (ViewType::States, _) => Selectable::Stream,
-            (ViewType::Table, _) => Selectable::Stream,
+            (ViewType::States, _) => Selectable::Trace,
+            (ViewType::Table, _) => Selectable::Trace,
             (ViewType::Heatmap, Samples::Arrays { shape, .. })
                 if (1..=2).contains(&shape.len()) =>
             {
-                Selectable::Stream
+                Selectable::Trace
             }
             (ViewType::Heatmap, _) => {
                 Selectable::No("Heatmaps show arrays of one or two dimensions".to_owned())
@@ -159,14 +159,14 @@ impl ViewType {
         }
     }
 
-    /// Whether a view of this type writes the values of its streams as text, so their
+    /// Whether a view of this type writes the values of its traces as text, so their
     /// display formats apply.
     pub fn writes_values(self) -> bool {
         !matches!(self, ViewType::Xy | ViewType::Logs)
     }
 
-    /// Whether a view of this type shows one stream only.
-    pub fn shows_one_stream(self) -> bool {
+    /// Whether a view of this type shows one trace only.
+    pub fn shows_one_trace(self) -> bool {
         self == ViewType::Heatmap
     }
 }
@@ -183,7 +183,7 @@ pub fn text_color_on(background: egui::Color32) -> egui::Color32 {
     }
 }
 
-/// Names of the streams at `paths` for legends and axes: the last level of each path,
+/// Names of the traces at `paths` for legends and axes: the last level of each path,
 /// after its last "/" or, for a record field, its last ".". Paths whose last levels are
 /// the same keep as many levels as needed to tell them apart.
 pub fn short_names<'a>(paths: impl IntoIterator<Item = &'a str>) -> Vec<&'a str> {
@@ -338,20 +338,20 @@ impl View {
         }
     }
 
-    pub fn shows_streams(&self) -> bool {
+    pub fn shows_traces(&self) -> bool {
         !matches!(self.kind, ViewKind::Logs(_))
     }
 
-    /// The paths of the streams the view shows and its type, or `None` if it does not
-    /// show streams.
+    /// The paths of the traces the view shows and its type, or `None` if it does not
+    /// show traces.
     pub fn selection_mut(&mut self) -> Option<(&mut BTreeSet<String>, ViewType)> {
         let view_type = self.view_type();
         let paths = match &mut self.kind {
-            ViewKind::Plot(plot) => &mut plot.streams,
-            ViewKind::States(states) => &mut states.streams,
-            ViewKind::Table(table) => &mut table.streams,
-            ViewKind::Xy(xy) => &mut xy.streams,
-            ViewKind::Heatmap(heatmap) => &mut heatmap.streams,
+            ViewKind::Plot(plot) => &mut plot.traces,
+            ViewKind::States(states) => &mut states.traces,
+            ViewKind::Table(table) => &mut table.traces,
+            ViewKind::Xy(xy) => &mut xy.traces,
+            ViewKind::Heatmap(heatmap) => &mut heatmap.traces,
             ViewKind::Logs(_) => return None,
         };
         Some((paths, view_type))
@@ -389,8 +389,8 @@ impl Viewable for View {
 }
 
 impl View {
-    /// Shows the number format of each shown stream with its unit, if the view writes
-    /// the values of its streams.
+    /// Shows the number format of each shown trace with its unit, if the view writes
+    /// the values of its traces.
     fn number_format_ui(&mut self, ui: &mut egui::Ui, model: &Model) {
         if !self.view_type().writes_values() {
             return;
@@ -420,10 +420,10 @@ impl View {
                                 }
                             })
                             .response
-                            .on_hover_text("How the numbers of the stream are written")
+                            .on_hover_text("How the numbers of the trace are written")
                             .on_disabled_hover_text("Only numbers have a format");
                     });
-                    if let Some(unit) = model.streams.unit(path) {
+                    if let Some(unit) = model.traces.unit(path) {
                         ui.weak(unit);
                     }
                 });
@@ -433,12 +433,12 @@ impl View {
     }
 }
 
-/// Whether the stream at `path` has numbers other than bools, which display formats
+/// Whether the trace at `path` has numbers other than bools, which display formats
 /// apply to.
 fn has_numbers(model: &Model, path: &str) -> bool {
-    let kind = match model.streams.series(path) {
+    let kind = match model.traces.series(path) {
         Some(series) => Some(series.kind),
-        None => match model.streams.get(path).map(|stream| &stream.samples) {
+        None => match model.traces.get(path).map(|trace| &trace.samples) {
             Some(Samples::Arrays { kind, .. }) => *kind,
             _ => None,
         },
@@ -446,12 +446,12 @@ fn has_numbers(model: &Model, path: &str) -> bool {
     kind.is_some_and(|kind| kind != NumberKind::Bool)
 }
 
-/// The unit of the streams at `paths` if they all have the same.
+/// The unit of the traces at `paths` if they all have the same.
 pub fn common_unit<'a, 'b>(
     model: &'a Model,
     paths: impl IntoIterator<Item = &'b str>,
 ) -> Option<&'a str> {
-    let mut units = paths.into_iter().map(|path| model.streams.unit(path));
+    let mut units = paths.into_iter().map(|path| model.traces.unit(path));
     let first = units.next()??;
     units.all(|unit| unit == Some(first)).then_some(first)
 }

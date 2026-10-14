@@ -40,7 +40,7 @@ Test Cases
 
    ``blip/src/app/view`` unit tests -- merge equal values into state runs
    with gaps at nulls, hide collapsed rows of the table, pair samples with the
-   current sample of the x stream, and sample arrays over time for heatmaps.
+   current sample of the x trace, and sample arrays over time for heatmaps.
 
 .. test:: Time cursor is set and dragged
    :id: TEST_BLIP_CURSOR
@@ -52,7 +52,7 @@ Test Cases
    keep the cursor at the end of the range until set, stop live mode when it
    is set, and click and drag it in a plot without panning the plot.
 
-.. test:: Stream values encode as plain CBOR
+.. test:: Trace values encode as plain CBOR
    :id: TEST_PROTO_DATA
    :status: implemented
    :component: proto

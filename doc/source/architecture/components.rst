@@ -14,7 +14,7 @@ Components
      panels of the window.
    * ``app/proto_parser.rs`` -- decodes binary CBOR frames into ``proto``
      messages and feeds the model.
-   * ``app/model`` -- data model: value ``streams`` and ``logs``.
+   * ``app/model`` -- data model: value ``traces`` and ``logs``.
    * ``app/time.rs`` -- the time range shared by all views.
    * ``app/layout`` -- the layout of the views as a tree of groups, shown
      with ``egui_tiles``, the layout panel to edit it and its versioned
@@ -22,7 +22,7 @@ Components
    * ``app/view`` -- views: time-series ``plot``, ``states`` over time,
      ``table`` of values, ``xy`` plot, ``heatmap`` of arrays and
      ``log_table``; ``time_axis`` shared by the views over time, and the
-     ``stream_selection`` of the selected view.
+     ``trace_selection`` of the selected view.
 
 .. arch:: proto crate
    :id: ARCH_PROTO

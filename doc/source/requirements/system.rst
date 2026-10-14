@@ -4,7 +4,7 @@ System Requirements
 Visualisation
 -------------
 
-.. req:: Plot value streams
+.. req:: Plot value traces
    :id: REQ_VIS_PLOT
    :status: implemented
    :component: blip
@@ -28,7 +28,7 @@ Visualisation
    :component: blip
    :satisfies: STK_LIVE_OBSERVE
 
-   blip shall display string, bool and integer streams over time as a row of
+   blip shall display string, bool and integer traces over time as a row of
    coloured bands, one band for each run of equal values.
 
 .. req:: Show values in a table
@@ -37,17 +37,17 @@ Visualisation
    :component: blip
    :satisfies: STK_LIVE_OBSERVE
 
-   blip shall display the values of streams of any type in a table, at the
+   blip shall display the values of traces of any type in a table, at the
    time of the time cursor.
 
-.. req:: Plot streams against each other
+.. req:: Plot traces against each other
    :id: REQ_VIS_XY
    :status: implemented
    :component: blip
    :satisfies: STK_LIVE_OBSERVE
 
-   blip shall plot numeric streams against another numeric stream, pairing
-   each sample with the sample of the other stream current at its time.
+   blip shall plot numeric traces against another numeric trace, pairing
+   each sample with the sample of the other trace current at its time.
 
 .. req:: Show arrays as heatmaps
    :id: REQ_VIS_HEATMAP
@@ -55,7 +55,7 @@ Visualisation
    :component: blip
    :satisfies: STK_LIVE_OBSERVE
 
-   blip shall display array streams of one dimension as heatmaps over time
+   blip shall display array traces of one dimension as heatmaps over time
    and arrays of two dimensions as heatmaps at a point in time.
 
 .. req:: Time cursor
@@ -88,7 +88,7 @@ Connectivity
    Messages shall be encoded as CBOR according to the types defined in the
    ``proto`` crate.
 
-.. req:: Typed stream values
+.. req:: Typed trace values
    :id: REQ_PROTO_TYPES
    :status: implemented
    :component: proto

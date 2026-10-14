@@ -1,18 +1,18 @@
 pub mod logs;
-pub mod streams;
+pub mod traces;
 
 use crate::app::model::logs::Logs;
-use crate::app::model::streams::Streams;
+use crate::app::model::traces::Traces;
 
 pub struct Model {
-    pub streams: Streams,
+    pub traces: Traces,
     pub logs: Logs,
 }
 
 impl Default for Model {
     fn default() -> Self {
         Self {
-            streams: Streams::new(),
+            traces: Traces::new(),
             logs: Logs::new(),
         }
     }
@@ -21,7 +21,7 @@ impl Default for Model {
 impl Model {
     /// Timestamps of the first and the newest collected data.
     pub fn time_span(&self) -> Option<(u64, u64)> {
-        [self.streams.time_span(), self.logs.time_span()]
+        [self.traces.time_span(), self.logs.time_span()]
             .into_iter()
             .flatten()
             .reduce(|(first_a, last_a), (first_b, last_b)| {

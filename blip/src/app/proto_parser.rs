@@ -6,10 +6,10 @@ pub fn parse_message(message: Vec<u8>, model: &mut Model) {
         Ok(message) => {
             match message {
                 proto::Message::Value(value) => {
-                    model.streams.append(&value);
+                    model.traces.append(&value);
                 }
                 proto::Message::ValueMetadata(metadata) => {
-                    model.streams.set_unit(&metadata.path, &metadata.unit);
+                    model.traces.set_unit(&metadata.path, &metadata.unit);
                 }
                 proto::Message::Log(record) => {
                     log::info!("received log message");

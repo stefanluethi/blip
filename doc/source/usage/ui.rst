@@ -16,10 +16,10 @@ Top panel
    received data.
 
 Left panel
-   The **Streams** of the selected plot, as a tree that branches at each
-   ``/`` of the path, with the type of each stream, and the **Layout** of the
+   The **Traces** of the selected plot, as a tree that branches at each
+   ``/`` of the path, with the type of each trace, and the **Layout** of the
    views below. Drag the border between them to resize them. The fields of a
-   record are separate streams joined to its path with ``.``, e.g.
+   record are separate traces joined to its path with ``.``, e.g.
    ``imu.acc``, listed below the record as ``.acc``. Arrays list their
    elements, e.g. ``imu.acc[0]``, if they have at most 16; larger arrays
    cannot be plotted yet.
@@ -37,9 +37,9 @@ Views
 -----
 
 Plot
-   Time-series plot of the ``Value`` streams checked in the left panel while
+   Time-series plot of the ``Value`` traces checked in the left panel while
    the plot is selected. Select a plot by clicking it or its row in the layout
-   panel. Hovering a plot shows the values of its streams at the pointer.
+   panel. Hovering a plot shows the values of its traces at the pointer.
    Numbers are drawn as lines and bools as steps between 0 and 1, both with
    gaps where a ``null`` was received. Strings cannot be plotted, show them
    in a states or table view.
@@ -57,12 +57,12 @@ layout.
 
 * A group has its name and how it arranges its children.
 * A view has its name and type, the sections of its type, e.g. the y axis,
-  lines and legend of a plot, and the **Number format** of its streams: how
+  lines and legend of a plot, and the **Number format** of its traces: how
   their numbers are written in the view (decimal, hex, binary or scientific),
   next to their unit as sent by the bridge. Hex and binary apply to whole
   numbers only, strings and bools have no format.
-* An XY view plots the streams selected in the left panel against one of them.
-  Its **Axes** set which stream is on the x axis, the others are on the y
+* An XY view plots the traces selected in the left panel against one of them.
+  Its **Axes** set which trace is on the x axis, the others are on the y
   axis.
 * Number fields left empty show *auto*: the value is fitted to the data.
 

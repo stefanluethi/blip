@@ -1,30 +1,31 @@
-//! An XY plot: streams plotted against another stream instead of against time, e.g. a
+//! An XY plot: traces plotted against another trace instead of against time, e.g. a
 //! position as a path.
 
 use super::time_axis::{index_at, within};
 use super::{ViewContext, Viewable, short_names};
 use crate::app::model::Model;
-use crate::app::model::streams::Series;
+use crate::app::model::traces::Series;
 use crate::app::time::TimeRange;
 use std::collections::BTreeSet;
 use std::ops::Range;
 
-/// Upper bound of points drawn per stream.
+/// Upper bound of points drawn per trace.
 const MAX_POINTS: usize = 20_000;
 /// Number of steps in which the trail fades out towards older points.
 const FADE_STEPS: usize = 8;
 /// Opacity of the oldest part of the trail.
 const MIN_OPACITY: f32 = 0.15;
 
-/// The shown streams plotted against one of them, the x stream, within the shown
+/// The shown traces plotted against one of them, the x trace, within the shown
 /// window.
 #[derive(serde::Deserialize, serde::Serialize, Clone, Default)]
 #[serde(default)]
 pub struct Xy {
-    /// Path of the stream on the x axis, see [`Xy::x_path`].
+    /// Path of the trace on the x axis, see [`Xy::x_path`].
     pub x: Option<String>,
-    /// Paths of the shown streams, the x stream and the streams on the y axis.
-    pub streams: BTreeSet<String>,
+    /// Paths of the shown traces, the x trace and the traces on the y axis.
+    #[serde(alias = "streams")] // the name before layout version 3
+    pub traces: BTreeSet<String>,
     /// Whether a unit has the same length on both axes, e.g. for positions.
     pub equal_axes: bool,
 }
@@ -75,26 +76,26 @@ impl Xy {
         Self::default()
     }
 
-    /// Before layout version 2, the x stream was not one of the shown streams.
+    /// Before layout version 2, the x trace was not one of the shown traces.
     pub fn migrate_v1(&mut self) {
         if let Some(x) = &self.x {
-            self.streams.insert(x.clone());
+            self.traces.insert(x.clone());
         }
     }
 
-    /// Path of the stream on the x axis: the chosen one if it is shown, else the first
-    /// shown stream.
+    /// Path of the trace on the x axis: the chosen one if it is shown, else the first
+    /// shown trace.
     pub fn x_path(&self) -> Option<&str> {
         self.x
             .as_deref()
-            .filter(|x| self.streams.contains(*x))
-            .or_else(|| self.streams.first().map(String::as_str))
+            .filter(|x| self.traces.contains(*x))
+            .or_else(|| self.traces.first().map(String::as_str))
     }
 
-    /// Paths of the streams on the y axis: the shown streams but the x stream.
+    /// Paths of the traces on the y axis: the shown traces but the x trace.
     fn y_paths(&self) -> impl Iterator<Item = &str> {
         let x = self.x_path();
-        self.streams
+        self.traces
             .iter()
             .map(String::as_str)
             .filter(move |&path| Some(path) != x)
@@ -137,13 +138,13 @@ impl Xy {
         let x_path = self.x_path();
         let y_paths: Vec<&str> = self.y_paths().collect();
         let names = short_names(y_paths.iter().copied());
-        // an axis is labelled with the name of its stream and the unit of its streams
+        // an axis is labelled with the name of its trace and the unit of its traces
         let label = |name: &str, unit: Option<&str>| match unit {
             Some(unit) if name.is_empty() => format!("[{unit}]"),
             Some(unit) => format!("{name} [{unit}]"),
             None => name.to_owned(),
         };
-        let x_unit = x_path.and_then(|x| model.streams.unit(x));
+        let x_unit = x_path.and_then(|x| model.traces.unit(x));
         let x_label = label(&short_names(x_path).concat(), x_unit);
         let y_unit = super::common_unit(model, y_paths.iter().copied());
         let y_label = match names[..] {
@@ -173,7 +174,7 @@ impl Xy {
             plot = plot.data_aspect(1.0);
         }
 
-        let x = x_path.and_then(|path| model.streams.series(path));
+        let x = x_path.and_then(|path| model.traces.series(path));
         let range = time.range();
         let cursor = time.cursor();
         let ring_color = ui.visuals().strong_text_color();
@@ -182,14 +183,14 @@ impl Xy {
                 return;
             };
             for (index, (path, name)) in y_paths.iter().zip(&names).enumerate() {
-                let Some(y) = model.streams.series(path) else {
+                let Some(y) = model.traces.series(path) else {
                     continue;
                 };
                 let color = super::plot::curve_color(index);
                 let points = thin_out(pair(x, y, within(y.timestamps, range)), MAX_POINTS);
                 Self::plot_trail(name, &points, color, plot_ui);
 
-                // where the stream was at the cursor
+                // where the trace was at the cursor
                 let at_cursor = cursor
                     .and_then(|t| index_at(y.timestamps, t))
                     .map(|index| pair(x, y, index..index + 1)[0])
@@ -210,8 +211,8 @@ impl Xy {
 
 impl Viewable for Xy {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
-        if self.streams.len() < 2 {
-            ui.weak("Select an x and a y stream in the streams panel");
+        if self.traces.len() < 2 {
+            ui.weak("Select an x and a y trace in the traces panel");
             return;
         }
         self.show_plot(ui, context.model, context.time);
@@ -219,7 +220,7 @@ impl Viewable for Xy {
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, _model: &Model) {
         let x_path = self.x_path().map(str::to_owned);
-        let paths: Vec<String> = self.streams.iter().cloned().collect();
+        let paths: Vec<String> = self.traces.iter().cloned().collect();
         let names = short_names(paths.iter().map(String::as_str));
         super::properties_section(ui, "Axes", |ui| {
             for (path, name) in paths.iter().zip(names) {
@@ -230,7 +231,7 @@ impl Viewable for Xy {
                         self.x = Some(path.clone());
                     }
                     if ui.selectable_label(!is_x, "Y").clicked() && is_x {
-                        // another stream becomes the x stream
+                        // another trace becomes the x trace
                         self.x = paths.iter().find(|other| *other != path).cloned();
                     }
                 });
@@ -247,25 +248,25 @@ impl Viewable for Xy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::model::streams::Streams;
+    use crate::app::model::traces::Traces;
     use proto::Data;
 
-    /// Streams of the given samples at the given timestamps.
-    fn streams(samples: &[(u64, &str, Data)]) -> Streams {
-        let mut streams = Streams::new();
+    /// Traces of the given samples at the given timestamps.
+    fn traces(samples: &[(u64, &str, Data)]) -> Traces {
+        let mut traces = Traces::new();
         for (timestamp, path, value) in samples {
-            streams.append(&proto::Value {
+            traces.append(&proto::Value {
                 timestamp: *timestamp,
                 path: path.to_string(),
                 value: value.clone(),
             });
         }
-        streams
+        traces
     }
 
     #[test]
     fn samples_are_paired_with_the_current_x() {
-        let streams = streams(&[
+        let traces = traces(&[
             (1, "y", Data::Float(10.0)),
             (2, "x", Data::Float(1.0)),
             (2, "y", Data::Float(20.0)),
@@ -273,7 +274,7 @@ mod tests {
             (4, "x", Data::Float(2.0)),
             (5, "y", Data::Null),
         ]);
-        let (x, y) = (streams.series("x").unwrap(), streams.series("y").unwrap());
+        let (x, y) = (traces.series("x").unwrap(), traces.series("y").unwrap());
         let points = pair(x, y, 0..y.len());
         assert!(points[0][0].is_nan());
         assert_eq!(points[1], [1.0, 20.0]);
@@ -284,9 +285,9 @@ mod tests {
     }
 
     #[test]
-    fn the_x_stream_is_the_chosen_or_else_the_first_shown_stream() {
+    fn the_x_trace_is_the_chosen_or_else_the_first_shown_trace() {
         let mut xy = Xy {
-            streams: ["a", "b", "c"].map(str::to_owned).into(),
+            traces: ["a", "b", "c"].map(str::to_owned).into(),
             ..Xy::default()
         };
         assert_eq!(xy.x_path(), Some("a"));
@@ -294,7 +295,7 @@ mod tests {
         xy.x = Some("b".to_owned());
         assert_eq!(xy.x_path(), Some("b"));
         assert_eq!(xy.y_paths().collect::<Vec<_>>(), ["a", "c"]);
-        xy.streams.remove("b");
+        xy.traces.remove("b");
         assert_eq!(xy.x_path(), Some("a"));
     }
 

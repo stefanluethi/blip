@@ -1,5 +1,5 @@
 use crate::app::model::Model;
-use crate::app::model::streams::{Samples, Stream, element_path};
+use crate::app::model::traces::{Samples, Trace, element_path};
 use crate::app::view::{Selectable, ViewType};
 use egui::{RichText, Ui};
 use egui_phosphor::regular::{BRACKETS_CURLY, BRACKETS_SQUARE, HASH, TEXT_AA};
@@ -8,22 +8,22 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Arrays with up to this many elements list each element for selection.
 pub const MAX_LISTED_ELEMENTS: usize = 16;
 
-/// Stream paths split into a tree at each "/", and at each "." between the fields of
+/// Trace paths split into a tree at each "/", and at each "." between the fields of
 /// a record.
 #[derive(Default)]
-pub struct StreamTree<'a> {
-    /// The stream if one ends at this node.
-    pub stream: Option<&'a Stream>,
+pub struct TraceTree<'a> {
+    /// The trace if one ends at this node.
+    pub trace: Option<&'a Trace>,
     /// Children by path segment, record fields with their leading ".", e.g. ".acc".
-    pub children: BTreeMap<&'a str, StreamTree<'a>>,
+    pub children: BTreeMap<&'a str, TraceTree<'a>>,
 }
 
-impl<'a> StreamTree<'a> {
-    pub fn build(streams: impl Iterator<Item = &'a Stream>) -> Self {
+impl<'a> TraceTree<'a> {
+    pub fn build(traces: impl Iterator<Item = &'a Trace>) -> Self {
         let mut root = Self::default();
-        for stream in streams {
-            let path = stream.path.as_str();
-            let (name, fields) = path.split_at(stream.fields_start.unwrap_or(path.len()));
+        for trace in traces {
+            let path = trace.path.as_str();
+            let (name, fields) = path.split_at(trace.fields_start.unwrap_or(path.len()));
             let field_starts = fields.match_indices('.').map(|(start, _)| start);
             let field_ends = field_starts.clone().skip(1).chain([fields.len()]);
             let field_segments = field_starts
@@ -35,7 +35,7 @@ impl<'a> StreamTree<'a> {
             for segment in segments.chain(field_segments) {
                 node = node.children.entry(segment).or_default();
             }
-            node.stream = Some(stream);
+            node.trace = Some(trace);
         }
         root
     }
@@ -44,12 +44,12 @@ impl<'a> StreamTree<'a> {
         self.children.keys().any(|segment| segment.starts_with('.'))
     }
 
-    /// The paths of all streams at and below this node that a view of `view_type` can
+    /// The paths of all traces at and below this node that a view of `view_type` can
     /// show.
     fn paths(&self, view_type: ViewType) -> Vec<String> {
-        self.stream
+        self.trace
             .into_iter()
-            .flat_map(|stream| stream_paths(stream, view_type))
+            .flat_map(|trace| trace_paths(trace, view_type))
             .chain(
                 self.children
                     .values()
@@ -68,7 +68,7 @@ pub fn type_icon(samples: &Samples) -> &'static str {
     }
 }
 
-/// The streams selected for a view.
+/// The traces selected for a view.
 struct Selection<'a> {
     paths: &'a mut BTreeSet<String>,
     view_type: ViewType,
@@ -95,7 +95,7 @@ fn show_checkbox(
     let checkbox = checkbox.indeterminate(selected_count > 0 && selected_count < paths.len());
     let response = ui.add_enabled(!paths.is_empty(), checkbox);
     if response.changed() {
-        if selected && selection.view_type.shows_one_stream() {
+        if selected && selection.view_type.shows_one_trace() {
             selection.paths.clear();
         }
         for path in paths {
@@ -120,36 +120,36 @@ fn element_indices(shape: &[usize], mut flat_index: usize) -> Vec<usize> {
     indices
 }
 
-/// The paths of `stream` that a view of `view_type` can show: its own, those of its
+/// The paths of `trace` that a view of `view_type` can show: its own, those of its
 /// elements, or none.
-pub fn stream_paths(stream: &Stream, view_type: ViewType) -> Vec<String> {
-    match (view_type.selectable(stream), &stream.samples) {
+pub fn trace_paths(trace: &Trace, view_type: ViewType) -> Vec<String> {
+    match (view_type.selectable(trace), &trace.samples) {
         (Selectable::Elements, Samples::Arrays { shape, .. }) => (0..shape.iter().product())
-            .map(|flat_index| element_path(&stream.path, &element_indices(shape, flat_index)))
+            .map(|flat_index| element_path(&trace.path, &element_indices(shape, flat_index)))
             .collect(),
         (Selectable::No(_), _) => vec![],
-        _ => vec![stream.path.clone()],
+        _ => vec![trace.path.clone()],
     }
 }
 
-/// Shows `stream` labelled `label` with the icon of its type: a checkbox, or a
+/// Shows `trace` labelled `label` with the icon of its type: a checkbox, or a
 /// collapsible list of checkboxes for its elements.
-fn show_stream(ui: &mut Ui, label: &str, stream: &Stream, selection: &mut Selection<'_>) {
-    let icon = Some(type_icon(&stream.samples));
-    let paths = stream_paths(stream, selection.view_type);
-    let mut hover = format!("{}\n{}", stream.path, stream.samples.type_label());
-    match selection.view_type.selectable(stream) {
-        Selectable::Stream => {}
+fn show_trace(ui: &mut Ui, label: &str, trace: &Trace, selection: &mut Selection<'_>) {
+    let icon = Some(type_icon(&trace.samples));
+    let paths = trace_paths(trace, selection.view_type);
+    let mut hover = format!("{}\n{}", trace.path, trace.samples.type_label());
+    match selection.view_type.selectable(trace) {
+        Selectable::Trace => {}
         Selectable::No(reason) => hover.push_str(&format!("\n{reason}")),
         Selectable::Elements => {
-            let id = ui.make_persistent_id(("stream_array", &stream.path));
+            let id = ui.make_persistent_id(("trace_array", &trace.path));
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false)
                 .show_header(ui, |ui| {
                     show_checkbox(ui, label, icon, &paths, selection).on_hover_text(hover);
                 })
                 .body(|ui| {
                     for path in &paths {
-                        let label = &path[stream.path.len()..];
+                        let label = &path[trace.path.len()..];
                         leaf_row(ui, |ui| {
                             show_checkbox(ui, label, None, std::slice::from_ref(path), selection)
                                 .on_hover_text(path);
@@ -175,27 +175,22 @@ fn leaf_row(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
     });
 }
 
-/// Shows the children of `node` as collapsible branches and streams.
-fn show_stream_tree(
-    ui: &mut Ui,
-    node: &StreamTree<'_>,
-    prefix: &str,
-    selection: &mut Selection<'_>,
-) {
+/// Shows the children of `node` as collapsible branches and traces.
+fn show_trace_tree(ui: &mut Ui, node: &TraceTree<'_>, prefix: &str, selection: &mut Selection<'_>) {
     for (segment, child) in &node.children {
         let child_prefix = format!("{prefix}/{segment}");
         let label = segment.strip_prefix('.').unwrap_or(segment);
         if child.children.is_empty() {
-            if let Some(stream) = child.stream {
-                show_stream(ui, label, stream, selection);
+            if let Some(trace) = child.trace {
+                show_trace(ui, label, trace, selection);
             }
         } else {
             let icon = child.is_record().then_some(BRACKETS_CURLY);
-            let id = ui.make_persistent_id(("stream_tree", &child_prefix));
+            let id = ui.make_persistent_id(("trace_tree", &child_prefix));
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
                 .show_header(ui, |ui| {
-                    if selection.view_type.shows_one_stream() {
-                        // a branch cannot be selected as one stream
+                    if selection.view_type.shows_one_trace() {
+                        // a branch cannot be selected as one trace
                         match icon {
                             Some(icon) => ui.label(format!("{label} {icon}")),
                             None => ui.label(label),
@@ -206,22 +201,22 @@ fn show_stream_tree(
                     }
                 })
                 .body(|ui| {
-                    // a stream can also be the prefix of other streams
-                    if let Some(stream) = child.stream {
-                        show_stream(ui, label, stream, selection);
+                    // a trace can also be the prefix of other traces
+                    if let Some(trace) = child.trace {
+                        show_trace(ui, label, trace, selection);
                     }
-                    show_stream_tree(ui, child, &child_prefix, selection);
+                    show_trace_tree(ui, child, &child_prefix, selection);
                 });
         }
     }
 }
 
-/// Shows all streams of `model` as a tree with checkboxes for the streams selected for
+/// Shows all traces of `model` as a tree with checkboxes for the traces selected for
 /// a view of the given type, disabled if there is no selection to edit.
 pub fn show(ui: &mut Ui, model: &Model, selection: Option<(&mut BTreeSet<String>, ViewType)>) {
-    let tree = StreamTree::build(model.streams.iter());
+    let tree = TraceTree::build(model.traces.iter());
     if tree.children.is_empty() {
-        ui.weak("No streams received");
+        ui.weak("No traces received");
         return;
     }
     let mut unselectable = BTreeSet::new();
@@ -229,7 +224,7 @@ pub fn show(ui: &mut Ui, model: &Model, selection: Option<(&mut BTreeSet<String>
     let (paths, view_type) = selection.unwrap_or((&mut unselectable, ViewType::Plot));
     let mut selection = Selection { paths, view_type };
     ui.add_enabled_ui(enabled, |ui| {
-        show_stream_tree(ui, &tree, "", &mut selection);
+        show_trace_tree(ui, &tree, "", &mut selection);
     });
 }
 
@@ -238,39 +233,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stream_tree_branches_at_slashes() {
-        let streams: Vec<Stream> = ["acc/x", "acc/y", "/cpu", "acc"]
+    fn trace_tree_branches_at_slashes() {
+        let traces: Vec<Trace> = ["acc/x", "acc/y", "/cpu", "acc"]
             .into_iter()
-            .map(|path| Stream::new(path.to_owned(), None))
+            .map(|path| Trace::new(path.to_owned(), None))
             .collect();
-        let tree = StreamTree::build(streams.iter());
+        let tree = TraceTree::build(traces.iter());
         assert_eq!(
             tree.children.keys().copied().collect::<Vec<_>>(),
             ["acc", "cpu"]
         );
         let acc = &tree.children["acc"];
-        assert_eq!(acc.stream.map(|stream| stream.path.as_str()), Some("acc"));
+        assert_eq!(acc.trace.map(|trace| trace.path.as_str()), Some("acc"));
         assert_eq!(acc.children.keys().copied().collect::<Vec<_>>(), ["x", "y"]);
         assert_eq!(
-            acc.children["x"].stream.map(|stream| stream.path.as_str()),
+            acc.children["x"].trace.map(|trace| trace.path.as_str()),
             Some("acc/x")
         );
         assert_eq!(
-            tree.children["cpu"]
-                .stream
-                .map(|stream| stream.path.as_str()),
+            tree.children["cpu"].trace.map(|trace| trace.path.as_str()),
             Some("/cpu")
         );
     }
 
     #[test]
-    fn stream_tree_branches_at_record_fields() {
-        let streams = [
-            Stream::new("sensors/imu.acc.z".to_owned(), Some(11)),
-            Stream::new("sensors/imu.ok".to_owned(), Some(11)),
-            Stream::new("sensors/v1.2".to_owned(), None),
+    fn trace_tree_branches_at_record_fields() {
+        let traces = [
+            Trace::new("sensors/imu.acc.z".to_owned(), Some(11)),
+            Trace::new("sensors/imu.ok".to_owned(), Some(11)),
+            Trace::new("sensors/v1.2".to_owned(), None),
         ];
-        let tree = StreamTree::build(streams.iter());
+        let tree = TraceTree::build(traces.iter());
         let sensors = &tree.children["sensors"];
         assert_eq!(
             sensors.children.keys().copied().collect::<Vec<_>>(),
@@ -285,29 +278,29 @@ mod tests {
         );
         assert_eq!(
             imu.children[".acc"].children[".z"]
-                .stream
-                .map(|stream| stream.path.as_str()),
+                .trace
+                .map(|trace| trace.path.as_str()),
             Some("sensors/imu.acc.z")
         );
     }
 
     #[test]
-    fn stream_tree_paths_list_array_elements() {
+    fn trace_tree_paths_list_array_elements() {
         let array = |path: &str, len| {
-            let mut stream = Stream::new(path.to_owned(), Some(3));
-            stream.samples = Samples::Arrays {
+            let mut trace = Trace::new(path.to_owned(), Some(3));
+            trace.samples = Samples::Arrays {
                 shape: vec![len],
                 kind: None,
                 values: vec![],
             };
-            stream
+            trace
         };
-        let streams = [
+        let traces = [
             array("imu.acc", 2),
             array("imu.big", MAX_LISTED_ELEMENTS + 1),
-            Stream::new("imu.ok".to_owned(), Some(3)),
+            Trace::new("imu.ok".to_owned(), Some(3)),
         ];
-        let tree = StreamTree::build(streams.iter());
+        let tree = TraceTree::build(traces.iter());
         assert_eq!(
             tree.children["imu"].paths(ViewType::Plot),
             ["imu.acc[0]", "imu.acc[1]", "imu.ok"]

@@ -1,10 +1,10 @@
-//! A states view: the values of streams over time as a row of coloured bands per
-//! stream, one band for each run of equal values.
+//! A states view: the values of traces over time as a row of coloured bands per
+//! trace, one band for each run of equal values.
 
 use super::time_axis::{self, index_at, visible_range};
 use super::{Formats, ViewContext, Viewable, short_names, text_color_on, with_unit};
 use crate::app::model::Model;
-use crate::app::model::streams::{DisplayFormat, NumberKind, Samples, Series};
+use crate::app::model::traces::{DisplayFormat, NumberKind, Samples, Series};
 use crate::app::time::{TimeBase, timestamp_to_seconds};
 use egui::Color32;
 use std::collections::BTreeSet;
@@ -16,12 +16,13 @@ const MIN_RUN_WIDTH: f64 = 3.0;
 /// wide enough for it.
 const LABEL_CHAR_WIDTH: f64 = 8.0;
 
-/// The values of the selected streams as states over time.
+/// The values of the selected traces as states over time.
 #[derive(serde::Deserialize, serde::Serialize, Clone)]
 #[serde(default)]
 pub struct States {
-    /// Paths of the shown streams.
-    pub streams: BTreeSet<String>,
+    /// Paths of the shown traces.
+    #[serde(alias = "streams")] // the name before layout version 3
+    pub traces: BTreeSet<String>,
     /// Height of a band as a fraction of its row, the rest is the gap to the next row.
     pub band_height: f64,
     /// Whether the bands wide enough for their value are labelled with it.
@@ -31,14 +32,14 @@ pub struct States {
 impl Default for States {
     fn default() -> Self {
         Self {
-            streams: BTreeSet::new(),
+            traces: BTreeSet::new(),
             band_height: 0.8,
             show_values: true,
         }
     }
 }
 
-/// The samples of a stream shown as states.
+/// The samples of a trace shown as states.
 #[derive(Clone, Copy)]
 enum StateSamples<'a> {
     /// Numbers, written in the display format.
@@ -51,13 +52,13 @@ enum StateSamples<'a> {
 
 impl<'a> StateSamples<'a> {
     fn of(model: &'a Model, path: &str, format: DisplayFormat) -> Option<Self> {
-        if let Some(series) = model.streams.series(path) {
+        if let Some(series) = model.traces.series(path) {
             return Some(Self::Numbers(series, format));
         }
-        let stream = model.streams.get(path)?;
-        match &stream.samples {
+        let trace = model.traces.get(path)?;
+        match &trace.samples {
             Samples::Strings(values) => Some(Self::Strings {
-                timestamps: &stream.timestamps,
+                timestamps: &trace.timestamps,
                 values,
             }),
             _ => None,
@@ -251,7 +252,7 @@ impl States {
         }
     }
 
-    /// Shows the values of the shown streams current at `t` seconds.
+    /// Shows the values of the shown traces current at `t` seconds.
     fn tooltip_ui(
         &self,
         ui: &mut egui::Ui,
@@ -261,16 +262,16 @@ impl States {
         base: TimeBase,
     ) {
         ui.label(base.format(t, 3));
-        let names = short_names(self.streams.iter().map(String::as_str));
+        let names = short_names(self.traces.iter().map(String::as_str));
         egui::Grid::new("states_tooltip")
             .num_columns(2)
             .show(ui, |ui| {
-                for (path, name) in self.streams.iter().zip(names) {
+                for (path, name) in self.traces.iter().zip(names) {
                     let Some(samples) = StateSamples::of(model, path, formats.of(path)) else {
                         continue;
                     };
                     if let Some(index) = index_at(samples.timestamps(), t) {
-                        let unit = model.streams.unit(path).filter(|_| !samples.is_null(index));
+                        let unit = model.traces.unit(path).filter(|_| !samples.is_null(index));
                         ui.label(name);
                         ui.label(with_unit(samples.text(index), unit));
                         ui.end_row();
@@ -281,12 +282,12 @@ impl States {
 
     fn show_states(&self, context: &mut ViewContext<'_>, ui: &mut egui::Ui) {
         let (model, formats, time) = (context.model, context.formats, &mut *context.time);
-        let names: Vec<String> = short_names(self.streams.iter().map(String::as_str))
+        let names: Vec<String> = short_names(self.traces.iter().map(String::as_str))
             .into_iter()
             .map(str::to_owned)
             .collect();
         let rows = names.len();
-        // the first stream is the top row
+        // the first trace is the top row
         let row_y = move |row: usize| (rows - 1 - row) as f64;
         let id = ui.id().with("states");
         let plot = time_axis::plot(id, time)
@@ -319,7 +320,7 @@ impl States {
             let (Some(range), Some(latest)) = (axis.range, latest) else {
                 return;
             };
-            for (row, path) in self.streams.iter().enumerate() {
+            for (row, path) in self.traces.iter().enumerate() {
                 if let Some(samples) = StateSamples::of(model, path, formats.of(path)) {
                     let y = row_y(row);
                     self.plot_row(samples, y, range, latest, axis.origin, plot_ui);
@@ -328,7 +329,7 @@ impl States {
         });
 
         if let Some(t) = response.hovered
-            && !self.streams.is_empty()
+            && !self.traces.is_empty()
         {
             let base = response.axis.base;
             response
@@ -360,25 +361,25 @@ impl Viewable for States {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::model::streams::Streams;
+    use crate::app::model::traces::Traces;
     use proto::Data;
 
-    /// Streams of the given samples, one every second.
-    fn streams(samples: &[(&str, Data)]) -> Streams {
-        let mut streams = Streams::new();
+    /// Traces of the given samples, one every second.
+    fn traces(samples: &[(&str, Data)]) -> Traces {
+        let mut traces = Traces::new();
         for (second, (path, value)) in samples.iter().enumerate() {
-            streams.append(&proto::Value {
+            traces.append(&proto::Value {
                 timestamp: second as u64 * 1_000_000_000,
                 path: path.to_string(),
                 value: value.clone(),
             });
         }
-        streams
+        traces
     }
 
     fn model(samples: &[(&str, Data)]) -> Model {
         Model {
-            streams: streams(samples),
+            traces: traces(samples),
             ..Model::default()
         }
     }

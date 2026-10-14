@@ -164,22 +164,22 @@ pub fn visible_range(timestamps: &[u64], range_x: Option<(f64, f64)>) -> Range<u
 mod tests {
     use super::*;
     use crate::app::model::Model;
-    use crate::app::model::streams::Streams;
+    use crate::app::model::traces::Traces;
     use egui_kittest::Harness;
 
     /// A harness showing a time plot of data from 0 to 40 seconds, its state is the
     /// shared time range.
     fn time_plot_harness() -> Harness<'static, TimeRange> {
-        let mut streams = Streams::new();
+        let mut traces = Traces::new();
         for second in 0..=40 {
-            streams.append(&proto::Value {
+            traces.append(&proto::Value {
                 timestamp: second * 1_000_000_000,
                 path: "a".to_owned(),
                 value: proto::Data::Float(1.0),
             });
         }
         let model = Model {
-            streams,
+            traces,
             ..Model::default()
         };
         Harness::builder()

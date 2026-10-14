@@ -3,7 +3,7 @@ use serde::ser::{SerializeMap, SerializeSeq};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
-/// The value of a stream sample, encoded as a plain CBOR data item without any type
+/// The value of a trace sample, encoded as a plain CBOR data item without any type
 /// tag, so each variant maps to one CBOR major type.
 ///
 /// Integers are a single kind on the wire, their sign decides the CBOR major type:
@@ -18,7 +18,7 @@ pub enum Data {
     Float(f64),
     Bool(bool),
     String(String),
-    /// The elements of an array, with the same shape in every sample of a stream.
+    /// The elements of an array, with the same shape in every sample of a trace.
     Array(Vec<Data>),
     /// The fields of a record in their order on the wire.
     Record(Vec<(String, Data)>),

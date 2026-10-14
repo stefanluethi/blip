@@ -1,10 +1,10 @@
-//! A table of the values of streams at the time of the cursor.
+//! A table of the values of traces at the time of the cursor.
 
-use super::stream_selection::{StreamTree, type_icon};
 use super::time_axis::index_at;
+use super::trace_selection::{TraceTree, type_icon};
 use super::{Formats, ViewContext, Viewable, short_names};
 use crate::app::model::Model;
-use crate::app::model::streams::{Samples, Stream};
+use crate::app::model::traces::{Samples, Trace};
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular::{BRACKETS_CURLY, CARET_DOWN, CARET_RIGHT};
 use std::collections::BTreeSet;
@@ -19,7 +19,7 @@ const MAX_TOOLTIP_ELEMENTS: usize = 64;
 /// Indentation of a level of the tree in points.
 const INDENT: f32 = 14.0;
 
-/// How the streams of a table are listed.
+/// How the traces of a table are listed.
 #[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
 pub enum TableRows {
     /// As a tree of their paths.
@@ -31,23 +31,24 @@ pub enum TableRows {
     Names,
 }
 
-/// The values of the selected streams at the cursor time.
+/// The values of the selected traces at the cursor time.
 #[derive(serde::Deserialize, serde::Serialize, Clone)]
 #[serde(default)]
 pub struct Table {
-    /// Paths of the shown streams.
-    pub streams: BTreeSet<String>,
+    /// Paths of the shown traces.
+    #[serde(alias = "streams")] // the name before layout version 3
+    pub traces: BTreeSet<String>,
     /// The collapsed branches, by the path segments leading to them joined with "/".
     pub collapsed: BTreeSet<String>,
     pub rows: TableRows,
-    /// Whether streams without a sample at the cursor time get a row.
+    /// Whether traces without a sample at the cursor time get a row.
     pub show_empty: bool,
 }
 
 impl Default for Table {
     fn default() -> Self {
         Self {
-            streams: BTreeSet::new(),
+            traces: BTreeSet::new(),
             collapsed: BTreeSet::new(),
             rows: TableRows::default(),
             show_empty: true,
@@ -55,20 +56,20 @@ impl Default for Table {
     }
 }
 
-/// A row of the table: a branch of the tree, a stream, or both.
+/// A row of the table: a branch of the tree, a trace, or both.
 struct Row<'a> {
     depth: usize,
     label: &'a str,
     /// Identifies the branch, for collapsing it.
     key: String,
-    stream: Option<&'a Stream>,
+    trace: Option<&'a Trace>,
     is_branch: bool,
     is_record: bool,
 }
 
 /// The rows of the children of `node`, without those of collapsed branches.
 fn rows<'a>(
-    node: &StreamTree<'a>,
+    node: &TraceTree<'a>,
     prefix: &str,
     depth: usize,
     collapsed: &BTreeSet<String>,
@@ -80,7 +81,7 @@ fn rows<'a>(
             depth,
             label: segment.strip_prefix('.').unwrap_or(segment),
             key: key.clone(),
-            stream: child.stream,
+            trace: child.trace,
             is_branch: !child.children.is_empty(),
             is_record: child.is_record(),
         });
@@ -90,10 +91,10 @@ fn rows<'a>(
     }
 }
 
-/// Shows `value` of `stream` without wrapping, in monospace for an array so its
+/// Shows `value` of `trace` without wrapping, in monospace for an array so its
 /// columns line up.
-fn value_label(ui: &mut egui::Ui, stream: &Stream, value: &str) -> egui::Response {
-    let text = match stream.samples {
+fn value_label(ui: &mut egui::Ui, trace: &Trace, value: &str) -> egui::Response {
+    let text = match trace.samples {
         Samples::Arrays { .. } => egui::RichText::new(value).monospace(),
         _ => egui::RichText::new(value),
     };
@@ -121,49 +122,49 @@ impl Table {
         } else {
             ui.add_space(ui.spacing().icon_width);
         }
-        let icon = match row.stream {
-            Some(stream) => Some(type_icon(&stream.samples)),
+        let icon = match row.trace {
+            Some(trace) => Some(type_icon(&trace.samples)),
             None => row.is_record.then_some(BRACKETS_CURLY),
         };
         let response = ui.label(row.label);
         if let Some(icon) = icon {
             ui.weak(icon);
         }
-        if let Some(stream) = row.stream {
-            response.on_hover_text(&stream.path);
+        if let Some(trace) = row.trace {
+            response.on_hover_text(&trace.path);
         }
     }
 
-    /// The rows of the shown streams of `streams` as listed in the properties, without
-    /// those without a sample at `t` seconds unless empty streams are shown.
+    /// The rows of the shown traces of `traces` as listed in the properties, without
+    /// those without a sample at `t` seconds unless empty traces are shown.
     fn table_rows<'a>(
         &self,
-        streams: impl Iterator<Item = &'a Stream>,
+        traces: impl Iterator<Item = &'a Trace>,
         t: Option<f64>,
     ) -> Vec<Row<'a>> {
-        let selected: Vec<&Stream> = streams
-            .filter(|stream| self.streams.contains(&stream.path))
-            .filter(|stream| {
-                self.show_empty || t.and_then(|t| index_at(&stream.timestamps, t)).is_some()
+        let selected: Vec<&Trace> = traces
+            .filter(|trace| self.traces.contains(&trace.path))
+            .filter(|trace| {
+                self.show_empty || t.and_then(|t| index_at(&trace.timestamps, t)).is_some()
             })
             .collect();
         let mut table_rows = vec![];
-        let paths = selected.iter().map(|stream| stream.path.as_str());
+        let paths = selected.iter().map(|trace| trace.path.as_str());
         let labels: Vec<&str> = match self.rows {
             TableRows::Tree => {
-                let tree = StreamTree::build(selected.iter().copied());
+                let tree = TraceTree::build(selected.iter().copied());
                 rows(&tree, "", 0, &self.collapsed, &mut table_rows);
                 vec![]
             }
             TableRows::Paths => paths.collect(),
             TableRows::Names => short_names(paths),
         };
-        for (stream, label) in selected.iter().zip(labels) {
+        for (trace, label) in selected.iter().zip(labels) {
             table_rows.push(Row {
                 depth: 0,
                 label,
-                key: stream.path.clone(),
-                stream: Some(stream),
+                key: trace.path.clone(),
+                trace: Some(trace),
                 is_branch: false,
                 is_record: false,
             });
@@ -172,26 +173,26 @@ impl Table {
     }
 
     fn show_table(&mut self, ui: &mut egui::Ui, model: &Model, formats: &Formats, t: Option<f64>) {
-        let table_rows = self.table_rows(model.streams.iter(), t);
-        // the `index`th sample of `stream` in its format and with its unit
-        let write = |stream: &Stream, index: usize, max_len: usize, digits: Option<usize>| {
-            let value = stream
+        let table_rows = self.table_rows(model.traces.iter(), t);
+        // the `index`th sample of `trace` in its format and with its unit
+        let write = |trace: &Trace, index: usize, max_len: usize, digits: Option<usize>| {
+            let value = trace
                 .samples
-                .format(index, max_len, digits, formats.of(&stream.path));
-            match model.streams.unit(&stream.path) {
+                .format(index, max_len, digits, formats.of(&trace.path));
+            match model.traces.unit(&trace.path) {
                 Some(unit) if value != "null" => format!("{value} {unit}"),
                 _ => value,
             }
         };
 
         // the sample of each row current at t, with its value written as text
-        let samples: Vec<Option<(&Stream, usize, String)>> = table_rows
+        let samples: Vec<Option<(&Trace, usize, String)>> = table_rows
             .iter()
             .map(|row| {
-                let stream = row.stream?;
-                let index = index_at(&stream.timestamps, t?)?;
-                let value = write(stream, index, MAX_SHOWN_ELEMENTS, Some(SHOWN_DIGITS));
-                Some((stream, index, value))
+                let trace = row.trace?;
+                let index = index_at(&trace.timestamps, t?)?;
+                let value = write(trace, index, MAX_SHOWN_ELEMENTS, Some(SHOWN_DIGITS));
+                Some((trace, index, value))
             })
             .collect();
         let row_height = ui.spacing().interact_size.y;
@@ -211,7 +212,7 @@ impl Table {
             .column(Column::initial(200.0).at_least(80.0).clip(true))
             .column(Column::remainder().at_least(60.0).clip(true))
             .header(row_height, |mut header| {
-                for title in ["Stream", "Value"] {
+                for title in ["Trace", "Value"] {
                     header.col(|ui| {
                         ui.strong(title);
                     });
@@ -223,10 +224,10 @@ impl Table {
                     let sample = &samples[table_row.index()];
                     table_row.col(|ui| self.name_ui(ui, row));
                     table_row.col(|ui| {
-                        if let Some((stream, index, value)) = sample {
-                            value_label(ui, stream, value).on_hover_ui(|ui| {
-                                let value = write(stream, *index, MAX_TOOLTIP_ELEMENTS, None);
-                                value_label(ui, stream, &value);
+                        if let Some((trace, index, value)) = sample {
+                            value_label(ui, trace, value).on_hover_ui(|ui| {
+                                let value = write(trace, *index, MAX_TOOLTIP_ELEMENTS, None);
+                                value_label(ui, trace, &value);
                             });
                         }
                     });
@@ -237,8 +238,8 @@ impl Table {
 
 impl Viewable for Table {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
-        if self.streams.is_empty() {
-            ui.weak("Select the streams to show in the streams panel");
+        if self.traces.is_empty() {
+            ui.weak("Select the traces to show in the traces panel");
             return;
         }
         self.show_table(ui, context.model, context.formats, context.time.cursor());
@@ -248,7 +249,7 @@ impl Viewable for Table {
         super::properties_section(ui, "Rows", |ui| {
             super::choice_row(
                 ui,
-                "Streams",
+                "Traces",
                 &mut self.rows,
                 &[
                     (TableRows::Tree, "Tree"),
@@ -258,7 +259,7 @@ impl Viewable for Table {
             );
             ui.label("Empty");
             ui.checkbox(&mut self.show_empty, "")
-                .on_hover_text("Show streams without a value at the cursor time");
+                .on_hover_text("Show traces without a value at the cursor time");
             ui.end_row();
         });
     }
@@ -270,12 +271,12 @@ mod tests {
 
     #[test]
     fn collapsed_branches_hide_their_rows() {
-        let streams = [
-            Stream::new("motor.speed".to_owned(), Some(5)),
-            Stream::new("motor.state".to_owned(), Some(5)),
-            Stream::new("sensor/temperature".to_owned(), None),
+        let traces = [
+            Trace::new("motor.speed".to_owned(), Some(5)),
+            Trace::new("motor.state".to_owned(), Some(5)),
+            Trace::new("sensor/temperature".to_owned(), None),
         ];
-        let tree = StreamTree::build(streams.iter());
+        let tree = TraceTree::build(traces.iter());
         let labels = |collapsed: &BTreeSet<String>| {
             let mut out = vec![];
             rows(&tree, "", 0, collapsed, &mut out);
@@ -292,23 +293,23 @@ mod tests {
     }
 
     #[test]
-    fn streams_are_listed_by_path_or_name_without_empty_ones() {
-        let mut streams = crate::app::model::streams::Streams::new();
+    fn traces_are_listed_by_path_or_name_without_empty_ones() {
+        let mut traces = crate::app::model::traces::Traces::new();
         for (seconds, path) in [(1, "cpu"), (1, "left/speed"), (3, "right/speed")] {
-            streams.append(&proto::Value {
+            traces.append(&proto::Value {
                 timestamp: seconds * 1_000_000_000,
                 path: path.to_owned(),
                 value: proto::Data::Float(1.0),
             });
         }
         let mut table = Table {
-            streams: BTreeSet::from(["left/speed".to_owned(), "right/speed".to_owned()]),
+            traces: BTreeSet::from(["left/speed".to_owned(), "right/speed".to_owned()]),
             rows: TableRows::Paths,
             ..Table::default()
         };
         let labels = |table: &Table, t| {
             table
-                .table_rows(streams.iter(), t)
+                .table_rows(traces.iter(), t)
                 .iter()
                 .map(|row| row.label.to_owned())
                 .collect::<Vec<_>>()

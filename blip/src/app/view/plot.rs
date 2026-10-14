@@ -2,7 +2,7 @@ use super::time_axis::{self, closest_index, visible_range, within};
 use super::{Formats, ViewContext, Viewable, short_names, with_unit};
 use crate::app::model::{
     Model,
-    streams::{NumberKind, Series},
+    traces::{NumberKind, Series},
 };
 use crate::app::time::{TimeBase, timestamp_to_seconds};
 use std::cmp::min;
@@ -76,12 +76,13 @@ impl LegendPlacement {
     }
 }
 
-/// A time-series plot of the selected streams.
+/// A time-series plot of the selected traces.
 #[derive(serde::Deserialize, serde::Serialize, Clone)]
 #[serde(default)]
 pub struct Plot {
-    /// Paths of the shown streams.
-    pub streams: BTreeSet<String>,
+    /// Paths of the shown traces.
+    #[serde(alias = "streams")] // the name before layout version 3
+    pub traces: BTreeSet<String>,
     /// The bottom of the y axis, or `None` to fit the shown values.
     pub y_min: Option<f64>,
     /// The top of the y axis, or `None` to fit the shown values.
@@ -100,7 +101,7 @@ pub struct Plot {
 impl Default for Plot {
     fn default() -> Self {
         Self {
-            streams: BTreeSet::new(),
+            traces: BTreeSet::new(),
             y_min: None,
             y_max: None,
             y_label: String::new(),
@@ -167,7 +168,7 @@ impl Plot {
         }
     }
 
-    /// The y range covered by the shown streams within the sample times `[start, end]`
+    /// The y range covered by the shown traces within the sample times `[start, end]`
     /// seconds.
     fn range_y(&self, model: &Model, range_x: (f64, f64)) -> Option<(f64, f64)> {
         let mut range: Option<(f64, f64)> = None;
@@ -196,9 +197,9 @@ impl Plot {
 
     /// The shown paths with their names in the legend and their curve colors.
     fn selected_path_iter(&self) -> impl Iterator<Item = (&str, &str, egui::Color32)> {
-        let names = short_names(self.streams.iter().map(String::as_str));
-        // colors follow the order of the selection, so they do not change as streams arrive
-        self.streams
+        let names = short_names(self.traces.iter().map(String::as_str));
+        // colors follow the order of the selection, so they do not change as traces arrive
+        self.traces
             .iter()
             .zip(names)
             .enumerate()
@@ -212,10 +213,10 @@ impl Plot {
         model: &'a Model,
     ) -> impl Iterator<Item = (&'a str, Series<'a>, egui::Color32)> {
         self.selected_path_iter()
-            .filter_map(|(path, name, color)| Some((name, model.streams.series(path)?, color)))
+            .filter_map(|(path, name, color)| Some((name, model.traces.series(path)?, color)))
     }
 
-    /// Shows the values of the shown streams at `t` seconds.
+    /// Shows the values of the shown traces at `t` seconds.
     fn tooltip_ui(
         &self,
         ui: &mut egui::Ui,
@@ -229,10 +230,10 @@ impl Plot {
             .num_columns(2)
             .show(ui, |ui| {
                 for (path, name, color) in self.selected_path_iter() {
-                    let value = model.streams.series(path).and_then(|series| {
+                    let value = model.traces.series(path).and_then(|series| {
                         let value = series.value(closest_index(series.timestamps, t)?);
                         let text = series.kind.format_as(value, None, formats.of(path));
-                        let unit = model.streams.unit(path).filter(|_| !value.is_nan());
+                        let unit = model.traces.unit(path).filter(|_| !value.is_nan());
                         Some(with_unit(text, unit))
                     });
                     if let Some(value) = value {
@@ -253,7 +254,7 @@ impl Plot {
             .placement(egui_plot::HPlacement::Left)
             .min_thickness(50.0);
         let label = match self.y_label.as_str() {
-            "" => super::common_unit(model, self.streams.iter().map(String::as_str)),
+            "" => super::common_unit(model, self.traces.iter().map(String::as_str)),
             label => Some(label),
         };
         if let Some(label) = label {
@@ -275,7 +276,7 @@ impl Plot {
         });
 
         if let Some(t) = response.hovered
-            && !self.streams.is_empty()
+            && !self.traces.is_empty()
         {
             let base = response.axis.base;
             response
@@ -371,7 +372,7 @@ impl Viewable for Plot {
     }
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, model: &Model) {
-        let unit = super::common_unit(model, self.streams.iter().map(String::as_str))
+        let unit = super::common_unit(model, self.traces.iter().map(String::as_str))
             .unwrap_or_default()
             .to_owned();
         super::properties_section(ui, "Y axis", |ui| {
@@ -383,7 +384,7 @@ impl Viewable for Plot {
                     .hint_text(unit)
                     .desired_width(f32::INFINITY),
             )
-            .on_hover_text("The unit of the streams if they share one and this is empty");
+            .on_hover_text("The unit of the traces if they share one and this is empty");
             ui.end_row();
         });
         super::properties_section(ui, "Lines", |ui| {
@@ -437,37 +438,37 @@ impl Viewable for Plot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::model::streams::Streams;
+    use crate::app::model::traces::Traces;
 
-    /// A float stream `a` of `count` values 1 ms apart, with a null every 7th value if
+    /// A float trace `a` of `count` values 1 ms apart, with a null every 7th value if
     /// `with_nulls`.
-    fn streams(count: u64, with_nulls: bool) -> Streams {
-        let mut streams = Streams::new();
+    fn traces(count: u64, with_nulls: bool) -> Traces {
+        let mut traces = Traces::new();
         for i in 0..count {
             let value = if with_nulls && i % 7 == 3 {
                 proto::Data::Null
             } else {
                 proto::Data::Float((i % 7) as f64)
             };
-            streams.append(&proto::Value {
+            traces.append(&proto::Value {
                 timestamp: i * 1_000_000,
                 path: "a".to_owned(),
                 value,
             });
         }
-        streams
+        traces
     }
 
     #[test]
     fn downsample_keeps_small_series() {
-        let streams = streams(10, false);
-        assert_eq!(downsample(streams.series("a").unwrap(), 0.0, 100).len(), 10);
+        let traces = traces(10, false);
+        assert_eq!(downsample(traces.series("a").unwrap(), 0.0, 100).len(), 10);
     }
 
     #[test]
     fn downsample_limits_points_and_keeps_extremes() {
-        let streams = streams(1_000_003, false);
-        let points = downsample(streams.series("a").unwrap(), 0.0, 1_000);
+        let traces = traces(1_000_003, false);
+        let points = downsample(traces.series("a").unwrap(), 0.0, 1_000);
         assert!(points.len() <= 1_000);
         assert!(points.windows(2).all(|p| p[0][0] <= p[1][0]));
         assert!(points.iter().any(|p| p[1] == 0.0));
@@ -476,8 +477,8 @@ mod tests {
 
     #[test]
     fn downsample_keeps_gaps() {
-        let streams = streams(1_000_003, true);
-        let points = downsample(streams.series("a").unwrap(), 0.0, 1_000);
+        let traces = traces(1_000_003, true);
+        let points = downsample(traces.series("a").unwrap(), 0.0, 1_000);
         assert!(points.len() <= 1_000);
         assert!(points.windows(2).all(|p| p[0][0] <= p[1][0]));
         assert!(points.iter().any(|p| p[1].is_nan()));

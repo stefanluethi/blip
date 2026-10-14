@@ -79,7 +79,7 @@ impl Layout {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::model::streams::DisplayFormat;
+    use crate::app::model::traces::DisplayFormat;
     use crate::app::view::ViewKind;
     use crate::app::view::plot::Interpolation;
     use egui_kittest::Harness;
@@ -91,7 +91,7 @@ mod tests {
         harness_with(Model::default(), selected)
     }
 
-    /// A harness as by [`harness`] showing the streams of `model`.
+    /// A harness as by [`harness`] showing the traces of `model`.
     fn harness_with(
         model: Model,
         selected: impl FnOnce(TileId, &[TileId]) -> TileId,
@@ -155,19 +155,19 @@ mod tests {
     }
 
     #[test]
-    fn numbers_take_a_format_and_other_streams_do_not() {
+    fn numbers_take_a_format_and_other_traces_do_not() {
         let mut model = Model::default();
         for (path, value) in [
             ("motor/errors", proto::Data::Uint(3)),
             ("motor/state", proto::Data::from("on")),
         ] {
-            model.streams.append(&proto::Value {
+            model.traces.append(&proto::Value {
                 timestamp: 0,
                 path: path.to_owned(),
                 value,
             });
         }
-        model.streams.set_unit("motor/errors", "count");
+        model.traces.set_unit("motor/errors", "count");
         let mut harness = harness_with(model, |_, views| views[0]);
         let view = harness.state_mut().selected_view_mut().unwrap();
         let selection = view.selection_mut().unwrap().0;

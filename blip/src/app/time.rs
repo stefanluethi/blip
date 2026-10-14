@@ -118,7 +118,7 @@ impl TimeRange {
     }
 
     /// The time of the cursor in seconds, shown by all views and the time of the values
-    /// of views that show one sample per stream: where the user put it, or else the end
+    /// of views that show one sample per trace: where the user put it, or else the end
     /// of the window.
     pub fn cursor(&self) -> Option<f64> {
         self.cursor.or_else(|| self.range().map(|(_, end)| end))

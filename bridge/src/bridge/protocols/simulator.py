@@ -29,7 +29,7 @@ SENSOR_DROPOUT_PROBABILITY = 0.05
 
 MOTOR_STATES = ["idle", "accelerating", "running", "braking"]
 
-# Units of the streams, sent as metadata every METADATA_INTERVAL_SEC so blip clients
+# Units of the traces, sent as metadata every METADATA_INTERVAL_SEC so blip clients
 # connecting later get them too. The fields of a record are joined to its path with "."
 UNITS = {
     "accelerometer": "m/s²",
@@ -123,7 +123,7 @@ class SimulatorProtocol(BaseProtocol):
             try:
                 self._sim_time += self.interval_sec
 
-                # 0. The units of the streams, repeated for clients connecting later
+                # 0. The units of the traces, repeated for clients connecting later
                 if time.monotonic() >= next_metadata:
                     await self._send_metadata(len(cpu_percentages))
                     next_metadata = time.monotonic() + METADATA_INTERVAL_SEC
@@ -226,7 +226,7 @@ class SimulatorProtocol(BaseProtocol):
         return Message.create_value("thermal/frame", frame)
 
     async def _send_metadata(self, cpu_count: int) -> None:
-        """Broadcast the units of all streams."""
+        """Broadcast the units of all traces."""
         units = dict(UNITS)
         units.update({f"sysinfo/cpu/cpu{idx}": CPU_UNIT for idx in range(cpu_count)})
         for path, unit in units.items():

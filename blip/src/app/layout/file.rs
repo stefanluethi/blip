@@ -5,9 +5,10 @@ use crate::app::view::{View, ViewKind};
 use egui_tiles::{Container, ContainerKind, Tile, TileId, Tiles, Tree};
 use std::collections::HashMap;
 
-/// Version of the format written by [`LayoutFile::new`]. Since version 2, the x stream
-/// of an XY view is one of its streams.
-pub const VERSION: u32 = 2;
+/// Version of the format written by [`LayoutFile::new`]. Since version 2, the x trace
+/// of an XY view is one of its traces. Since version 3, the traces of a view are saved
+/// as `traces` instead of `streams`, which views still read.
+pub const VERSION: u32 = 3;
 
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct LayoutFile {
@@ -101,6 +102,10 @@ impl LayoutFile {
                 }
             });
             self.version = 2;
+        }
+        if self.version == 2 {
+            // views read the traces saved as `streams`
+            self.version = 3;
         }
         (self.version == VERSION).then_some(self)
     }
@@ -245,13 +250,13 @@ mod tests {
     }
 
     #[test]
-    fn version_1_xy_views_get_their_x_stream_as_one_of_their_streams() {
+    fn version_1_xy_views_get_their_x_trace_as_one_of_their_traces() {
         let mut view = View::new(ViewType::Xy, "XY".to_owned());
         let ViewKind::Xy(xy) = &mut view.kind else {
             unreachable!()
         };
         xy.x = Some("pose.x".to_owned());
-        xy.streams.insert("pose.y".to_owned());
+        xy.traces.insert("pose.y".to_owned());
         let file = LayoutFile {
             version: 1,
             root: Group::tabs(vec![Node::Group(Group::tabs(vec![Node::View(view)]))]),
@@ -270,7 +275,15 @@ mod tests {
             panic!("the XY view is missing")
         };
         assert_eq!(xy.x_path(), Some("pose.x"));
-        assert!(xy.streams.contains("pose.y"));
+        assert!(xy.traces.contains("pose.y"));
+    }
+
+    #[test]
+    fn version_2_views_read_their_traces_saved_as_streams() {
+        let saved = HashMap::from([("streams", ["pose.x", "pose.y"])]);
+        let bytes = serde_cbor_2::to_vec(&saved).unwrap();
+        let xy: crate::app::view::xy::Xy = serde_cbor_2::from_slice(&bytes).unwrap();
+        assert_eq!(xy.traces, ["pose.x", "pose.y"].map(str::to_owned).into());
     }
 
     #[test]

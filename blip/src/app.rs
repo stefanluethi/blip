@@ -184,22 +184,22 @@ impl App {
         app
     }
 
-    fn streams_ui(&mut self, ui: &mut egui::Ui) {
-        ui.strong("Streams");
+    fn traces_ui(&mut self, ui: &mut egui::Ui) {
+        ui.strong("Traces");
         let view = self.layout.selected_view_mut();
         let hint = match &view {
-            None => Some("Select a view to choose its streams"),
-            Some(view) if !view.shows_streams() => Some("The selected view shows no streams"),
+            None => Some("Select a view to choose its traces"),
+            Some(view) if !view.shows_traces() => Some("The selected view shows no traces"),
             Some(_) => None,
         };
         if let Some(hint) = hint {
             ui.weak(hint);
         }
         egui::ScrollArea::vertical()
-            .id_salt("streams")
+            .id_salt("traces")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                view::stream_selection::show(
+                view::trace_selection::show(
                     ui,
                     &self.state.model,
                     view.and_then(view::View::selection_mut),
@@ -231,12 +231,12 @@ impl eframe::App for App {
             .resizable(true)
             .default_size(220.0)
             .show(ui, |ui| {
-                // the streams on top, resizable by dragging the border to the layout
-                egui::Panel::top("streams panel")
+                // the traces on top, resizable by dragging the border to the layout
+                egui::Panel::top("traces panel")
                     .resizable(true)
                     .default_size(250.0)
                     .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(0, 4)))
-                    .show(ui, |ui| self.streams_ui(ui));
+                    .show(ui, |ui| self.traces_ui(ui));
                 ui.add_space(4.0);
                 self.layout.panel_ui(ui);
             });
