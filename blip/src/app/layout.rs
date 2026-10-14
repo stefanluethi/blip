@@ -161,10 +161,10 @@ impl Layout {
         tab
     }
 
-    /// Adds a new view next to the selected view, or into the selected group, or into the
-    /// shown tab.
-    fn add_view(&mut self, view_type: ViewType) {
-        let (container, index) = match self
+    /// Where a new view or group is added: next to the selected view, or into the
+    /// selected group, or into the shown tab. Returns the group and the index in it.
+    fn insertion_point(&mut self) -> (TileId, usize) {
+        match self
             .selected
             .filter(|&id| self.tree.tiles.get(id).is_some())
         {
@@ -187,13 +187,33 @@ impl Layout {
                     None => (self.add_tab(), usize::MAX),
                 }
             }
-        };
+        }
+    }
 
+    /// Adds a new view at the [insertion point](Self::insertion_point).
+    fn add_view(&mut self, view_type: ViewType) {
+        let (container, index) = self.insertion_point();
         let name = self.unique_name(view_type.name());
         let view = self.tree.tiles.insert_pane(View::new(view_type, name));
         self.tree
             .move_tile_to_container(view, container, index, true);
         self.select(view);
+    }
+
+    /// Adds a new empty group of `kind` at the [insertion point](Self::insertion_point),
+    /// returns its id.
+    fn add_group(&mut self, kind: GroupKind) -> TileId {
+        let (container, index) = self.insertion_point();
+        let name = self.unique_name("Group");
+        let group = self
+            .tree
+            .tiles
+            .insert_container(Container::new(kind.container_kind(), vec![]));
+        self.group_names.insert(group, name);
+        self.tree
+            .move_tile_to_container(group, container, index, true);
+        self.select(group);
+        group
     }
 
     fn set_group_kind(&mut self, tile_id: TileId, kind: GroupKind) {
@@ -207,6 +227,7 @@ impl Layout {
         if tile_id == self.root() {
             return;
         }
+        let parent = self.parent(tile_id);
         self.tree.remove_recursively(tile_id);
         self.group_names
             .retain(|&id, _| self.tree.tiles.get(id).is_some());
@@ -216,19 +237,17 @@ impl Layout {
         {
             self.selected = None;
         }
-        self.remove_empty_groups();
+        if let Some(parent) = parent {
+            self.remove_if_empty(parent);
+        }
     }
 
-    /// Removes groups left without children, except the top level.
-    fn remove_empty_groups(&mut self) {
-        let root = self.root();
-        let empty = self.tree.tiles.iter().find_map(|(&id, tile)| match tile {
-            Tile::Container(container) if id != root && container.is_empty() => Some(id),
-            _ => None,
-        });
-        if let Some(empty) = empty {
-            // removing it removes further groups left empty
-            self.remove(empty);
+    /// Removes `group` if a move or removal left it without children, except the top
+    /// level. Groups made empty by the user stay, to add views to them.
+    fn remove_if_empty(&mut self, group: TileId) {
+        if group != self.root() && self.container(group).is_some_and(Container::is_empty) {
+            // removing it removes its parent if that is left empty too
+            self.remove(group);
         }
     }
 
@@ -250,6 +269,7 @@ impl Layout {
         let Some(parent) = self.parent(target) else {
             return;
         };
+        let old_parent = self.parent(dragged);
         match drop {
             Drop::Before | Drop::After => {
                 let index = self
@@ -290,7 +310,9 @@ impl Layout {
                 }
             }
         }
-        self.remove_empty_groups();
+        if let Some(old_parent) = old_parent {
+            self.remove_if_empty(old_parent);
+        }
         self.select(dragged);
     }
 
@@ -580,6 +602,22 @@ mod tests {
         layout.drop_tile(logs, new_tab, Drop::Into);
         assert_eq!(children(&layout, layout.root()), [new_tab]);
         assert!(layout.tree.tiles.get(tab).is_none());
+    }
+
+    #[test]
+    fn a_group_is_added_next_to_the_selected_view_and_kept_while_empty() {
+        let (mut layout, tab, plot, logs) = default_layout();
+        layout.select(plot);
+        let group = layout.add_group(GroupKind::Horizontal);
+        assert_eq!(children(&layout, tab), [plot, group, logs]);
+        assert_eq!(kind(&layout, group), GroupKind::Horizontal);
+
+        // moving other views around keeps the new group, adding a view puts it inside
+        layout.drop_tile(logs, plot, Drop::Before);
+        assert_eq!(children(&layout, tab), [logs, plot, group]);
+        layout.select(group);
+        layout.add_view(ViewType::Table);
+        assert_eq!(children(&layout, group).len(), 1);
     }
 
     #[test]

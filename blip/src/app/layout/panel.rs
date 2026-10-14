@@ -10,6 +10,7 @@ enum Action {
     Select(TileId),
     AddView(ViewType),
     AddTab,
+    AddGroup(GroupKind),
     SetGroupKind(TileId, GroupKind),
     StartRename(TileId),
     FinishRename,
@@ -54,9 +55,17 @@ impl Layout {
                     {
                         actions.push(Action::AddTab);
                     }
+                    for kind in GroupKind::ALL {
+                        if ui
+                            .button(format!("{} {} group", kind.icon(), kind.name()))
+                            .clicked()
+                        {
+                            actions.push(Action::AddGroup(kind));
+                        }
+                    }
                 })
                 .response
-                .on_hover_text("Add a view or a tab");
+                .on_hover_text("Add a view, a tab or a group");
             });
         });
 
@@ -256,6 +265,9 @@ impl Layout {
             Action::AddView(view_type) => self.add_view(view_type),
             Action::AddTab => {
                 self.add_tab();
+            }
+            Action::AddGroup(kind) => {
+                self.add_group(kind);
             }
             Action::SetGroupKind(tile_id, kind) => self.set_group_kind(tile_id, kind),
             Action::StartRename(tile_id) => {

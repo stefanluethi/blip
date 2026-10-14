@@ -52,8 +52,9 @@ The layout panel shows the views as a tree of groups. The groups at the top
 level are tabs. A group shows its children as tabs, stacked vertically or side
 by side.
 
-* Add a view or a tab with the **+** button. A view is added next to the
-  selected view or into the selected group.
+* Add a view, a tab or a group with the **+** button. A view or group is
+  added next to the selected view or into the selected group. A new group
+  stays while it is empty, to add views to it.
 * Drag a row onto the top or bottom edge of another row to move it before or
   after that row, onto a group to move it into the group, or onto a view to
   put both into a new group. A new group stacks its children across the
