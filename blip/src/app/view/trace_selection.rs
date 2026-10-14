@@ -226,24 +226,32 @@ fn matches(path: &str, search: &str) -> bool {
 /// Shows a field to search the traces by `search`, with a button to clear it.
 pub fn search_ui(ui: &mut Ui, search: &mut String) {
     ui.horizontal(|ui| {
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if !search.is_empty()
-                && ui
-                    .small_button(X)
-                    .on_hover_text("Clear the search")
-                    .clicked()
-            {
-                search.clear();
-            }
-            // the id stays the same as the clear button comes and goes, to keep the focus
-            ui.add(
+        // the clear button is a square as high as the field: the text, its margins and
+        // its stroke, and room is left for it
+        let side = ui.text_style_height(&egui::TextStyle::Body) + 6.0;
+        let clear_width = if search.is_empty() {
+            0.0
+        } else {
+            side + ui.spacing().item_spacing.x
+        };
+        // the id stays the same as the clear button comes and goes, to keep the focus
+        let field = ui
+            .add(
                 egui::TextEdit::singleline(search)
                     .id_salt("trace_search")
                     .hint_text(format!("{MAGNIFYING_GLASS} Search traces"))
-                    .desired_width(f32::INFINITY),
+                    .desired_width(ui.available_width() - clear_width),
             )
             .on_hover_text("Show only the traces whose path contains each word");
-        });
+        ui.spacing_mut().button_padding.x = 0.0;
+        if !search.is_empty()
+            && ui
+                .add(egui::Button::new(X).min_size(egui::Vec2::splat(field.rect.height())))
+                .on_hover_text("Clear the search")
+                .clicked()
+        {
+            search.clear();
+        }
     });
 }
 
@@ -415,6 +423,35 @@ mod tests {
         harness.run();
         assert!(harness.state().0.is_empty());
         assert!(harness.query_by_label_contains("temp").is_some());
+    }
+
+    #[test]
+    fn the_clear_button_is_as_high_as_the_search_field_and_fits_beside_it() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+
+        let width = 250.0;
+        // the size of egui and that of blip
+        for size in [12.5, 14.0] {
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(width, 100.0))
+                .build_ui_state(
+                    move |ui, search: &mut String| {
+                        ui.style_mut()
+                            .text_styles
+                            .insert(egui::TextStyle::Body, egui::FontId::proportional(size));
+                        search_ui(ui, search);
+                    },
+                    "motor".to_owned(),
+                );
+            harness.run();
+            let field = harness.get_by_role(egui::accesskit::Role::TextInput).rect();
+            let clear = harness.get_by_label(X).rect();
+            assert_eq!(field.height(), clear.height());
+            assert_eq!(field.top(), clear.top());
+            assert_eq!(clear.width(), clear.height());
+            assert!(field.right() < clear.left() && clear.right() <= width);
+        }
     }
 
     #[test]
