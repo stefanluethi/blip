@@ -26,8 +26,8 @@
 
     <link rel="manifest" href="manifest.json">
     <link rel="apple-touch-icon" href="assets/icon_ios_touch_192.png">
-    <meta name="theme-color" media="(prefers-color-scheme: light)" content="white">
-    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#404040">
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#F8F9FA">
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1F2430">
 
     <style>
         html {
@@ -38,14 +38,16 @@
         body {
             /* Light mode background color for what is not covered by the egui canvas,
             or where the egui canvas is translucent. */
-            background: #909090;
+            background: #F8F9FA;
+            color: #5C6166;
         }
 
         @media (prefers-color-scheme: dark) {
             body {
                 /* Dark mode background color for what is not covered by the egui canvas,
                 or where the egui canvas is translucent. */
-                background: #404040;
+                background: #1F2430;
+                color: #CCCAC2;
             }
         }
 
@@ -79,7 +81,6 @@
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            color: #f0f0f0;
             font-size: 24px;
             font-family: Ubuntu-Light, Helvetica, sans-serif;
             text-align: center;
@@ -100,8 +101,8 @@
             height: 24px;
             margin: 0px;
             border-radius: 50%;
-            border: 3px solid #fff;
-            border-color: #fff transparent #fff transparent;
+            border: 3px solid currentColor;
+            border-color: currentColor transparent currentColor transparent;
             animation: lds-dual-ring 1.2s linear infinite;
         }
 

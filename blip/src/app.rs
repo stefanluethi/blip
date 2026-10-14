@@ -1,6 +1,7 @@
 mod layout;
 mod model;
 mod proto_parser;
+mod theme;
 mod time;
 mod view;
 
@@ -155,8 +156,7 @@ pub struct App {
 impl App {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // This is also where you can customize the look and feel of egui using
-        // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
+        theme::install(&cc.egui_ctx);
 
         let mut fonts = egui::FontDefinitions::default();
         fonts.font_data.insert(
