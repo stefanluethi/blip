@@ -2,7 +2,7 @@ use crate::app::model::Model;
 use crate::app::model::traces::{Samples, Trace, element_path};
 use crate::app::view::{Selectable, ViewType};
 use egui::{RichText, Ui};
-use egui_phosphor::regular::{BRACKETS_CURLY, BRACKETS_SQUARE, HASH, TEXT_AA};
+use egui_phosphor::regular::{BRACKETS_CURLY, BRACKETS_SQUARE, HASH, MAGNIFYING_GLASS, TEXT_AA, X};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Arrays with up to this many elements list each element for selection.
@@ -72,6 +72,8 @@ pub fn type_icon(samples: &Samples) -> &'static str {
 struct Selection<'a> {
     paths: &'a mut BTreeSet<String>,
     view_type: ViewType,
+    /// Whether only the traces matching a search are shown.
+    searching: bool,
 }
 
 /// Shows a checkbox labelled `label` with a weak `icon` after it for selecting all
@@ -186,7 +188,8 @@ fn show_trace_tree(ui: &mut Ui, node: &TraceTree<'_>, prefix: &str, selection: &
             }
         } else {
             let icon = child.is_record().then_some(BRACKETS_CURLY);
-            let id = ui.make_persistent_id(("trace_tree", &child_prefix));
+            // while searching, branches keep a separate open state, open by default
+            let id = ui.make_persistent_id(("trace_tree", &child_prefix, selection.searching));
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
                 .show_header(ui, |ui| {
                     if selection.view_type.shows_one_trace() {
@@ -211,18 +214,70 @@ fn show_trace_tree(ui: &mut Ui, node: &TraceTree<'_>, prefix: &str, selection: &
     }
 }
 
-/// Shows all traces of `model` as a tree with checkboxes for the traces selected for
-/// a view of the given type, disabled if there is no selection to edit.
-pub fn show(ui: &mut Ui, model: &Model, selection: Option<(&mut BTreeSet<String>, ViewType)>) {
-    let tree = TraceTree::build(model.traces.iter());
+/// Whether `path` contains each word of `search`, ignoring case.
+fn matches(path: &str, search: &str) -> bool {
+    let path = path.to_lowercase();
+    search
+        .to_lowercase()
+        .split_whitespace()
+        .all(|word| path.contains(word))
+}
+
+/// Shows a field to search the traces by `search`, with a button to clear it.
+pub fn search_ui(ui: &mut Ui, search: &mut String) {
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if !search.is_empty()
+                && ui
+                    .small_button(X)
+                    .on_hover_text("Clear the search")
+                    .clicked()
+            {
+                search.clear();
+            }
+            // the id stays the same as the clear button comes and goes, to keep the focus
+            ui.add(
+                egui::TextEdit::singleline(search)
+                    .id_salt("trace_search")
+                    .hint_text(format!("{MAGNIFYING_GLASS} Search traces"))
+                    .desired_width(f32::INFINITY),
+            )
+            .on_hover_text("Show only the traces whose path contains each word");
+        });
+    });
+}
+
+/// Shows the traces of `model` whose path matches `search` as a tree with checkboxes
+/// for the traces selected for a view of the given type, disabled if there is no
+/// selection to edit.
+pub fn show(
+    ui: &mut Ui,
+    model: &Model,
+    search: &str,
+    selection: Option<(&mut BTreeSet<String>, ViewType)>,
+) {
+    let tree = TraceTree::build(
+        model
+            .traces
+            .iter()
+            .filter(|trace| matches(&trace.path, search)),
+    );
     if tree.children.is_empty() {
-        ui.weak("No traces received");
+        match model.traces.iter().next() {
+            None => ui.weak("No traces received"),
+            Some(_) => ui.weak("No traces match the search"),
+        };
         return;
     }
     let mut unselectable = BTreeSet::new();
     let enabled = selection.is_some();
     let (paths, view_type) = selection.unwrap_or((&mut unselectable, ViewType::Plot));
-    let mut selection = Selection { paths, view_type };
+    let searching = !search.trim().is_empty();
+    let mut selection = Selection {
+        paths,
+        view_type,
+        searching,
+    };
     ui.add_enabled_ui(enabled, |ui| {
         show_trace_tree(ui, &tree, "", &mut selection);
     });
@@ -305,6 +360,61 @@ mod tests {
             tree.children["imu"].paths(ViewType::Plot),
             ["imu.acc[0]", "imu.acc[1]", "imu.ok"]
         );
+    }
+
+    #[test]
+    fn searches_match_each_word_ignoring_case() {
+        assert!(matches("motor/left.Speed", ""));
+        assert!(matches("motor/left.Speed", "  LEFT speed "));
+        assert!(matches("motor/left.Speed", "speed motor"));
+        assert!(!matches("motor/left.Speed", "right speed"));
+    }
+
+    #[test]
+    fn searching_shows_and_selects_only_the_matching_traces() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+
+        let mut model = Model::default();
+        for path in ["motor/speed", "motor/current", "sensor/temp"] {
+            model.traces.append(&proto::Value {
+                timestamp: 0,
+                path: path.to_owned(),
+                value: proto::Data::Uint(1),
+            });
+        }
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(300.0, 400.0))
+            .build_ui_state(
+                move |ui, (search, paths): &mut (String, BTreeSet<String>)| {
+                    search_ui(ui, search);
+                    show(ui, &model, search, Some((paths, ViewType::Plot)));
+                },
+                (String::new(), BTreeSet::new()),
+            );
+        harness.run();
+        harness
+            .get_by_role(egui::accesskit::Role::TextInput)
+            .focus();
+        harness
+            .get_by_role(egui::accesskit::Role::TextInput)
+            .type_text("MOTOR spe");
+        harness.run();
+        assert!(harness.query_by_label_contains("speed").is_some());
+        assert!(harness.query_by_label_contains("current").is_none());
+        assert!(harness.query_by_label_contains("temp").is_none());
+
+        harness.get_by_label_contains("motor").click();
+        harness.run();
+        assert_eq!(
+            harness.state().1,
+            BTreeSet::from(["motor/speed".to_owned()])
+        );
+
+        harness.get_by_label(X).click();
+        harness.run();
+        assert!(harness.state().0.is_empty());
+        assert!(harness.query_by_label_contains("temp").is_some());
     }
 
     #[test]

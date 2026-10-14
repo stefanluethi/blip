@@ -22,7 +22,8 @@ Left panel
    record are separate traces joined to its path with ``.``, e.g.
    ``imu.acc``, listed below the record as ``.acc``. Arrays list their
    elements, e.g. ``imu.acc[0]``, if they have at most 16; larger arrays
-   cannot be plotted yet.
+   cannot be plotted yet. The search field above the traces shows only those
+   whose path contains each of its words, ignoring case.
 
 Right panel
    The **Properties** of the selected view or group, see `Properties`_.

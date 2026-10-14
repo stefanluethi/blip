@@ -147,6 +147,9 @@ pub struct App {
     state: State,
     #[serde(skip)]
     layout: layout::Layout,
+    /// The search of the traces panel.
+    #[serde(skip)]
+    trace_search: String,
 }
 
 impl App {
@@ -195,6 +198,7 @@ impl App {
         if let Some(hint) = hint {
             ui.weak(hint);
         }
+        view::trace_selection::search_ui(ui, &mut self.trace_search);
         egui::ScrollArea::vertical()
             .id_salt("traces")
             .auto_shrink([false, false])
@@ -202,6 +206,7 @@ impl App {
                 view::trace_selection::show(
                     ui,
                     &self.state.model,
+                    &self.trace_search,
                     view.and_then(view::View::selection_mut),
                 );
             });
