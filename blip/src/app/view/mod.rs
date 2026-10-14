@@ -201,6 +201,43 @@ pub fn properties_section(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut 
         });
 }
 
+/// Adds a row labelled `label` to the grid of a properties section to choose one of
+/// `options` by their names.
+pub fn choice_row<T: PartialEq + Copy>(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut T,
+    options: &[(T, &str)],
+) {
+    ui.label(label);
+    ui.horizontal_wrapped(|ui| {
+        for &(option, name) in options {
+            ui.selectable_value(value, option, name);
+        }
+    });
+    ui.end_row();
+}
+
+/// Adds rows to the grid of a properties section to choose whether `range` fits the
+/// shown values (`None`) or is fixed, and to set the ends of a fixed range. A range
+/// that becomes fixed starts at `fitted`, the range fitted to the shown values.
+pub fn range_rows(ui: &mut egui::Ui, range: &mut Option<(f64, f64)>, fitted: (f64, f64)) {
+    let mut fixed = range.is_some();
+    choice_row(ui, "Range", &mut fixed, &[(false, "Auto"), (true, "Fixed")]);
+    if fixed != range.is_some() {
+        *range = fixed.then_some(fitted);
+    }
+    if let Some((min, max)) = range {
+        let speed = ((*max - *min).abs() * 0.01).max(1.0e-6);
+        ui.label("Min");
+        ui.add(egui::DragValue::new(min).speed(speed));
+        ui.end_row();
+        ui.label("Max");
+        ui.add(egui::DragValue::new(max).speed(speed));
+        ui.end_row();
+    }
+}
+
 /// The elements of an array of `shape` if they are few enough to be listed.
 fn elements(shape: &[usize]) -> Selectable {
     if shape.iter().product::<usize>() > MAX_LISTED_ELEMENTS {

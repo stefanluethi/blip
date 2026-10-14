@@ -2,7 +2,7 @@
 
 use super::stream_selection::{StreamTree, type_icon};
 use super::time_axis::index_at;
-use super::{ViewContext, Viewable};
+use super::{ViewContext, Viewable, short_names};
 use crate::app::model::Model;
 use crate::app::model::streams::{Samples, Stream};
 use egui_extras::{Column, TableBuilder};
@@ -19,14 +19,40 @@ const MAX_TOOLTIP_ELEMENTS: usize = 64;
 /// Indentation of a level of the tree in points.
 const INDENT: f32 = 14.0;
 
+/// How the streams of a table are listed.
+#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub enum TableRows {
+    /// As a tree of their paths.
+    #[default]
+    Tree,
+    /// As a list of their paths.
+    Paths,
+    /// As a list of their names, see [`short_names`].
+    Names,
+}
+
 /// The values of the selected streams at the cursor time.
-#[derive(serde::Deserialize, serde::Serialize, Clone, Default)]
+#[derive(serde::Deserialize, serde::Serialize, Clone)]
 #[serde(default)]
 pub struct Table {
     /// Paths of the shown streams.
     pub streams: BTreeSet<String>,
     /// The collapsed branches, by the path segments leading to them joined with "/".
     pub collapsed: BTreeSet<String>,
+    pub rows: TableRows,
+    /// Whether streams without a sample at the cursor time get a row.
+    pub show_empty: bool,
+}
+
+impl Default for Table {
+    fn default() -> Self {
+        Self {
+            streams: BTreeSet::new(),
+            collapsed: BTreeSet::new(),
+            rows: TableRows::default(),
+            show_empty: true,
+        }
+    }
 }
 
 /// A row of the table: a branch of the tree, a stream, or both.
@@ -108,14 +134,45 @@ impl Table {
         }
     }
 
-    fn show_table(&mut self, ui: &mut egui::Ui, model: &Model, t: Option<f64>) {
-        let selected = model
-            .streams
-            .iter()
-            .filter(|stream| self.streams.contains(&stream.path));
-        let tree = StreamTree::build(selected);
+    /// The rows of the shown streams of `streams` as listed in the properties, without
+    /// those without a sample at `t` seconds unless empty streams are shown.
+    fn table_rows<'a>(
+        &self,
+        streams: impl Iterator<Item = &'a Stream>,
+        t: Option<f64>,
+    ) -> Vec<Row<'a>> {
+        let selected: Vec<&Stream> = streams
+            .filter(|stream| self.streams.contains(&stream.path))
+            .filter(|stream| {
+                self.show_empty || t.and_then(|t| index_at(&stream.timestamps, t)).is_some()
+            })
+            .collect();
         let mut table_rows = vec![];
-        rows(&tree, "", 0, &self.collapsed, &mut table_rows);
+        let paths = selected.iter().map(|stream| stream.path.as_str());
+        let labels: Vec<&str> = match self.rows {
+            TableRows::Tree => {
+                let tree = StreamTree::build(selected.iter().copied());
+                rows(&tree, "", 0, &self.collapsed, &mut table_rows);
+                vec![]
+            }
+            TableRows::Paths => paths.collect(),
+            TableRows::Names => short_names(paths),
+        };
+        for (stream, label) in selected.iter().zip(labels) {
+            table_rows.push(Row {
+                depth: 0,
+                label,
+                key: stream.path.clone(),
+                stream: Some(stream),
+                is_branch: false,
+                is_record: false,
+            });
+        }
+        table_rows
+    }
+
+    fn show_table(&mut self, ui: &mut egui::Ui, model: &Model, t: Option<f64>) {
+        let table_rows = self.table_rows(model.streams.iter(), t);
 
         // the sample of each row current at t, with its value written as text
         let samples: Vec<Option<(&Stream, usize, String)>> = table_rows
@@ -179,6 +236,25 @@ impl Viewable for Table {
         }
         self.show_table(ui, context.model, context.time.cursor());
     }
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, _model: &Model) {
+        super::properties_section(ui, "Rows", |ui| {
+            super::choice_row(
+                ui,
+                "Streams",
+                &mut self.rows,
+                &[
+                    (TableRows::Tree, "Tree"),
+                    (TableRows::Paths, "Paths"),
+                    (TableRows::Names, "Names"),
+                ],
+            );
+            ui.label("Empty");
+            ui.checkbox(&mut self.show_empty, "")
+                .on_hover_text("Show streams without a value at the cursor time");
+            ui.end_row();
+        });
+    }
 }
 
 #[cfg(test)]
@@ -206,5 +282,34 @@ mod tests {
         );
         let collapsed = BTreeSet::from(["/motor".to_owned()]);
         assert_eq!(labels(&collapsed), ["motor", "sensor", " temperature"]);
+    }
+
+    #[test]
+    fn streams_are_listed_by_path_or_name_without_empty_ones() {
+        let mut streams = crate::app::model::streams::Streams::new();
+        for (seconds, path) in [(1, "cpu"), (1, "left/speed"), (3, "right/speed")] {
+            streams.append(&proto::Value {
+                timestamp: seconds * 1_000_000_000,
+                path: path.to_owned(),
+                value: proto::Data::Float(1.0),
+            });
+        }
+        let mut table = Table {
+            streams: BTreeSet::from(["left/speed".to_owned(), "right/speed".to_owned()]),
+            rows: TableRows::Paths,
+            ..Table::default()
+        };
+        let labels = |table: &Table, t| {
+            table
+                .table_rows(streams.iter(), t)
+                .iter()
+                .map(|row| row.label.to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(labels(&table, Some(2.0)), ["left/speed", "right/speed"]);
+        table.rows = TableRows::Names;
+        assert_eq!(labels(&table, Some(2.0)), ["left/speed", "right/speed"]);
+        table.show_empty = false;
+        assert_eq!(labels(&table, Some(2.0)), ["speed"]);
     }
 }

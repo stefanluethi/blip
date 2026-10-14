@@ -12,12 +12,109 @@ const Y_MARGIN_FRACTION: f64 = 0.05;
 /// Upper bound of points drawn per curve within the visible x range.
 const MAX_POINTS_PER_CURVE: usize = 100_000;
 
+/// Points of a curve shown as markers are at least this many points apart on average.
+const MIN_MARKER_SPACING: f32 = 8.0;
+
+/// How a curve goes from one sample to the next.
+#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub enum Interpolation {
+    /// A straight line, except for bools, which always hold their value.
+    #[default]
+    Linear,
+    /// Each value held until the next sample.
+    Step,
+}
+
+/// When the samples of a curve are marked.
+#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub enum ShowPoints {
+    /// When they are far enough apart to tell them apart.
+    #[default]
+    Auto,
+    Always,
+    Never,
+}
+
+/// Where the legend is shown.
+#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub enum LegendPlacement {
+    Hidden,
+    TopLeft,
+    #[default]
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+impl LegendPlacement {
+    const ALL: [LegendPlacement; 5] = [
+        LegendPlacement::Hidden,
+        LegendPlacement::TopLeft,
+        LegendPlacement::TopRight,
+        LegendPlacement::BottomLeft,
+        LegendPlacement::BottomRight,
+    ];
+
+    fn name(self) -> &'static str {
+        match self {
+            LegendPlacement::Hidden => "Hidden",
+            LegendPlacement::TopLeft => "Top left",
+            LegendPlacement::TopRight => "Top right",
+            LegendPlacement::BottomLeft => "Bottom left",
+            LegendPlacement::BottomRight => "Bottom right",
+        }
+    }
+
+    fn corner(self) -> Option<egui_plot::Corner> {
+        match self {
+            LegendPlacement::Hidden => None,
+            LegendPlacement::TopLeft => Some(egui_plot::Corner::LeftTop),
+            LegendPlacement::TopRight => Some(egui_plot::Corner::RightTop),
+            LegendPlacement::BottomLeft => Some(egui_plot::Corner::LeftBottom),
+            LegendPlacement::BottomRight => Some(egui_plot::Corner::RightBottom),
+        }
+    }
+}
+
 /// A time-series plot of the selected streams.
-#[derive(serde::Deserialize, serde::Serialize, Clone, Default)]
+#[derive(serde::Deserialize, serde::Serialize, Clone)]
 #[serde(default)]
 pub struct Plot {
     /// Paths of the shown streams.
     pub streams: BTreeSet<String>,
+    /// The range of the y axis, or `None` to fit the shown values.
+    pub y_range: Option<(f64, f64)>,
+    /// Label of the y axis, none if empty.
+    pub y_label: String,
+    pub interpolation: Interpolation,
+    /// Width of the curves in points.
+    pub line_width: f32,
+    pub points: ShowPoints,
+    /// Whether the area between a curve and zero is filled.
+    pub fill: bool,
+    /// Whether curves go on over nulls instead of leaving gaps.
+    pub connect_nulls: bool,
+    pub legend: LegendPlacement,
+    /// The range of the y axis fitted to the values shown in the last frame.
+    #[serde(skip)]
+    fitted_y: Option<(f64, f64)>,
+}
+
+impl Default for Plot {
+    fn default() -> Self {
+        Self {
+            streams: BTreeSet::new(),
+            y_range: None,
+            y_label: String::new(),
+            interpolation: Interpolation::default(),
+            line_width: 1.5,
+            points: ShowPoints::default(),
+            fill: false,
+            connect_nulls: false,
+            legend: LegendPlacement::default(),
+            fitted_y: None,
+        }
+    }
 }
 
 impl Plot {
@@ -26,8 +123,9 @@ impl Plot {
     }
 
     /// Draws the values of `series` within `range_x` seconds, shifted by `origin`
-    /// seconds, with gaps at nulls.
+    /// seconds, as set in the properties of the plot.
     fn plot_series(
+        &self,
         name: &str,
         series: Series<'_>,
         color: egui::Color32,
@@ -36,20 +134,42 @@ impl Plot {
         plot_ui: &mut egui_plot::PlotUi<'_>,
     ) {
         let visible = series.slice(visible_range(series.timestamps, range_x));
-        let points = downsample(visible, origin, MAX_POINTS_PER_CURVE);
-        // lines of the same name share one legend entry
+        let mut points = downsample(visible, origin, MAX_POINTS_PER_CURVE);
+        if self.connect_nulls {
+            points.retain(|point| !point[1].is_nan());
+        }
+        let show_points = match self.points {
+            ShowPoints::Auto => {
+                points.len() as f32 * MIN_MARKER_SPACING <= plot_ui.transform().frame().width()
+            }
+            ShowPoints::Always => true,
+            ShowPoints::Never => false,
+        };
+        let step = self.interpolation == Interpolation::Step || series.kind == NumberKind::Bool;
+        // lines and markers of the same name share one legend entry
         for segment in points
             .split(|point| point[1].is_nan())
             .filter(|segment| !segment.is_empty())
         {
-            let segment = if series.kind == NumberKind::Bool {
+            if show_points {
+                plot_ui.points(
+                    egui_plot::Points::new(name, segment.to_vec())
+                        .color(color)
+                        .radius(self.line_width + 1.0),
+                );
+            }
+            let segment = if step {
                 steps(segment)
             } else {
                 segment.to_vec()
             };
-            plot_ui.line(
-                egui_plot::Line::new(name, egui_plot::PlotPoints::from(segment)).color(color),
-            );
+            let mut line = egui_plot::Line::new(name, egui_plot::PlotPoints::from(segment))
+                .color(color)
+                .width(self.line_width);
+            if self.fill {
+                line = line.fill(0.0);
+            }
+            plot_ui.line(line);
         }
     }
 
@@ -123,26 +243,30 @@ impl Plot {
 
     /// Shows the shared time range of `time`, and applies panning and zooming of the
     /// plot to it.
-    fn show_plot(&self, model: &Model, time: &mut TimeRange, ui: &mut egui::Ui) {
+    fn show_plot(&mut self, model: &Model, time: &mut TimeRange, ui: &mut egui::Ui) {
         let id = ui.id().with("plot");
-        let plot = time_axis::plot(id, time)
-            .legend(egui_plot::Legend::default())
-            .custom_y_axes(vec![
-                egui_plot::AxisHints::new_y()
-                    .placement(egui_plot::HPlacement::Left)
-                    .min_thickness(50.0),
-            ]);
+        let mut y_axis = egui_plot::AxisHints::new_y()
+            .placement(egui_plot::HPlacement::Left)
+            .min_thickness(50.0);
+        if !self.y_label.is_empty() {
+            y_axis = y_axis.label(self.y_label.as_str());
+        }
+        let mut plot = time_axis::plot(id, time).custom_y_axes(vec![y_axis]);
+        if let Some(corner) = self.legend.corner() {
+            plot = plot.legend(egui_plot::Legend::default().position(corner));
+        }
 
+        let mut fitted_y = None;
         let response = time_axis::show(id, plot, ui, time, |plot_ui, axis| {
-            if let Some(range) = axis.range
-                && let Some((min_y, max_y)) = self.range_y(model, range)
-            {
+            fitted_y = axis.range.and_then(|range| self.range_y(model, range));
+            if let Some((min_y, max_y)) = self.y_range.or(fitted_y) {
                 plot_ui.set_plot_bounds_y(min_y..=max_y);
             }
             for (name, series, color) in self.selected_series_iter(model) {
-                Self::plot_series(name, series, color, axis.range, axis.origin, plot_ui);
+                self.plot_series(name, series, color, axis.range, axis.origin, plot_ui);
             }
         });
+        self.fitted_y = fitted_y;
 
         if let Some(t) = response.hovered
             && !self.streams.is_empty()
@@ -230,6 +354,65 @@ fn steps(points: &[[f64; 2]]) -> Vec<[f64; 2]> {
 impl Viewable for Plot {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         self.show_plot(context.model, context.time, ui);
+    }
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, _model: &Model) {
+        let fitted = self.fitted_y.unwrap_or((0.0, 1.0));
+        super::properties_section(ui, "Y axis", |ui| {
+            super::range_rows(ui, &mut self.y_range, fitted);
+            ui.label("Label");
+            ui.add(egui::TextEdit::singleline(&mut self.y_label).desired_width(f32::INFINITY));
+            ui.end_row();
+        });
+        super::properties_section(ui, "Lines", |ui| {
+            super::choice_row(
+                ui,
+                "Interpolation",
+                &mut self.interpolation,
+                &[
+                    (Interpolation::Linear, "Linear"),
+                    (Interpolation::Step, "Step"),
+                ],
+            );
+            ui.label("Width");
+            ui.add(
+                egui::DragValue::new(&mut self.line_width)
+                    .range(0.5..=6.0)
+                    .speed(0.1),
+            );
+            ui.end_row();
+            super::choice_row(
+                ui,
+                "Points",
+                &mut self.points,
+                &[
+                    (ShowPoints::Auto, "Auto"),
+                    (ShowPoints::Always, "Always"),
+                    (ShowPoints::Never, "Never"),
+                ],
+            );
+            ui.label("Fill");
+            ui.checkbox(&mut self.fill, "")
+                .on_hover_text("Fill the area between a curve and zero");
+            ui.end_row();
+            super::choice_row(
+                ui,
+                "Nulls",
+                &mut self.connect_nulls,
+                &[(false, "Gap"), (true, "Connect")],
+            );
+        });
+        super::properties_section(ui, "Legend", |ui| {
+            ui.label("Placement");
+            egui::ComboBox::from_id_salt("plot_legend")
+                .selected_text(self.legend.name())
+                .show_ui(ui, |ui| {
+                    for placement in LegendPlacement::ALL {
+                        ui.selectable_value(&mut self.legend, placement, placement.name());
+                    }
+                });
+            ui.end_row();
+        });
     }
 }
 

@@ -9,8 +9,6 @@ use crate::app::time::{TimeBase, TimeRange, timestamp_to_seconds};
 use egui::Color32;
 use std::collections::BTreeSet;
 
-/// Height of a band as a fraction of its row, the rest is the gap to the next row.
-const BAND_HEIGHT: f64 = 0.8;
 /// Runs narrower than this many points next to each other are drawn as one band that
 /// shows that the value changes too often to tell.
 const MIN_RUN_WIDTH: f64 = 3.0;
@@ -19,11 +17,25 @@ const MIN_RUN_WIDTH: f64 = 3.0;
 const LABEL_CHAR_WIDTH: f64 = 8.0;
 
 /// The values of the selected streams as states over time.
-#[derive(serde::Deserialize, serde::Serialize, Clone, Default)]
+#[derive(serde::Deserialize, serde::Serialize, Clone)]
 #[serde(default)]
 pub struct States {
     /// Paths of the shown streams.
     pub streams: BTreeSet<String>,
+    /// Height of a band as a fraction of its row, the rest is the gap to the next row.
+    pub band_height: f64,
+    /// Whether the bands wide enough for their value are labelled with it.
+    pub show_values: bool,
+}
+
+impl Default for States {
+    fn default() -> Self {
+        Self {
+            streams: BTreeSet::new(),
+            band_height: 0.8,
+            show_values: true,
+        }
+    }
 }
 
 /// The samples of a stream shown as states.
@@ -186,17 +198,18 @@ impl States {
 
     /// Draws the bands of `samples` in the row centered at `y`.
     fn plot_row(
+        &self,
         samples: StateSamples<'_>,
         y: f64,
         range: (f64, f64),
         latest: f64,
         origin: f64,
-        visuals: &egui::Visuals,
         plot_ui: &mut egui_plot::PlotUi<'_>,
     ) {
+        let visuals = plot_ui.ctx().global_style().visuals.clone();
         let seconds_per_point = plot_ui.transform().dvalue_dpos()[0].abs();
         let dark_mode = visuals.dark_mode;
-        let (top, bottom) = (y + BAND_HEIGHT / 2.0, y - BAND_HEIGHT / 2.0);
+        let (top, bottom) = (y + self.band_height / 2.0, y - self.band_height / 2.0);
         for run in runs(samples, range, latest, MIN_RUN_WIDTH * seconds_per_point) {
             let start = run.start.max(range.0) - origin;
             let end = run.end.min(range.1) - origin;
@@ -212,7 +225,8 @@ impl States {
                     .stroke(egui::Stroke::NONE)
                     .allow_hover(false),
             );
-            if let Some(label) = label
+            if self.show_values
+                && let Some(label) = label
                 && (end - start) / seconds_per_point
                     > (label.chars().count() + 1) as f64 * LABEL_CHAR_WIDTH
             {
@@ -280,7 +294,6 @@ impl States {
             ]);
 
         let latest = time.latest();
-        let visuals = ui.visuals().clone();
         let response = time_axis::show(id, plot, ui, time, |plot_ui, axis| {
             plot_ui.set_plot_bounds_y(-0.5..=rows.max(1) as f64 - 0.5);
             let (Some(range), Some(latest)) = (axis.range, latest) else {
@@ -289,7 +302,7 @@ impl States {
             for (row, path) in self.streams.iter().enumerate() {
                 if let Some(samples) = StateSamples::of(model, path) {
                     let y = row_y(row);
-                    Self::plot_row(samples, y, range, latest, axis.origin, &visuals, plot_ui);
+                    self.plot_row(samples, y, range, latest, axis.origin, plot_ui);
                 }
             }
         });
@@ -308,6 +321,19 @@ impl States {
 impl Viewable for States {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         self.show_states(context.model, context.time, ui);
+    }
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, _model: &Model) {
+        super::properties_section(ui, "Bands", |ui| {
+            ui.label("Height");
+            ui.add(egui::Slider::new(&mut self.band_height, 0.2..=1.0))
+                .on_hover_text("Height of a band as a fraction of its row");
+            ui.end_row();
+            ui.label("Values");
+            ui.checkbox(&mut self.show_values, "")
+                .on_hover_text("Label the bands wide enough with their value");
+            ui.end_row();
+        });
     }
 }
 

@@ -472,38 +472,20 @@ impl Viewable for Heatmap {
         // the mode is kept for a 2D array, but only applies to a 1D one
         if dimensions != Some(2) {
             super::properties_section(ui, "Array", |ui| {
-                ui.label("Show");
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.mode, ArrayMode::OverTime, "Over time")
-                        .on_hover_text("Each element as a row of colours over time");
-                    ui.selectable_value(&mut self.mode, ArrayMode::AtCursor, "At cursor")
-                        .on_hover_text("The elements at the cursor time as a line");
-                });
-                ui.end_row();
+                super::choice_row(
+                    ui,
+                    "Show",
+                    &mut self.mode,
+                    &[
+                        (ArrayMode::OverTime, "Over time"),
+                        (ArrayMode::AtCursor, "At cursor"),
+                    ],
+                );
             });
         }
+        let fitted = self.shown_range();
         super::properties_section(ui, "Colour scale", |ui| {
-            ui.label("Range");
-            let mut fixed = self.value_range.is_some();
-            ui.horizontal(|ui| {
-                ui.selectable_value(&mut fixed, false, "Auto")
-                    .on_hover_text("Fit the range to the shown values");
-                ui.selectable_value(&mut fixed, true, "Fixed")
-                    .on_hover_text("Keep the range of the values");
-            });
-            ui.end_row();
-            if fixed != self.value_range.is_some() {
-                self.value_range = fixed.then(|| self.shown_range());
-            }
-            if let Some((min, max)) = &mut self.value_range {
-                let speed = ((*max - *min).abs() * 0.01).max(1.0e-6);
-                ui.label("Min");
-                ui.add(egui::DragValue::new(min).speed(speed));
-                ui.end_row();
-                ui.label("Max");
-                ui.add(egui::DragValue::new(max).speed(speed));
-                ui.end_row();
-            }
+            super::range_rows(ui, &mut self.value_range, fitted);
         });
     }
 }
