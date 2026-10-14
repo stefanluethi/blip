@@ -43,3 +43,6 @@ web-sys = "0.3" # to access the DOM (to hide the loading text)
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+egui_kittest = "0.36.2"

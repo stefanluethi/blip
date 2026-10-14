@@ -303,21 +303,28 @@ impl Layout {
             return;
         }
 
-        let panes_in_tabs = self
+        let tab_groups: Vec<_> = self
             .tree
             .tiles
             .iter()
             .filter_map(|(_, tile)| match tile {
-                Tile::Container(Container::Tabs(tabs)) => Some(tabs.children.iter().copied()),
+                Tile::Container(Container::Tabs(tabs)) => Some(tabs),
                 _ => None,
             })
-            .flatten()
             .collect();
+        let panes_in_tabs = tab_groups
+            .iter()
+            .flat_map(|tabs| tabs.children.iter().copied())
+            .collect();
+        // egui_tiles takes a group out of the tree while showing its tabs, so which tabs
+        // are open is looked up before
+        let open_tabs = tab_groups.iter().filter_map(|tabs| tabs.active).collect();
         let mut behavior = Behavior {
             context,
             group_names: &self.group_names,
             selected: &mut self.selected,
             panes_in_tabs,
+            open_tabs,
             renaming: &mut self.renaming_title,
             rename_ended: None,
         };
@@ -347,6 +354,8 @@ struct Behavior<'a, 'b> {
     selected: &'a mut Option<TileId>,
     /// Views shown as a tab, they get no title bar.
     panes_in_tabs: HashSet<TileId>,
+    /// The tabs shown in their group.
+    open_tabs: HashSet<TileId>,
     /// The view or group whose title is edited and its new name.
     renaming: &'a mut Option<(TileId, String)>,
     /// Set when editing the title ends.
@@ -460,14 +469,7 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
         response: egui::Response,
     ) -> egui::Response {
         // a click on an inactive tab opens it, a click on the open tab renames it
-        let is_open = || {
-            let parent = tiles.parent_of(tile_id)?;
-            match tiles.get_container(parent)? {
-                Container::Tabs(tabs) => Some(tabs.active == Some(tile_id)),
-                _ => None,
-            }
-        };
-        if response.clicked() && is_open() == Some(true) {
+        if response.clicked() && self.open_tabs.contains(&tile_id) {
             let name = self.tab_title_for_tile(tiles, tile_id).text().to_owned();
             *self.renaming = Some((tile_id, name));
         }
@@ -513,6 +515,12 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::model::Model;
+    use crate::app::time::TimeRange;
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     fn children(layout: &Layout, tile_id: TileId) -> Vec<TileId> {
         layout.container(tile_id).unwrap().children_vec()
@@ -581,6 +589,33 @@ mod tests {
         layout.drop_tile(tab, tab, Drop::Into);
         assert_eq!(children(&layout, layout.root()), [tab]);
         assert_eq!(children(&layout, tab), [plot, logs]);
+    }
+
+    #[test]
+    fn clicking_the_open_tab_renames_it() {
+        let mut layout = Layout::default();
+        let main = children(&layout, layout.root())[0];
+        layout.add_tab();
+        let renaming = Rc::new(RefCell::new(None));
+        let renamed = renaming.clone();
+        let model = Model::default();
+        let mut time = TimeRange::default();
+        let mut harness = Harness::builder().build_ui(move |ui| {
+            let mut context = ViewContext {
+                model: &model,
+                time: &mut time,
+            };
+            layout.ui(ui, &mut context);
+            *renamed.borrow_mut() = layout.renaming_title.as_ref().map(|(id, _)| *id);
+        });
+        harness.run();
+
+        harness.get_by_label("Tab 1").click();
+        harness.run();
+        assert_eq!(*renaming.borrow(), None);
+        harness.get_by_label("Tab 1").click();
+        harness.run();
+        assert_eq!(*renaming.borrow(), Some(main));
     }
 
     #[test]
