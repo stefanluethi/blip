@@ -6,7 +6,6 @@ use super::time_axis::index_at;
 use super::{ViewContext, Viewable};
 use crate::app::model::Model;
 use crate::app::model::streams::{Samples, Stream};
-use crate::app::time::{TimeBase, timestamp_to_seconds};
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular::{BRACKETS_CURLY, CARET_DOWN, CARET_RIGHT};
 use std::collections::BTreeSet;
@@ -110,7 +109,7 @@ impl Table {
         }
     }
 
-    fn show_table(&mut self, ui: &mut egui::Ui, model: &Model, t: Option<f64>, base: TimeBase) {
+    fn show_table(&mut self, ui: &mut egui::Ui, model: &Model, t: Option<f64>) {
         let selected = model
             .streams
             .iter()
@@ -146,10 +145,9 @@ impl Table {
             .resizable(true)
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
             .column(Column::initial(200.0).at_least(80.0).clip(true))
-            .column(Column::initial(300.0).at_least(60.0).clip(true))
-            .column(Column::remainder().at_least(60.0))
+            .column(Column::remainder().at_least(60.0).clip(true))
             .header(row_height, |mut header| {
-                for title in ["Stream", "Value", "Time"] {
+                for title in ["Stream", "Value"] {
                     header.col(|ui| {
                         ui.strong(title);
                     });
@@ -169,12 +167,6 @@ impl Table {
                             });
                         }
                     });
-                    table_row.col(|ui| {
-                        if let Some((stream, index, _)) = sample {
-                            let time = timestamp_to_seconds(stream.timestamps[*index]);
-                            ui.weak(base.format(time, 3));
-                        }
-                    });
                 });
             });
     }
@@ -186,11 +178,7 @@ impl Viewable for Table {
             ui.weak("Select the streams to show in the streams panel");
             return;
         }
-        let time = &context.time;
-        if let Some(label) = time.cursor_label() {
-            ui.weak(format!("Values at {label}"));
-        }
-        self.show_table(ui, context.model, time.cursor(), time.base());
+        self.show_table(ui, context.model, context.time.cursor());
     }
 }
 

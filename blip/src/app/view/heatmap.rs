@@ -178,9 +178,8 @@ impl Heatmap {
         self.value_range.or(self.fitted_range).unwrap_or((0.0, 1.0))
     }
 
-    /// Shows the mode for a 1D array, the range of the values and the cursor time
-    /// described by `cursor_label` if values at the cursor are shown.
-    fn options_ui(&mut self, ui: &mut egui::Ui, dimensions: usize, cursor_label: Option<String>) {
+    /// Shows the mode for a 1D array and the range of the values.
+    fn options_ui(&mut self, ui: &mut egui::Ui, dimensions: usize) {
         ui.horizontal(|ui| {
             if dimensions == 1 {
                 ui.selectable_value(&mut self.mode, ArrayMode::OverTime, "Over time");
@@ -200,11 +199,6 @@ impl Heatmap {
                 ui.add(egui::DragValue::new(min).speed(speed));
                 ui.label("to");
                 ui.add(egui::DragValue::new(max).speed(speed));
-            }
-            let at_cursor = dimensions == 2 || self.mode == ArrayMode::AtCursor;
-            if at_cursor && let Some(label) = cursor_label {
-                ui.separator();
-                ui.weak(format!("at {label}"));
             }
         });
     }
@@ -487,11 +481,10 @@ impl Viewable for Heatmap {
             return;
         }
         let kind = kind.unwrap_or(NumberKind::Float);
-        let cursor_label = context.time.cursor_label();
         super::settings_below(
             ui,
             self,
-            |heatmap, ui| heatmap.options_ui(ui, shape.len(), cursor_label),
+            |heatmap, ui| heatmap.options_ui(ui, shape.len()),
             |heatmap, ui| heatmap.contents_ui(ui, stream, kind, shape, context.time),
         );
     }

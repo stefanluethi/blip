@@ -139,19 +139,6 @@ impl TimeRange {
         self.hovered.or_else(|| self.range().map(|(_, end)| end))
     }
 
-    /// The cursor time written for views that show the values at it, with where it is.
-    pub fn cursor_label(&self) -> Option<String> {
-        let t = self.cursor()?;
-        let at = if self.hovered.is_some() {
-            "hovered"
-        } else if self.is_live() {
-            "newest"
-        } else {
-            "window end"
-        };
-        Some(format!("{} ({at})", self.base().format(t, 3)))
-    }
-
     /// Time of the newest collected data in seconds.
     pub fn latest(&self) -> Option<f64> {
         self.span.map(|(_, latest)| latest)
