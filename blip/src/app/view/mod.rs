@@ -148,6 +148,42 @@ pub fn text_color_on(background: egui::Color32) -> egui::Color32 {
     }
 }
 
+/// Names of the streams at `paths` for legends and axes: the last level of each path,
+/// after its last "/" or, for a record field, its last ".". Paths whose last levels are
+/// the same keep as many levels as needed to tell them apart.
+pub fn short_names<'a>(paths: impl IntoIterator<Item = &'a str>) -> Vec<&'a str> {
+    let paths: Vec<&str> = paths.into_iter().collect();
+    let name = |path: &'a str, levels: usize| -> &'a str {
+        let start = path
+            .rmatch_indices(['/', '.'])
+            .nth(levels - 1)
+            .map_or(0, |(index, _)| index + 1);
+        &path[start..]
+    };
+    let mut levels = vec![1; paths.len()];
+    loop {
+        let names: Vec<&str> = paths
+            .iter()
+            .zip(&levels)
+            .map(|(path, &levels)| name(path, levels))
+            .collect();
+        let mut changed = false;
+        for (index, path) in paths.iter().enumerate() {
+            let shared = names
+                .iter()
+                .enumerate()
+                .any(|(other, &name)| other != index && name == names[index]);
+            if shared && names[index].len() < path.len() {
+                levels[index] += 1;
+                changed = true;
+            }
+        }
+        if !changed {
+            return names;
+        }
+    }
+}
+
 /// Shows the settings of `view` added by `settings` in a row at the bottom of `ui`, and
 /// the contents added by `contents` in the space above them.
 pub fn settings_below<T>(
@@ -229,5 +265,27 @@ impl Viewable for View {
             ViewKind::Heatmap(heatmap) => heatmap.view(ui, context),
             ViewKind::Logs(logs) => logs.view(ui, context),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_names_are_the_last_level() {
+        assert_eq!(
+            short_names(["motor/speed", "imu.acc[2]", "cpu", "/a/b.c.d"]),
+            ["speed", "acc[2]", "cpu", "d"]
+        );
+    }
+
+    #[test]
+    fn short_names_keep_levels_to_tell_paths_apart() {
+        assert_eq!(
+            short_names(["left/motor/speed", "right/motor/speed", "speed", "torque"]),
+            ["left/motor/speed", "right/motor/speed", "speed", "torque"]
+        );
+        assert_eq!(short_names(["a/x", "b/x", "c/y"]), ["a/x", "b/x", "y"]);
     }
 }

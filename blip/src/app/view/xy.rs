@@ -3,7 +3,7 @@
 
 use super::stream_selection::stream_paths;
 use super::time_axis::{index_at, within};
-use super::{ViewContext, ViewType, Viewable};
+use super::{ViewContext, ViewType, Viewable, short_names};
 use crate::app::model::Model;
 use crate::app::model::streams::Series;
 use crate::app::time::TimeRange;
@@ -132,9 +132,10 @@ impl Xy {
     }
 
     fn show_plot(&self, ui: &mut egui::Ui, model: &Model, time: &TimeRange) {
-        let x_label = self.x.clone().unwrap_or_default();
-        let y_label = match self.streams.len() {
-            1 => self.streams.first().cloned().unwrap_or_default(),
+        let names = short_names(self.streams.iter().map(String::as_str));
+        let x_label = short_names(self.x.as_deref()).concat();
+        let y_label = match names[..] {
+            [name] => name.to_owned(),
             _ => String::new(),
         };
         let mut plot = egui_plot::Plot::new(ui.id().with("xy"))
@@ -171,13 +172,13 @@ impl Xy {
             let (Some(x), Some(range)) = (x, range) else {
                 return;
             };
-            for (index, path) in self.streams.iter().enumerate() {
+            for (index, (path, name)) in self.streams.iter().zip(&names).enumerate() {
                 let Some(y) = model.streams.series(path) else {
                     continue;
                 };
                 let color = super::plot::curve_color(index);
                 let points = thin_out(pair(x, y, within(y.timestamps, range)), MAX_POINTS);
-                Self::plot_trail(path, &points, color, plot_ui);
+                Self::plot_trail(name, &points, color, plot_ui);
 
                 // where the stream was at the time hovered in another view
                 let at_hovered = hovered

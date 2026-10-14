@@ -2,7 +2,7 @@
 //! stream, one band for each run of equal values.
 
 use super::time_axis::{self, index_at, visible_range};
-use super::{ViewContext, Viewable, text_color_on};
+use super::{ViewContext, Viewable, short_names, text_color_on};
 use crate::app::model::Model;
 use crate::app::model::streams::{NumberKind, Samples, Series};
 use crate::app::time::{TimeBase, TimeRange, timestamp_to_seconds};
@@ -229,15 +229,16 @@ impl States {
     /// Shows the values of the shown streams current at `t` seconds.
     fn tooltip_ui(&self, ui: &mut egui::Ui, model: &Model, t: f64, base: TimeBase) {
         ui.label(base.format(t, 3));
+        let names = short_names(self.streams.iter().map(String::as_str));
         egui::Grid::new("states_tooltip")
             .num_columns(2)
             .show(ui, |ui| {
-                for path in &self.streams {
+                for (path, name) in self.streams.iter().zip(names) {
                     let Some(samples) = StateSamples::of(model, path) else {
                         continue;
                     };
                     if let Some(index) = index_at(samples.timestamps(), t) {
-                        ui.label(path);
+                        ui.label(name);
                         ui.label(samples.label(index));
                         ui.end_row();
                     }
@@ -246,7 +247,10 @@ impl States {
     }
 
     fn show_states(&self, model: &Model, time: &mut TimeRange, ui: &mut egui::Ui) {
-        let names: Vec<String> = self.streams.iter().cloned().collect();
+        let names: Vec<String> = short_names(self.streams.iter().map(String::as_str))
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
         let rows = names.len();
         // the first stream is the top row
         let row_y = move |row: usize| (rows - 1 - row) as f64;

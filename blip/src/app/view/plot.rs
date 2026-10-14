@@ -1,5 +1,5 @@
 use super::time_axis::{self, closest_index, visible_range, within};
-use super::{ViewContext, Viewable};
+use super::{ViewContext, Viewable, short_names};
 use crate::app::model::{
     Model,
     streams::{NumberKind, Series},
@@ -80,22 +80,25 @@ impl Plot {
         })
     }
 
-    /// The shown paths with their curve colors.
-    fn selected_path_iter(&self) -> impl Iterator<Item = (&str, egui::Color32)> {
+    /// The shown paths with their names in the legend and their curve colors.
+    fn selected_path_iter(&self) -> impl Iterator<Item = (&str, &str, egui::Color32)> {
+        let names = short_names(self.streams.iter().map(String::as_str));
         // colors follow the order of the selection, so they do not change as streams arrive
         self.streams
             .iter()
+            .zip(names)
             .enumerate()
-            .map(|(index, path)| (path.as_str(), curve_color(index)))
+            .map(|(index, (path, name))| (path.as_str(), name, curve_color(index)))
     }
 
-    /// The shown numeric series that were received, with their curve colors.
+    /// The shown numeric series that were received, with their names in the legend and
+    /// their curve colors.
     fn selected_series_iter<'a>(
         &'a self,
         model: &'a Model,
     ) -> impl Iterator<Item = (&'a str, Series<'a>, egui::Color32)> {
         self.selected_path_iter()
-            .filter_map(|(path, color)| Some((path, model.streams.series(path)?, color)))
+            .filter_map(|(path, name, color)| Some((name, model.streams.series(path)?, color)))
     }
 
     /// Shows the values of the shown streams at `t` seconds.
@@ -104,13 +107,13 @@ impl Plot {
         egui::Grid::new("plot_tooltip")
             .num_columns(2)
             .show(ui, |ui| {
-                for (path, color) in self.selected_path_iter() {
+                for (path, name, color) in self.selected_path_iter() {
                     let value = model.streams.series(path).and_then(|series| {
                         closest_index(series.timestamps, t)
                             .map(|index| series.kind.format(series.value(index)))
                     });
                     if let Some(value) = value {
-                        ui.colored_label(color, path);
+                        ui.colored_label(color, name);
                         ui.label(value);
                         ui.end_row();
                     }
@@ -135,8 +138,8 @@ impl Plot {
             {
                 plot_ui.set_plot_bounds_y(min_y..=max_y);
             }
-            for (path, series, color) in self.selected_series_iter(model) {
-                Self::plot_series(path, series, color, axis.range, axis.origin, plot_ui);
+            for (name, series, color) in self.selected_series_iter(model) {
+                Self::plot_series(name, series, color, axis.range, axis.origin, plot_ui);
             }
         });
 
