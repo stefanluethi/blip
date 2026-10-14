@@ -126,7 +126,8 @@ impl LogTable {
         ui.add_space(4.0);
 
         let footer_height = 24.0;
-        let table_height = (ui.available_height() - footer_height).max(50.0);
+        // the table shrinks to nothing before the footer is pushed out of a small view
+        let table_height = (ui.available_height() - footer_height).max(0.0);
 
         ui.allocate_ui_with_layout(
             egui::vec2(ui.available_width(), table_height),
@@ -136,6 +137,7 @@ impl LogTable {
                 let text_height = egui::TextStyle::Monospace.resolve(ui.style()).size;
 
                 let mut builder = TableBuilder::new(ui)
+                    .min_scrolled_height(0.0)
                     .striped(true)
                     .resizable(true)
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
@@ -424,6 +426,25 @@ mod tests {
             level,
             message: message.to_string(),
         }
+    }
+
+    #[test]
+    fn autoscroll_button_stays_visible_in_a_small_view() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+
+        let mut logs = Logs::new();
+        for _ in 0..100 {
+            logs.push(create_entry(LogLevel::Info, "core", "message"));
+        }
+        let mut table = LogTable::new();
+        let time = TimeRange::default();
+        let size = egui::vec2(400.0, 120.0);
+        let harness = Harness::builder()
+            .with_size(size)
+            .build_ui(move |ui| table.ui(ui, &logs, &time));
+        let button = harness.get_by_label(egui_phosphor::regular::ARROW_LINE_DOWN);
+        assert!(button.rect().bottom() <= size.y);
     }
 
     #[test]
