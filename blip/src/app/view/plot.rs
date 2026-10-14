@@ -82,37 +82,33 @@ impl LegendPlacement {
 pub struct Plot {
     /// Paths of the shown streams.
     pub streams: BTreeSet<String>,
-    /// The range of the y axis, or `None` to fit the shown values.
-    pub y_range: Option<(f64, f64)>,
+    /// The bottom of the y axis, or `None` to fit the shown values.
+    pub y_min: Option<f64>,
+    /// The top of the y axis, or `None` to fit the shown values.
+    pub y_max: Option<f64>,
     /// Label of the y axis, none if empty.
     pub y_label: String,
     pub interpolation: Interpolation,
     /// Width of the curves in points.
     pub line_width: f32,
     pub points: ShowPoints,
-    /// Whether the area between a curve and zero is filled.
-    pub fill: bool,
     /// Whether curves go on over nulls instead of leaving gaps.
     pub connect_nulls: bool,
     pub legend: LegendPlacement,
-    /// The range of the y axis fitted to the values shown in the last frame.
-    #[serde(skip)]
-    fitted_y: Option<(f64, f64)>,
 }
 
 impl Default for Plot {
     fn default() -> Self {
         Self {
             streams: BTreeSet::new(),
-            y_range: None,
+            y_min: None,
+            y_max: None,
             y_label: String::new(),
             interpolation: Interpolation::default(),
             line_width: 1.5,
             points: ShowPoints::default(),
-            fill: false,
             connect_nulls: false,
             legend: LegendPlacement::default(),
-            fitted_y: None,
         }
     }
 }
@@ -163,13 +159,11 @@ impl Plot {
             } else {
                 segment.to_vec()
             };
-            let mut line = egui_plot::Line::new(name, egui_plot::PlotPoints::from(segment))
-                .color(color)
-                .width(self.line_width);
-            if self.fill {
-                line = line.fill(0.0);
-            }
-            plot_ui.line(line);
+            plot_ui.line(
+                egui_plot::Line::new(name, egui_plot::PlotPoints::from(segment))
+                    .color(color)
+                    .width(self.line_width),
+            );
         }
     }
 
@@ -243,7 +237,7 @@ impl Plot {
 
     /// Shows the shared time range of `time`, and applies panning and zooming of the
     /// plot to it.
-    fn show_plot(&mut self, model: &Model, time: &mut TimeRange, ui: &mut egui::Ui) {
+    fn show_plot(&self, model: &Model, time: &mut TimeRange, ui: &mut egui::Ui) {
         let id = ui.id().with("plot");
         let mut y_axis = egui_plot::AxisHints::new_y()
             .placement(egui_plot::HPlacement::Left)
@@ -256,17 +250,15 @@ impl Plot {
             plot = plot.legend(egui_plot::Legend::default().position(corner));
         }
 
-        let mut fitted_y = None;
         let response = time_axis::show(id, plot, ui, time, |plot_ui, axis| {
-            fitted_y = axis.range.and_then(|range| self.range_y(model, range));
-            if let Some((min_y, max_y)) = self.y_range.or(fitted_y) {
+            let fitted = axis.range.and_then(|range| self.range_y(model, range));
+            if let Some((min_y, max_y)) = y_bounds(self.y_min, self.y_max, fitted) {
                 plot_ui.set_plot_bounds_y(min_y..=max_y);
             }
             for (name, series, color) in self.selected_series_iter(model) {
                 self.plot_series(name, series, color, axis.range, axis.origin, plot_ui);
             }
         });
-        self.fitted_y = fitted_y;
 
         if let Some(t) = response.hovered
             && !self.streams.is_empty()
@@ -277,6 +269,14 @@ impl Plot {
                 .on_hover_ui_at_pointer(|ui| self.tooltip_ui(ui, model, t, base));
         }
     }
+}
+
+/// The range of the y axis from `min` and `max` where they are set and from the ends of
+/// `fitted` where not, or `None` if an end is unknown or the ends are not in order.
+fn y_bounds(min: Option<f64>, max: Option<f64>, fitted: Option<(f64, f64)>) -> Option<(f64, f64)> {
+    let min = min.or(fitted.map(|(low, _)| low))?;
+    let max = max.or(fitted.map(|(_, high)| high))?;
+    (min < max).then_some((min, max))
 }
 
 /// Color of the `index`th curve, picked like egui_plot picks its colors.
@@ -357,9 +357,9 @@ impl Viewable for Plot {
     }
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, _model: &Model) {
-        let fitted = self.fitted_y.unwrap_or((0.0, 1.0));
         super::properties_section(ui, "Y axis", |ui| {
-            super::range_rows(ui, &mut self.y_range, fitted);
+            super::optional_number_row(ui, "Min", &mut self.y_min);
+            super::optional_number_row(ui, "Max", &mut self.y_max);
             ui.label("Label");
             ui.add(egui::TextEdit::singleline(&mut self.y_label).desired_width(f32::INFINITY));
             ui.end_row();
@@ -391,10 +391,6 @@ impl Viewable for Plot {
                     (ShowPoints::Never, "Never"),
                 ],
             );
-            ui.label("Fill");
-            ui.checkbox(&mut self.fill, "")
-                .on_hover_text("Fill the area between a curve and zero");
-            ui.end_row();
             super::choice_row(
                 ui,
                 "Nulls",
@@ -464,6 +460,17 @@ mod tests {
         assert!(points.windows(2).all(|p| p[0][0] <= p[1][0]));
         assert!(points.iter().any(|p| p[1].is_nan()));
         assert!(points.iter().any(|p| p[1] == 6.0));
+    }
+
+    #[test]
+    fn y_bounds_fit_the_ends_that_are_not_set() {
+        let fitted = Some((-1.0, 5.0));
+        assert_eq!(y_bounds(None, None, fitted), fitted);
+        assert_eq!(y_bounds(Some(0.0), None, fitted), Some((0.0, 5.0)));
+        assert_eq!(y_bounds(None, Some(2.0), fitted), Some((-1.0, 2.0)));
+        assert_eq!(y_bounds(Some(0.0), Some(1.0), None), Some((0.0, 1.0)));
+        assert_eq!(y_bounds(Some(0.0), None, None), None);
+        assert_eq!(y_bounds(Some(6.0), None, fitted), None);
     }
 
     #[test]

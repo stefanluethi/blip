@@ -218,6 +218,35 @@ pub fn choice_row<T: PartialEq + Copy>(
     ui.end_row();
 }
 
+/// Adds a row labelled `label` to the grid of a properties section with a field for
+/// `value`, which is `None` while the field is empty. While the field is edited, text
+/// that is no number is kept in it and leaves `value` as it was.
+pub fn optional_number_row(ui: &mut egui::Ui, label: &str, value: &mut Option<f64>) {
+    ui.label(label);
+    let id = ui.id().with(("optional number", label));
+    let edited: Option<String> = ui.data(|data| data.get_temp(id));
+    let mut text = edited.unwrap_or_else(|| value.map_or_else(String::new, |v| v.to_string()));
+    let response = ui.add(
+        egui::TextEdit::singleline(&mut text)
+            .hint_text("auto")
+            .desired_width(f32::INFINITY),
+    );
+    if response.changed() {
+        let text = text.trim();
+        if text.is_empty() {
+            *value = None;
+        } else if let Ok(number) = text.parse() {
+            *value = Some(number);
+        }
+    }
+    if response.has_focus() {
+        ui.data_mut(|data| data.insert_temp(id, text));
+    } else {
+        ui.data_mut(|data| data.remove::<String>(id));
+    }
+    ui.end_row();
+}
+
 /// Adds rows to the grid of a properties section to choose whether `range` fits the
 /// shown values (`None`) or is fixed, and to set the ends of a fixed range. A range
 /// that becomes fixed starts at `fitted`, the range fitted to the shown values.

@@ -114,6 +114,38 @@ mod tests {
         assert_eq!(plot.interpolation, Interpolation::Step);
     }
 
+    /// The plot selected in `harness`.
+    fn selected_plot(harness: &Harness<'_, Layout>) -> crate::app::view::plot::Plot {
+        let layout = harness.state();
+        match &layout.selected.and_then(|id| layout.view(id)).unwrap().kind {
+            ViewKind::Plot(plot) => plot.clone(),
+            _ => panic!("the plot is not selected"),
+        }
+    }
+
+    #[test]
+    fn number_fields_keep_partial_numbers_and_are_auto_when_empty() {
+        let mut harness = harness(|_, views| views[0]);
+        harness.run();
+        // the fields are the name, the y axis min, max and label
+        fn min<'a>(harness: &'a Harness<'_, Layout>) -> egui_kittest::Node<'a> {
+            let mut fields = harness.get_all_by_role(egui::accesskit::Role::TextInput);
+            fields.nth(1).unwrap()
+        }
+        min(&harness).focus();
+        min(&harness).type_text("-");
+        harness.run();
+        assert_eq!(selected_plot(&harness).y_min, None);
+        min(&harness).type_text("2");
+        harness.run();
+        assert_eq!(selected_plot(&harness).y_min, Some(-2.0));
+        for _ in 0..2 {
+            harness.key_press(egui::Key::Backspace);
+            harness.run();
+        }
+        assert_eq!(selected_plot(&harness).y_min, None);
+    }
+
     #[test]
     fn groups_are_renamed_while_typing_but_not_to_blank_names() {
         let mut harness = harness(|tab, _| tab);
