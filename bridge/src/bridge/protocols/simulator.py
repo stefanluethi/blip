@@ -29,6 +29,23 @@ SENSOR_DROPOUT_PROBABILITY = 0.05
 
 MOTOR_STATES = ["idle", "accelerating", "running", "braking"]
 
+# Units of the streams, sent as metadata every METADATA_INTERVAL_SEC so blip clients
+# connecting later get them too. The fields of a record are joined to its path with "."
+UNITS = {
+    "accelerometer": "m/s²",
+    "imu.acc": "m/s²",
+    "imu.gyro": "rad/s",
+    "motor.speed_rpm": "rpm",
+    "robot/pose.x": "m",
+    "robot/pose.y": "m",
+    "robot/pose.heading": "rad",
+    "audio/spectrum": "dB",
+    "thermal/frame": "°C",
+    "sensor/temperature": "°C",
+}
+CPU_UNIT = "%"
+METADATA_INTERVAL_SEC = 1.0
+
 # The simulated robot drives a figure eight of this size (m) in this time (s)
 POSE_EXTENT_M = 2.0
 POSE_PERIOD_SEC = 20.0
@@ -100,10 +117,16 @@ class SimulatorProtocol(BaseProtocol):
             INFO, "main", f"simulator booted ({len(cpu_percentages)} CPU cores detected)"
         )
         next_log = time.monotonic() + self.log_interval_sec
+        next_metadata = time.monotonic()
 
         while self._running:
             try:
                 self._sim_time += self.interval_sec
+
+                # 0. The units of the streams, repeated for clients connecting later
+                if time.monotonic() >= next_metadata:
+                    await self._send_metadata(len(cpu_percentages))
+                    next_metadata = time.monotonic() + METADATA_INTERVAL_SEC
 
                 # 1. Accelerometer simulation
                 accel_val = random.uniform(-10.0, 10.0)
@@ -201,6 +224,13 @@ class SimulatorProtocol(BaseProtocol):
             for row in range(THERMAL_SIZE)
         ]
         return Message.create_value("thermal/frame", frame)
+
+    async def _send_metadata(self, cpu_count: int) -> None:
+        """Broadcast the units of all streams."""
+        units = dict(UNITS)
+        units.update({f"sysinfo/cpu/cpu{idx}": CPU_UNIT for idx in range(cpu_count)})
+        for path, unit in units.items():
+            await self.send_to_websocket(Message.create_metadata(path, unit).encode_cbor())
 
     async def _send_log(self, level: int, component: str, message: str) -> None:
         """Broadcast a single log record."""

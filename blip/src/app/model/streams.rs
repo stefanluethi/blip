@@ -2,6 +2,38 @@ use proto::Data;
 use std::collections::BTreeMap;
 use std::ops::Range;
 
+/// How the numbers of a stream are written.
+#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub enum DisplayFormat {
+    /// As decimals, bools as `true` and `false`.
+    #[default]
+    Default,
+    /// Integers and whole floats in hexadecimal, e.g. `0x1f`.
+    Hex,
+    /// Integers and whole floats in binary, e.g. `0b101`.
+    Binary,
+    /// Numbers with an exponent, e.g. `1.5e3`.
+    Scientific,
+}
+
+impl DisplayFormat {
+    pub const ALL: [DisplayFormat; 4] = [
+        DisplayFormat::Default,
+        DisplayFormat::Hex,
+        DisplayFormat::Binary,
+        DisplayFormat::Scientific,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            DisplayFormat::Default => "Default",
+            DisplayFormat::Hex => "Hex",
+            DisplayFormat::Binary => "Binary",
+            DisplayFormat::Scientific => "Scientific",
+        }
+    }
+}
+
 /// The kind of the numbers of a stream or of the elements of an array stream, all
 /// stored as `f64` with NaN for null.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,6 +91,31 @@ impl NumberKind {
         match (self, digits) {
             (Self::Float, Some(digits)) => format_significant(value, digits),
             _ => self.format(value),
+        }
+    }
+
+    /// `value` written as a value of this kind in `format`, as by [`Self::format_digits`]
+    /// where the format does not apply: to bools, nulls and, in hex and binary, to
+    /// floats that are not whole numbers.
+    pub fn format_as(self, value: f64, digits: Option<usize>, format: DisplayFormat) -> String {
+        let is_number = self != Self::Bool && value.is_finite();
+        let whole = (is_number && value.fract() == 0.0 && value.abs() < 2f64.powi(63))
+            .then_some(value as i64);
+        let sign = if value < 0.0 { "-" } else { "" };
+        match (format, whole) {
+            (DisplayFormat::Hex, Some(whole)) => format!("{sign}0x{:x}", whole.unsigned_abs()),
+            (DisplayFormat::Binary, Some(whole)) => format!("{sign}0b{:b}", whole.unsigned_abs()),
+            (DisplayFormat::Scientific, _) if is_number => {
+                let text = match digits {
+                    Some(digits) => format!("{:.*e}", digits.max(1) - 1, value),
+                    None => format!("{value:e}"),
+                };
+                match text.split_once('e') {
+                    Some((mantissa, exponent)) => format!("{}e{exponent}", trim_zeros(mantissa)),
+                    None => text,
+                }
+            }
+            _ => self.format_digits(value, digits),
         }
     }
 }
@@ -201,18 +258,24 @@ impl Samples {
     }
 
     /// The `index`th sample written as text, arrays with at most `max_len` elements per
-    /// dimension and a line per row as in [`format_array`], and floats with at most `digits` significant digits or all of them if
+    /// dimension and a line per row as in [`format_array`], and numbers in `format`, floats with at most `digits` significant digits or all of them if
     /// `digits` is `None`.
-    pub fn format(&self, index: usize, max_len: usize, digits: Option<usize>) -> String {
+    pub fn format(
+        &self,
+        index: usize,
+        max_len: usize,
+        digits: Option<usize>,
+        format: DisplayFormat,
+    ) -> String {
         match self {
             Self::Empty => "null".to_owned(),
-            Self::Numbers { kind, values } => kind.format_digits(values[index], digits),
+            Self::Numbers { kind, values } => kind.format_as(values[index], digits, format),
             Self::Strings(values) => values[index].clone().unwrap_or_else(|| "null".to_owned()),
             Self::Arrays { shape, kind, .. } => {
                 let elements = self.array_sample(index).unwrap_or_default();
                 let kind = kind.unwrap_or(NumberKind::Float);
                 format_array(shape, elements, max_len, &|value| {
-                    kind.format_digits(value, digits)
+                    kind.format_as(value, digits, format)
                 })
             }
         }
@@ -469,6 +532,9 @@ fn parse_element_path(path: &str) -> Option<(&str, Vec<usize>)> {
 pub struct Streams {
     /// Sorted, so the streams of a record follow each other.
     map: BTreeMap<String, Stream>,
+    /// The units of the streams by their paths, as received in their metadata, also
+    /// for streams without samples yet.
+    units: BTreeMap<String, String>,
 }
 
 impl Default for Streams {
@@ -481,11 +547,31 @@ impl Streams {
     pub fn new() -> Self {
         Self {
             map: BTreeMap::new(),
+            units: BTreeMap::new(),
         }
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Stream> {
         self.map.values()
+    }
+
+    /// Sets the unit of the stream at `path`, an empty `unit` for none.
+    pub fn set_unit(&mut self, path: &str, unit: &str) {
+        if unit.is_empty() {
+            self.units.remove(path);
+        } else if self.units.get(path).is_none_or(|known| known != unit) {
+            self.units.insert(path.to_owned(), unit.to_owned());
+        }
+    }
+
+    /// The unit of the stream at `path`, or of the array stream of an element written by
+    /// [`element_path`].
+    pub fn unit(&self, path: &str) -> Option<&str> {
+        let unit = match self.units.get(path) {
+            Some(unit) => Some(unit),
+            None => self.units.get(parse_element_path(path)?.0),
+        };
+        unit.map(String::as_str)
     }
 
     pub fn get(&self, path: &str) -> Option<&Stream> {
@@ -797,7 +883,7 @@ mod tests {
         ]);
         let format = |path, index, max_len, digits| {
             let samples = &streams.get(path).unwrap().samples;
-            samples.format(index, max_len, digits)
+            samples.format(index, max_len, digits, DisplayFormat::Default)
         };
         assert_eq!(format("m", 0, 8, None), "[[0.5, 1, 2],\n [  3, 4, 5]]");
         assert_eq!(format("m", 0, 2, None), "[[0.5, 1, …],\n [  3, 4, …]]");
@@ -810,6 +896,38 @@ mod tests {
         let samples = &streams.get("m").unwrap().samples;
         assert_eq!(samples.array_sample(0).unwrap()[3], 3.0);
         assert!(samples.array_sample(1).is_none());
+    }
+
+    #[test]
+    fn numbers_are_written_in_their_display_format() {
+        use DisplayFormat::{Binary, Hex, Scientific};
+        let int = NumberKind::Integer;
+        assert_eq!(int.format_as(31.0, None, Hex), "0x1f");
+        assert_eq!(int.format_as(-5.0, None, Binary), "-0b101");
+        assert_eq!(int.format_as(f64::NAN, None, Hex), "null");
+        assert_eq!(int.format_as(1500.0, None, Scientific), "1.5e3");
+        let float = NumberKind::Float;
+        assert_eq!(float.format_as(16.0, None, Hex), "0x10");
+        assert_eq!(float.format_as(0.5, Some(3), Hex), "0.5");
+        assert_eq!(
+            float.format_as(0.000_123_45, Some(3), Scientific),
+            "1.23e-4"
+        );
+        assert_eq!(NumberKind::Bool.format_as(1.0, None, Binary), "true");
+        let streams = streams(&[("a", Data::Array(vec![Data::Uint(10), Data::Uint(255)]))]);
+        let samples = &streams.get("a").unwrap().samples;
+        assert_eq!(samples.format(0, 8, None, Hex), "[0xa, 0xff]");
+    }
+
+    #[test]
+    fn elements_have_the_unit_of_their_array() {
+        let mut streams = Streams::new();
+        streams.set_unit("imu.acc", "m/s²");
+        streams.set_unit("speed", "");
+        assert_eq!(streams.unit("imu.acc"), Some("m/s²"));
+        assert_eq!(streams.unit("imu.acc[2]"), Some("m/s²"));
+        assert_eq!(streams.unit("imu.gyro"), None);
+        assert_eq!(streams.unit("speed"), None);
     }
 
     #[test]

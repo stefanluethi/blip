@@ -8,12 +8,12 @@ pub fn parse_message(message: Vec<u8>, model: &mut Model) {
                 proto::Message::Value(value) => {
                     model.streams.append(&value);
                 }
+                proto::Message::ValueMetadata(metadata) => {
+                    model.streams.set_unit(&metadata.path, &metadata.unit);
+                }
                 proto::Message::Log(record) => {
                     log::info!("received log message");
                     model.logs.push(LogEntry::from_proto(&record));
-                }
-                _ => {
-                    log::warn!("Message not handled!");
                 }
             };
         }

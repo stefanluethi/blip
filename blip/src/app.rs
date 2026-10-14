@@ -252,6 +252,7 @@ impl eframe::App for App {
                 let mut context = ViewContext {
                     model: &self.state.model,
                     time: &mut self.state.time,
+                    formats: &view::NO_FORMATS,
                 };
                 self.layout.ui(ui, &mut context);
             });

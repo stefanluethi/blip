@@ -2,10 +2,10 @@
 //! stream, one band for each run of equal values.
 
 use super::time_axis::{self, index_at, visible_range};
-use super::{ViewContext, Viewable, short_names, text_color_on};
+use super::{Formats, ViewContext, Viewable, short_names, text_color_on, with_unit};
 use crate::app::model::Model;
-use crate::app::model::streams::{NumberKind, Samples, Series};
-use crate::app::time::{TimeBase, TimeRange, timestamp_to_seconds};
+use crate::app::model::streams::{DisplayFormat, NumberKind, Samples, Series};
+use crate::app::time::{TimeBase, timestamp_to_seconds};
 use egui::Color32;
 use std::collections::BTreeSet;
 
@@ -41,7 +41,8 @@ impl Default for States {
 /// The samples of a stream shown as states.
 #[derive(Clone, Copy)]
 enum StateSamples<'a> {
-    Numbers(Series<'a>),
+    /// Numbers, written in the display format.
+    Numbers(Series<'a>, DisplayFormat),
     Strings {
         timestamps: &'a [u64],
         values: &'a [Option<String>],
@@ -49,9 +50,9 @@ enum StateSamples<'a> {
 }
 
 impl<'a> StateSamples<'a> {
-    fn of(model: &'a Model, path: &str) -> Option<Self> {
+    fn of(model: &'a Model, path: &str, format: DisplayFormat) -> Option<Self> {
         if let Some(series) = model.streams.series(path) {
-            return Some(Self::Numbers(series));
+            return Some(Self::Numbers(series, format));
         }
         let stream = model.streams.get(path)?;
         match &stream.samples {
@@ -65,14 +66,14 @@ impl<'a> StateSamples<'a> {
 
     fn timestamps(&self) -> &'a [u64] {
         match self {
-            Self::Numbers(series) => series.timestamps,
+            Self::Numbers(series, _) => series.timestamps,
             Self::Strings { timestamps, .. } => timestamps,
         }
     }
 
     fn is_null(&self, index: usize) -> bool {
         match self {
-            Self::Numbers(series) => series.value(index).is_nan(),
+            Self::Numbers(series, _) => series.value(index).is_nan(),
             Self::Strings { values, .. } => values[index].is_none(),
         }
     }
@@ -80,15 +81,25 @@ impl<'a> StateSamples<'a> {
     /// Whether the samples at `a` and `b` have the same value.
     fn same(&self, a: usize, b: usize) -> bool {
         match self {
-            Self::Numbers(series) => series.value(a) == series.value(b),
+            Self::Numbers(series, _) => series.value(a) == series.value(b),
             Self::Strings { values, .. } => values[a] == values[b],
         }
     }
 
-    /// The value of the sample at `index`.
+    /// The value of the sample at `index`, which its colour follows.
     fn label(&self, index: usize) -> String {
         match self {
-            Self::Numbers(series) => series.kind.format(series.value(index)),
+            Self::Numbers(series, _) => series.kind.format(series.value(index)),
+            Self::Strings { .. } => self.text(index),
+        }
+    }
+
+    /// The value of the sample at `index` as shown, in the display format.
+    fn text(&self, index: usize) -> String {
+        match self {
+            Self::Numbers(series, format) => {
+                series.kind.format_as(series.value(index), None, *format)
+            }
             Self::Strings { values, .. } => {
                 values[index].clone().unwrap_or_else(|| "null".to_owned())
             }
@@ -96,7 +107,7 @@ impl<'a> StateSamples<'a> {
     }
 
     fn is_bool(&self) -> bool {
-        matches!(self, Self::Numbers(series) if series.kind == NumberKind::Bool)
+        matches!(self, Self::Numbers(series, _) if series.kind == NumberKind::Bool)
     }
 }
 
@@ -226,7 +237,7 @@ impl States {
                     .allow_hover(false),
             );
             if self.show_values
-                && let Some(label) = label
+                && let Some(label) = run.index.map(|index| samples.text(index))
                 && (end - start) / seconds_per_point
                     > (label.chars().count() + 1) as f64 * LABEL_CHAR_WIDTH
             {
@@ -241,26 +252,35 @@ impl States {
     }
 
     /// Shows the values of the shown streams current at `t` seconds.
-    fn tooltip_ui(&self, ui: &mut egui::Ui, model: &Model, t: f64, base: TimeBase) {
+    fn tooltip_ui(
+        &self,
+        ui: &mut egui::Ui,
+        model: &Model,
+        formats: &Formats,
+        t: f64,
+        base: TimeBase,
+    ) {
         ui.label(base.format(t, 3));
         let names = short_names(self.streams.iter().map(String::as_str));
         egui::Grid::new("states_tooltip")
             .num_columns(2)
             .show(ui, |ui| {
                 for (path, name) in self.streams.iter().zip(names) {
-                    let Some(samples) = StateSamples::of(model, path) else {
+                    let Some(samples) = StateSamples::of(model, path, formats.of(path)) else {
                         continue;
                     };
                     if let Some(index) = index_at(samples.timestamps(), t) {
+                        let unit = model.streams.unit(path).filter(|_| !samples.is_null(index));
                         ui.label(name);
-                        ui.label(samples.label(index));
+                        ui.label(with_unit(samples.text(index), unit));
                         ui.end_row();
                     }
                 }
             });
     }
 
-    fn show_states(&self, model: &Model, time: &mut TimeRange, ui: &mut egui::Ui) {
+    fn show_states(&self, context: &mut ViewContext<'_>, ui: &mut egui::Ui) {
+        let (model, formats, time) = (context.model, context.formats, &mut *context.time);
         let names: Vec<String> = short_names(self.streams.iter().map(String::as_str))
             .into_iter()
             .map(str::to_owned)
@@ -300,7 +320,7 @@ impl States {
                 return;
             };
             for (row, path) in self.streams.iter().enumerate() {
-                if let Some(samples) = StateSamples::of(model, path) {
+                if let Some(samples) = StateSamples::of(model, path, formats.of(path)) {
                     let y = row_y(row);
                     self.plot_row(samples, y, range, latest, axis.origin, plot_ui);
                 }
@@ -313,14 +333,14 @@ impl States {
             let base = response.axis.base;
             response
                 .response
-                .on_hover_ui_at_pointer(|ui| self.tooltip_ui(ui, model, t, base));
+                .on_hover_ui_at_pointer(|ui| self.tooltip_ui(ui, model, formats, t, base));
         }
     }
 }
 
 impl Viewable for States {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
-        self.show_states(context.model, context.time, ui);
+        self.show_states(context, ui);
     }
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, _model: &Model) {
@@ -378,7 +398,7 @@ mod tests {
             ("s", Data::Null),
             ("s", Data::from("run")),
         ]);
-        let samples = StateSamples::of(&model, "s").unwrap();
+        let samples = StateSamples::of(&model, "s", DisplayFormat::Default).unwrap();
         let runs = runs(samples, (0.0, 10.0), 6.0, 0.0);
         assert_eq!(
             spans(&runs),
@@ -399,7 +419,7 @@ mod tests {
             ("b", Data::Bool(false)),
             ("b", Data::Bool(false)),
         ]);
-        let samples = StateSamples::of(&model, "b").unwrap();
+        let samples = StateSamples::of(&model, "b", DisplayFormat::Default).unwrap();
         assert!(samples.is_bool());
         let runs = runs(samples, (1.5, 2.5), 3.0, 0.0);
         // the run starts at the sample before the range, which is enough to draw it

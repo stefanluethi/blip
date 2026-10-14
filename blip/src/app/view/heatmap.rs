@@ -3,9 +3,9 @@
 //! be shown at the cursor time as a line over its indices.
 
 use super::time_axis::{self, index_at};
-use super::{ViewContext, Viewable, text_color_on};
+use super::{ViewContext, Viewable, text_color_on, with_unit};
 use crate::app::model::Model;
-use crate::app::model::streams::{NumberKind, Samples, Stream, format_significant};
+use crate::app::model::streams::{DisplayFormat, NumberKind, Samples, Stream, format_significant};
 use crate::app::time::TimeRange;
 use egui::Color32;
 use std::collections::BTreeSet;
@@ -92,9 +92,24 @@ fn value_range(values: &[f64]) -> Option<(f64, f64)> {
 /// Significant digits of the values shown in a heatmap.
 const DIGITS: usize = 3;
 
-/// `value` of an array of `kind` written for a cell or a tooltip.
-fn format_element(value: f64, kind: NumberKind) -> String {
-    kind.format_digits(value, Some(DIGITS))
+/// How the elements of the shown array are written.
+#[derive(Clone, Copy)]
+struct ValueText<'a> {
+    kind: NumberKind,
+    format: DisplayFormat,
+    unit: Option<&'a str>,
+}
+
+impl ValueText<'_> {
+    /// `value` written for a cell.
+    fn write(self, value: f64) -> String {
+        self.kind.format_as(value, Some(DIGITS), self.format)
+    }
+
+    /// `value` written for a tooltip, with its unit.
+    fn with_unit(self, value: f64) -> String {
+        with_unit(self.write(value), self.unit.filter(|_| !value.is_nan()))
+    }
 }
 
 /// The values of an array stream of `len` elements within `(start, end)` seconds as a
@@ -208,7 +223,7 @@ impl Heatmap {
         &mut self,
         ui: &mut egui::Ui,
         stream: &Stream,
-        kind: NumberKind,
+        text: ValueText<'_>,
         len: usize,
         time: &mut TimeRange,
         size: egui::Vec2,
@@ -252,7 +267,7 @@ impl Heatmap {
             response.response.on_hover_ui_at_pointer(|ui| {
                 ui.label(base.format(t, 3));
                 if let Some(value) = value {
-                    ui.label(format!("[{element}] = {}", format_element(value, kind)));
+                    ui.label(format!("[{element}] = {}", text.with_unit(value)));
                 }
             });
         }
@@ -264,7 +279,7 @@ impl Heatmap {
         &mut self,
         ui: &mut egui::Ui,
         stream: &Stream,
-        kind: NumberKind,
+        text: ValueText<'_>,
         (rows, columns): (usize, usize),
         time: &TimeRange,
         size: egui::Vec2,
@@ -307,7 +322,7 @@ impl Heatmap {
                     let position = egui_plot::PlotPoint::new(column as f64, -(row as f64));
                     let color = text_color_on(color_of(value, range));
                     plot_ui.text(
-                        egui_plot::Text::new("", position, format_element(value, kind))
+                        egui_plot::Text::new("", position, text.write(value))
                             .color(color)
                             .allow_hover(false),
                     );
@@ -333,17 +348,20 @@ impl Heatmap {
 
         if let Some((row, column, value)) = response.inner {
             response.response.on_hover_ui_at_pointer(|ui| {
-                ui.label(format!(
-                    "[{row}][{column}] = {}",
-                    format_element(value, kind)
-                ));
+                ui.label(format!("[{row}][{column}] = {}", text.with_unit(value)));
             });
         }
     }
 
     /// Shows the elements of a 1D array stream at the cursor time as a line over their
     /// indices.
-    fn line_ui(&mut self, ui: &mut egui::Ui, stream: &Stream, kind: NumberKind, time: &TimeRange) {
+    fn line_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        stream: &Stream,
+        text: ValueText<'_>,
+        time: &TimeRange,
+    ) {
         let values: Vec<f64> = time
             .cursor()
             .and_then(|t| index_at(&stream.timestamps, t))
@@ -364,11 +382,9 @@ impl Heatmap {
             .x_grid_spacer(index_spacer)
             .allow_boxed_zoom(false)
             .label_formatter(move |hover| match hover {
-                egui_plot::HoverPosition::NearDataPoint { position, .. } => Some(format!(
-                    "[{}] = {}",
-                    position.x,
-                    format_element(position.y, kind)
-                )),
+                egui_plot::HoverPosition::NearDataPoint { position, .. } => {
+                    Some(format!("[{}] = {}", position.x, text.with_unit(position.y)))
+                }
                 egui_plot::HoverPosition::Elsewhere { .. } => None,
             });
         plot.show(ui, |plot_ui| {
@@ -456,8 +472,12 @@ impl Viewable for Heatmap {
             ));
             return;
         }
-        let kind = kind.unwrap_or(NumberKind::Float);
-        self.contents_ui(ui, stream, kind, shape, context.time);
+        let text = ValueText {
+            kind: kind.unwrap_or(NumberKind::Float),
+            format: context.formats.of(path),
+            unit: model.streams.unit(path),
+        };
+        self.contents_ui(ui, stream, text, shape, context.time);
     }
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, model: &Model) {
@@ -496,12 +516,12 @@ impl Heatmap {
         &mut self,
         ui: &mut egui::Ui,
         stream: &Stream,
-        kind: NumberKind,
+        text: ValueText<'_>,
         shape: &[usize],
         time: &mut TimeRange,
     ) {
         if shape.len() == 1 && self.mode == ArrayMode::AtCursor {
-            self.line_ui(ui, stream, kind, time);
+            self.line_ui(ui, stream, text, time);
             return;
         }
 
@@ -509,9 +529,9 @@ impl Heatmap {
         let size = egui::vec2((ui.available_width() - COLOR_BAR_WIDTH).max(50.0), height);
         ui.horizontal(|ui| {
             match *shape {
-                [len] => self.over_time_ui(ui, stream, kind, len, time, size),
+                [len] => self.over_time_ui(ui, stream, text, len, time, size),
                 [rows, columns] => {
-                    self.grid_ui(ui, stream, kind, (rows, columns), time, size);
+                    self.grid_ui(ui, stream, text, (rows, columns), time, size);
                 }
                 _ => {}
             }

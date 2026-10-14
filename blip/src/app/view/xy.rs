@@ -110,10 +110,18 @@ impl Xy {
 
     fn show_plot(&self, ui: &mut egui::Ui, model: &Model, time: &TimeRange) {
         let names = short_names(self.streams.iter().map(String::as_str));
-        let x_label = short_names(self.x.as_deref()).concat();
+        // an axis is labelled with the name of its stream and the unit of its streams
+        let label = |name: &str, unit: Option<&str>| match unit {
+            Some(unit) if name.is_empty() => format!("[{unit}]"),
+            Some(unit) => format!("{name} [{unit}]"),
+            None => name.to_owned(),
+        };
+        let x_unit = self.x.as_deref().and_then(|x| model.streams.unit(x));
+        let x_label = label(&short_names(self.x.as_deref()).concat(), x_unit);
+        let y_unit = super::common_unit(model, &self.streams);
         let y_label = match names[..] {
-            [name] => name.to_owned(),
-            _ => String::new(),
+            [name] => label(name, y_unit),
+            _ => label("", y_unit),
         };
         let mut plot = egui_plot::Plot::new(ui.id().with("xy"))
             .legend(

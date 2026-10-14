@@ -135,8 +135,32 @@ async def test_simulator_bridge_typed_values():
         await server.stop()
 
 
+async def test_simulator_bridge_units():
+    proto = SimulatorProtocol(interval_ms=10)
+    server = BridgeServer(protocol=proto, host="127.0.0.1", port=3994, path="/ws/test")
+    await server.start()
+
+    try:
+        async with websockets.connect("ws://127.0.0.1:3994/ws/test") as ws:
+            # the units are repeated, so a client connecting later gets them too
+            units = {}
+            for _ in range(2000):
+                data = decode_cbor_message(await asyncio.wait_for(ws.recv(), timeout=2.0))
+                if "ValueMetadata" in data:
+                    metadata = data["ValueMetadata"]
+                    units[metadata["path"]] = metadata["unit"]
+                    if "sensor/temperature" in units and "sysinfo/cpu/cpu0" in units:
+                        break
+
+            assert units["sensor/temperature"] == "°C"
+            assert units["sysinfo/cpu/cpu0"] == "%"
+    finally:
+        await server.stop()
+
+
 if __name__ == "__main__":
     asyncio.run(test_simulator_bridge())
     asyncio.run(test_simulator_bridge_logs())
     asyncio.run(test_simulator_bridge_typed_values())
+    asyncio.run(test_simulator_bridge_units())
     print("ALL TESTS PASSED SUCCESSFULLY!")

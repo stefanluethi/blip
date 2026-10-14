@@ -8,15 +8,39 @@ pub mod time_axis;
 pub mod xy;
 
 use crate::app::model::Model;
-use crate::app::model::streams::{NumberKind, Samples, Stream};
+use crate::app::model::streams::{DisplayFormat, NumberKind, Samples, Stream};
 use crate::app::time::TimeRange;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use stream_selection::MAX_LISTED_ELEMENTS;
 
 /// What views get from the app to show their contents.
 pub struct ViewContext<'a> {
     pub model: &'a Model,
     pub time: &'a mut TimeRange,
+    /// The display formats of the streams of the shown view.
+    pub formats: &'a Formats,
+}
+
+/// The display formats of the streams of a view by their paths, the default format for
+/// streams without one.
+#[derive(serde::Deserialize, serde::Serialize, Clone, Default)]
+pub struct Formats(BTreeMap<String, DisplayFormat>);
+
+/// The formats of a view whose streams all have the default format.
+pub static NO_FORMATS: Formats = Formats(BTreeMap::new());
+
+impl Formats {
+    pub fn of(&self, path: &str) -> DisplayFormat {
+        self.0.get(path).copied().unwrap_or_default()
+    }
+
+    pub fn set(&mut self, path: &str, format: DisplayFormat) {
+        if format == DisplayFormat::Default {
+            self.0.remove(path);
+        } else {
+            self.0.insert(path.to_owned(), format);
+        }
+    }
 }
 
 pub trait Viewable {
@@ -31,6 +55,8 @@ pub trait Viewable {
 pub struct View {
     pub name: String,
     pub kind: ViewKind,
+    #[serde(default)]
+    pub formats: Formats,
 }
 
 #[derive(serde::Deserialize, serde::Serialize, Clone)]
@@ -131,6 +157,12 @@ impl ViewType {
                 Selectable::No("Heatmaps show arrays of one or two dimensions".to_owned())
             }
         }
+    }
+
+    /// Whether a view of this type writes the values of its streams as text, so their
+    /// display formats apply.
+    pub fn writes_values(self) -> bool {
+        !matches!(self, ViewType::Xy | ViewType::Logs)
     }
 
     /// Whether a view of this type shows one stream only.
@@ -288,7 +320,11 @@ impl View {
             ViewType::Heatmap => ViewKind::Heatmap(heatmap::Heatmap::new()),
             ViewType::Logs => ViewKind::Logs(log_table::LogTable::new()),
         };
-        Self { name, kind }
+        Self {
+            name,
+            kind,
+            formats: Formats::default(),
+        }
     }
 
     pub fn view_type(&self) -> ViewType {
@@ -324,6 +360,11 @@ impl View {
 
 impl Viewable for View {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
+        let context = &mut ViewContext {
+            model: context.model,
+            time: context.time,
+            formats: &self.formats,
+        };
         match &mut self.kind {
             ViewKind::Plot(plot) => plot.view(ui, context),
             ViewKind::States(states) => states.view(ui, context),
@@ -343,6 +384,77 @@ impl Viewable for View {
             ViewKind::Heatmap(heatmap) => heatmap.properties_ui(ui, model),
             ViewKind::Logs(logs) => logs.properties_ui(ui, model),
         }
+        self.streams_ui(ui, model);
+    }
+}
+
+impl View {
+    /// Shows the unit of each shown stream and, if the view writes the values of the
+    /// streams, their display format.
+    fn streams_ui(&mut self, ui: &mut egui::Ui, model: &Model) {
+        let writes_values = self.view_type().writes_values();
+        let paths: Vec<String> = match self.selection_mut() {
+            Some((paths, _)) if !paths.is_empty() => paths.iter().cloned().collect(),
+            _ => return,
+        };
+        let names = short_names(paths.iter().map(String::as_str));
+        properties_section(ui, "Streams", |ui| {
+            for (path, name) in paths.iter().zip(names) {
+                ui.label(name).on_hover_text(path);
+                ui.horizontal(|ui| {
+                    if writes_values && has_numbers(model, path) {
+                        let current = self.formats.of(path);
+                        egui::ComboBox::from_id_salt(("display format", path))
+                            .selected_text(current.name())
+                            .width(90.0)
+                            .show_ui(ui, |ui| {
+                                for format in DisplayFormat::ALL {
+                                    if ui
+                                        .selectable_label(current == format, format.name())
+                                        .clicked()
+                                    {
+                                        self.formats.set(path, format);
+                                    }
+                                }
+                            })
+                            .response
+                            .on_hover_text("How the values are written");
+                    }
+                    if let Some(unit) = model.streams.unit(path) {
+                        ui.weak(unit);
+                    }
+                });
+                ui.end_row();
+            }
+        });
+    }
+}
+
+/// Whether the stream at `path` has numbers other than bools, which display formats
+/// apply to.
+fn has_numbers(model: &Model, path: &str) -> bool {
+    let kind = match model.streams.series(path) {
+        Some(series) => Some(series.kind),
+        None => match model.streams.get(path).map(|stream| &stream.samples) {
+            Some(Samples::Arrays { kind, .. }) => *kind,
+            _ => None,
+        },
+    };
+    kind.is_some_and(|kind| kind != NumberKind::Bool)
+}
+
+/// The unit of the streams at `paths` if they all have the same.
+pub fn common_unit<'a>(model: &'a Model, paths: &BTreeSet<String>) -> Option<&'a str> {
+    let mut units = paths.iter().map(|path| model.streams.unit(path));
+    let first = units.next()??;
+    units.all(|unit| unit == Some(first)).then_some(first)
+}
+
+/// `value` followed by `unit` if there is one.
+pub fn with_unit(value: String, unit: Option<&str>) -> String {
+    match unit {
+        Some(unit) => format!("{value} {unit}"),
+        None => value,
     }
 }
 

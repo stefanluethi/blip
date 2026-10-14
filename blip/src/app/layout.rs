@@ -647,6 +647,7 @@ mod tests {
             let mut context = ViewContext {
                 model: &model,
                 time: &mut time,
+                formats: &crate::app::view::NO_FORMATS,
             };
             layout.ui(ui, &mut context);
             *renamed.borrow_mut() = layout.renaming_title.as_ref().map(|(id, _)| *id);

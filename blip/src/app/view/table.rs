@@ -2,7 +2,7 @@
 
 use super::stream_selection::{StreamTree, type_icon};
 use super::time_axis::index_at;
-use super::{ViewContext, Viewable, short_names};
+use super::{Formats, ViewContext, Viewable, short_names};
 use crate::app::model::Model;
 use crate::app::model::streams::{Samples, Stream};
 use egui_extras::{Column, TableBuilder};
@@ -171,8 +171,18 @@ impl Table {
         table_rows
     }
 
-    fn show_table(&mut self, ui: &mut egui::Ui, model: &Model, t: Option<f64>) {
+    fn show_table(&mut self, ui: &mut egui::Ui, model: &Model, formats: &Formats, t: Option<f64>) {
         let table_rows = self.table_rows(model.streams.iter(), t);
+        // the `index`th sample of `stream` in its format and with its unit
+        let write = |stream: &Stream, index: usize, max_len: usize, digits: Option<usize>| {
+            let value = stream
+                .samples
+                .format(index, max_len, digits, formats.of(&stream.path));
+            match model.streams.unit(&stream.path) {
+                Some(unit) if value != "null" => format!("{value} {unit}"),
+                _ => value,
+            }
+        };
 
         // the sample of each row current at t, with its value written as text
         let samples: Vec<Option<(&Stream, usize, String)>> = table_rows
@@ -180,9 +190,7 @@ impl Table {
             .map(|row| {
                 let stream = row.stream?;
                 let index = index_at(&stream.timestamps, t?)?;
-                let value = stream
-                    .samples
-                    .format(index, MAX_SHOWN_ELEMENTS, Some(SHOWN_DIGITS));
+                let value = write(stream, index, MAX_SHOWN_ELEMENTS, Some(SHOWN_DIGITS));
                 Some((stream, index, value))
             })
             .collect();
@@ -217,8 +225,7 @@ impl Table {
                     table_row.col(|ui| {
                         if let Some((stream, index, value)) = sample {
                             value_label(ui, stream, value).on_hover_ui(|ui| {
-                                let value =
-                                    stream.samples.format(*index, MAX_TOOLTIP_ELEMENTS, None);
+                                let value = write(stream, *index, MAX_TOOLTIP_ELEMENTS, None);
                                 value_label(ui, stream, &value);
                             });
                         }
@@ -234,7 +241,7 @@ impl Viewable for Table {
             ui.weak("Select the streams to show in the streams panel");
             return;
         }
-        self.show_table(ui, context.model, context.time.cursor());
+        self.show_table(ui, context.model, context.formats, context.time.cursor());
     }
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, _model: &Model) {

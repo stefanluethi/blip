@@ -24,6 +24,9 @@ Left panel
    elements, e.g. ``imu.acc[0]``, if they have at most 16; larger arrays
    cannot be plotted yet.
 
+Right panel
+   The **Properties** of the selected view or group, see `Properties`_.
+
 Center
    The views, laid out as edited in the layout panel.
 
@@ -44,6 +47,22 @@ Plot
 Logs
    Table of received ``Log`` records with timestamp, level, component and
    message. Records outside the shown time range are greyed out.
+
+Properties
+----------
+
+The properties panel shows the settings of the selected view or group in
+sections that can be collapsed. Changes apply at once and are saved with the
+layout.
+
+* A group has its name and how it arranges its children.
+* A view has its name and type, the sections of its type, e.g. the y axis,
+  lines and legend of a plot, and its **Streams**: the unit of each stream as
+  sent by the bridge, and how its numbers are written in the view (decimal,
+  hex, binary or scientific). Hex and binary apply to whole numbers only.
+* Number fields left empty show *auto*: the value is fitted to the data.
+
+Log views keep their search and filters in the view.
 
 Layout
 ------
@@ -87,7 +106,8 @@ The time axes show the timestamps as local time of day, or as time since boot
 if they are too small to be a date (before 2001).
 
 Dragging a plot moves the range, and zooming a plot with :kbd:`Ctrl` and the
-mouse wheel changes the window. The y axes fit the data in the range.
+mouse wheel changes the window. The y axes fit the data in the range, unless
+their min or max is set in the properties.
 
 The layout, the time window and the target address are persisted and restored
 on the next start.

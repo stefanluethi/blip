@@ -1,10 +1,10 @@
 use super::time_axis::{self, closest_index, visible_range, within};
-use super::{ViewContext, Viewable, short_names};
+use super::{Formats, ViewContext, Viewable, short_names, with_unit};
 use crate::app::model::{
     Model,
     streams::{NumberKind, Series},
 };
-use crate::app::time::{TimeBase, TimeRange, timestamp_to_seconds};
+use crate::app::time::{TimeBase, timestamp_to_seconds};
 use std::cmp::min;
 use std::collections::BTreeSet;
 
@@ -216,15 +216,24 @@ impl Plot {
     }
 
     /// Shows the values of the shown streams at `t` seconds.
-    fn tooltip_ui(&self, ui: &mut egui::Ui, model: &Model, t: f64, base: TimeBase) {
+    fn tooltip_ui(
+        &self,
+        ui: &mut egui::Ui,
+        model: &Model,
+        formats: &Formats,
+        t: f64,
+        base: TimeBase,
+    ) {
         ui.label(base.format(t, 3));
         egui::Grid::new("plot_tooltip")
             .num_columns(2)
             .show(ui, |ui| {
                 for (path, name, color) in self.selected_path_iter() {
                     let value = model.streams.series(path).and_then(|series| {
-                        closest_index(series.timestamps, t)
-                            .map(|index| series.kind.format(series.value(index)))
+                        let value = series.value(closest_index(series.timestamps, t)?);
+                        let text = series.kind.format_as(value, None, formats.of(path));
+                        let unit = model.streams.unit(path).filter(|_| !value.is_nan());
+                        Some(with_unit(text, unit))
                     });
                     if let Some(value) = value {
                         ui.colored_label(color, name);
@@ -237,13 +246,18 @@ impl Plot {
 
     /// Shows the shared time range of `time`, and applies panning and zooming of the
     /// plot to it.
-    fn show_plot(&self, model: &Model, time: &mut TimeRange, ui: &mut egui::Ui) {
+    fn show_plot(&self, context: &mut ViewContext<'_>, ui: &mut egui::Ui) {
+        let (model, formats, time) = (context.model, context.formats, &mut *context.time);
         let id = ui.id().with("plot");
         let mut y_axis = egui_plot::AxisHints::new_y()
             .placement(egui_plot::HPlacement::Left)
             .min_thickness(50.0);
-        if !self.y_label.is_empty() {
-            y_axis = y_axis.label(self.y_label.as_str());
+        let label = match self.y_label.as_str() {
+            "" => super::common_unit(model, &self.streams),
+            label => Some(label),
+        };
+        if let Some(label) = label {
+            y_axis = y_axis.label(label);
         }
         let mut plot = time_axis::plot(id, time).custom_y_axes(vec![y_axis]);
         if let Some(corner) = self.legend.corner() {
@@ -266,7 +280,7 @@ impl Plot {
             let base = response.axis.base;
             response
                 .response
-                .on_hover_ui_at_pointer(|ui| self.tooltip_ui(ui, model, t, base));
+                .on_hover_ui_at_pointer(|ui| self.tooltip_ui(ui, model, formats, t, base));
         }
     }
 }
@@ -353,15 +367,23 @@ fn steps(points: &[[f64; 2]]) -> Vec<[f64; 2]> {
 
 impl Viewable for Plot {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
-        self.show_plot(context.model, context.time, ui);
+        self.show_plot(context, ui);
     }
 
-    fn properties_ui(&mut self, ui: &mut egui::Ui, _model: &Model) {
+    fn properties_ui(&mut self, ui: &mut egui::Ui, model: &Model) {
+        let unit = super::common_unit(model, &self.streams)
+            .unwrap_or_default()
+            .to_owned();
         super::properties_section(ui, "Y axis", |ui| {
             super::optional_number_row(ui, "Min", &mut self.y_min);
             super::optional_number_row(ui, "Max", &mut self.y_max);
             ui.label("Label");
-            ui.add(egui::TextEdit::singleline(&mut self.y_label).desired_width(f32::INFINITY));
+            ui.add(
+                egui::TextEdit::singleline(&mut self.y_label)
+                    .hint_text(unit)
+                    .desired_width(f32::INFINITY),
+            )
+            .on_hover_text("The unit of the streams if they share one and this is empty");
             ui.end_row();
         });
         super::properties_section(ui, "Lines", |ui| {

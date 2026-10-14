@@ -79,6 +79,7 @@ impl Layout {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::model::streams::DisplayFormat;
     use crate::app::view::ViewKind;
     use crate::app::view::plot::Interpolation;
     use egui_kittest::Harness;
@@ -87,11 +88,18 @@ mod tests {
     /// A harness showing the properties panel of the default layout with what
     /// `selected` picks from its tab and the views in it selected.
     fn harness(selected: impl FnOnce(TileId, &[TileId]) -> TileId) -> Harness<'static, Layout> {
+        harness_with(Model::default(), selected)
+    }
+
+    /// A harness as by [`harness`] showing the streams of `model`.
+    fn harness_with(
+        model: Model,
+        selected: impl FnOnce(TileId, &[TileId]) -> TileId,
+    ) -> Harness<'static, Layout> {
         let mut layout = Layout::default();
         let tab = layout.container(layout.root()).unwrap().children_vec()[0];
         let views = layout.container(tab).unwrap().children_vec();
         layout.select(selected(tab, &views));
-        let model = Model::default();
         Harness::builder()
             .with_size(egui::vec2(300.0, 800.0))
             .build_ui_state(
@@ -144,6 +152,36 @@ mod tests {
             harness.run();
         }
         assert_eq!(selected_plot(&harness).y_min, None);
+    }
+
+    #[test]
+    fn streams_show_their_unit_and_take_a_display_format() {
+        let mut model = Model::default();
+        model.streams.append(&proto::Value {
+            timestamp: 0,
+            path: "motor/errors".to_owned(),
+            value: proto::Data::Uint(3),
+        });
+        model.streams.set_unit("motor/errors", "count");
+        let mut harness = harness_with(model, |_, views| views[0]);
+        let view = harness.state_mut().selected_view_mut().unwrap();
+        view.selection_mut()
+            .unwrap()
+            .0
+            .insert("motor/errors".to_owned());
+        harness.run();
+        harness.get_by_label("count");
+        harness
+            .get_by(|node| {
+                node.role() == egui::accesskit::Role::ComboBox
+                    && node.value().as_deref() == Some("Default")
+            })
+            .click();
+        harness.run();
+        harness.get_by_label("Hex").click();
+        harness.run();
+        let view = harness.state_mut().selected_view_mut().unwrap();
+        assert_eq!(view.formats.of("motor/errors"), DisplayFormat::Hex);
     }
 
     #[test]
