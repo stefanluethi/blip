@@ -4,6 +4,7 @@
 
 mod file;
 mod panel;
+mod properties;
 
 pub use file::{GroupKind, LayoutFile};
 
@@ -33,6 +34,9 @@ pub struct Layout {
     renaming: Option<(TileId, String)>,
     /// The view or group renamed by clicking its title in the center and its new name.
     renaming_title: Option<(TileId, String)>,
+    /// The view or group whose name is edited in the properties panel and the text of
+    /// the field, which may be blank while the name is not.
+    properties_name: Option<(TileId, String)>,
 }
 
 impl Default for Layout {
@@ -58,6 +62,7 @@ impl Layout {
             selected: None,
             renaming: None,
             renaming_title: None,
+            properties_name: None,
         }
     }
 

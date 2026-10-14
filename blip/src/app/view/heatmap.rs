@@ -178,31 +178,6 @@ impl Heatmap {
         self.value_range.or(self.fitted_range).unwrap_or((0.0, 1.0))
     }
 
-    /// Shows the mode for a 1D array and the range of the values.
-    fn options_ui(&mut self, ui: &mut egui::Ui, dimensions: usize) {
-        ui.horizontal(|ui| {
-            if dimensions == 1 {
-                ui.selectable_value(&mut self.mode, ArrayMode::OverTime, "Over time");
-                ui.selectable_value(&mut self.mode, ArrayMode::AtCursor, "At cursor");
-                ui.separator();
-            }
-            let mut fixed = self.value_range.is_some();
-            if ui
-                .checkbox(&mut fixed, "Fixed range")
-                .on_hover_text("Keep the range of the values instead of fitting the shown ones")
-                .changed()
-            {
-                self.value_range = fixed.then(|| self.shown_range());
-            }
-            if let Some((min, max)) = &mut self.value_range {
-                let speed = ((*max - *min).abs() * 0.01).max(1.0e-6);
-                ui.add(egui::DragValue::new(min).speed(speed));
-                ui.label("to");
-                ui.add(egui::DragValue::new(max).speed(speed));
-            }
-        });
-    }
-
     /// Uploads the colours of `values` as an image of `size` pixels, returns its texture.
     fn texture(
         &mut self,
@@ -482,12 +457,54 @@ impl Viewable for Heatmap {
             return;
         }
         let kind = kind.unwrap_or(NumberKind::Float);
-        super::settings_below(
-            ui,
-            self,
-            |heatmap, ui| heatmap.options_ui(ui, shape.len()),
-            |heatmap, ui| heatmap.contents_ui(ui, stream, kind, shape, context.time),
-        );
+        self.contents_ui(ui, stream, kind, shape, context.time);
+    }
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, model: &Model) {
+        let dimensions = self
+            .streams
+            .first()
+            .and_then(|path| model.streams.get(path))
+            .and_then(|stream| match &stream.samples {
+                Samples::Arrays { shape, .. } => Some(shape.len()),
+                _ => None,
+            });
+        // the mode is kept for a 2D array, but only applies to a 1D one
+        if dimensions != Some(2) {
+            super::properties_section(ui, "Array", |ui| {
+                ui.label("Show");
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.mode, ArrayMode::OverTime, "Over time")
+                        .on_hover_text("Each element as a row of colours over time");
+                    ui.selectable_value(&mut self.mode, ArrayMode::AtCursor, "At cursor")
+                        .on_hover_text("The elements at the cursor time as a line");
+                });
+                ui.end_row();
+            });
+        }
+        super::properties_section(ui, "Colour scale", |ui| {
+            ui.label("Range");
+            let mut fixed = self.value_range.is_some();
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut fixed, false, "Auto")
+                    .on_hover_text("Fit the range to the shown values");
+                ui.selectable_value(&mut fixed, true, "Fixed")
+                    .on_hover_text("Keep the range of the values");
+            });
+            ui.end_row();
+            if fixed != self.value_range.is_some() {
+                self.value_range = fixed.then(|| self.shown_range());
+            }
+            if let Some((min, max)) = &mut self.value_range {
+                let speed = ((*max - *min).abs() * 0.01).max(1.0e-6);
+                ui.label("Min");
+                ui.add(egui::DragValue::new(min).speed(speed));
+                ui.end_row();
+                ui.label("Max");
+                ui.add(egui::DragValue::new(max).speed(speed));
+                ui.end_row();
+            }
+        });
     }
 }
 

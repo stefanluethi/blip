@@ -241,6 +241,11 @@ impl eframe::App for App {
                 self.layout.panel_ui(ui);
             });
 
+        egui::Panel::right("properties panel")
+            .resizable(true)
+            .default_size(240.0)
+            .show(ui, |ui| self.layout.properties_ui(ui, &self.state.model));
+
         egui::CentralPanel::default()
             .frame(egui::Frame::central_panel(ui.style()).inner_margin(egui::Margin::ZERO))
             .show(ui, |ui| {

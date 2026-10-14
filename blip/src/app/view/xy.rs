@@ -75,29 +75,6 @@ impl Xy {
         Self::default()
     }
 
-    /// Shows the choice of the x stream and the options.
-    fn options_ui(&mut self, ui: &mut egui::Ui, model: &Model) {
-        ui.horizontal(|ui| {
-            ui.label("X:");
-            let selected = self.x.as_deref().unwrap_or("Select a stream");
-            egui::ComboBox::from_id_salt("xy_x")
-                .selected_text(selected)
-                .width(200.0)
-                .show_ui(ui, |ui| {
-                    for stream in model.streams.iter() {
-                        for path in stream_paths(stream, ViewType::Xy) {
-                            let checked = self.x.as_ref() == Some(&path);
-                            if ui.selectable_label(checked, &path).clicked() {
-                                self.x = Some(path);
-                            }
-                        }
-                    }
-                });
-            ui.checkbox(&mut self.equal_axes, "Equal axes")
-                .on_hover_text("Give a unit the same length on both axes");
-        });
-    }
-
     /// Draws `points` as a line fading out towards the first points, and the last point
     /// as a dot.
     fn plot_trail(
@@ -201,13 +178,36 @@ impl Xy {
 
 impl Viewable for Xy {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
-        let model = context.model;
-        super::settings_below(
-            ui,
-            self,
-            |xy, ui| xy.options_ui(ui, model),
-            |xy, ui| xy.show_plot(ui, model, context.time),
-        );
+        if self.x.is_none() {
+            ui.weak("Select the x stream in the properties panel");
+            return;
+        }
+        self.show_plot(ui, context.model, context.time);
+    }
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, model: &Model) {
+        super::properties_section(ui, "Axes", |ui| {
+            ui.label("X stream");
+            let selected = self.x.as_deref().unwrap_or("Select a stream");
+            egui::ComboBox::from_id_salt("xy_x")
+                .selected_text(selected)
+                .width(ui.available_width())
+                .show_ui(ui, |ui| {
+                    for stream in model.streams.iter() {
+                        for path in stream_paths(stream, ViewType::Xy) {
+                            let checked = self.x.as_ref() == Some(&path);
+                            if ui.selectable_label(checked, &path).clicked() {
+                                self.x = Some(path);
+                            }
+                        }
+                    }
+                });
+            ui.end_row();
+            ui.label("Equal axes");
+            ui.checkbox(&mut self.equal_axes, "")
+                .on_hover_text("Give a unit the same length on both axes");
+            ui.end_row();
+        });
     }
 }
 

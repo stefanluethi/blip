@@ -21,6 +21,9 @@ pub struct ViewContext<'a> {
 
 pub trait Viewable {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>);
+
+    /// Shows the properties of the view in the properties panel, in sections.
+    fn properties_ui(&mut self, _ui: &mut egui::Ui, _model: &Model) {}
 }
 
 /// A view in the layout, shown as a pane in the center.
@@ -184,20 +187,18 @@ pub fn short_names<'a>(paths: impl IntoIterator<Item = &'a str>) -> Vec<&'a str>
     }
 }
 
-/// Shows the settings of `view` added by `settings` in a row at the bottom of `ui`, and
-/// the contents added by `contents` in the space above them.
-pub fn settings_below<T>(
-    ui: &mut egui::Ui,
-    view: &mut T,
-    settings: impl FnOnce(&mut T, &mut egui::Ui),
-    contents: impl FnOnce(&mut T, &mut egui::Ui),
-) {
-    ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-        settings(view, ui);
-        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-            contents(view, ui);
+/// Shows a section of properties titled `title` that can be collapsed, with the label
+/// and the value of each property added by `add` in a row of a grid.
+pub fn properties_section(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) {
+    egui::CollapsingHeader::new(egui::RichText::new(title).strong())
+        .id_salt(("properties", title))
+        .default_open(true)
+        .show(ui, |ui| {
+            egui::Grid::new(("properties grid", title))
+                .num_columns(2)
+                .spacing([12.0, 6.0])
+                .show(ui, add);
         });
-    });
 }
 
 /// The elements of an array of `shape` if they are few enough to be listed.
@@ -264,6 +265,17 @@ impl Viewable for View {
             ViewKind::Xy(xy) => xy.view(ui, context),
             ViewKind::Heatmap(heatmap) => heatmap.view(ui, context),
             ViewKind::Logs(logs) => logs.view(ui, context),
+        }
+    }
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, model: &Model) {
+        match &mut self.kind {
+            ViewKind::Plot(plot) => plot.properties_ui(ui, model),
+            ViewKind::States(states) => states.properties_ui(ui, model),
+            ViewKind::Table(table) => table.properties_ui(ui, model),
+            ViewKind::Xy(xy) => xy.properties_ui(ui, model),
+            ViewKind::Heatmap(heatmap) => heatmap.properties_ui(ui, model),
+            ViewKind::Logs(logs) => logs.properties_ui(ui, model),
         }
     }
 }
