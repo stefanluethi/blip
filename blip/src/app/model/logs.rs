@@ -54,22 +54,26 @@ pub struct LogEntry {
 }
 
 impl LogEntry {
-    pub fn from_proto(record: &proto::LogRecord) -> Self {
+    /// A record without a timestamp gets `now`, the newest time of the received data,
+    /// or the wall-clock time if there is none.
+    pub fn from_proto(record: &proto::LogRecord, now: Option<u64>) -> Self {
         let level = match record.level {
             0 => LogLevel::Trace,
             1 => LogLevel::Debug,
             2 => LogLevel::Info,
             3 => LogLevel::Warn,
-            4 => LogLevel::Error,
-            _ => LogLevel::Trace,
+            // more severe levels, e.g. fatal
+            _ => LogLevel::Error,
         };
 
         let time = if record.timestamp > 0 {
             record.timestamp
         } else {
-            chrono::Utc::now()
-                .timestamp_nanos_opt()
-                .map_or(0, |nanos| nanos as u64)
+            now.unwrap_or_else(|| {
+                chrono::Utc::now()
+                    .timestamp_nanos_opt()
+                    .map_or(0, |nanos| nanos as u64)
+            })
         };
         let seconds = timestamp_to_seconds(time);
         let timestamp = TimeBase::guess(seconds).format(seconds, 3);

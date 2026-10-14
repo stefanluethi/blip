@@ -533,13 +533,15 @@ impl Traces {
         }
     }
 
-    /// The paths of the fields of the record at `path`, also of nested records.
+    /// The paths of the fields of the record at `path`, also of nested records, but not
+    /// of traces whose names only contain a `.`, e.g. `v1.2`.
     fn field_paths(&self, path: &str) -> impl Iterator<Item = &str> {
         let prefix = format!("{path}.");
         self.map
             .range(prefix.clone()..)
-            .map(|(path, _)| path.as_str())
-            .take_while(move |path| path.starts_with(&prefix))
+            .take_while(move |(field, _)| field.starts_with(&prefix))
+            .filter(move |(_, trace)| trace.fields_start.is_some_and(|start| start <= path.len()))
+            .map(|(field, _)| field.as_str())
     }
 
     /// Timestamps of the first and the newest value of all traces.
@@ -720,6 +722,21 @@ mod tests {
         assert!(traces.get("imu").is_none());
         assert_values(values(&traces, "imu.x"), &[1.0, f64::NAN]);
         assert_values(values(&traces, "imu.y"), &[2.0, f64::NAN]);
+    }
+
+    #[test]
+    fn a_null_is_no_gap_in_traces_with_a_dot_in_their_names() {
+        let imu = record(&[("x", Data::Float(1.0))]);
+        let traces = traces(&[
+            ("v1.2", Data::Float(1.0)),
+            ("imu", imu),
+            ("v1", Data::Null),
+            ("imu.x", Data::Null),
+        ]);
+        assert_values(values(&traces, "v1.2"), &[1.0]);
+        assert_eq!(traces.get("v1").unwrap().samples, Samples::Empty);
+        // `imu.x` is a field, but not a record
+        assert_values(values(&traces, "imu.x"), &[1.0, f64::NAN]);
     }
 
     #[test]

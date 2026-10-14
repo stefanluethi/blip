@@ -102,7 +102,12 @@ impl Model {
                 self.describe(source, Some(&metadata.path), frame);
                 self.traces.set_unit(&metadata.path, &metadata.unit);
             }
-            Ok(proto::Message::Log(record)) => self.logs.push(LogEntry::from_proto(&record)),
+            Ok(proto::Message::Log(record)) => {
+                // a log without a timestamp happened about when the newest data did, in
+                // the time domain of the device
+                let now = self.time_span().map(|(_, newest)| newest);
+                self.logs.push(LogEntry::from_proto(&record, now));
+            }
             Ok(proto::Message::Actions(actions)) => {
                 self.describe(source, None, frame);
                 self.actions.set(source, actions);

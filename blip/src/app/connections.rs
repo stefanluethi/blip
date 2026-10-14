@@ -158,10 +158,7 @@ impl Connections {
         }
         self.failed.remove(&address);
         let wakeup = move || ctx.request_repaint();
-        let options = ewebsock::Options {
-            max_incoming_frame_size: 2048,
-            ..Default::default()
-        };
+        let options = ewebsock::Options::default();
         match ewebsock::connect_with_wakeup(address.clone(), options, wakeup) {
             Ok((sender, receiver)) => self.sockets.push(Socket {
                 address,
