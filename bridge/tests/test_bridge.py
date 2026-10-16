@@ -143,6 +143,52 @@ async def test_simulator_bridge_units():
         await server.stop()
 
 
+async def test_simulator_actions_change_what_it_sends(monkeypatch):
+    import bridge.protocols.simulator as simulator
+    from bridge import ActionError, LogLevel
+
+    proto = SimulatorProtocol(interval_ms=10)
+    paths = [d["path"] for d in proto.actions.descriptors()]
+    assert paths == [
+        "motor/enable", "motor/speed", "thermal/ambient", "log/level", "log/message", "imu/calibrate"
+    ]
+
+    await proto.invoke("motor/enable", {"enabled": False})
+    assert proto._motor_message().data.value["enabled"] is False
+    try:
+        await proto.invoke("motor/speed", {"rpm": 1000})
+        raise AssertionError("the speed of a disabled motor was set")
+    except ActionError as e:
+        assert "disabled" in str(e)
+    await proto.invoke("motor/enable", {"enabled": True})
+    await proto.invoke("motor/speed", {"rpm": 1000})
+    for _ in range(1000):
+        motor = proto._motor_message().data.value
+    assert motor["state"] == "running" and abs(motor["speed_rpm"] - 1000) < 50
+
+    sent = []
+
+    async def capture(frame: bytes) -> None:
+        sent.append(decode_cbor_message(frame))
+
+    proto.attach(capture)
+    await proto.invoke("log/level", {"level": "WARN"})
+    assert proto._log_level == LogLevel.WARN
+    assert {"path": "simulator/log_level", "value": "WARN"}.items() <= sent[-1]["Value"].items()
+    await proto._send_log(LogLevel.INFO, "test", "dropped")
+    await proto._send_log(LogLevel.ERROR, "test", "kept")
+    assert [m["Log"]["message"] for m in sent if "Log" in m] == ["kept"]
+
+    monkeypatch.setattr(simulator, "CALIBRATION_SEC", 0.05)
+    calibration = asyncio.create_task(proto.invoke("imu/calibrate", {}))
+    await asyncio.sleep(0.01)
+    assert not proto.actions.is_enabled("imu/calibrate")
+    await calibration
+    assert proto.actions.is_enabled("imu/calibrate")
+    assert proto._gyro_bias == [0.0, 0.0, 0.0]
+    proto.attach(None)
+
+
 if __name__ == "__main__":
     asyncio.run(test_simulator_bridge())
     asyncio.run(test_simulator_bridge_logs())
