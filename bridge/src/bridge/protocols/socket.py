@@ -17,7 +17,8 @@ RETRY_DELAY_SEC = 3.0
 class SocketProtocol(Protocol):
     """Passes the data a target sends over TCP or UDP to blip unchanged, and forwards
     the invocations of blip to the target as Invoke requests. The target announces its
-    actions itself, an invocation succeeds once it is forwarded."""
+    actions itself, an invocation succeeds once it is forwarded. The ActionResult
+    messages of the target are dropped by the bridge, which answered already."""
 
     def __init__(
         self,

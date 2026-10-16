@@ -9,6 +9,7 @@ from typing import Optional
 import cbor2
 
 from bridge import ActionError, Protocol
+from bridge.proto import ACTIONS_PREFIX
 from bridge.recording import read_frames
 
 logger = logging.getLogger("bridge.replay")
@@ -30,7 +31,7 @@ def timestamp(frame: bytes) -> Optional[int]:
 def disable_actions(frame: bytes) -> bytes:
     """`frame` with its actions disabled if it is an Actions message, as a replay
     carries out no actions."""
-    if not frame.startswith(b"\xa1\x67Actions"):
+    if not frame.startswith(ACTIONS_PREFIX):
         return frame
     try:
         message = cbor2.loads(frame)

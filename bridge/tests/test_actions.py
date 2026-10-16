@@ -247,6 +247,31 @@ async def test_a_slow_action_holds_up_only_its_own_invocations():
         await server.stop()
 
 
+def test_messages_are_told_apart_by_their_prefix():
+    from bridge.proto import ACTION_RESULT_PREFIX, ACTIONS_PREFIX, Message
+
+    assert Message.create_actions([]).encode_cbor().startswith(ACTIONS_PREFIX)
+    assert Message.create_action_result(1, "no").encode_cbor().startswith(ACTION_RESULT_PREFIX)
+    assert not Message.create_log(0, "x").encode_cbor().startswith(ACTION_RESULT_PREFIX)
+
+
+async def test_answers_sent_by_the_protocol_are_dropped():
+    from bridge.proto import Message
+
+    target = Target()
+    server = await serve(target, 3983)
+    try:
+        async with websockets.connect("ws://127.0.0.1:3983/ws/test") as ws:
+            await receive(ws, "Actions")
+            # e.g. a target answering a forwarded invocation with its own id
+            await target.send(Message.create_action_result(0, "not yours"))
+            await target.send_value("after", 1)
+            message = cbor2.loads(await asyncio.wait_for(ws.recv(), timeout=2.0))
+            assert "Value" in message
+    finally:
+        await server.stop()
+
+
 async def test_a_change_while_a_client_connects_reaches_it():
     target = Target()
     server = await serve(target, 3984)

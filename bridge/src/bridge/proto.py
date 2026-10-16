@@ -125,6 +125,16 @@ class Invocation:
     args: Dict[str, Any]
 
 
+def variant_prefix(variant: str) -> bytes:
+    """The start of the CBOR encoding of every message of `variant`: a map of one entry
+    whose key is the name of the variant. Tells messages apart without decoding them."""
+    return b"\xa1" + cbor2.dumps(variant)
+
+
+ACTIONS_PREFIX = variant_prefix("Actions")
+ACTION_RESULT_PREFIX = variant_prefix("ActionResult")
+
+
 def decode_request(raw_bytes: bytes) -> Invocation:
     """Decodes a request of blip, raises ValueError if it is not one."""
     try:
