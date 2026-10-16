@@ -7,18 +7,25 @@ from typing import Optional
 import cbor2
 
 from outpost import ActionError, Protocol
+from outpost.proto import split_items
 
 logger = logging.getLogger("outpost.socket")
 
 # Seconds before connecting again after an error
 RETRY_DELAY_SEC = 3.0
+# Bytes of an incomplete message kept at most, so a damaged length does not make the
+# outpost wait for data forever
+MAX_PENDING_BYTES = 16 * 1024 * 1024
 
 
 class SocketProtocol(Protocol):
-    """Passes the data a target sends over TCP or UDP to blip unchanged, and forwards
+    """Passes the messages a target sends over TCP or UDP to blip unchanged, and forwards
     the invocations of blip to the target as Invoke requests. The target announces its
     actions itself, an invocation succeeds once it is forwarded. The ActionResult
-    messages of the target are dropped by the outpost, which answered already."""
+    messages of the target are dropped by the outpost, which answered already.
+
+    The target sends its messages as a CBOR sequence (RFC 8742), any number at once;
+    over TCP they may be split anywhere, a UDP datagram holds complete messages."""
 
     def __init__(
         self,
@@ -86,11 +93,28 @@ class SocketProtocol(Protocol):
             await writer.wait_closed()
 
     async def _forward(self, reader: asyncio.StreamReader) -> None:
+        """Sends each complete message of the TCP stream to blip, keeping the start of
+        an incomplete one until the rest arrives."""
+        pending = b""
         while True:
             data = await reader.read(4096)
             if not data:
+                if pending:
+                    logger.warning(f"Dropping {len(pending)} bytes of an incomplete message at the end of the stream")
                 return
-            await self.send(data)
+            pending += data
+            try:
+                frames, pending = split_items(pending)
+            except ValueError as e:
+                # the next message may start with a later read
+                logger.error(f"Dropping {len(pending)} bytes that are no messages ({e}): {pending[:32].hex()}")
+                pending = b""
+                continue
+            if len(pending) > MAX_PENDING_BYTES:
+                logger.error(f"Dropping {len(pending)} bytes of a message that does not end: {pending[:32].hex()}")
+                pending = b""
+            for frame in frames:
+                await self._send_frame(frame)
 
     async def _udp(self) -> None:
         """Sets up the UDP endpoint, retrying while that fails."""

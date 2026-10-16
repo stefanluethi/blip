@@ -1,9 +1,125 @@
 """Tests for the socket passthrough protocol."""
 
 import asyncio
+import socket
 
 import outpost.protocols.socket as socket_protocol
+from outpost.proto import Message
 from outpost.protocols.socket import SocketProtocol
+from outpost.recording import RecordingWriter, read_frames
+from outpost.server import OutpostServer
+
+
+def messages() -> list[bytes]:
+    return [
+        Message.create_metadata("speed", "rpm").encode_cbor(),
+        Message.create_value("speed", 1500, timestamp_ns=1_000_000).encode_cbor(),
+        Message.create_value("imu", {"acc": [0.5, -1.0]}, timestamp_ns=2_000_000).encode_cbor(),
+        Message.create_log(1, "started", timestamp_ns=3_000_000, component="motor").encode_cbor(),
+    ]
+
+
+class Reads:
+    """A stream reader returning the given reads, then the end of the stream."""
+
+    def __init__(self, *reads: bytes) -> None:
+        self.reads = list(reads)
+
+    async def read(self, n: int) -> bytes:
+        return self.reads.pop(0) if self.reads else b""
+
+
+def attached(protocol: SocketProtocol) -> list[bytes]:
+    """The frames `protocol` sends to blip, as they arrive."""
+    frames = []
+
+    async def send(frame: bytes) -> None:
+        frames.append(frame)
+
+    protocol.attach(send)
+    return frames
+
+
+async def test_several_messages_of_one_read_are_sent_one_by_one():
+    protocol = SocketProtocol()
+    frames = attached(protocol)
+    await protocol._forward(Reads(b"".join(messages())))
+    assert frames == messages()
+
+
+async def test_messages_split_over_reads_are_sent_once_complete():
+    protocol = SocketProtocol()
+    frames = attached(protocol)
+    data = b"".join(messages())
+    # within the first message, and within the third
+    cuts = [3, len(messages()[0]) + len(messages()[1]) + 5]
+    await protocol._forward(Reads(data[:cuts[0]], data[cuts[0]:cuts[1]], data[cuts[1]:]))
+    assert frames == messages()
+
+
+async def test_an_incomplete_message_at_the_end_of_the_stream_is_dropped():
+    protocol = SocketProtocol()
+    frames = attached(protocol)
+    first, second = messages()[:2]
+    await protocol._forward(Reads(first + second[:-1]))
+    assert frames == [first]
+
+
+async def test_undecodable_data_is_dropped_and_later_messages_are_sent():
+    protocol = SocketProtocol()
+    frames = attached(protocol)
+    first, second = messages()[:2]
+    # 0x1c is no CBOR
+    await protocol._forward(Reads(bytes.fromhex("1c") + first, second))
+    assert frames == [second]
+
+
+async def test_a_message_that_does_not_end_is_dropped(monkeypatch):
+    monkeypatch.setattr(socket_protocol, "MAX_PENDING_BYTES", 100)
+    protocol = SocketProtocol()
+    frames = attached(protocol)
+    # a byte string of 2^32 bytes
+    await protocol._forward(Reads(bytes.fromhex("5a ffffffff") + bytes(200), messages()[0]))
+    assert frames == [messages()[0]]
+
+
+async def test_several_messages_of_one_datagram_are_sent_one_by_one():
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    protocol = SocketProtocol(mode="udp", remote_port=port, listen=True)
+    frames = attached(protocol)
+    task = asyncio.create_task(protocol.run())
+    try:
+        for _ in range(100):
+            if protocol._udp_transport is not None:
+                break
+            await asyncio.sleep(0.01)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as target:
+            target.sendto(b"".join(messages()), ("127.0.0.1", port))
+        for _ in range(100):
+            if len(frames) == len(messages()):
+                break
+            await asyncio.sleep(0.01)
+        assert frames == messages()
+    finally:
+        task.cancel()
+
+
+async def test_actions_and_action_results_within_a_batch_are_told_apart(tmp_path):
+    protocol = SocketProtocol()
+    path = tmp_path / "batch.blip"
+    server = OutpostServer(protocol=protocol, recorder=RecordingWriter(path))
+    actions = Message.create_actions([{"path": "motor/stop", "enabled": True}]).encode_cbor()
+    result = Message.create_action_result(7).encode_cbor()
+    value, log = messages()[1], messages()[3]
+
+    await protocol._forward(Reads(value + actions + result + log))
+    server.recorder.close()
+
+    # kept for clients connecting later, while the result of the target is dropped
+    assert server._actions_frame == actions
+    assert list(read_frames(path)) == [value, actions, log]
 
 
 async def test_unexpected_errors_reconnect_instead_of_stopping(monkeypatch):

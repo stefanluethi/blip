@@ -1,9 +1,10 @@
 """Protocol serialization and schema definition matching Rust proto crate."""
 
 import enum
+import io
 import time
 from dataclasses import dataclass, asdict
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 import cbor2
 
 
@@ -133,6 +134,30 @@ def variant_prefix(variant: str) -> bytes:
 
 ACTIONS_PREFIX = variant_prefix("Actions")
 ACTION_RESULT_PREFIX = variant_prefix("ActionResult")
+
+
+def split_items(data: bytes) -> Tuple[List[bytes], bytes]:
+    """The complete CBOR items at the start of `data`, a CBOR sequence (RFC 8742) as
+    targets send several messages at once, each encoded as it is, and the incomplete
+    item after them. Raises ValueError if `data` holds something that is no CBOR."""
+    stream = io.BytesIO(data)
+    decoder = cbor2.CBORDecoder(stream)
+    items = []
+    start = 0
+    while start < len(data):
+        # a break outside of an item of indefinite length, which the decoder returns
+        if data[start] == 0xFF:
+            raise ValueError("unexpected break code")
+        try:
+            decoder.decode()
+        except cbor2.CBORDecodeEOF:
+            break
+        except Exception as e:
+            raise ValueError(f"not CBOR: {e}") from e
+        end = stream.tell()
+        items.append(data[start:end])
+        start = end
+    return items, data[start:]
 
 
 def decode_request(raw_bytes: bytes) -> Invocation:
