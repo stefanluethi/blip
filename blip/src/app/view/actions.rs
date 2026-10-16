@@ -444,7 +444,7 @@ impl Actions {
         // the inputs, starting from the readback or the defaults
         let follows_readback = action.params.len() == 1
             && matches!(action.params[0].kind, ParamKind::Bool | ParamKind::Enum(_))
-            && invoker.outcome(&action.path, now) != Some(&Outcome::Pending);
+            && invoker.follows_readback(&action.path, context.model.readback_samples(&action.path));
         let readback_value = action
             .readback
             .as_deref()

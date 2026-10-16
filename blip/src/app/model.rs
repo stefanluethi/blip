@@ -37,6 +37,16 @@ impl Model {
         None
     }
 
+    /// The number of samples of the readback trace of the action at `path`, 0 if it
+    /// has none.
+    pub fn readback_samples(&self, path: &str) -> usize {
+        self.actions
+            .get(path)
+            .and_then(|action| action.readback.as_deref())
+            .and_then(|readback| self.traces.get(readback))
+            .map_or(0, |trace| trace.timestamps.len())
+    }
+
     /// Timestamps of the first and the newest collected data.
     pub fn time_span(&self) -> Option<(u64, u64)> {
         [self.traces.time_span(), self.logs.time_span()]

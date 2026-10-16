@@ -70,6 +70,10 @@ pub struct Invoker {
     pending: HashMap<u32, (String, f64)>,
     /// The id of the latest invocation of each action and its outcome, by path.
     latest: HashMap<String, (u32, Outcome)>,
+    /// The number of samples the readback trace of each action had when the target
+    /// accepted its latest invocation, by path. Samples up to then may show the state
+    /// before the action.
+    readback_marks: HashMap<String, usize>,
     /// The actions whose input is dragged, by path.
     dragged: HashMap<String, Dragged>,
     /// The requests to send.
@@ -131,8 +135,14 @@ impl Invoker {
         self.latest.insert(path.to_owned(), (id, Outcome::Pending));
     }
 
-    /// Takes the answer of the target to an invocation.
-    pub fn receive(&mut self, result: &ActionResult, now: f64) {
+    /// Takes the answer of the target to an invocation. `readback_samples` tells the
+    /// number of samples the readback trace of an action has so far.
+    pub fn receive(
+        &mut self,
+        result: &ActionResult,
+        now: f64,
+        readback_samples: impl FnOnce(&str) -> usize,
+    ) {
         let Some((path, _)) = self.pending.remove(&result.id) else {
             return;
         };
@@ -144,6 +154,25 @@ impl Invoker {
                 Ok(()) => Outcome::Accepted(now),
                 Err(reason) => Outcome::Rejected(reason.clone()),
             };
+            if result.result.is_ok() {
+                self.readback_marks
+                    .insert(path.clone(), readback_samples(&path));
+            }
+        }
+    }
+
+    /// Whether an input of the action at `path` shows the readback, given the number
+    /// of samples of its readback trace: not while the latest invocation is pending,
+    /// and once it was accepted only from a sample that arrived after the answer, as
+    /// earlier ones may show the state before.
+    pub fn follows_readback(&self, path: &str, readback_samples: usize) -> bool {
+        match self.latest.get(path) {
+            Some((_, Outcome::Pending)) => false,
+            Some((_, Outcome::Accepted(_))) => self
+                .readback_marks
+                .get(path)
+                .is_none_or(|&mark| readback_samples > mark),
+            _ => true,
         }
     }
 
@@ -248,8 +277,8 @@ mod tests {
         );
         assert_eq!(invoker.outcome("speed", 0.0), Some(&Outcome::Pending));
 
-        invoker.receive(&answer(0, Ok(())), 1.0);
-        invoker.receive(&answer(1, Err("busy")), 1.0);
+        invoker.receive(&answer(0, Ok(())), 1.0, |_| 0);
+        invoker.receive(&answer(1, Err("busy")), 1.0, |_| 0);
         assert_eq!(invoker.outcome("speed", 2.0), Some(&Outcome::Accepted(1.0)));
         assert_eq!(invoker.outcome("speed", 1.0 + SHOW_ACCEPTED + 0.1), None);
         assert_eq!(
@@ -257,8 +286,8 @@ mod tests {
             Some(&Outcome::Rejected("busy".to_owned()))
         );
         // unknown and repeated answers change nothing
-        invoker.receive(&answer(1, Ok(())), 2.0);
-        invoker.receive(&answer(7, Ok(())), 2.0);
+        invoker.receive(&answer(1, Ok(())), 2.0, |_| 0);
+        invoker.receive(&answer(7, Ok(())), 2.0, |_| 0);
         assert_eq!(
             invoker.outcome("reboot", 100.0),
             Some(&Outcome::Rejected("busy".to_owned()))
@@ -270,10 +299,29 @@ mod tests {
         let mut invoker = Invoker::default();
         invoker.invoke("speed", args(1), 0.0);
         invoker.invoke("speed", args(2), 0.0);
-        invoker.receive(&answer(0, Err("old")), 0.5);
+        invoker.receive(&answer(0, Err("old")), 0.5, |_| 0);
         assert_eq!(invoker.outcome("speed", 0.5), Some(&Outcome::Pending));
-        invoker.receive(&answer(1, Ok(())), 0.6);
+        invoker.receive(&answer(1, Ok(())), 0.6, |_| 0);
         assert_eq!(invoker.outcome("speed", 0.6), Some(&Outcome::Accepted(0.6)));
+    }
+
+    #[test]
+    fn inputs_follow_the_readback_once_it_is_newer_than_the_answer() {
+        let mut invoker = Invoker::default();
+        assert!(invoker.follows_readback("enable", 0));
+        invoker.invoke("enable", vec![], 0.0);
+        assert!(!invoker.follows_readback("enable", 10));
+        // accepted when the readback had 10 samples, which show the state before
+        invoker.receive(&answer(0, Ok(())), 0.1, |path| {
+            assert_eq!(path, "enable");
+            10
+        });
+        assert!(!invoker.follows_readback("enable", 10));
+        assert!(invoker.follows_readback("enable", 11));
+        // a rejected invocation changed nothing, the readback is right
+        invoker.invoke("enable", vec![], 1.0);
+        invoker.receive(&answer(1, Err("no")), 1.1, |_| 20);
+        assert!(invoker.follows_readback("enable", 11));
     }
 
     #[test]
@@ -286,7 +334,7 @@ mod tests {
         assert_eq!(invoker.outcome("speed", 0.0), Some(&Outcome::Unanswered));
         assert!(!invoker.is_waiting(ANSWER_TIMEOUT + 0.1));
         // a late answer changes nothing
-        invoker.receive(&answer(0, Ok(())), 6.0);
+        invoker.receive(&answer(0, Ok(())), 6.0, |_| 0);
         assert_eq!(invoker.outcome("speed", 6.0), Some(&Outcome::Unanswered));
     }
 
