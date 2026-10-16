@@ -37,6 +37,10 @@ class BaseProtocol(ABC):
         """Stop protocol task / connection."""
         pass
 
+    async def on_client_connected(self) -> None:
+        """Called when a WebSocket client connects."""
+        pass
+
     @abstractmethod
     async def handle_incoming_ws_message(self, message: Union[bytes, str]) -> None:
         """Handle or forward incoming message sent from WebSocket client to the protocol backend."""

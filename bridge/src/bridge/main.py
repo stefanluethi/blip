@@ -6,7 +6,9 @@ import signal
 import sys
 import click
 
+from bridge.recording import RecordingWriter
 from bridge.server import BridgeServer
+from bridge.protocols.replay import ReplayProtocol
 from bridge.protocols.robby import RobbyProtocol
 from bridge.protocols.simulator import SimulatorProtocol
 from bridge.protocols.socket import SocketProtocol
@@ -25,7 +27,7 @@ def setup_logging(verbose: bool) -> None:
 @click.command()
 @click.option(
     "--protocol", "-p",
-    type=click.Choice(["simulator", "tcp", "udp", "robby"], case_sensitive=False),
+    type=click.Choice(["simulator", "tcp", "udp", "robby", "replay"], case_sensitive=False),
     default="simulator",
     help="Protocol mode to run (default: simulator)."
 )
@@ -41,6 +43,15 @@ def setup_logging(verbose: bool) -> None:
 @click.option("--listen", is_flag=True, help="Listen mode for TCP/UDP sockets.")
 @click.option("--interval", default=20, type=int, help="Simulator sampling interval in milliseconds.")
 @click.option("--log-interval", default=500, type=int, help="Simulator mean log interval in milliseconds.")
+@click.option(
+    "--file", "replay_file", type=click.Path(exists=True, dir_okay=False),
+    help="Recording file to replay in replay mode."
+)
+@click.option("--speed", default=1.0, type=float, help="Replay speed, 2 replays twice as fast.")
+@click.option(
+    "--record", type=click.Path(dir_okay=False),
+    help="Record the messages sent to blip to this file (gzip-compressed CBOR sequence)."
+)
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose debug output.")
 def main(
     protocol: str,
@@ -53,6 +64,9 @@ def main(
     listen: bool,
     interval: int,
     log_interval: int,
+    replay_file: str | None,
+    speed: float,
+    record: str | None,
     verbose: bool
 ) -> None:
     """Protocol to WebSocket Server Bridge CLI."""
@@ -76,12 +90,20 @@ def main(
             remote_port=remote_port if remote_port is not None else 80,
             remote_path=remote_path,
         )
+    elif protocol.lower() == "replay":
+        if replay_file is None:
+            click.echo("Replay mode needs a recording file, pass it with --file", err=True)
+            sys.exit(1)
+        proto_instance = ReplayProtocol(path=replay_file, speed=speed)
     else:
         click.echo(f"Unsupported protocol: {protocol}", err=True)
         sys.exit(1)
 
     # Initialize server
-    server = BridgeServer(protocol=proto_instance, host=host, port=port, path=path)
+    recorder = RecordingWriter(record) if record else None
+    server = BridgeServer(
+        protocol=proto_instance, host=host, port=port, path=path, recorder=recorder
+    )
 
     async def async_main():
         await server.start()
@@ -106,6 +128,10 @@ def main(
         asyncio.run(async_main())
     except KeyboardInterrupt:
         logger.info("Server stopped by keyboard interrupt.")
+    finally:
+        # also when stopped by Ctrl+C on Windows, where the server is not stopped
+        if recorder:
+            recorder.close()
 
 
 if __name__ == "__main__":

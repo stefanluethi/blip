@@ -48,6 +48,21 @@ uv run bridge --protocol robby --remote-host 192.168.1.70
 
 Stream samples are scaled with the stream descriptor's scale factor and timestamped from its sampling time. Actions from blip are forwarded to robby unchanged.
 
+#### Recording and Replay
+Record the messages sent to blip with any protocol, to open them in blip later (**File > Open recording**):
+
+```bash
+uv run bridge --protocol simulator --record simulator.blip
+```
+
+Replay a recording, saved by blip or the bridge, at the pace of its timestamps (`--speed 2` replays twice as fast):
+
+```bash
+uv run bridge --protocol replay --file simulator.blip
+```
+
+A recording is a gzip-compressed CBOR sequence of a header and the messages as sent in WebSocket frames (see `doc/source/architecture/protocol.rst`).
+
 ## Protocol Data Schema (CBOR)
 
 Messages sent in binary WebSocket frames match the following Rust `proto` structure:
