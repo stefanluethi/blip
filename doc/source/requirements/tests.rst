@@ -40,7 +40,8 @@ Test Cases
 
    ``blip/src/app/view`` unit tests -- merge equal values into state runs
    with gaps at nulls, hide collapsed rows of the table, pair samples with the
-   current sample of the x trace, and sample arrays over time for heatmaps.
+   current sample of the x trace, sample arrays over time for heatmaps, and
+   zoom plots with the mouse wheel without panning them, unless disabled.
 
 .. test:: Time cursor is set and dragged
    :id: TEST_BLIP_CURSOR
@@ -58,15 +59,17 @@ Test Cases
    :component: blip
    :verifies: REQ_VIS_PLAYBACK
 
-   ``blip/src/app.rs``, ``blip/src/app/time.rs`` and ``blip/src/app/model.rs``
-   tests -- drop values and log records while not recording but keep units,
+   ``blip/src/app.rs``, ``blip/src/app/time.rs``,
+   ``blip/src/app/view/time_axis.rs`` and ``blip/src/app/model.rs`` tests --
+   drop values and log records while not recording but keep units,
    actions and answers, start a recording only while connected, clearing the
    data but the latest units and actions, which are recorded again, stop
    recording when a recording file is opened, keep a paused range while data
    arrives, play on from it with the cursor without skipping ahead by the
    paused time, return to live mode at the newest data, pause when panning or
-   setting the cursor but not when zooming, and switch with the buttons of the
-   bottom panel.
+   setting the cursor but not when zooming, also with the mouse wheel over a
+   plot, stay unchanged when zooming beyond the shortest or longest window, and
+   switch with the buttons of the bottom panel.
 
 .. test:: Trace values encode as plain CBOR
    :id: TEST_PROTO_DATA

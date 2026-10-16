@@ -229,8 +229,8 @@ pressed, which returns the cursor to the end of the range.
 The time axes show the timestamps as local time of day, or as time since boot
 if they are too small to be a date (before 2001).
 
-Dragging a plot moves the range, and zooming a plot with :kbd:`Ctrl` and the
-mouse wheel changes the window. The y axes fit the data in the range, unless
+Dragging a plot moves the range, and scrolling the mouse wheel over a plot zooms
+it, which changes the window. The y axes fit the data in the range, unless
 their min or max is set in the properties.
 
 The layout, the time window and the connection addresses are persisted and restored

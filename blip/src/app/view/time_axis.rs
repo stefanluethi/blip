@@ -82,6 +82,7 @@ pub fn show<'a>(
             .flatten()
     });
     let transform = response.transform;
+    super::zoom_on_wheel(&response.response);
 
     if let Some((start, end)) = axis.range {
         let bounds = transform.bounds();
@@ -241,6 +242,26 @@ mod tests {
         let time = harness.state();
         assert_eq!(time.cursor(), cursor);
         assert_ne!(time.range(), range);
+    }
+
+    #[test]
+    fn scrolling_a_time_plot_zooms_the_window() {
+        let mut harness = time_plot_harness();
+        harness.run();
+        let window = |harness: &Harness<'_, TimeRange>| {
+            let (start, end) = harness.state().range().unwrap();
+            end - start
+        };
+        let before = window(&harness);
+
+        // scrolling up shows a shorter window
+        super::super::scroll_wheel(&mut harness, egui::pos2(200.0, 100.0), 100.0);
+        let zoomed_in = window(&harness);
+        assert!(zoomed_in < before * 0.9, "{zoomed_in} {before}");
+
+        // scrolling down shows a longer window
+        super::super::scroll_wheel(&mut harness, egui::pos2(200.0, 100.0), -200.0);
+        assert!(window(&harness) > zoomed_in * 1.1);
     }
 
     #[test]
