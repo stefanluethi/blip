@@ -1,13 +1,19 @@
-"""Simulator protocol implementation matching Rust simulator app."""
+"""Simulator protocol implementation matching Rust simulator app.
+
+It only uses the public API of the bridge, so it is the reference for protocols of
+users. Its actions change what it sends: the motor follows its speed setpoint, the log
+level filters its log records and the ambient temperature shows in the thermal frame.
+"""
 
 import asyncio
 import math
 import random
 import logging
 import time
+from typing import Annotated
 import psutil
 
-from bridge import LogLevel, Message, Protocol
+from bridge import ActionError, LogLevel, Message, Protocol, Range, Unit, action
 
 logger = logging.getLogger("bridge.simulator")
 
@@ -24,7 +30,13 @@ CPU_SMOOTHING_SEC = 2.0
 # is sent as null
 SENSOR_DROPOUT_PROBABILITY = 0.05
 
-MOTOR_STATES = ["idle", "accelerating", "running", "braking"]
+# The motor speed follows the setpoint with this time constant (s), and counts as
+# running within this distance of it (rpm)
+MOTOR_TIME_CONSTANT_SEC = 0.8
+MOTOR_SETTLED_RPM = 30.0
+
+# How long a calibration of the IMU takes (s)
+CALIBRATION_SEC = 2.0
 
 # Units of the traces, sent as metadata every METADATA_INTERVAL_SEC so blip clients
 # connecting later get them too. The fields of a record are joined to its path with "."
@@ -61,7 +73,6 @@ _RANDOM_LOGS = [
     (30, TRACE, "sensor", "accelerometer sample {accel:.3f} m/s^2"),
     (20, DEBUG, "sensor", "accelerometer FIFO level {fifo}/32"),
     (15, DEBUG, "net", "heartbeat sent (seq={seq})"),
-    (10, INFO, "motor", "speed setpoint changed to {rpm} rpm"),
     (8, INFO, "storage", "flushed {blocks} blocks to flash"),
     (5, WARN, "net", "packet retransmit (seq={seq}, attempt {attempt})"),
     (4, WARN, "power", "supply voltage low: {voltage:.2f} V"),
@@ -87,7 +98,12 @@ class SimulatorProtocol(Protocol):
         self._seq = 0
         self._cpu_avg: dict[int, float] = {}
         self._cpu_high: set[int] = set()
-        self._motor_state = 0
+        self._motor_enabled = True
+        self._motor_setpoint = 1500
+        self._motor_speed = 0.0
+        self._log_level = TRACE
+        self._ambient = 22.0
+        self._gyro_bias = [random.gauss(0.0, 0.02) for _ in range(3)]
         # Simulated time (s), advanced by the sampling interval
         self._sim_time = 0.0
         # whether the units are sent with the next tick, for a client that connected
@@ -164,18 +180,21 @@ class SimulatorProtocol(Protocol):
     def _imu_message(self) -> Message:
         """An IMU sample as a record of two vector arrays."""
         acc = [random.gauss(0.0, 0.1), random.gauss(0.0, 0.1), 9.81 + random.gauss(0.0, 0.1)]
-        gyro = [random.gauss(0.0, 0.01) for _ in range(3)]
+        gyro = [bias + random.gauss(0.0, 0.01) for bias in self._gyro_bias]
         return Message.create_value("imu", {"acc": acc, "gyro": gyro})
 
     def _motor_message(self) -> Message:
         """A motor sample as a record of an integer, a bool and a string."""
-        if random.random() < 0.02:
-            self._motor_state = (self._motor_state + 1) % len(MOTOR_STATES)
-        state = MOTOR_STATES[self._motor_state]
-        enabled = state != "idle"
-        speed_rpm = random.randrange(1400, 1600) if enabled else 0
+        target = self._motor_setpoint if self._motor_enabled else 0.0
+        alpha = min(1.0, self.interval_sec / MOTOR_TIME_CONSTANT_SEC)
+        self._motor_speed += alpha * (target - self._motor_speed)
+        if abs(target - self._motor_speed) > MOTOR_SETTLED_RPM:
+            state = "accelerating" if target > self._motor_speed else "braking"
+        else:
+            state = "running" if target > 0 else "idle"
+        speed_rpm = max(0, round(self._motor_speed + random.gauss(0.0, 5.0))) if state != "idle" else 0
         return Message.create_value(
-            "motor", {"speed_rpm": speed_rpm, "enabled": enabled, "state": state}
+            "motor", {"speed_rpm": speed_rpm, "enabled": self._motor_enabled, "state": state}
         )
 
     def _pose_message(self) -> Message:
@@ -208,7 +227,7 @@ class SimulatorProtocol(Protocol):
         frame = [
             [
                 round(
-                    22.0
+                    self._ambient
                     + 13.0 * math.exp(-((row - spot_row) ** 2 + (column - spot_column) ** 2) / 2.0)
                     + random.gauss(0.0, 0.1),
                     2,
@@ -225,9 +244,64 @@ class SimulatorProtocol(Protocol):
         units.update({f"sysinfo/cpu/cpu{idx}": CPU_UNIT for idx in range(cpu_count)})
         for path, unit in units.items():
             await self.send(Message.create_metadata(path, unit))
+        await self._send_log_level()
+
+    async def _send_log_level(self) -> None:
+        """The log level as a trace, the readback of the log/level action."""
+        await self.send_value("simulator/log_level", self._log_level.name)
+
+    # The actions, offered to blip in this order
+
+    @action("motor/enable", readback="motor.enabled")
+    async def enable_motor(self, enabled: bool = True) -> None:
+        """Switches the motor on or off"""
+        self._motor_enabled = enabled
+        await self._send_log(INFO, "motor", "motor enabled" if enabled else "motor disabled")
+
+    @action("motor/speed", readback="motor.speed_rpm")
+    async def set_motor_speed(self, rpm: Annotated[int, Range(0, 3000), Unit("rpm")] = 1500) -> None:
+        """Speed setpoint of the motor"""
+        if not self._motor_enabled:
+            raise ActionError("the motor is disabled, enable it first")
+        self._motor_setpoint = rpm
+        await self._send_log(INFO, "motor", f"speed setpoint changed to {rpm} rpm")
+
+    @action("thermal/ambient")
+    async def set_ambient(
+        self, temperature: Annotated[float, Range(15.0, 35.0, step=0.5), Unit("°C")] = 22.0
+    ) -> None:
+        """Ambient temperature of the thermal camera scene"""
+        self._ambient = temperature
+
+    @action("log/level", readback="simulator/log_level")
+    async def set_log_level(self, level: LogLevel = LogLevel.TRACE) -> None:
+        """Lowest level of the log records sent"""
+        self._log_level = level
+        await self._send_log_level()
+
+    @action("log/message")
+    async def log_message(self, level: LogLevel = LogLevel.INFO, text: str = "hello") -> None:
+        """Sends a log record"""
+        if not text.strip():
+            raise ActionError("the text is empty")
+        await self.send_log(level, text, component="user")
+
+    @action("imu/calibrate", confirm=True)
+    async def calibrate_imu(self) -> None:
+        """Removes the bias of the gyroscope, takes a moment"""
+        self.actions.set_enabled(False, "imu/calibrate")
+        try:
+            await self._send_log(INFO, "imu", "calibration started, keep the device still")
+            await asyncio.sleep(CALIBRATION_SEC)
+            self._gyro_bias = [0.0, 0.0, 0.0]
+            await self._send_log(INFO, "imu", "calibration done")
+        finally:
+            self.actions.set_enabled(True, "imu/calibrate")
 
     async def _send_log(self, level: int, component: str, message: str) -> None:
-        """Broadcast a single log record."""
+        """Broadcast a single log record, unless below the log level."""
+        if level < self._log_level:
+            return
         log_msg = Message.create_log(level, message, component=component)
         await self.send(log_msg)
 
@@ -255,7 +329,6 @@ class SimulatorProtocol(Protocol):
             accel=accel_val,
             fifo=random.randint(0, 32),
             seq=self._seq,
-            rpm=random.randrange(0, 3001, 100),
             blocks=random.randint(1, 64),
             attempt=random.randint(1, 3),
             voltage=random.uniform(3.0, 3.2),
