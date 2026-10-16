@@ -10,6 +10,9 @@ from bridge import ActionError, Protocol
 
 logger = logging.getLogger("bridge.socket")
 
+# Seconds before connecting again after an error
+RETRY_DELAY_SEC = 3.0
+
 
 class SocketProtocol(Protocol):
     """Passes the data a target sends over TCP or UDP to blip unchanged, and forwards
@@ -61,10 +64,11 @@ class SocketProtocol(Protocol):
                 logger.info(f"Connected to TCP server {self.host}:{self.port}")
                 await self._forward(reader)
                 logger.warning("TCP server closed connection.")
-            except (OSError, asyncio.IncompleteReadError) as e:
-                logger.error(f"TCP client error: {e}. Reconnecting in 3 seconds...")
+            # any error, so the bridge keeps serving blip; cancelling is no Exception
+            except Exception as e:
+                logger.error(f"TCP client error: {e}. Reconnecting in {RETRY_DELAY_SEC:.0f} seconds...")
             self.writer = None
-            await asyncio.sleep(3.0)
+            await asyncio.sleep(RETRY_DELAY_SEC)
 
     async def _handle_tcp_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         """Handle incoming TCP client connection when running in listen mode."""
@@ -88,7 +92,7 @@ class SocketProtocol(Protocol):
             await self.send(data)
 
     async def _udp(self) -> None:
-        """Setup UDP endpoint."""
+        """Sets up the UDP endpoint, retrying while that fails."""
         class UDPProtocol(asyncio.DatagramProtocol):
             def __init__(self, outer: 'SocketProtocol') -> None:
                 self.outer = outer
@@ -97,16 +101,22 @@ class SocketProtocol(Protocol):
                 asyncio.create_task(self.outer.send(data))
 
         loop = asyncio.get_running_loop()
-        if self.listen:
-            transport, _ = await loop.create_datagram_endpoint(
-                lambda: UDPProtocol(self), local_addr=(self.host, self.port)
-            )
-            logger.info(f"UDP listener active on {self.host}:{self.port}")
-        else:
-            transport, _ = await loop.create_datagram_endpoint(
-                lambda: UDPProtocol(self), remote_addr=(self.host, self.port)
-            )
-            logger.info(f"UDP socket bound to remote {self.host}:{self.port}")
+        while True:
+            try:
+                if self.listen:
+                    transport, _ = await loop.create_datagram_endpoint(
+                        lambda: UDPProtocol(self), local_addr=(self.host, self.port)
+                    )
+                    logger.info(f"UDP listener active on {self.host}:{self.port}")
+                else:
+                    transport, _ = await loop.create_datagram_endpoint(
+                        lambda: UDPProtocol(self), remote_addr=(self.host, self.port)
+                    )
+                    logger.info(f"UDP socket bound to remote {self.host}:{self.port}")
+                break
+            except Exception as e:
+                logger.error(f"UDP error: {e}. Retrying in {RETRY_DELAY_SEC:.0f} seconds...")
+                await asyncio.sleep(RETRY_DELAY_SEC)
         self._udp_transport = transport
         await asyncio.Event().wait()
 
