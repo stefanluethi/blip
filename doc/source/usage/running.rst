@@ -19,6 +19,11 @@ string, and a temperature that is ``null`` now and then. It also emits log
 records from a few synthetic components at all severity levels. Sustained
 high CPU load on a core is reported as a warning.
 
+Its traces are sampled at different rates: the accelerometer and the ``imu``
+every sampling interval (``interval_ms``, 20 ms by default), the spectrum
+every 33 ms, the motor every 50 ms, the pose every 100 ms, the thermal frame
+every 115 ms, the CPU load every 250 ms and the temperature every second.
+
 Its actions change what it sends: ``motor/enable`` switches the motor on and
 off, ``motor/speed`` sets its speed setpoint (rejected while the motor is
 off), ``thermal/ambient`` the ambient temperature of the thermal frame,

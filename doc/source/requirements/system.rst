@@ -279,8 +279,9 @@ Outpost
    :satisfies: STK_DEVICE_IF, STK_CONTROL
 
    The outpost shall provide a simulator mode that streams synthetic CPU load
-   and sensor values, and log records of all severity levels, without
-   hardware, and offers actions that change what it streams.
+   and sensor values at different sampling rates, and log records of all
+   severity levels, without hardware, and offers actions that change what it
+   streams.
 
 .. req:: Record messages
    :id: REQ_OUTPOST_RECORD

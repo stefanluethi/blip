@@ -143,6 +143,34 @@ async def test_simulator_outpost_units():
         await server.stop()
 
 
+async def test_simulator_outpost_rates():
+    proto = SimulatorProtocol(interval_ms=10)
+    server = OutpostServer(protocol=proto, host="127.0.0.1", port=3993, path="/ws/test")
+    await server.start()
+
+    try:
+        async with websockets.connect("ws://127.0.0.1:3993/ws/test") as ws:
+            # count the samples of each trace for a while
+            counts = {}
+            loop = asyncio.get_running_loop()
+            end = loop.time() + 1.5
+            while loop.time() < end:
+                data = decode_cbor_message(await asyncio.wait_for(ws.recv(), timeout=2.0))
+                if "Value" in data:
+                    path = data["Value"]["path"]
+                    counts[path] = counts.get(path, 0) + 1
+
+            # every 10 ms, 50 ms, 100 ms, 250 ms and 1 s
+            rates = ["accelerometer", "motor", "robot/pose", "sysinfo/cpu/cpu0", "sensor/temperature"]
+            assert [counts[path] for path in rates] == sorted(
+                (counts[path] for path in rates), reverse=True
+            ), counts
+            assert counts["accelerometer"] > 3 * counts["motor"] > 0, counts
+            assert counts["robot/pose"] > 2 * counts["sensor/temperature"] > 0, counts
+    finally:
+        await server.stop()
+
+
 async def test_simulator_actions_change_what_it_sends(monkeypatch):
     import outpost.protocols.simulator as simulator
     from outpost import ActionError, LogLevel
@@ -194,4 +222,5 @@ if __name__ == "__main__":
     asyncio.run(test_simulator_outpost_logs())
     asyncio.run(test_simulator_outpost_typed_values())
     asyncio.run(test_simulator_outpost_units())
+    asyncio.run(test_simulator_outpost_rates())
     print("ALL TESTS PASSED SUCCESSFULLY!")
