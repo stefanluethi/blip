@@ -119,6 +119,18 @@ Connectivity
    Messages shall be encoded as CBOR according to the types defined in the
    ``proto`` crate.
 
+.. req:: Several messages per frame
+   :id: REQ_PROTO_SEQUENCE
+   :status: implemented
+   :component: blip
+   :satisfies: STK_LIVE_OBSERVE
+   :rationale: Targets send their messages in batches, e.g. one UDP datagram
+      per control cycle.
+
+   blip shall accept a binary frame holding several messages as a CBOR
+   sequence (RFC 8742), and apply them in their order. A frame that cannot be
+   read to its end shall keep the messages before.
+
 .. req:: Typed trace values
    :id: REQ_PROTO_TYPES
    :status: implemented

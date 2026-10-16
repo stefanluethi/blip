@@ -99,7 +99,11 @@ Text frames received by blip are logged but otherwise ignored.
 
 .. note::
 
-   On the WebSocket side each frame carries exactly one message.
+   A WebSocket frame to blip carries one message or several as a CBOR
+   sequence (RFC 8742), i.e. their CBOR items one after another, e.g. a batch
+   a target sent in one datagram. blip applies them in their order; if the
+   frame cannot be read to its end, the messages before are kept. A frame to
+   the target carries exactly one request.
 
 Actions
 -------
