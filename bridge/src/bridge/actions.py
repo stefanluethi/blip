@@ -235,7 +235,8 @@ class Actions:
 
     def __init__(self, on_change: Callable[[], None] = lambda: None) -> None:
         self._actions: Dict[str, _Action] = {}
-        self._on_change = on_change
+        # called after each change
+        self.on_change = on_change
 
     def add(
         self,
@@ -257,16 +258,16 @@ class Actions:
         self._actions[path] = _Action(
             path, function, _params(function), description, readback, confirm, enabled
         )
-        self._on_change()
+        self.on_change()
 
     def remove(self, path: str) -> None:
         if self._actions.pop(path, None) is not None:
-            self._on_change()
+            self.on_change()
 
     def clear(self) -> None:
         if self._actions:
             self._actions.clear()
-            self._on_change()
+            self.on_change()
 
     def set_enabled(self, enabled: bool, *paths: str) -> None:
         """Enables or disables the actions at `paths`, all actions if none are given."""
@@ -278,7 +279,7 @@ class Actions:
             changed |= action.enabled != enabled
             action.enabled = enabled
         if changed:
-            self._on_change()
+            self.on_change()
 
     def is_enabled(self, path: str) -> bool:
         return self._actions[path].enabled
