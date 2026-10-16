@@ -96,7 +96,7 @@ impl State {
     }
 
     #[expect(dead_code, reason = "no UI sends commands yet")]
-    fn websocket_send(&mut self, command: proto::Action) {
+    fn websocket_send(&mut self, command: proto::Request) {
         if let Some(sender) = self.ws_sender.as_mut() {
             let command_packet = serde_cbor_2::to_vec(&command).unwrap();
             log::debug!(

@@ -23,6 +23,11 @@ Target to blip: ``Message``
    * - ``Log``
      - ``timestamp: u64`` (ns), ``level: u8``, ``component: String``
        (optional), ``message: String``
+   * - ``Actions``
+     - ``Vec<ActionDescriptor>``, all actions the target can carry out (see
+       `Actions`_)
+   * - ``ActionResult``
+     - ``id: u32``, ``result: Result<(), String>``
 
 Example (shown as JSON for readability)::
 
@@ -78,23 +83,91 @@ Example of a record with an array field::
    {"Value": {"timestamp": 1712345678000000000, "path": "imu",
               "value": {"acc": [0.1, -0.2, 9.8], "valid": true}}}
 
-blip to target: ``Action``
---------------------------
+blip to target: ``Request``
+---------------------------
 
 .. list-table::
    :header-rows: 1
    :widths: 20 80
 
    * - Variant
-     - Payload
-   * - ``SetMotorSpeed``
-     - ``u16``
+     - Fields
+   * - ``Invoke``
+     - ``id: u32``, ``path: String``, ``args: Data`` (a record)
 
 Text frames received by blip are logged but otherwise ignored.
 
 .. note::
 
    On the WebSocket side each frame carries exactly one message.
+
+Actions
+-------
+
+The target announces the actions it can carry out, e.g. setting a motor
+setpoint, a log level or enabling a function, and blip invokes them.
+
+An ``Actions`` message lists all actions and replaces the list sent before, so
+actions that are gone disappear in blip. The bridge sends the list to each
+client that connects and to all clients whenever it changes.
+
+.. list-table:: ``ActionDescriptor``
+   :header-rows: 1
+   :widths: 25 75
+
+   * - Field
+     - Meaning
+   * - ``path: String``
+     - Names the action, levels separated by ``/`` like trace paths.
+   * - ``description: String``
+     - Optional.
+   * - ``params: Vec<Param>``
+     - The parameters, optional. An action without parameters is a button.
+   * - ``readback: Option<String>``
+     - Optional, the path of the trace that shows the current value of what
+       the action sets, e.g. the measured speed of a speed setpoint. It is
+       metadata only: blip shows the value next to the action and starts the
+       input from it.
+   * - ``confirm: bool``
+     - Optional, whether the user confirms before the action is sent.
+   * - ``enabled: bool``
+     - Optional (default ``true``), whether the target can carry out the
+       action now, e.g. not while the link to the device is down.
+
+A ``Param`` has a ``name: String``, a ``kind: ParamKind``, a ``unit: String``
+(optional) and a ``default: Option<Data>`` (optional). The kinds:
+
+.. list-table:: ``ParamKind``
+   :header-rows: 1
+   :widths: 40 60
+
+   * - Kind (CBOR)
+     - Argument
+   * - ``"Bool"``
+     - bool
+   * - ``{"Int": {"min": …, "max": …}}``
+     - integer, bounds optional
+   * - ``{"Float": {"min": …, "max": …, "step": …}}``
+     - float (or integer), bounds and step optional
+   * - ``{"Enum": ["a", "b"]}``
+     - one of the strings
+   * - ``"String"``
+     - string
+
+An ``Invoke`` request carries an ``id`` chosen by blip, unique within the
+connection, the ``path`` of the action and its arguments as a record by
+parameter name. The target answers the client that sent it with an
+``ActionResult`` of the same ``id``, ``{"Ok": null}`` if it carried the action
+out, ``{"Err": "reason"}`` if it rejected it. Whether the action had the
+desired effect shows in the traces, e.g. the readback.
+
+Example (shown as JSON for readability)::
+
+   {"Actions": [{"path": "motor/speed", "readback": "motor/speed_rpm",
+                 "params": [{"name": "rpm", "unit": "rpm",
+                             "kind": {"Int": {"min": 0, "max": 3000}}}]}]}
+   {"Invoke": {"id": 1, "path": "motor/speed", "args": {"rpm": 1500}}}
+   {"ActionResult": {"id": 1, "result": {"Ok": null}}}
 
 Recording files
 ---------------
