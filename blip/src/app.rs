@@ -26,6 +26,8 @@ pub struct State {
     ws_receiver: Option<ewebsock::WsReceiver>,
     #[serde(skip)]
     ws_sender: Option<ewebsock::WsSender>,
+    #[serde(skip)]
+    invoker: model::actions::Invoker,
 }
 
 impl Default for State {
@@ -36,6 +38,7 @@ impl Default for State {
             model: model::Model::default(),
             ws_receiver: None,
             ws_sender: None,
+            invoker: model::actions::Invoker::default(),
         }
     }
 }
@@ -50,6 +53,7 @@ impl State {
         let (sender, receiver) =
             ewebsock::connect_with_wakeup(self.target_address.clone(), options, wakeup).unwrap();
         self.model = model::Model::default();
+        self.invoker.reset(false);
         self.ws_receiver = Some(receiver);
         self.ws_sender = Some(sender);
     }
@@ -61,21 +65,26 @@ impl State {
         }
         self.ws_receiver = None;
         self.ws_sender = None;
+        self.invoker.reset(false);
     }
 
-    fn websocket_receive(&mut self) -> bool {
+    /// Handles the received events, returns whether the connection ended.
+    fn websocket_receive(&mut self, now: f64) -> bool {
         if let Some(receiver) = self.ws_receiver.as_ref() {
             while let Some(event) = receiver.try_recv() {
                 match event {
                     ewebsock::WsEvent::Opened => {
                         log::info!("ws connected");
+                        self.invoker.connected = true;
                     }
                     ewebsock::WsEvent::Message(message) => match message {
                         ewebsock::WsMessage::Text(msg) => {
                             log::info!("{}", msg);
                         }
                         ewebsock::WsMessage::Binary(msg) => {
-                            self.model.receive(&msg);
+                            if let Some(result) = self.model.receive(&msg) {
+                                self.invoker.receive(&result, now);
+                            }
                         }
                         _ => {
                             log::warn!("ws unknown message received");
@@ -95,15 +104,18 @@ impl State {
         false
     }
 
-    #[expect(dead_code, reason = "no UI sends commands yet")]
-    fn websocket_send(&mut self, command: proto::Request) {
-        if let Some(sender) = self.ws_sender.as_mut() {
-            let command_packet = serde_cbor_2::to_vec(&command).unwrap();
+    /// Sends the invocations of the views, or drops them if not connected.
+    fn websocket_send(&mut self) {
+        for request in self.invoker.take_outbox() {
+            let Some(sender) = self.ws_sender.as_mut() else {
+                continue;
+            };
+            let packet = serde_cbor_2::to_vec(&request).expect("requests encode");
             log::debug!(
-                "send command {}",
-                hex_string::HexString::from_bytes(&command_packet).as_string()
+                "send request {}",
+                hex_string::HexString::from_bytes(&packet).as_string()
             );
-            sender.send(ewebsock::WsMessage::Binary(command_packet));
+            sender.send(ewebsock::WsMessage::Binary(packet));
         }
     }
 
@@ -126,7 +138,10 @@ impl State {
                 }
             }
             if ui.button("Clear Data").clicked() {
+                // the target announces its actions once, so they are kept
+                let actions = std::mem::take(&mut self.model.actions);
                 self.model = model::Model::default();
+                self.model.actions = actions;
             }
         });
     }
@@ -268,8 +283,10 @@ impl App {
     fn open(&mut self, file: &files::File) -> Result<(), String> {
         if model::recording::is_recording(&file.bytes) {
             let mut model = model::Model::default();
-            let loaded = model::recording::read_file(&file.bytes, |frame| model.receive(frame))
-                .map_err(|error| format!("{} cannot be opened: {error}", file.name))?;
+            let loaded = model::recording::read_file(&file.bytes, |frame| {
+                model.receive(frame);
+            })
+            .map_err(|error| format!("{} cannot be opened: {error}", file.name))?;
             self.state.websocket_disconnect();
             self.state.model = model;
             self.state.time.fit(&self.state.model);
@@ -338,9 +355,11 @@ impl App {
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &Context, _frame: &mut Frame) {
-        if self.state.websocket_receive() {
+        let now = ctx.input(|input| input.time);
+        if self.state.websocket_receive(now) {
             self.state.websocket_disconnect();
         }
+        self.state.invoker.update(now);
         self.files.receive_dropped(ctx);
         while let Some(file) = self.files.try_recv() {
             if let Err(error) = file.and_then(|file| self.open(&file)) {
@@ -386,10 +405,17 @@ impl eframe::App for App {
                 let mut context = ViewContext {
                     model: &self.state.model,
                     time: &mut self.state.time,
+                    invoker: &mut self.state.invoker,
                     formats: &view::NO_FORMATS,
                 };
                 self.layout.ui(ui, &mut context);
             });
+        self.state.websocket_send();
+        let now = ui.input(|input| input.time);
+        if self.state.invoker.is_waiting(now) {
+            ui.ctx()
+                .request_repaint_after_secs(model::actions::DRAG_INTERVAL as f32);
+        }
 
         self.notice_ui(ui.ctx());
     }

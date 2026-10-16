@@ -1,8 +1,10 @@
+pub mod actions;
 pub mod logs;
 pub mod numbers;
 pub mod recording;
 pub mod traces;
 
+use crate::app::model::actions::Actions;
 use crate::app::model::logs::{LogEntry, Logs};
 use crate::app::model::recording::Recording;
 use crate::app::model::traces::Traces;
@@ -11,13 +13,16 @@ use crate::app::model::traces::Traces;
 pub struct Model {
     pub traces: Traces,
     pub logs: Logs,
+    /// The actions the target announced.
+    pub actions: Actions,
     /// The received frames, to save them.
     pub recording: Recording,
 }
 
 impl Model {
-    /// Records a received frame and applies the message in it.
-    pub fn receive(&mut self, frame: &[u8]) {
+    /// Records a received frame and applies the message in it. Returns the answer to
+    /// an invocation, for the invoker.
+    pub fn receive(&mut self, frame: &[u8]) -> Option<proto::ActionResult> {
         self.recording.push(frame);
         match serde_cbor_2::from_slice::<proto::Message>(frame) {
             Ok(proto::Message::Value(value)) => self.traces.append(&value),
@@ -25,9 +30,11 @@ impl Model {
                 self.traces.set_unit(&metadata.path, &metadata.unit);
             }
             Ok(proto::Message::Log(record)) => self.logs.push(LogEntry::from_proto(&record)),
-            Ok(proto::Message::Actions(_) | proto::Message::ActionResult(_)) => {}
+            Ok(proto::Message::Actions(actions)) => self.actions.set(actions),
+            Ok(proto::Message::ActionResult(result)) => return Some(result),
             Err(error) => log::warn!("error parsing message: {error}"),
         }
+        None
     }
 
     /// Timestamps of the first and the newest collected data.
