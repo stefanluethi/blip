@@ -10,8 +10,8 @@ the target is a **protocol**, a Python class provided by the user of blip.
   API (`from outpost import Protocol, action, ...`), loaded from a file or module.
 - **Actions**: Python functions of the protocol that blip shows as buttons, fields,
   sliders and dropdowns, with their parameters taken from the type hints.
-- **Simulator**: streams CPU load, simulated sensor measurements and synthetic log
-  records, and offers demo actions. It is also the reference protocol.
+- **Simulator**: streams CPU load and simulated sensor measurements at different rates
+  and synthetic log records, and offers demo actions. It is also the reference protocol.
 - **Socket passthrough**: TCP and UDP for targets that speak the blip protocol
   themselves.
 - **Recording and replay** of the messages sent to blip.

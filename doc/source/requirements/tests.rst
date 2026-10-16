@@ -32,6 +32,16 @@ Test Cases
    records, arrays, integers, bools, strings and nulls arrive as plain CBOR
    items.
 
+.. test:: Simulator outpost streams traces at different rates
+   :id: TEST_OUTPOST_SIM_RATES
+   :status: implemented
+   :component: outpost
+   :verifies: REQ_OUTPOST_SIM
+
+   ``outpost/tests/test_outpost.py::test_simulator_outpost_rates`` -- connects
+   a WebSocket client to the outpost in simulator mode and checks that faster
+   sampled traces arrive more often than slower ones.
+
 .. test:: Views compute what they show
    :id: TEST_BLIP_VIEWS
    :status: implemented
