@@ -159,7 +159,9 @@ connection, the ``path`` of the action and its arguments as a record by
 parameter name. The target answers the client that sent it with an
 ``ActionResult`` of the same ``id``, ``{"Ok": null}`` if it carried the action
 out, ``{"Err": "reason"}`` if it rejected it. Whether the action had the
-desired effect shows in the traces, e.g. the readback.
+desired effect shows in the traces, e.g. the readback. The bridge answers the
+invocations itself and drops ``ActionResult`` messages a protocol sends, e.g.
+those of a passthrough target or of a replayed recording.
 
 Example (shown as JSON for readability)::
 

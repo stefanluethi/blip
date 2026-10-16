@@ -8,15 +8,11 @@ import websockets
 from websockets.server import WebSocketServerProtocol, serve
 
 from bridge.actions import ActionError
-from bridge.proto import LogLevel, Message, decode_request
+from bridge.proto import ACTION_RESULT_PREFIX, ACTIONS_PREFIX, LogLevel, Message, decode_request
 from bridge.protocol import Protocol
 from bridge.recording import RecordingWriter
 
 logger = logging.getLogger("bridge.server")
-
-# The start of the CBOR encoding of an Actions message, a map of one entry whose key
-# is the text "Actions"
-_ACTIONS_PREFIX = b"\xa1\x67Actions"
 
 # The component of the log records about invocations
 ACTIONS_COMPONENT = "actions"
@@ -61,8 +57,13 @@ class BridgeServer:
         self.protocol.attach(self.broadcast)
 
     async def broadcast(self, message: bytes) -> None:
-        """Sends a message of the protocol to all clients."""
-        if message.startswith(_ACTIONS_PREFIX):
+        """Sends a message of the protocol to all clients, but answers to invocations."""
+        if message.startswith(ACTION_RESULT_PREFIX):
+            # e.g. of a target that knows the actions itself, or of a replay: the bridge
+            # answers the invoking client itself, and these ids are not that client's
+            logger.debug("Dropping an ActionResult of the protocol")
+            return
+        if message.startswith(ACTIONS_PREFIX):
             self._actions_frame = message
         if self.recorder:
             self.recorder.write(message)

@@ -41,7 +41,9 @@ TCP or UDP endpoint of a target that speaks the blip protocol itself::
 Add ``-o listen=true`` to accept connections from the target instead of
 connecting to it. The data of the target is passed to blip unchanged, the
 invocations of blip are forwarded as ``Invoke`` requests, and the target
-announces its actions itself.
+announces its actions itself. An invocation is accepted once it is forwarded;
+``ActionResult`` messages of the target are dropped, as the bridge answers
+blip itself.
 
 Replay a recording, saved by blip or recorded by the bridge::
 
