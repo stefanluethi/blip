@@ -433,7 +433,7 @@ mod tests {
         use egui_kittest::Harness;
         use egui_kittest::kittest::Queryable;
 
-        let mut logs = Logs::new();
+        let mut logs = Logs::default();
         for _ in 0..100 {
             logs.push(create_entry(LogLevel::Info, "core", "message"));
         }

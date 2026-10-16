@@ -250,6 +250,37 @@ mod tests {
     }
 
     #[test]
+    fn layouts_survive_json() {
+        let mut views: Vec<Node> = ViewType::ALL
+            .into_iter()
+            .enumerate()
+            .map(|(index, view_type)| {
+                let mut view = View::new(view_type, format!("View {index}"));
+                if let Some((traces, _)) = view.selection_mut() {
+                    traces.insert("imu.acc[1]".to_owned());
+                }
+                Node::View(view)
+            })
+            .collect();
+        if let Node::View(view) = &mut views[0] {
+            view.formats
+                .set("imu.acc[1]", crate::app::model::numbers::DisplayFormat::Hex);
+        }
+        let file = LayoutFile {
+            version: VERSION,
+            root: Group::tabs(vec![Node::Group(Group {
+                shares: vec![1.5; views.len()],
+                ..Group::tabs(views)
+            })]),
+        };
+        let cbor = serde_cbor_2::to_vec(&file).unwrap();
+
+        let json = serde_json::to_vec_pretty(&file).unwrap();
+        let file: LayoutFile = serde_json::from_slice(&json).unwrap();
+        assert_eq!(serde_cbor_2::to_vec(&file).unwrap(), cbor);
+    }
+
+    #[test]
     fn version_1_xy_views_get_their_x_trace_as_one_of_their_traces() {
         let mut view = View::new(ViewType::Xy, "XY".to_owned());
         let ViewKind::Xy(xy) = &mut view.kind else {
