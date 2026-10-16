@@ -1,9 +1,19 @@
 """Protocol serialization and schema definition matching Rust proto crate."""
 
+import enum
 import time
 from dataclasses import dataclass, asdict
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 import cbor2
+
+
+class LogLevel(enum.IntEnum):
+    """Levels of log records as understood by blip."""
+    TRACE = 0
+    DEBUG = 1
+    INFO = 2
+    WARN = 3
+    ERROR = 4
 
 
 @dataclass
@@ -44,12 +54,14 @@ class LogRecord:
 
 @dataclass
 class Message:
-    """Protocol message wrapping Value, ValueMetadata, or LogRecord."""
-    variant: str  # "Value", "ValueMetadata", or "Log"
-    data: Union[Value, ValueMetadata, LogRecord]
+    """A message to blip: a Value, ValueMetadata, Log, Actions or ActionResult."""
+    variant: str
+    # a dataclass with to_dict or plain data
+    data: Any
 
     def to_dict(self) -> Dict[str, Any]:
-        return {self.variant: self.data.to_dict()}
+        data = self.data.to_dict() if hasattr(self.data, "to_dict") else self.data
+        return {self.variant: data}
 
     def encode_cbor(self) -> bytes:
         """Encode message to CBOR binary format."""
@@ -92,6 +104,42 @@ class Message:
                 message=message,
             )
         )
+
+    @classmethod
+    def create_actions(cls, descriptors: List[Dict[str, Any]]) -> "Message":
+        """The list of all actions, see bridge.actions."""
+        return cls(variant="Actions", data=descriptors)
+
+    @classmethod
+    def create_action_result(cls, id: int, error: Optional[str] = None) -> "Message":
+        """The answer to the invocation `id`, rejected with `error` if given."""
+        result = {"Ok": None} if error is None else {"Err": error}
+        return cls(variant="ActionResult", data={"id": id, "result": result})
+
+
+@dataclass
+class Invocation:
+    """A request of blip to carry out an action."""
+    id: int
+    path: str
+    args: Dict[str, Any]
+
+
+def decode_request(raw_bytes: bytes) -> Invocation:
+    """Decodes a request of blip, raises ValueError if it is not one."""
+    try:
+        data = cbor2.loads(raw_bytes)
+    except Exception as e:
+        raise ValueError(f"not CBOR: {e}") from e
+    if not isinstance(data, dict) or set(data) != {"Invoke"}:
+        raise ValueError("not an Invoke request")
+    content = data["Invoke"]
+    if not isinstance(content, dict):
+        raise ValueError("malformed Invoke request")
+    id, path, args = content.get("id"), content.get("path"), content.get("args")
+    if not isinstance(id, int) or isinstance(id, bool) or not isinstance(path, str):
+        raise ValueError("malformed Invoke request")
+    return Invocation(id=id, path=path, args=args)
 
 
 def decode_cbor_message(raw_bytes: bytes) -> Optional[Dict[str, Any]]:
