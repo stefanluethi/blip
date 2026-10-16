@@ -57,7 +57,8 @@ class OutpostServer:
         self.protocol.attach(self.broadcast)
 
     async def broadcast(self, message: bytes) -> None:
-        """Sends a message of the protocol to all clients, but answers to invocations."""
+        """Sends a message of the protocol to all clients, but answers to invocations.
+        A single one, `Protocol.send` splits the batches of a target."""
         if message.startswith(ACTION_RESULT_PREFIX):
             # e.g. of a target that knows the actions itself, or of a replay: the outpost
             # answers the invoking client itself, and these ids are not that client's

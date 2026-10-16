@@ -5,7 +5,7 @@ import logging
 from typing import Any, Awaitable, Callable, Optional, Set, Union
 
 from outpost.actions import Actions, declared_actions
-from outpost.proto import Data, Message
+from outpost.proto import Data, Message, split_items
 
 logger = logging.getLogger("outpost.protocol")
 
@@ -60,10 +60,25 @@ class Protocol:
         await self.actions.invoke(path, args)
 
     async def send(self, message: Union[Message, bytes]) -> None:
-        """Sends a message, or the bytes of one, to blip."""
+        """Sends a message to blip, or the bytes of complete messages: one or several
+        one after another, a CBOR sequence (RFC 8742)."""
+        if isinstance(message, Message):
+            await self._send_frame(message.encode_cbor())
+            return
+        try:
+            frames, rest = split_items(message)
+        except ValueError as e:
+            logger.error(f"Dropping {len(message)} bytes that are no messages ({e}): {message[:32].hex()}")
+            return
+        if rest:
+            logger.error(f"Dropping {len(rest)} bytes of an incomplete message: {rest[:32].hex()}")
+        for frame in frames:
+            await self._send_frame(frame)
+
+    async def _send_frame(self, frame: bytes) -> None:
+        """Sends the bytes of a single message to blip."""
         if self._send_callback is None:
             return
-        frame = message.encode_cbor() if isinstance(message, Message) else message
         try:
             await self._send_callback(frame)
         except Exception as e:
