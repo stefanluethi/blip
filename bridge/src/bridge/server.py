@@ -90,9 +90,15 @@ class BridgeServer:
 
         client_addr = websocket.remote_address
         logger.info(f"WebSocket client connected from {client_addr} on path '{path}'")
-        if self._actions_frame is not None:
-            await self._send(websocket, self._actions_frame)
+        # added before the actions are sent, so a change announced meanwhile reaches the
+        # client too; if it may have arrived before the list it replaces, the latest
+        # list is sent once more
         self.connected_clients.add(websocket)
+        sent = self._actions_frame
+        if sent is not None:
+            await self._send(websocket, sent)
+            if self._actions_frame is not sent:
+                await self._send(websocket, self._actions_frame)
         await self.protocol.on_client_connected()
 
         try:
