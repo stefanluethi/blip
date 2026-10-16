@@ -4,11 +4,11 @@ import asyncio
 import logging
 import time
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional
 
 import cbor2
 
-from bridge.protocols.base import BaseProtocol
+from bridge import ActionError, Protocol
 from bridge.recording import read_frames
 
 logger = logging.getLogger("bridge.replay")
@@ -27,37 +27,38 @@ def timestamp(frame: bytes) -> Optional[int]:
     return value if isinstance(value, int) else None
 
 
-class ReplayProtocol(BaseProtocol):
+def disable_actions(frame: bytes) -> bytes:
+    """`frame` with its actions disabled if it is an Actions message, as a replay
+    carries out no actions."""
+    if not frame.startswith(b"\xa1\x67Actions"):
+        return frame
+    try:
+        message = cbor2.loads(frame)
+        for descriptor in message["Actions"]:
+            descriptor["enabled"] = False
+        return cbor2.dumps(message)
+    except Exception:
+        return frame
+
+
+class ReplayProtocol(Protocol):
     """Sends the messages of a recording file unchanged, each after the time between
     its timestamp and the first one divided by `speed`. Messages without a timestamp
     are sent right away. Starts when the first client connects, so it sees the whole
-    recording."""
+    recording. The actions of the recording are shown disabled."""
 
-    def __init__(self, path: Union[str, Path], speed: float = 1.0) -> None:
-        super().__init__()
+    def __init__(self, path: Path, speed: float = 1.0) -> None:
         self.path = Path(path)
         self.speed = speed
         self.client_connected = asyncio.Event()
-        self._task: Optional[asyncio.Task] = None
-
-    async def start(self) -> None:
         # read now, so a missing or wrong file stops the bridge at startup
         self._frames = list(read_frames(self.path))
         logger.info(f"Replaying {len(self._frames)} messages of {self.path} at {self.speed}x")
-        self._task = asyncio.create_task(self._replay())
-
-    async def stop(self) -> None:
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
 
     async def on_client_connected(self) -> None:
         self.client_connected.set()
 
-    async def _replay(self) -> None:
+    async def run(self) -> None:
         await self.client_connected.wait()
         first: Optional[int] = None
         start = time.monotonic()
@@ -70,8 +71,8 @@ class ReplayProtocol(BaseProtocol):
                 delay = due - time.monotonic()
                 if delay > 0:
                     await asyncio.sleep(delay)
-            await self.send_to_websocket(frame)
+            await self.send(disable_actions(frame))
         logger.info("Replay finished")
 
-    async def handle_incoming_ws_message(self, message: Union[bytes, str]) -> None:
-        logger.debug("Ignoring a message from blip during a replay")
+    async def invoke(self, path: str, args: dict) -> None:
+        raise ActionError("a replay carries out no actions")

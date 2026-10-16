@@ -5,16 +5,13 @@ import math
 import random
 import logging
 import time
-from typing import Union
 import psutil
 
-from bridge.protocols.base import BaseProtocol
-from bridge.proto import Message
+from bridge import LogLevel, Message, Protocol
 
 logger = logging.getLogger("bridge.simulator")
 
-# Log levels as understood by blip (proto LogRecord.level)
-TRACE, DEBUG, INFO, WARN, ERROR = range(5)
+TRACE, DEBUG, INFO, WARN, ERROR = LogLevel
 
 # Smoothed per-core CPU load (percent) above which a warning is logged, and below
 # which it is reported back to normal. Raw samples at short intervals jump between
@@ -73,44 +70,38 @@ _RANDOM_LOGS = [
 ]
 
 
-class SimulatorProtocol(BaseProtocol):
+async def sleep_until(deadline: float) -> None:
+    """Sleeps until `time.perf_counter()` reaches `deadline`. On Windows the event loop
+    runs timers up to its clock resolution of about 16 ms early, so a single sleep of
+    10 ms may return right away."""
+    while (remaining := deadline - time.perf_counter()) > 0:
+        await asyncio.sleep(remaining)
+
+
+class SimulatorProtocol(Protocol):
     """Simulator protocol driving synthetic telemetry (CPU usage & accelerometer) and logs."""
 
-    def __init__(self, interval_ms: int = 50, log_interval_ms: int = 500) -> None:
-        super().__init__()
+    def __init__(self, interval_ms: int = 20, log_interval_ms: int = 500) -> None:
         self.interval_sec = interval_ms / 1000.0
         self.log_interval_sec = log_interval_ms / 1000.0
-        self._task: asyncio.Task | None = None
-        self._running = False
         self._seq = 0
         self._cpu_avg: dict[int, float] = {}
         self._cpu_high: set[int] = set()
         self._motor_state = 0
         # Simulated time (s), advanced by the sampling interval
         self._sim_time = 0.0
+        # whether the units are sent with the next tick, for a client that connected
+        self._metadata_due = False
 
-    async def start(self) -> None:
-        """Start simulator telemetry stream task."""
-        self._running = True
-        self._task = asyncio.create_task(self._run_loop())
+    async def on_client_connected(self) -> None:
+        self._metadata_due = True
+
+    async def run(self) -> None:
+        """Periodic loop broadcasting accelerometer and CPU telemetry and logs encoded in CBOR."""
         logger.info(
             f"Simulator started (sampling interval: {self.interval_sec * 1000:.0f}ms, "
             f"log interval: {self.log_interval_sec * 1000:.0f}ms)"
         )
-
-    async def stop(self) -> None:
-        """Stop simulator background task."""
-        self._running = False
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-        logger.info("Simulator stopped.")
-
-    async def _run_loop(self) -> None:
-        """Periodic loop broadcasting accelerometer and CPU telemetry and logs encoded in CBOR."""
         # Initialize psutil cpu percent calculation
         cpu_percentages = psutil.cpu_percent(percpu=True)
         await self._send_log(
@@ -118,41 +109,43 @@ class SimulatorProtocol(BaseProtocol):
         )
         next_log = time.monotonic() + self.log_interval_sec
         next_metadata = time.monotonic()
+        next_tick = time.perf_counter()
 
-        while self._running:
+        while True:
             try:
                 self._sim_time += self.interval_sec
 
                 # 0. The units of the traces, repeated for clients connecting later
-                if time.monotonic() >= next_metadata:
+                if self._metadata_due or time.monotonic() >= next_metadata:
+                    self._metadata_due = False
                     await self._send_metadata(len(cpu_percentages))
                     next_metadata = time.monotonic() + METADATA_INTERVAL_SEC
 
                 # 1. Accelerometer simulation
                 accel_val = random.uniform(-10.0, 10.0)
                 accel_msg = Message.create_value("accelerometer", accel_val)
-                await self.send_to_websocket(accel_msg.encode_cbor())
+                await self.send(accel_msg)
 
                 # 2. Per-CPU usage simulation
                 cpu_percentages = psutil.cpu_percent(percpu=True)
                 for idx, cpu_val in enumerate(cpu_percentages):
                     cpu_path = f"sysinfo/cpu/cpu{idx}"
                     cpu_msg = Message.create_value(cpu_path, float(cpu_val))
-                    await self.send_to_websocket(cpu_msg.encode_cbor())
+                    await self.send(cpu_msg)
                 await self._log_cpu_transitions(cpu_percentages)
 
                 # 3. Typed values: a record with arrays, a record with an integer,
                 # a bool and a string, and a sensor that sometimes delivers no value
-                await self.send_to_websocket(self._imu_message().encode_cbor())
-                await self.send_to_websocket(self._motor_message().encode_cbor())
-                await self.send_to_websocket(self._pose_message().encode_cbor())
-                await self.send_to_websocket(self._spectrum_message().encode_cbor())
-                await self.send_to_websocket(self._thermal_message().encode_cbor())
+                await self.send(self._imu_message())
+                await self.send(self._motor_message())
+                await self.send(self._pose_message())
+                await self.send(self._spectrum_message())
+                await self.send(self._thermal_message())
                 temperature = None
                 if random.random() >= SENSOR_DROPOUT_PROBABILITY:
                     temperature = 25.0 + random.gauss(0.0, 0.2)
                 temperature_msg = Message.create_value("sensor/temperature", temperature)
-                await self.send_to_websocket(temperature_msg.encode_cbor())
+                await self.send(temperature_msg)
 
                 # 4. Random background logs, at a jittered rate
                 now = time.monotonic()
@@ -160,7 +153,8 @@ class SimulatorProtocol(BaseProtocol):
                     await self._send_random_log(accel_val)
                     next_log = now + self.log_interval_sec * random.uniform(0.5, 1.5)
 
-                await asyncio.sleep(self.interval_sec)
+                next_tick = max(next_tick + self.interval_sec, time.perf_counter())
+                await sleep_until(next_tick)
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -230,12 +224,12 @@ class SimulatorProtocol(BaseProtocol):
         units = dict(UNITS)
         units.update({f"sysinfo/cpu/cpu{idx}": CPU_UNIT for idx in range(cpu_count)})
         for path, unit in units.items():
-            await self.send_to_websocket(Message.create_metadata(path, unit).encode_cbor())
+            await self.send(Message.create_metadata(path, unit))
 
     async def _send_log(self, level: int, component: str, message: str) -> None:
         """Broadcast a single log record."""
         log_msg = Message.create_log(level, message, component=component)
-        await self.send_to_websocket(log_msg.encode_cbor())
+        await self.send(log_msg)
 
     async def _log_cpu_transitions(self, cpu_percentages: list[float]) -> None:
         """Log when a core's smoothed load enters or leaves the high-load range."""
@@ -269,8 +263,3 @@ class SimulatorProtocol(BaseProtocol):
             flash_addr=random.randrange(0x08000000, 0x08100000, 0x100),
         )
         await self._send_log(level, component, message)
-
-    async def handle_incoming_ws_message(self, message: Union[bytes, str]) -> None:
-        """Echo incoming messages back to WebSocket clients (matching simulator behavior)."""
-        logger.debug(f"Simulator received WS message, echoing back (size: {len(message)})")
-        await self.send_to_websocket(message)

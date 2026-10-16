@@ -1,19 +1,23 @@
-# Protocol to WebSocket Bridge
+# Bridge
 
-A Python-based asynchronous bridge linking various data sources and protocols (TCP/UDP sockets or simulated hardware metrics) to a WebSocket server interface.
+An asynchronous bridge connecting a target to blip over WebSocket. The bridge serves
+blip, records the messages and carries out the actions blip invokes. How it talks to
+the target is a **protocol**, a Python class provided by the user of blip.
 
 ## Features
 
-- **Protocol Agnostic Architecture**: Easily extendable base class for integrating new protocol handlers.
-- **Simulator Mode**: Streams CPU load, simulated sensor measurements and synthetic log records encoded via CBOR (`cbor2`), replicating the Rust simulator.
-- **Socket Bridge Mode**: TCP and UDP packet forwarding over WebSockets.
-- **Robby Mode**: Connects to the robby ESP32 WebSocket server and translates robby stream, log and thread table messages to blip messages.
-- **CBOR Serialization**: Native support for binary `proto` messages matching the Rust `proto` library schema.
+- **User-provided protocols**: a protocol is a small Python class against the public
+  API (`from bridge import Protocol, action, ...`), loaded from a file or module.
+- **Actions**: Python functions of the protocol that blip shows as buttons, fields,
+  sliders and dropdowns, with their parameters taken from the type hints.
+- **Simulator**: streams CPU load, simulated sensor measurements and synthetic log
+  records, and offers demo actions. It is also the reference protocol.
+- **Socket passthrough**: TCP and UDP for targets that speak the blip protocol
+  themselves.
+- **Recording and replay** of the messages sent to blip.
 - **`uv` Integration**: Managed using `uv` and standard `pyproject.toml`.
 
 ## Quick Start
-
-### Installation
 
 Sync dependencies using `uv`:
 
@@ -21,54 +25,104 @@ Sync dependencies using `uv`:
 uv sync
 ```
 
+Run the tests:
+
+```bash
+uv run pytest
+```
+
 ### Running the Bridge
 
-#### Simulator Mode (Default)
-Starts the WebSocket server on `ws://127.0.0.1:3000/ws/bridge` with simulated CPU, accelerometer, IMU (record of arrays), motor (integer, bool and string) and temperature (with nulls) telemetry and log records:
+The simulator is the default protocol. It serves `ws://127.0.0.1:3000/ws/bridge`:
 
 ```bash
 uv run bridge --protocol simulator --port 3000
 ```
 
-Use `--interval` to set the sampling interval and `--log-interval` to set the mean interval between log records (both in milliseconds).
-
-#### TCP Socket Mode
-Bridges a TCP endpoint to WebSockets:
+The options of a protocol are set with `--option key=value` (`-o`), converted by the
+type hints of its constructor. `--protocol-help` lists them:
 
 ```bash
-uv run bridge --protocol tcp --remote-host 127.0.0.1 --remote-port 9000
+uv run bridge --protocol simulator --protocol-help
+uv run bridge --protocol simulator -o interval_ms=10 -o log_interval_ms=200
 ```
 
-#### Robby Mode
-Connects to the robby ESP32 at `ws://<remote-host>:80/ws/robby`:
+The protocols that come with the bridge:
 
-```bash
-uv run bridge --protocol robby --remote-host 192.168.1.70
-```
+- `simulator`: synthetic telemetry, logs and demo actions.
+- `replay`: replays a recording (`-o path=recording.blip`, `-o speed=2` replays twice
+  as fast). The actions of the recording are shown disabled.
+- `tcp` and `udp`: pass the data of a target that speaks the blip protocol through
+  unchanged (`-o remote_host=… -o remote_port=… -o listen=true`), and forward
+  invocations to it.
 
-Stream samples are scaled with the stream descriptor's scale factor and timestamped from its sampling time. Actions from blip are forwarded to robby unchanged.
-
-#### Recording and Replay
-Record the messages sent to blip with any protocol, to open them in blip later (**File > Open recording**):
+Record the messages sent to blip with any protocol, to open them in blip later
+(**File > Open recording**):
 
 ```bash
 uv run bridge --protocol simulator --record simulator.blip
 ```
 
-Replay a recording, saved by blip or the bridge, at the pace of its timestamps (`--speed 2` replays twice as fast):
+### Writing a Protocol
 
-```bash
-uv run bridge --protocol replay --file simulator.blip
+A protocol implements `run`, which the bridge runs while it serves and cancels when it
+shuts down. It sends to blip with `send_value`, `send_metadata`, `send_log` or `send`.
+Methods decorated with `@action` are its actions, sharing the link to the target:
+
+```python
+from typing import Annotated, Literal
+
+from bridge import ActionError, LogLevel, Protocol, Range, Unit, action
+
+
+class MyTarget(Protocol):
+    def __init__(self, host: str, port: int = 9000) -> None:
+        self.host, self.port = host, port
+        self.link = None
+
+    async def run(self) -> None:
+        ...  # connect, translate what the target sends, e.g.
+        await self.send_value("motor/speed_rpm", 1432)
+
+    @action("motor/speed", readback="motor/speed_rpm")
+    async def set_speed(self, rpm: Annotated[int, Range(0, 3000), Unit("rpm")]) -> None:
+        """Speed setpoint"""
+        if self.link is None:
+            raise ActionError("not connected")
+        ...
+
+    @action("log/level")
+    async def set_log_level(self, level: Literal["debug", "info", "warn"] = "info") -> None:
+        ...
 ```
 
-A recording is a gzip-compressed CBOR sequence of a header and the messages as sent in WebSocket frames (see `doc/source/architecture/protocol.rst`).
+Run it by naming its file, followed by `:ClassName` if the file defines several
+protocols, or its module:
+
+```bash
+uv run bridge --protocol ./my_target.py -o host=192.168.1.70
+```
+
+Or serve it from a script of your own with `bridge.run(MyTarget("192.168.1.70"))`.
+
+Actions are carried out one after another per action, in the order blip sent them. An
+action succeeds when it returns and is rejected when it raises, `ActionError` with the
+reason shown in blip. Actions can be added, removed, enabled and disabled at runtime
+through `self.actions`, e.g. `self.actions.set_enabled(False)` while the link to the
+target is down; blip gets the new list right away.
+
+Parameter types are `bool`, `int`, `float`, `str`, `Literal` of strings and
+`enum.Enum` (offered by member name), optionally in `Annotated` with a `Range` and a
+`Unit`. A default value is the initial value in blip.
 
 ## Protocol Data Schema (CBOR)
 
-Messages sent in binary WebSocket frames match the following Rust `proto` structure:
+Messages sent in binary WebSocket frames match the Rust `proto` crate, see
+`doc/source/architecture/protocol.rst`:
 
-- **Value**: `{ timestamp: int (ns), path: str, value: any }`, where `value` is a plain CBOR item: `None`, `int`, `float`, `bool`, `str`, a `list` of fixed length or a `dict` with `str` keys, nested freely (see `doc/source/architecture/protocol.rst`)
+- **Value**: `{ timestamp: int (ns), path: str, value: any }`, where `value` is a plain CBOR item: `None`, `int`, `float`, `bool`, `str`, a `list` of fixed length or a `dict` with `str` keys, nested freely
 - **ValueMetadata**: `{ path: str, unit: str }`
 - **LogRecord**: `{ timestamp: int (ns), level: int, component: str, message: str }`
-- **Message**: Tagged CBOR enum `Value`, `ValueMetadata`, or `Log`
-- **Action**: Tagged CBOR enum for commands (e.g. `SetMotorSpeed(int)`)
+- **Actions**: the list of all actions and their parameters
+- **ActionResult**: `{ id: int, result: {"Ok": null} | {"Err": str} }`, the answer to an invocation
+- **Request** (blip to the bridge): `{"Invoke": { id: int, path: str, args: dict }}`
