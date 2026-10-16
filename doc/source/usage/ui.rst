@@ -4,16 +4,42 @@ Using the UI
 Connecting
 ----------
 
-#. Enter the WebSocket address of the bridge or target in the settings panel,
-   e.g. ``ws://127.0.0.1:3000/ws/bridge``.
-#. Press **Connect**. The button changes to **Disconnect** while connected.
+The **Connections** panel below the properties lists the bridges and targets
+by their name and WebSocket address, starting with
+``ws://127.0.0.1:3000/ws/bridge`` of a bridge started with its defaults, named
+``bridge``. Several of them can be connected at once.
+
+* Add an address with the **+** button, Enter keeps it, Escape drops it. The
+  new connection is named after the last part of the path of the address,
+  e.g. ``robby`` for ``ws://192.168.1.10/ws/robby``, numbered if another
+  connection has the name.
+* Click a connection to connect it, click it again to disconnect it. The
+  connections are independent, the data received so far is kept; clear it
+  with **File > Clear data**.
+* Right-click a connection to connect or disconnect it, to rename it, to edit
+  its address or to delete it. Rename it while it is disconnected.
+
+The traces of a connection are listed below its name, e.g. ``cpu/load`` of
+the connection ``robby`` as ``robby/cpu/load``, and the components of its logs
+start with the name, e.g. ``robby/motor``. Views keep the paths with the name,
+so a layout shows the same traces after reconnecting. A connection whose name
+is empty adds nothing to the paths, as do the messages of a recording saved by
+the bridge or by an older blip. The names of two connections differ, unless
+they are empty.
+
+Each target sends its own timestamps. Targets sending the time since boot
+rather than the time of day are shown next to each other only as far as they
+were started at the same time.
+
+The dot before each connection shows its state: hollow when disconnected,
+a spinner while connecting, green when connected and red when connecting
+failed or the connection broke. Hover the red dot for the reason.
 
 Window
 ------
 
 Top panel
-   The menu, see `Menu`_, and below it the WebSocket address, **Connect**
-   and **Clear Data**, which removes all received data.
+   The menu, see `Menu`_.
 
 Left panel
    The **Traces** of the selected plot, as a tree that branches at each
@@ -26,7 +52,9 @@ Left panel
    whose path contains each of its words, ignoring case.
 
 Right panel
-   The **Properties** of the selected view or group, see `Properties`_.
+   The **Properties** of the selected view or group, see `Properties`_, and
+   the **Connections** below, see `Connecting`_. Drag the border between them
+   to resize them.
 
 Center
    The views, laid out as edited in the layout panel.
@@ -38,12 +66,14 @@ Menu
 ----
 
 File
-   * **Open recording** (:kbd:`Ctrl+O`) disconnects and shows the data of a
+   * **Open recording** (:kbd:`Ctrl+O`) disconnects all connections and
+     shows the data of a
      recording file as if it had been received, with the time range fitted
      to all of it.
    * **Save recording** (:kbd:`Ctrl+S`) saves all messages received since
-     the data was last cleared to a ``.blip`` file, also those of an opened
-     recording. On the web, the file is downloaded.
+     the data was last cleared to a ``.blip`` file with the names of their
+     connections, also those of an opened recording. On the web, the file is downloaded.
+   * **Clear data** removes all received data.
    * **Open layout** and **Save layout** load and save the layout of the
      views, with all their settings, as a JSON file. **Reset layout** returns
      to a plot and a log view.
@@ -141,7 +171,7 @@ Dragging a plot moves the range, and zooming a plot with :kbd:`Ctrl` and the
 mouse wheel changes the window. The y axes fit the data in the range, unless
 their min or max is set in the properties.
 
-The layout, the time window and the target address are persisted and restored
+The layout, the time window and the connection addresses are persisted and restored
 on the next start.
 
 .. todo::

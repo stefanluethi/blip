@@ -55,6 +55,14 @@ def test_uncompressed_recordings_are_read(tmp_path):
     assert list(read_frames(path)) == frames()
 
 
+def test_the_connection_names_of_recordings_by_blip_are_skipped(tmp_path):
+    path = tmp_path / "test.blip"
+    a, b, c, d = frames()
+    items = [a, cbor2.dumps("robby"), b, c, cbor2.dumps(""), d]
+    path.write_bytes(cbor2.dumps({"format": FORMAT, "version": 2}) + b"".join(items))
+    assert list(read_frames(path)) == frames()
+
+
 def test_messages_have_timestamps_except_metadata():
     assert [timestamp(frame) for frame in frames()] == [None, 1_000_000, 2_000_000, 3_000_000]
 
