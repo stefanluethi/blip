@@ -146,6 +146,32 @@ impl Model {
     }
 }
 
+/// The items of the CBOR sequence (RFC 8742) `bytes`, each as its bytes, e.g. the
+/// messages of a frame. Ends after the first item that cannot be read, with its error.
+pub fn cbor_items(bytes: &[u8]) -> impl Iterator<Item = Result<&[u8], serde_cbor_2::Error>> {
+    let mut items =
+        serde_cbor_2::Deserializer::from_slice(bytes).into_iter::<serde::de::IgnoredAny>();
+    let mut start = 0;
+    std::iter::from_fn(move || {
+        if start > bytes.len() {
+            return None;
+        }
+        match items.next()? {
+            Ok(_) => {
+                let end = items.byte_offset();
+                let item = &bytes[start..end];
+                start = end;
+                Some(Ok(item))
+            }
+            Err(error) => {
+                // the rest cannot be told apart into items
+                start = usize::MAX;
+                Some(Err(error))
+            }
+        }
+    })
+}
+
 /// `name` below `source`, i.e. `"{source}/{name}"`, or `name` if the source has no name.
 fn sourced(source: &str, name: &str) -> String {
     if source.is_empty() {
@@ -188,6 +214,37 @@ mod tests {
         }
         assert_eq!(model.logs.entries[0].component, "b/motor");
         assert_eq!(model.recording.messages(), 4);
+    }
+
+    #[test]
+    fn a_cbor_sequence_is_split_into_its_items() {
+        let value = frame(&proto::Message::Value(proto::Value {
+            timestamp: 1,
+            path: "cpu".to_owned(),
+            value: proto::Data::Float(12.5),
+        }));
+        let log = frame(&proto::Message::Log(proto::LogRecord {
+            timestamp: 2,
+            level: 2,
+            component: String::new(),
+            message: "hi".to_owned(),
+        }));
+        let batch = [value.clone(), log.clone()].concat();
+        let items: Vec<&[u8]> = cbor_items(&batch).collect::<Result<_, _>>().unwrap();
+        assert_eq!(items, [&value[..], &log[..]]);
+        assert_eq!(cbor_items(&value).count(), 1);
+        assert_eq!(cbor_items(&[]).count(), 0);
+
+        // the items end with the first that cannot be read
+        let cut = &batch[..batch.len() - 1];
+        let items: Vec<_> = cbor_items(cut).collect();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].as_ref().ok(), Some(&&value[..]));
+        assert!(items[1].is_err());
+        let broken = [&value[..], &[0xff], &log[..]].concat();
+        let items: Vec<_> = cbor_items(&broken).collect();
+        assert_eq!(items.len(), 2);
+        assert!(items[1].is_err());
     }
 
     #[test]

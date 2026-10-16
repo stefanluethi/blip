@@ -157,8 +157,9 @@ impl Connections {
         }
     }
 
-    /// Passes the name of the connection and each frame received since the last call to
-    /// `receive`, ending connections when they are closed or fail.
+    /// Passes the name of the connection and each message received since the last call
+    /// to `receive`, ending connections when they are closed or fail. A frame holds one
+    /// message or several as a CBOR sequence, e.g. a batch of a target.
     pub fn receive(&mut self, mut receive: impl FnMut(&str, &[u8])) {
         let failed = &mut self.failed;
         self.sockets.retain_mut(|socket| {
@@ -169,7 +170,15 @@ impl Connections {
                         socket.open = true;
                     }
                     ewebsock::WsEvent::Message(ewebsock::WsMessage::Binary(frame)) => {
-                        receive(&socket.name, &frame);
+                        for message in crate::app::model::cbor_items(&frame) {
+                            match message {
+                                Ok(message) => receive(&socket.name, message),
+                                Err(error) => log::warn!(
+                                    "error reading a message of {}: {error}",
+                                    socket.address
+                                ),
+                            }
+                        }
                     }
                     ewebsock::WsEvent::Message(ewebsock::WsMessage::Text(text)) => {
                         log::info!("{text}");

@@ -114,19 +114,16 @@ pub fn read_file(file: &[u8], mut receive: impl FnMut(&str, &[u8])) -> Result<Lo
         _ => return Err("the file is not a blip recording".to_owned()),
     }
 
-    let bytes = &bytes[items.byte_offset()..];
-    let mut frames =
-        serde_cbor_2::Deserializer::from_slice(bytes).into_iter::<serde::de::IgnoredAny>();
-    let (mut start, mut messages) = (0, 0);
+    let mut messages = 0;
     let mut source = String::new();
-    while let Some(item) = frames.next() {
-        if let Err(error) = item {
-            problem.get_or_insert_with(|| format!("a message cannot be read: {error}"));
-            break;
-        }
-        let end = frames.byte_offset();
-        let item = &bytes[start..end];
-        start = end;
+    for item in super::cbor_items(&bytes[items.byte_offset()..]) {
+        let item = match item {
+            Ok(item) => item,
+            Err(error) => {
+                problem.get_or_insert_with(|| format!("a message cannot be read: {error}"));
+                break;
+            }
+        };
         // messages are maps, a text string names the source
         if let Ok(name) = serde_cbor_2::from_slice::<String>(item) {
             source = name;
