@@ -55,12 +55,8 @@ impl Recording {
     }
 
     /// The number of recorded messages.
-    pub fn len(&self) -> usize {
+    pub fn messages(&self) -> usize {
         self.len
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
     }
 
     /// The contents of a recording file of the frames.
@@ -203,7 +199,7 @@ mod tests {
         recording.push("a", &frame(2));
         recording.push("b", &frame(3));
         recording.push("", &frame(4));
-        assert_eq!(recording.len(), 5);
+        assert_eq!(recording.messages(), 5);
         let (frames, loaded) = read_sourced(&recording.to_file());
         let sources: Vec<&str> = frames.iter().map(|(source, _)| source.as_str()).collect();
         assert_eq!(sources, ["", "a", "a", "b", ""]);

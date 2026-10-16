@@ -218,6 +218,11 @@ impl Connections {
             .collect()
     }
 
+    /// Whether a connection is open.
+    pub fn is_connected(&self) -> bool {
+        self.sockets.iter().any(|socket| socket.open)
+    }
+
     fn status(&self, address: &str) -> Status {
         match (self.socket(address), self.failed.get(address)) {
             (Some(socket), _) if socket.open => Status::Connected,

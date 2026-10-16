@@ -178,15 +178,13 @@ mod tests {
                 value: proto::Data::Float(1.0),
             });
         }
-        let model = Model {
-            traces,
-            ..Model::default()
-        };
+        let mut model = Model::default();
+        model.traces = traces;
         Harness::builder()
             .with_size(egui::vec2(400.0, 200.0))
             .build_ui_state(
                 move |ui, time: &mut TimeRange| {
-                    time.update(&model);
+                    time.update(&model, ui.input(|input| input.time));
                     let id = ui.id().with("plot");
                     show(id, plot(id, time), ui, time, |_, _| {});
                 },

@@ -157,8 +157,13 @@ impl LogTable {
                         builder = builder
                             .scroll_to_row(filtered_entries.len() - 1, Some(egui::Align::Max));
                     }
-                } else if range != self.last_range
-                    && let Some((_, end)) = range
+                } else if let Some((_, end)) = range
+                    // while playing, the range moves each frame
+                    && if time.is_playing() {
+                        self.filter.auto_scroll
+                    } else {
+                        range != self.last_range
+                    }
                 {
                     // scroll to the newest entry in the moved range
                     let last_in_range = filtered_entries

@@ -275,6 +275,12 @@ impl Invoker {
         std::mem::take(&mut self.outbox)
     }
 
+    /// Forgets how many samples the readback traces had, when the data is cleared and
+    /// the traces start again from none.
+    pub fn forget_readback_marks(&mut self) {
+        self.readback_marks.clear();
+    }
+
     /// Forgets the invocations, e.g. when a recording replaces the data. The inputs and
     /// the open connections are kept.
     pub fn reset(&mut self) {
@@ -394,6 +400,9 @@ mod tests {
         invoker.receive("", &answer(0, Ok(())), 0.1, &model(10));
         assert!(!invoker.follows_readback("enable", 10));
         assert!(invoker.follows_readback("enable", 11));
+        // after clearing the data, the readback starts again from no samples
+        invoker.forget_readback_marks();
+        assert!(invoker.follows_readback("enable", 1));
         // a rejected invocation changed nothing, the readback is right
         invoker.invoke("enable", vec![], 1.0);
         invoker.receive("", &answer(1, Err("no")), 1.1, &model(20));

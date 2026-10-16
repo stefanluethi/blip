@@ -12,17 +12,89 @@ use view::ViewContext;
 
 const OPEN_RECORDING: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
 const SAVE_RECORDING: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
+const RECORDING_COLOR: egui::Color32 = egui::Color32::from_rgb(235, 87, 87);
 
 #[derive(serde::Deserialize, serde::Serialize, Default)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct State {
     time: time::TimeRange,
 
+    /// Whether the samples received from the connections are kept, else they are
+    /// dropped. A recording starts with an open connection and clears the data.
+    #[serde(skip)]
+    recording: bool,
+
     #[serde(skip)]
     model: model::Model,
 
     #[serde(skip)]
     invoker: model::actions::Invoker,
+}
+
+impl State {
+    /// Applies a frame received from `source`, the name of its connection, at the time
+    /// `now`: records it while recording, and passes answers to the invoker.
+    fn receive(&mut self, source: &str, frame: &[u8], now: f64) {
+        let result = if self.recording {
+            self.model.receive(source, frame)
+        } else {
+            self.model.receive_unrecorded(source, frame)
+        };
+        if let Some(result) = result {
+            self.invoker.receive(source, &result, now, &self.model);
+        }
+    }
+
+    /// Removes the received data, see [`model::Model::clear`].
+    fn clear_data(&mut self) {
+        self.model.clear();
+        self.invoker.forget_readback_marks();
+    }
+
+    /// Starts or stops recording. A recording starts only while `connected`, clears the
+    /// data and follows it live.
+    fn set_recording(&mut self, recording: bool, connected: bool) {
+        if recording && !self.recording {
+            if !connected {
+                return;
+            }
+            self.clear_data();
+            self.time.go_live();
+        }
+        self.recording = recording;
+    }
+
+    /// The bottom panel: the record button and the time range.
+    fn bottom_ui(&mut self, ui: &mut egui::Ui, connected: bool) {
+        ui.horizontal(|ui| {
+            if record_button(ui, self.recording, connected) {
+                self.set_recording(!self.recording, connected);
+            }
+            ui.separator();
+            self.time.ui(ui);
+        });
+    }
+}
+
+/// A button showing whether `recording`, which can be started only while `connected`.
+/// Returns whether it was clicked, to switch.
+fn record_button(ui: &mut egui::Ui, recording: bool, connected: bool) -> bool {
+    let color = if recording {
+        RECORDING_COLOR
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    let icon = egui::RichText::new(egui_phosphor::regular::RECORD).color(color);
+    let button = egui::Button::new((icon, "Record")).selected(recording);
+    let hint = if recording {
+        "Recording the received samples, click to stop"
+    } else {
+        "Click to clear the data and record the received samples"
+    };
+    ui.add_enabled(recording || connected, button)
+        .on_hover_text(hint)
+        .on_disabled_hover_text("Connect to record")
+        .clicked()
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -95,8 +167,8 @@ impl App {
                 {
                     self.files.open(files::Kind::Recording, ui.ctx());
                 }
-                let recorded = !self.state.model.recording.is_empty();
-                let messages = self.state.model.recording.len();
+                let recorded = self.state.model.has_samples();
+                let messages = self.state.model.recording.messages();
                 let save = shortcut("Save recording…", &SAVE_RECORDING);
                 if ui
                     .add_enabled(recorded, save)
@@ -110,10 +182,7 @@ impl App {
                     .on_hover_text("Remove all received data")
                     .clicked()
                 {
-                    // targets announce their actions once, so they are kept
-                    let actions = std::mem::take(&mut self.state.model.actions);
-                    self.state.model = model::Model::default();
-                    self.state.model.actions = actions;
+                    self.state.clear_data();
                 }
                 ui.separator();
                 if ui.button("Open layout…").clicked() {
@@ -148,7 +217,7 @@ impl App {
             self.files.open(files::Kind::Recording, ctx);
         }
         if ctx.input_mut(|input| input.consume_shortcut(&SAVE_RECORDING))
-            && !self.state.model.recording.is_empty()
+            && self.state.model.has_samples()
         {
             self.save_recording();
         }
@@ -178,6 +247,7 @@ impl App {
             })
             .map_err(|error| format!("{} cannot be opened: {error}", file.name))?;
             self.connections.disconnect_all();
+            self.state.recording = false;
             self.state.invoker.reset();
             self.state.model = model;
             self.state.time.fit(&self.state.model);
@@ -264,14 +334,11 @@ impl App {
 impl eframe::App for App {
     fn logic(&mut self, ctx: &Context, _frame: &mut Frame) {
         let now = ctx.input(|input| input.time);
-        let State { model, invoker, .. } = &mut self.state;
-        self.connections.receive(|source, frame| {
-            if let Some(result) = model.receive(source, frame) {
-                invoker.receive(source, &result, now, model);
-            }
-        });
-        invoker.connected = self.connections.open_names();
-        invoker.update(now);
+        let state = &mut self.state;
+        self.connections
+            .receive(|source, frame| state.receive(source, frame, now));
+        state.invoker.connected = self.connections.open_names();
+        state.invoker.update(now);
         self.files.receive_dropped(ctx);
         while let Some(file) = self.files.try_recv() {
             if let Err(error) = file.and_then(|file| self.open(&file)) {
@@ -283,10 +350,12 @@ impl eframe::App for App {
         self.shortcuts(ui.ctx());
         egui::Panel::top("top panel").show(ui, |ui| self.menu_ui(ui));
 
-        self.state.time.update(&self.state.model);
+        let now = ui.input(|input| input.time);
+        self.state.time.update(&self.state.model, now);
 
         egui::Panel::bottom("bottom panel").show(ui, |ui| {
-            self.state.time.ui(ui);
+            let connected = self.connections.is_connected();
+            self.state.bottom_ui(ui, connected);
         });
 
         egui::Panel::left("left panel")
@@ -329,7 +398,6 @@ impl eframe::App for App {
                 self.layout.ui(ui, &mut context);
             });
         self.send_invocations();
-        let now = ui.input(|input| input.time);
         if self.state.invoker.is_waiting(now) {
             ui.ctx()
                 .request_repaint_after_secs(model::actions::DRAG_INTERVAL as f32);
@@ -384,4 +452,97 @@ fn configure_text_styles(ctx: &egui::Context) {
     ]
     .into();
     ctx.all_styles_mut(move |style| style.text_styles = text_styles.clone());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn value(timestamp: u64) -> Vec<u8> {
+        serde_cbor_2::to_vec(&proto::Message::Value(proto::Value {
+            timestamp,
+            path: "rpm".to_owned(),
+            value: proto::Data::Uint(1),
+        }))
+        .unwrap()
+    }
+
+    fn unit() -> Vec<u8> {
+        serde_cbor_2::to_vec(&proto::Message::ValueMetadata(proto::ValueMetadata {
+            path: "rpm".to_owned(),
+            unit: "rpm".to_owned(),
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_recording_starts_only_while_connected_and_clears_the_data() {
+        let mut state = State::default();
+        assert!(!state.recording);
+        state.receive("a", &unit(), 0.0);
+        state.receive("a", &value(1_000_000_000), 0.0);
+        assert!(!state.model.has_samples());
+        state.set_recording(true, false);
+        assert!(!state.recording);
+
+        state.set_recording(true, true);
+        state.receive("a", &value(2_000_000_000), 0.0);
+        state.receive("a", &value(3_000_000_000), 0.0);
+        state.time.update(&state.model, 0.0);
+        state.time.set_cursor(2.5);
+        // stopping keeps the data, also when no longer connected
+        state.set_recording(false, false);
+        assert!(!state.recording);
+        assert!(state.model.has_samples());
+
+        state.set_recording(true, true);
+        assert!(state.recording);
+        assert!(!state.model.has_samples());
+        assert_eq!(state.model.traces.unit("a/rpm"), Some("rpm"));
+        assert!(state.time.is_live() && state.time.is_playing());
+    }
+
+    #[test]
+    fn the_record_button_is_disabled_until_connected() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(600.0, 40.0))
+            .build_ui_state(
+                |ui, (state, connected): &mut (State, bool)| state.bottom_ui(ui, *connected),
+                (State::default(), false),
+            );
+        harness.run();
+        harness.get_by_label_contains("Record").click();
+        harness.run();
+        assert!(!harness.state().0.recording);
+
+        harness.state_mut().1 = true;
+        harness.run();
+        harness.get_by_label_contains("Record").click();
+        harness.run();
+        assert!(harness.state().0.recording);
+
+        harness.state_mut().1 = false;
+        harness.run();
+        harness.get_by_label_contains("Record").click();
+        harness.run();
+        assert!(!harness.state().0.recording);
+    }
+
+    #[test]
+    fn opening_a_recording_stops_recording() {
+        let mut recorded = model::Model::default();
+        recorded.receive("a", &value(1));
+        let file = files::File {
+            name: "a.blip".to_owned(),
+            bytes: recorded.recording.to_file(),
+        };
+        let mut app = App::default();
+        app.state.recording = true;
+        app.open(&file).unwrap();
+        assert!(!app.state.recording);
+        assert!(app.state.model.has_samples());
+    }
 }

@@ -15,7 +15,9 @@ by their name and WebSocket address, starting with
   connection has the name.
 * Click a connection to connect it, click it again to disconnect it. The
   connections are independent, the data received so far is kept; clear it
-  with **File > Clear data**.
+  with **File > Clear data**. The received values are kept only while
+  recording, started with **Record** in the bottom panel once connected, see
+  `Time range`_.
 * Right-click a connection to connect or disconnect it, to rename it, to edit
   its address or to delete it. Rename it while it is disconnected.
 
@@ -68,15 +70,17 @@ Menu
 ----
 
 File
-   * **Open recording** (:kbd:`Ctrl+O`) disconnects all connections and
-     shows the data of a
+   * **Open recording** (:kbd:`Ctrl+O`) disconnects all connections, stops
+     recording and shows the data of a
      recording file as if it had been received, with the time range fitted
      to all of it.
    * **Save recording** (:kbd:`Ctrl+S`) saves all messages received since
      the data was last cleared to a ``.blip`` file with the names of their
      connections, also those of an opened recording. On the web, the file is downloaded.
-   * **Clear data** removes all received data but the announced actions,
-     which the targets send only when connecting or when they change.
+   * **Clear data** removes all received data but the latest units and
+     actions of the targets, which they may send only when connecting or when
+     they change. The recording starts again with them, so a saved recording
+     has them too.
    * **Open layout** and **Save layout** load and save the layout of the
      views, with all their settings, as a JSON file. **Reset layout** returns
      to a plot and a log view.
@@ -197,20 +201,30 @@ Time range
 
 All views show the same time range, set in the bottom panel:
 
-* **Live** follows the newest data. Clicking it while live stops at the
-  current time.
+* **Record** keeps the values and log records received from the connections.
+  While it is off they are dropped, as if the connections were closed, but
+  the connections stay open: the targets' units and actions are still kept and
+  actions can still be invoked. A recording starts only while a connection is
+  open. Starting it clears the data as **File > Clear data** does and follows
+  the newest data live. Stopping it keeps the data, also when the connections
+  close. blip starts without recording, as does opening a recording file.
+* **Pause** stops the range where it is, while recording goes on, to inspect
+  the data. **Play** moves the range on from there at the pace of the
+  timestamps, along with the time cursor, and returns to live mode once it
+  reaches the newest data.
+* **Live** follows the newest data, playing.
 * **Window** sets the length of the range.
 * The timeline spans all collected data, its thumb shows the range. Drag the
   thumb to move the range, click the timeline to center the range there, or
-  scroll over it to change the window. Moving the range to the end of the
-  data returns to live mode.
+  scroll over it to change the window. Moving the range pauses, moving it to
+  the end of the data returns to live mode.
 
 The time cursor is a vertical line with a handle on top, shown in all plots
 over time and on the timeline. The table, the heatmap at the cursor and the
 marker of the XY view show the values at its time. It stays at the end of the
 range until it is set: click a plot to put it there, or drag it in a plot or
-on the timeline. Setting it stops live mode until **Live** is pressed, which
-returns the cursor to the end of the range.
+on the timeline. Setting it pauses, and it stays set until **Live** is
+pressed, which returns the cursor to the end of the range.
 
 The time axes show the timestamps as local time of day, or as time since boot
 if they are too small to be a date (before 2001).

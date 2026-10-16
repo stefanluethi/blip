@@ -377,10 +377,9 @@ mod tests {
     }
 
     fn model(samples: &[(&str, Data)]) -> Model {
-        Model {
-            traces: traces(samples),
-            ..Model::default()
-        }
+        let mut model = Model::default();
+        model.traces = traces(samples);
+        model
     }
 
     fn spans(runs: &[Run]) -> Vec<(f64, f64, Option<usize>)> {
