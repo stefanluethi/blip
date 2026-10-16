@@ -67,6 +67,23 @@ Visualisation
    blip shall show one time cursor in all views over time, which the user can
    set and drag, and which stays at the end of the shown time range until set.
 
+.. req:: Exact integers
+   :id: REQ_VIS_INT
+   :status: implemented
+   :component: blip
+   :satisfies: STK_LIVE_OBSERVE
+
+   blip shall keep and show integer values exactly, over the whole range of
+   the wire protocol from ``i64::MIN`` to ``u64::MAX``.
+
+.. req:: Zoom the UI
+   :id: REQ_VIS_ZOOM
+   :status: implemented
+   :component: blip
+
+   blip shall let the user scale its whole UI, and keep the scale across
+   restarts.
+
 Connectivity
 ------------
 
@@ -134,6 +151,28 @@ Platforms
    blip shall persist the layout of the views and the target address across
    restarts.
 
+Files
+-----
+
+.. req:: Save and open recordings
+   :id: REQ_FILE_RECORDING
+   :status: implemented
+   :component: blip
+   :satisfies: STK_REVIEW
+
+   blip shall save the messages received since the data was last cleared to
+   a recording file, and open recording files, showing their data as if it
+   had been received.
+
+.. req:: Save and open layouts
+   :id: REQ_FILE_LAYOUT
+   :status: implemented
+   :component: blip
+   :satisfies: STK_REVIEW
+
+   blip shall save the layout of the views to a JSON file and open layout
+   files saved by the same or an older version of blip.
+
 Bridge
 ------
 
@@ -164,3 +203,21 @@ Bridge
    The bridge shall provide a simulator mode that streams synthetic CPU load
    and sensor values, and log records of all severity levels, without
    hardware.
+
+.. req:: Record messages
+   :id: REQ_BRIDGE_RECORD
+   :status: implemented
+   :component: bridge
+   :satisfies: STK_REVIEW
+
+   The bridge shall record the messages it sends to blip to a recording file
+   that blip opens.
+
+.. req:: Replay recordings
+   :id: REQ_BRIDGE_REPLAY
+   :status: implemented
+   :component: bridge
+   :satisfies: STK_REVIEW, STK_DEVICE_IF
+
+   The bridge shall send the messages of a recording file to blip unchanged,
+   at the pace of their timestamps or faster.

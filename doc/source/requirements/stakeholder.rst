@@ -32,3 +32,11 @@ Stakeholder Requirements
    :priority: medium
 
    As a developer I want to send commands to the target from the tool.
+
+.. stk:: Review observations later
+   :id: STK_REVIEW
+   :status: approved
+   :priority: medium
+
+   As a developer I want to keep what I observed, look at it again later and
+   share it with others, together with the arrangement of views I used.

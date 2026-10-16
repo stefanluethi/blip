@@ -62,3 +62,45 @@ Test Cases
    expected CBOR bytes, round-trip nested arrays and records, decode values
    encoded by the Python bridge, and reject byte strings, non-text map keys,
    duplicate fields and integers out of range.
+
+.. test:: Integers are kept exactly
+   :id: TEST_BLIP_NUMBERS
+   :status: implemented
+   :component: blip
+   :verifies: REQ_VIS_INT
+
+   ``blip/src/app/model/numbers.rs`` and ``blip/src/app/model/traces.rs``
+   tests -- keep integers beyond 2^53 exact, switch to unsigned for integers
+   above ``i64::MAX``, reject integers that do not fit with the others, and
+   write them in every number format.
+
+.. test:: Recordings are saved and opened
+   :id: TEST_BLIP_RECORDING
+   :status: implemented
+   :component: blip
+   :verifies: REQ_FILE_RECORDING
+
+   ``blip/src/app/model/recording.rs`` tests -- save frames and read them
+   back unchanged, read uncompressed files, files of several gzip members and
+   files written by the Python bridge, read a cut off file up to the cut and
+   reject other files.
+
+.. test:: Layouts are saved as JSON
+   :id: TEST_BLIP_LAYOUT_FILE
+   :status: implemented
+   :component: blip
+   :verifies: REQ_FILE_LAYOUT
+
+   ``blip/src/app/layout/file.rs::layouts_survive_json`` -- saves a layout
+   with a view of each type as JSON and checks it loads unchanged.
+
+.. test:: Bridge records and replays
+   :id: TEST_BRIDGE_RECORDING
+   :status: implemented
+   :component: bridge
+   :verifies: REQ_BRIDGE_RECORD, REQ_BRIDGE_REPLAY
+
+   ``bridge/tests/test_recording.py`` -- writes and reads recording files,
+   also cut off and uncompressed ones, and replays a recording through the
+   bridge to a WebSocket client while recording what is sent, checking that
+   both are the recorded frames byte for byte.

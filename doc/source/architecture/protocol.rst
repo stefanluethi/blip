@@ -95,3 +95,26 @@ Text frames received by blip are logged but otherwise ignored.
 .. note::
 
    On the WebSocket side each frame carries exactly one message.
+
+Recording files
+---------------
+
+blip saves the received messages to a recording file (**File > Save
+recording**), and the bridge writes the same format with ``--record``. A
+recording is a CBOR sequence (RFC 8742), i.e. CBOR items one after another
+without anything around them, compressed with gzip:
+
+#. A header, the map ``{"format": "blip recording", "version": 1}``.
+#. The ``Message`` of each binary frame, byte for byte as received, in the
+   order of arrival.
+
+As the frames are stored as received, a recording keeps everything that was
+sent, also messages blip could not read. Appending a frame is writing its
+bytes, so a recording that was cut off, e.g. when the bridge was killed, is
+read up to the last whole message. Readers accept files of several gzip
+members one after another, as appending to a gzip file creates them, and
+uncompressed files.
+
+blip saves recordings with the extension ``.blip``. Layouts are saved as JSON
+files of the same versioned format that blip keeps its layout in, so they can
+be read, compared and edited.

@@ -51,6 +51,21 @@ messages to blip messages:
 Actions sent by blip are forwarded to robby unchanged. The bridge reconnects
 when the connection to robby is lost.
 
+Replay a recording, saved by blip or recorded by the bridge::
+
+   uv run bridge --protocol replay --file recording.blip
+
+The messages are sent unchanged, each when the time between its timestamp
+and the first one has passed, divided by ``--speed``. The replay starts when
+the first client connects.
+
+Record the messages sent to blip with any protocol::
+
+   uv run bridge --protocol robby --remote-host 192.168.1.70 --record robby.blip
+
+The file is written while the bridge runs and can be opened in blip with
+**File > Open recording**.
+
 Options:
 
 .. list-table::
@@ -62,7 +77,7 @@ Options:
      - Description
    * - ``--protocol`` / ``-p``
      - ``simulator``
-     - Data source: ``simulator``, ``tcp``, ``udp`` or ``robby``
+     - Data source: ``simulator``, ``tcp``, ``udp``, ``robby`` or ``replay``
    * - ``--host`` / ``-h``
      - ``127.0.0.1``
      - WebSocket server bind address
@@ -90,6 +105,15 @@ Options:
    * - ``--log-interval``
      - ``500``
      - Mean simulator log interval in milliseconds
+   * - ``--file``
+     -
+     - Recording file to replay
+   * - ``--speed``
+     - ``1``
+     - Replay speed, ``2`` replays twice as fast
+   * - ``--record``
+     -
+     - Record the messages sent to blip to this file
    * - ``--verbose`` / ``-v``
      - off
      - Enable debug output
