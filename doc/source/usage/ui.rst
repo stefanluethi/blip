@@ -12,8 +12,8 @@ Window
 ------
 
 Top panel
-   WebSocket address, **Connect** and **Clear Data**, which removes all
-   received data.
+   The menu, see `Menu`_, and below it the WebSocket address, **Connect**
+   and **Clear Data**, which removes all received data.
 
 Left panel
    The **Traces** of the selected plot, as a tree that branches at each
@@ -33,6 +33,33 @@ Center
 
 Bottom panel
    The time range shown by all views.
+
+Menu
+----
+
+File
+   * **Open recording** (:kbd:`Ctrl+O`) disconnects and shows the data of a
+     recording file as if it had been received, with the time range fitted
+     to all of it.
+   * **Save recording** (:kbd:`Ctrl+S`) saves all messages received since
+     the data was last cleared to a ``.blip`` file, also those of an opened
+     recording. On the web, the file is downloaded.
+   * **Open layout** and **Save layout** load and save the layout of the
+     views, with all their settings, as a JSON file. **Reset layout** returns
+     to a plot and a log view.
+
+   Recording and layout files can also be dropped onto the window.
+
+View
+   Zooms the whole UI in and out, also with :kbd:`Ctrl` and :kbd:`+`,
+   :kbd:`-` and :kbd:`0` natively. In the browser, these keys zoom the page.
+   The zoom is kept across restarts.
+
+Help
+   The version of blip and a link to this documentation.
+
+The theme button on the right of the menu switches between the light, dark
+and system theme.
 
 Views
 -----
