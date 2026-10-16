@@ -7,6 +7,7 @@ import websockets
 from websockets.server import WebSocketServerProtocol, serve
 
 from bridge.protocols.base import BaseProtocol
+from bridge.recording import RecordingWriter
 
 logger = logging.getLogger("bridge.server")
 
@@ -19,9 +20,12 @@ class BridgeServer:
         protocol: BaseProtocol,
         host: str = "127.0.0.1",
         port: int = 3000,
-        path: str = "/ws/bridge"
+        path: str = "/ws/bridge",
+        recorder: Optional[RecordingWriter] = None,
     ) -> None:
         self.protocol = protocol
+        # records the binary messages, also while no client is connected
+        self.recorder = recorder
         self.host = host
         self.port = port
         self.path = path.rstrip("/")
@@ -34,6 +38,8 @@ class BridgeServer:
 
     async def broadcast(self, message: Union[bytes, str]) -> None:
         """Broadcast message received from protocol backend to all active WS clients."""
+        if self.recorder and isinstance(message, bytes):
+            self.recorder.write(message)
         if not self.connected_clients:
             return
 
@@ -64,6 +70,7 @@ class BridgeServer:
         client_addr = websocket.remote_address
         logger.info(f"WebSocket client connected from {client_addr} on path '{path}'")
         self.connected_clients.add(websocket)
+        await self.protocol.on_client_connected()
 
         try:
             async for message in websocket:
@@ -99,4 +106,6 @@ class BridgeServer:
             self.connected_clients.clear()
 
         await self.protocol.stop()
+        if self.recorder:
+            self.recorder.close()
         logger.info("WebSocket server shutdown complete.")
