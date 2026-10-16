@@ -8,7 +8,8 @@ pub mod trace_selection;
 pub mod xy;
 
 use crate::app::model::Model;
-use crate::app::model::traces::{DisplayFormat, NumberKind, Samples, Trace};
+use crate::app::model::numbers::{DisplayFormat, NumberKind};
+use crate::app::model::traces::{Samples, Trace};
 use crate::app::time::TimeRange;
 use std::collections::{BTreeMap, BTreeSet};
 use trace_selection::MAX_LISTED_ELEMENTS;
@@ -133,18 +134,13 @@ impl ViewType {
             (ViewType::Plot | ViewType::Xy, _) => Selectable::Trace,
             (
                 ViewType::States,
-                Samples::Numbers {
-                    kind: NumberKind::Float,
-                    ..
+                Samples::Numbers(numbers)
+                | Samples::Arrays {
+                    elements: numbers, ..
                 },
-            )
-            | (
-                ViewType::States,
-                Samples::Arrays {
-                    kind: Some(NumberKind::Float),
-                    ..
-                },
-            ) => Selectable::No("States show strings, bools and integers".to_owned()),
+            ) if numbers.kind() == Some(NumberKind::Float) => {
+                Selectable::No("States show strings, bools and integers".to_owned())
+            }
             (ViewType::States, Samples::Arrays { shape, .. }) => elements(shape),
             (ViewType::States, _) => Selectable::Trace,
             (ViewType::Table, _) => Selectable::Trace,
@@ -439,7 +435,7 @@ fn has_numbers(model: &Model, path: &str) -> bool {
     let kind = match model.traces.series(path) {
         Some(series) => Some(series.kind),
         None => match model.traces.get(path).map(|trace| &trace.samples) {
-            Some(Samples::Arrays { kind, .. }) => *kind,
+            Some(Samples::Arrays { elements, .. }) => elements.kind(),
             _ => None,
         },
     };

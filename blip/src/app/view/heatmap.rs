@@ -5,7 +5,8 @@
 use super::time_axis::{self, index_at};
 use super::{ViewContext, Viewable, text_color_on, with_unit};
 use crate::app::model::Model;
-use crate::app::model::traces::{DisplayFormat, NumberKind, Samples, Trace, format_significant};
+use crate::app::model::numbers::{DisplayFormat, Number, format_significant};
+use crate::app::model::traces::{Samples, Trace};
 use crate::app::time::TimeRange;
 use egui::Color32;
 use std::collections::BTreeSet;
@@ -96,21 +97,29 @@ const DIGITS: usize = 3;
 /// How the elements of the shown array are written.
 #[derive(Clone, Copy)]
 struct ValueText<'a> {
-    kind: NumberKind,
     format: DisplayFormat,
     unit: Option<&'a str>,
 }
 
 impl ValueText<'_> {
     /// `value` written for a cell.
-    fn write(self, value: f64) -> String {
-        self.kind.format_as(value, Some(DIGITS), self.format)
+    fn write(self, value: Number) -> String {
+        value.format(Some(DIGITS), self.format)
     }
 
     /// `value` written for a tooltip, with its unit.
-    fn with_unit(self, value: f64) -> String {
-        with_unit(self.write(value), self.unit.filter(|_| !value.is_nan()))
+    fn with_unit(self, value: Number) -> String {
+        with_unit(self.write(value), self.unit.filter(|_| !value.is_null()))
     }
+}
+
+/// The elements of the sample of an array trace at the cursor time.
+fn sample_at_cursor(trace: &Trace, time: &TimeRange) -> Vec<Number> {
+    time.cursor()
+        .and_then(|t| index_at(&trace.timestamps, t))
+        .and_then(|index| trace.samples.array_sample(index))
+        .map(|elements| elements.iter().collect())
+        .unwrap_or_default()
 }
 
 /// The values of an array trace of `len` elements within `(start, end)` seconds as a
@@ -136,8 +145,8 @@ fn over_time(
         else {
             continue;
         };
-        for (element, &value) in elements.iter().enumerate() {
-            grid[(len - 1 - element) * columns + column] = value;
+        for (element, value) in elements.iter().enumerate() {
+            grid[(len - 1 - element) * columns + column] = value.as_f64();
         }
     }
     grid
@@ -263,7 +272,7 @@ impl Heatmap {
             let value = index_at(&trace.timestamps, t)
                 .and_then(|index| trace.samples.array_sample(index))
                 .filter(|_| element >= 0.0)
-                .and_then(|elements| elements.get(element as usize).copied());
+                .and_then(|elements| elements.get(element as usize));
             let base = response.axis.base;
             response.response.on_hover_ui_at_pointer(|ui| {
                 ui.label(base.format(t, 3));
@@ -285,12 +294,8 @@ impl Heatmap {
         time: &TimeRange,
         size: egui::Vec2,
     ) {
-        let values: Vec<f64> = time
-            .cursor()
-            .and_then(|t| index_at(&trace.timestamps, t))
-            .and_then(|index| trace.samples.array_sample(index))
-            .map(<[f64]>::to_vec)
-            .unwrap_or_default();
+        let numbers = sample_at_cursor(trace, time);
+        let values: Vec<f64> = numbers.iter().map(|number| number.as_f64()).collect();
         self.fitted_range = value_range(&values);
         let range = self.shown_range();
         let texture =
@@ -318,12 +323,12 @@ impl Heatmap {
             plot_ui.image(egui_plot::PlotImage::new("", texture, center, size).allow_hover(false));
 
             if plot_ui.transform().dpos_dvalue()[0].abs() >= MIN_LABELLED_CELL_WIDTH {
-                for (index, &value) in values.iter().enumerate() {
+                for (index, &number) in numbers.iter().enumerate() {
                     let (row, column) = (index / columns, index % columns);
                     let position = egui_plot::PlotPoint::new(column as f64, -(row as f64));
-                    let color = text_color_on(color_of(value, range));
+                    let color = text_color_on(color_of(number.as_f64(), range));
                     plot_ui.text(
-                        egui_plot::Text::new("", position, text.write(value))
+                        egui_plot::Text::new("", position, text.write(number))
                             .color(color)
                             .allow_hover(false),
                     );
@@ -342,7 +347,7 @@ impl Heatmap {
                 (
                     row,
                     column,
-                    values[row as usize * columns + column as usize],
+                    numbers[row as usize * columns + column as usize],
                 )
             })
         });
@@ -357,12 +362,8 @@ impl Heatmap {
     /// Shows the elements of a 1D array trace at the cursor time as a line over their
     /// indices.
     fn line_ui(&mut self, ui: &mut egui::Ui, trace: &Trace, text: ValueText<'_>, time: &TimeRange) {
-        let values: Vec<f64> = time
-            .cursor()
-            .and_then(|t| index_at(&trace.timestamps, t))
-            .and_then(|index| trace.samples.array_sample(index))
-            .map(<[f64]>::to_vec)
-            .unwrap_or_default();
+        let numbers = sample_at_cursor(trace, time);
+        let values: Vec<f64> = numbers.iter().map(|number| number.as_f64()).collect();
         self.fitted_range = value_range(&values);
         let fixed_range = self.value_range;
         let color = super::plot::curve_color(0);
@@ -378,7 +379,8 @@ impl Heatmap {
             .allow_boxed_zoom(false)
             .label_formatter(move |hover| match hover {
                 egui_plot::HoverPosition::NearDataPoint { position, .. } => {
-                    Some(format!("[{}] = {}", position.x, text.with_unit(position.y)))
+                    let number = numbers.get(position.x.round() as usize)?;
+                    Some(format!("[{}] = {}", position.x, text.with_unit(*number)))
                 }
                 egui_plot::HoverPosition::Elsewhere { .. } => None,
             });
@@ -457,7 +459,7 @@ impl Viewable for Heatmap {
             ui.weak(format!("{path} has not been received"));
             return;
         };
-        let Samples::Arrays { shape, kind, .. } = &trace.samples else {
+        let Samples::Arrays { shape, .. } = &trace.samples else {
             ui.weak(format!("{path} is not an array"));
             return;
         };
@@ -468,7 +470,6 @@ impl Viewable for Heatmap {
             return;
         }
         let text = ValueText {
-            kind: kind.unwrap_or(NumberKind::Float),
             format: context.formats.of(path),
             unit: model.traces.unit(path),
         };

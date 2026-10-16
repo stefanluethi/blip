@@ -1,4 +1,5 @@
 pub mod logs;
+pub mod numbers;
 pub mod traces;
 
 use crate::app::model::logs::Logs;

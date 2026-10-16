@@ -4,7 +4,8 @@
 use super::time_axis::{self, index_at, visible_range};
 use super::{Formats, ViewContext, Viewable, short_names, text_color_on, with_unit};
 use crate::app::model::Model;
-use crate::app::model::traces::{DisplayFormat, NumberKind, Samples, Series};
+use crate::app::model::numbers::{DisplayFormat, NumberKind};
+use crate::app::model::traces::{Samples, Series};
 use crate::app::time::{TimeBase, timestamp_to_seconds};
 use egui::Color32;
 use std::collections::BTreeSet;
@@ -74,7 +75,7 @@ impl<'a> StateSamples<'a> {
 
     fn is_null(&self, index: usize) -> bool {
         match self {
-            Self::Numbers(series, _) => series.value(index).is_nan(),
+            Self::Numbers(series, _) => series.number(index).is_null(),
             Self::Strings { values, .. } => values[index].is_none(),
         }
     }
@@ -82,7 +83,7 @@ impl<'a> StateSamples<'a> {
     /// Whether the samples at `a` and `b` have the same value.
     fn same(&self, a: usize, b: usize) -> bool {
         match self {
-            Self::Numbers(series, _) => series.value(a) == series.value(b),
+            Self::Numbers(series, _) => series.number(a) == series.number(b),
             Self::Strings { values, .. } => values[a] == values[b],
         }
     }
@@ -90,7 +91,7 @@ impl<'a> StateSamples<'a> {
     /// The value of the sample at `index`, which its colour follows.
     fn label(&self, index: usize) -> String {
         match self {
-            Self::Numbers(series, _) => series.kind.format(series.value(index)),
+            Self::Numbers(series, _) => series.number(index).to_string(),
             Self::Strings { .. } => self.text(index),
         }
     }
@@ -98,9 +99,7 @@ impl<'a> StateSamples<'a> {
     /// The value of the sample at `index` as shown, in the display format.
     fn text(&self, index: usize) -> String {
         match self {
-            Self::Numbers(series, format) => {
-                series.kind.format_as(series.value(index), None, *format)
-            }
+            Self::Numbers(series, format) => series.number(index).format(None, *format),
             Self::Strings { values, .. } => {
                 values[index].clone().unwrap_or_else(|| "null".to_owned())
             }
