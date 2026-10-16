@@ -1,0 +1,72 @@
+# Builds and tests sonde, the C++ tracing library: the tests with GCC, MSVC and under
+# ThreadSanitizer, the library without exceptions and RTTI, and for Cortex-M0 and M4.
+
+name: sonde
+
+on:
+  push:
+    branches: [main]
+    paths: [sonde/**, .github/workflows/sonde.yml]
+  pull_request:
+    paths: [sonde/**, .github/workflows/sonde.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: sonde
+
+jobs:
+  test:
+    name: test (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gcc
+            os: ubuntu-latest
+            flags: ""
+          - name: thread sanitizer
+            os: ubuntu-latest
+            flags: -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_FLAGS=-fsanitize=thread -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread
+          - name: msvc
+            os: windows-latest
+            flags: ""
+    steps:
+      - uses: actions/checkout@v7
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DSONDE_WERROR=ON ${{ matrix.flags }}
+      - name: Build
+        run: cmake --build build --config Debug --parallel
+      - name: Test
+        run: ctest --test-dir build --build-config Debug --output-on-failure
+
+  freestanding:
+    name: build (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: no exceptions, no RTTI
+            flags: >-
+              -DSONDE_BUILD_TESTS=OFF "-DCMAKE_CXX_FLAGS=-fno-exceptions -fno-rtti"
+          # the toolchain file sets -fno-exceptions -fno-rtti
+          - name: cortex-m0
+            flags: -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DSONDE_CPU=cortex-m0
+          - name: cortex-m4
+            flags: -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DSONDE_CPU=cortex-m4
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install arm-none-eabi-gcc
+        if: startsWith(matrix.name, 'cortex')
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
+      - name: Configure
+        run: >-
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=MinSizeRel -DSONDE_WERROR=ON
+          -DSONDE_BUILD_EXAMPLES=ON ${{ matrix.flags }}
+      - name: Build
+        run: cmake --build build --parallel

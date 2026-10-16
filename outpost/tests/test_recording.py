@@ -2,11 +2,12 @@
 
 import asyncio
 import gzip
+from pathlib import Path
 
 import cbor2
 import websockets
 
-from outpost.proto import Message
+from outpost.proto import Message, split_items
 from outpost.protocols.replay import ReplayProtocol, timestamp
 from outpost.recording import FORMAT, VERSION, RecordingWriter, read_frames
 from outpost.server import OutpostServer
@@ -86,3 +87,27 @@ async def test_replay_sends_and_records_the_frames_unchanged(tmp_path):
 
     assert received == frames()
     assert list(read_frames(copy)) == frames()
+
+
+# a recording written by sonde, the C++ tracing library, uncompressed
+SONDE_RECORDING = Path(__file__).parents[2] / "sonde" / "tests" / "data" / "recording.blip"
+
+
+def test_recordings_of_sonde_are_read():
+    read = list(read_frames(SONDE_RECORDING))
+    assert len(read) == 12
+    assert cbor2.loads(read[0]) == {"ValueMetadata": {"path": "motor/speed", "unit": "rpm"}}
+    assert cbor2.loads(read[5]) == {
+        "Value": {
+            "timestamp": 3_000_000,
+            "path": "motor",
+            "value": {"speed_rpm": 1500, "enabled": True, "state": "running"},
+        }
+    }
+    assert cbor2.loads(read[9]) == {
+        "Log": {"timestamp": 3_000_000, "level": 3, "message": "no component"}
+    }
+    # the batches of sonde are the messages one after another
+    data = SONDE_RECORDING.read_bytes()
+    items, rest = split_items(data)
+    assert items[1:] == read and rest == b""
