@@ -2,6 +2,7 @@
 
 import functools
 import importlib
+import itertools
 import importlib.util
 import inspect
 import sys
@@ -11,6 +12,10 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from bridge.protocol import Protocol
+
+
+# Numbers the module names of protocol files, which may share their names
+_file_numbers = itertools.count()
 
 
 class LoadError(Exception):
@@ -43,17 +48,24 @@ def _protocol_classes(module: types.ModuleType) -> List[type]:
 
 
 def _import_file(path: Path) -> types.ModuleType:
-    name = path.stem
+    """Imports the protocol file at `path` under a private module name, so a file named
+    like another module, e.g. ``serial.py``, neither replaces that module nor imports
+    itself in its place. Modules next to the file can be imported, unless an installed
+    module has the same name."""
+    name = f"_blip_protocol_{next(_file_numbers)}_{path.stem}"
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         raise LoadError(f"cannot load {path}")
     module = importlib.util.module_from_spec(spec)
-    # so the module can import modules next to it
-    sys.path.insert(0, str(path.resolve().parent))
+    folder = str(path.resolve().parent)
+    # after the installed modules, which keep their names
+    if folder not in sys.path:
+        sys.path.append(folder)
     sys.modules[name] = module
     try:
         spec.loader.exec_module(module)
     except Exception as e:
+        del sys.modules[name]
         raise LoadError(f"error loading {path}: {type(e).__name__}: {e}") from e
     return module
 

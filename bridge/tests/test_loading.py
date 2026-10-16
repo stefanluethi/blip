@@ -67,6 +67,26 @@ def test_a_file_with_several_protocols_needs_a_class_name(tmp_path):
         load_protocol(f"{path}:Missing")
 
 
+def test_a_file_named_like_a_module_does_not_shadow_it(tmp_path):
+    import json
+    import sys
+
+    (tmp_path / "target_helpers.py").write_text("PORT = 4242\n", encoding="utf-8")
+    source = (
+        "import json\nfrom target_helpers import PORT\nfrom bridge import Protocol\n\n"
+        "class Json(Protocol):\n"
+        "    def __init__(self, port: int = PORT) -> None:\n"
+        "        self.text = json.dumps({'port': port})\n\n"
+        "    async def run(self) -> None:\n"
+        "        pass\n"
+    )
+    path = write_protocol(tmp_path, source, "json.py")
+    protocol = create_protocol(load_protocol(str(path)), [])
+    # the protocol imported the json of the standard library, which stays registered
+    assert protocol.text == '{"port": 4242}'
+    assert sys.modules["json"] is json
+
+
 def test_unknown_protocols_are_reported():
     with pytest.raises(LoadError, match="unknown protocol"):
         load_protocol("no_such_module_here")
