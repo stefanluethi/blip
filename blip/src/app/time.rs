@@ -1,6 +1,7 @@
-//! The time range shared by all views.
+//! The time range shared by all views, and the controls to play and pause it.
 
 use crate::app::model::Model;
+use egui_phosphor::regular;
 
 const NANOS_PER_SECOND: f64 = 1.0e9;
 const MIN_WINDOW: f64 = 1.0e-3;
@@ -78,7 +79,8 @@ impl TimeBase {
 }
 
 /// A window of `window` seconds shown by all views. It either follows the newest data
-/// (live) or ends at a fixed time.
+/// (live), or ends at a time that stays while paused and moves on at the pace of the
+/// timestamps while playing.
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct TimeRange {
@@ -86,6 +88,12 @@ pub struct TimeRange {
     /// End of the window in seconds, or `None` to follow the newest data.
     #[serde(skip)]
     end: Option<f64>,
+    /// Whether the window moves on in time, always while live.
+    #[serde(skip)]
+    playing: bool,
+    /// When the window was last moved on while playing, in seconds as egui counts them.
+    #[serde(skip)]
+    played_at: Option<f64>,
     /// Times of the first and the newest collected data in seconds.
     #[serde(skip)]
     span: Option<(f64, f64)>,
@@ -99,6 +107,8 @@ impl Default for TimeRange {
         Self {
             window: 20.0,
             end: None,
+            playing: true,
+            played_at: None,
             span: None,
             cursor: None,
         }
@@ -106,14 +116,36 @@ impl Default for TimeRange {
 }
 
 impl TimeRange {
-    /// Updates the span of the collected data, call once per frame before the views.
-    pub fn update(&mut self, model: &Model) {
+    /// Updates the span of the collected data and moves the window on while playing,
+    /// call once per frame before the views with the time `now` in seconds.
+    pub fn update(&mut self, model: &Model, now: f64) {
+        self.update_span(model);
+        self.play_on(now);
+    }
+
+    fn update_span(&mut self, model: &Model) {
         self.span = model
             .time_span()
             .map(|(first, latest)| (timestamp_to_seconds(first), timestamp_to_seconds(latest)));
         if self.span.is_none() {
-            self.end = None;
-            self.cursor = None;
+            self.go_live();
+        }
+    }
+
+    /// Moves the window and the cursor on by the time passed since the last call while
+    /// playing, and follows the newest data once the window reaches it.
+    fn play_on(&mut self, now: f64) {
+        let last = self.played_at.take();
+        let (true, Some(end), Some((_, latest))) = (self.playing, self.end, self.span) else {
+            return;
+        };
+        self.played_at = Some(now);
+        let step = last.map_or(0.0, |last| (now - last).max(0.0));
+        if end + step >= latest {
+            self.go_live();
+        } else {
+            self.end = Some(end + step);
+            self.cursor = self.cursor.map(|cursor| cursor + step);
         }
     }
 
@@ -124,21 +156,19 @@ impl TimeRange {
         self.cursor.or_else(|| self.range().map(|(_, end)| end))
     }
 
-    /// Puts the cursor at `t` seconds within the collected data. This stops following
-    /// the newest data, so the cursor stays in the window.
+    /// Puts the cursor at `t` seconds within the collected data. This pauses, so the
+    /// cursor stays in the window.
     pub fn set_cursor(&mut self, t: f64) {
         let Some((first, latest)) = self.span else {
             return;
         };
-        if self.is_live() {
-            self.end = Some(latest);
-        }
+        self.pause();
         self.cursor = Some(t.clamp(first, latest));
     }
 
     /// Shows all data of `model`, e.g. of a loaded recording.
     pub fn fit(&mut self, model: &Model) {
-        self.update(model);
+        self.update_span(model);
         if let Some((first, latest)) = self.span {
             self.window = (latest - first).clamp(MIN_WINDOW, MAX_WINDOW);
         }
@@ -146,9 +176,33 @@ impl TimeRange {
     }
 
     /// Follows the newest data with the window and the cursor.
-    fn go_live(&mut self) {
+    pub fn go_live(&mut self) {
         self.end = None;
         self.cursor = None;
+        self.playing = true;
+    }
+
+    /// Stops the window where it is, also while live.
+    fn pause(&mut self) {
+        if self.is_live() {
+            self.end = self.latest();
+        }
+        self.playing = false;
+    }
+
+    /// Pauses while playing, else moves the window on from where it is.
+    fn toggle_play(&mut self) {
+        if self.playing {
+            self.pause();
+        } else {
+            self.playing = true;
+        }
+    }
+
+    /// Whether the window moves on, following the newest data or at the pace of the
+    /// timestamps.
+    pub fn is_playing(&self) -> bool {
+        self.playing
     }
 
     /// Time of the newest collected data in seconds.
@@ -178,15 +232,27 @@ impl TimeRange {
     }
 
     /// Applies a pan or zoom of a plot to `[start, end]` seconds. Zooming keeps
-    /// following the newest data in live mode.
+    /// following the newest data in live mode and keeps playing, panning pauses.
     pub fn pan_zoom(&mut self, start: f64, end: f64) {
         let window = (end - start).clamp(MIN_WINDOW, MAX_WINDOW);
-        if self.is_live() && (window - self.window).abs() > self.window * 1.0e-6 {
-            self.window = window;
-        } else {
-            self.window = window;
+        let zoomed = (window - self.window).abs() > self.window * 1.0e-6;
+        self.window = window;
+        if !zoomed {
+            self.move_end(end);
+        } else if !self.is_live() {
+            let playing = self.playing;
             self.set_end(end);
+            if !playing {
+                // reaching the newest data stays paused there
+                self.pause();
+            }
         }
+    }
+
+    /// Pauses and moves the end of the window to `end` seconds, see [`Self::set_end`].
+    fn move_end(&mut self, end: f64) {
+        self.pause();
+        self.set_end(end);
     }
 
     /// Moves the end of the window to `end` seconds, switches to live mode if that is
@@ -201,21 +267,26 @@ impl TimeRange {
         }
     }
 
+    /// The controls of the time range: playing and pausing, the window and the
+    /// timeline.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
+            let (icon, hint) = if self.playing {
+                (regular::PAUSE, "Pause")
+            } else {
+                (regular::PLAY, "Play at the pace of the timestamps")
+            };
+            if ui.button(icon).on_hover_text(hint).clicked() {
+                self.toggle_play();
+            }
             let live_button =
-                egui::Button::new(format!("{} Live", egui_phosphor::regular::BROADCAST))
-                    .selected(self.is_live());
+                egui::Button::new(format!("{} Live", regular::BROADCAST)).selected(self.is_live());
             if ui
                 .add(live_button)
                 .on_hover_text("Follow the newest data")
                 .clicked()
             {
-                if self.is_live() {
-                    self.end = self.span.map(|(_, latest)| latest);
-                } else {
-                    self.go_live();
-                }
+                self.go_live();
             }
 
             ui.label("Window:");
@@ -229,6 +300,9 @@ impl TimeRange {
 
             self.timeline_ui(ui);
         });
+        if self.playing && !self.is_live() {
+            ui.ctx().request_repaint();
+        }
     }
 
     /// A track over the collected data with a thumb for the shown window and the
@@ -276,9 +350,9 @@ impl TimeRange {
             let jump =
                 (response.clicked() || response.drag_started()) && !thumb_at(range).contains(pos);
             if jump {
-                self.set_end(t_at(pos.x) + self.window / 2.0);
+                self.move_end(t_at(pos.x) + self.window / 2.0);
             } else if response.dragged() {
-                self.set_end(end + (response.drag_delta().x / rect.width()) as f64 * duration);
+                self.move_end(end + (response.drag_delta().x / rect.width()) as f64 * duration);
             }
         }
 
@@ -475,5 +549,101 @@ mod tests {
         let mut time = time_range(100.0, 150.0, 20.0);
         time.pan_zoom(50.0, 70.0);
         assert_eq!(time.range(), Some((100.0, 120.0)));
+    }
+
+    #[test]
+    fn a_paused_window_stays_while_data_arrives_and_plays_on_from_there() {
+        let mut time = time_range(100.0, 150.0, 20.0);
+        assert!(time.playing);
+        time.toggle_play();
+        assert!(!time.is_live() && !time.playing);
+        time.span = Some((100.0, 160.0));
+        time.play_on(1.0);
+        time.play_on(3.0);
+        assert_eq!(time.range(), Some((130.0, 150.0)));
+
+        time.toggle_play();
+        time.play_on(4.0);
+        time.play_on(6.5);
+        assert!(time.playing && !time.is_live());
+        assert_eq!(time.range(), Some((132.5, 152.5)));
+        // the time while paused is skipped
+        time.toggle_play();
+        time.play_on(10.0);
+        time.toggle_play();
+        time.play_on(20.0);
+        time.play_on(21.0);
+        assert_eq!(time.range(), Some((133.5, 153.5)));
+    }
+
+    #[test]
+    fn playing_moves_the_cursor_along_and_goes_live_at_the_newest_data() {
+        let mut time = time_range(100.0, 150.0, 20.0);
+        time.pan_zoom(120.0, 140.0);
+        time.set_cursor(130.0);
+        time.toggle_play();
+        time.play_on(0.0);
+        time.play_on(5.0);
+        assert_eq!(time.range(), Some((125.0, 145.0)));
+        assert_eq!(time.cursor(), Some(135.0));
+        time.play_on(10.0);
+        assert!(time.is_live() && time.playing);
+        assert_eq!(time.cursor(), Some(150.0));
+    }
+
+    #[test]
+    fn panning_and_setting_the_cursor_pause_and_zooming_plays_on() {
+        let mut time = time_range(100.0, 150.0, 20.0);
+        time.pan_zoom(120.0, 140.0);
+        assert!(!time.playing);
+        time.toggle_play();
+        time.pan_zoom(130.0, 140.0);
+        assert!(time.playing);
+        assert_eq!(time.range(), Some((130.0, 140.0)));
+        time.set_cursor(135.0);
+        assert!(!time.playing);
+        // setting the cursor while live pauses at the newest data
+        let mut time = time_range(100.0, 150.0, 20.0);
+        time.set_cursor(140.0);
+        assert!(!time.playing);
+        assert_eq!(time.range(), Some((130.0, 150.0)));
+    }
+
+    #[test]
+    fn zooming_while_paused_stays_paused_also_at_the_newest_data() {
+        let mut time = time_range(100.0, 150.0, 20.0);
+        time.pan_zoom(120.0, 140.0);
+        time.pan_zoom(135.0, 165.0);
+        assert!(!time.playing && !time.is_live());
+        assert_eq!(time.range(), Some((120.0, 150.0)));
+    }
+
+    #[test]
+    fn the_buttons_pause_and_go_live() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(600.0, 40.0))
+            .build_ui_state(
+                |ui, time: &mut TimeRange| time.ui(ui),
+                time_range(100.0, 150.0, 20.0),
+            );
+        harness.run();
+        harness.get_by_label(regular::PAUSE).click();
+        harness.run();
+        assert!(!harness.state().playing);
+        assert_eq!(harness.state().range(), Some((130.0, 150.0)));
+        // playing repaints each frame
+        harness.get_by_label(regular::PLAY).click();
+        harness.run_steps(2);
+        assert!(harness.state().playing);
+
+        harness.get_by_label(regular::PAUSE).click();
+        harness.step();
+        harness.run();
+        harness.get_by_label_contains("Live").click();
+        harness.run();
+        assert!(harness.state().is_live() && harness.state().playing);
     }
 }

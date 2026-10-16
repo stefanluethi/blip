@@ -52,6 +52,22 @@ Test Cases
    keep the cursor at the end of the range until set, stop live mode when it
    is set, and click and drag it in a plot without panning the plot.
 
+.. test:: Recording is switched, the time range paused and played
+   :id: TEST_BLIP_PLAYBACK
+   :status: implemented
+   :component: blip
+   :verifies: REQ_VIS_PLAYBACK
+
+   ``blip/src/app.rs``, ``blip/src/app/time.rs`` and ``blip/src/app/model.rs``
+   tests -- drop values and log records while not recording but keep units,
+   actions and answers, start a recording only while connected, clearing the
+   data but the latest units and actions, which are recorded again, stop
+   recording when a recording file is opened, keep a paused range while data
+   arrives, play on from it with the cursor without skipping ahead by the
+   paused time, return to live mode at the newest data, pause when panning or
+   setting the cursor but not when zooming, and switch with the buttons of the
+   bottom panel.
+
 .. test:: Trace values encode as plain CBOR
    :id: TEST_PROTO_DATA
    :status: implemented
