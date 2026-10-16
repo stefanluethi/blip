@@ -136,6 +136,15 @@ impl TimeRange {
         self.cursor = Some(t.clamp(first, latest));
     }
 
+    /// Shows all data of `model`, e.g. of a loaded recording.
+    pub fn fit(&mut self, model: &Model) {
+        self.update(model);
+        if let Some((first, latest)) = self.span {
+            self.window = (latest - first).clamp(MIN_WINDOW, MAX_WINDOW);
+        }
+        self.go_live();
+    }
+
     /// Follows the newest data with the window and the cursor.
     fn go_live(&mut self) {
         self.end = None;

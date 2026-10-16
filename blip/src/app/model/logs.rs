@@ -105,10 +105,6 @@ impl Default for Logs {
 }
 
 impl Logs {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn push(&mut self, entry: LogEntry) {
         if self.entries.len() >= self.max_entries {
             self.entries.pop_front();
