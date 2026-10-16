@@ -25,6 +25,7 @@ impl Model {
                 self.traces.set_unit(&metadata.path, &metadata.unit);
             }
             Ok(proto::Message::Log(record)) => self.logs.push(LogEntry::from_proto(&record)),
+            Ok(proto::Message::Actions(_) | proto::Message::ActionResult(_)) => {}
             Err(error) => log::warn!("error parsing message: {error}"),
         }
     }

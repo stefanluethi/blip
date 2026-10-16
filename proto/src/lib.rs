@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+mod action;
 mod data;
 
+pub use action::{ActionDescriptor, ActionResult, Invocation, Param, ParamKind, Request};
 pub use data::Data;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -27,14 +29,13 @@ pub struct LogRecord {
     pub message: String,
 }
 
+/// A message from the target to blip.
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub enum Message {
     Value(Value),
     ValueMetadata(ValueMetadata),
     Log(LogRecord),
-}
-
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
-pub enum Action {
-    SetMotorSpeed(u16),
+    /// All actions the target can carry out, replacing the ones announced before.
+    Actions(Vec<ActionDescriptor>),
+    ActionResult(ActionResult),
 }
