@@ -552,18 +552,31 @@ impl Actions {
         }
     }
 
-    /// Asks to confirm the action held in `confirm`, invoking it if confirmed.
-    fn confirm_ui(ui: &mut egui::Ui, invoker: &mut Invoker, id: egui::Id, now: f64) {
+    /// Asks to confirm the action held in `confirm`, invoking it if confirmed. Run is
+    /// disabled while the action cannot be carried out, e.g. once the connection
+    /// ended or the target disabled the action while the dialog was open.
+    fn confirm_ui(ui: &mut egui::Ui, context: &mut ViewContext<'_>, id: egui::Id, now: f64) {
         let Some(confirmation) = ui.data(|data| data.get_temp::<Confirmation>(id)) else {
             return;
+        };
+        let invoker = &mut *context.invoker;
+        let disabled = match context.model.actions.get(&confirmation.path) {
+            Some(action) => disabled_reason(invoker, action),
+            None => Some("The target no longer announces the action"),
         };
         let mut decided = false;
         egui::Modal::new(id.with("modal")).show(ui.ctx(), |ui| {
             ui.set_max_width(320.0);
             ui.label(format!("Carry out {}?", confirmation.path));
+            if let Some(reason) = disabled {
+                ui.weak(reason);
+            }
             ui.add_space(8.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                if ui.button("Run").clicked() {
+                if ui
+                    .add_enabled(disabled.is_none(), egui::Button::new("Run"))
+                    .clicked()
+                {
                     invoker.invoke(&confirmation.path, confirmation.args.clone(), now);
                     decided = true;
                 }
@@ -624,7 +637,7 @@ impl Viewable for Actions {
         if let Some(confirmation) = confirm {
             ui.data_mut(|data| data.insert_temp(confirm_id, confirmation));
         }
-        Self::confirm_ui(ui, context.invoker, confirm_id, now);
+        Self::confirm_ui(ui, context, confirm_id, now);
     }
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, model: &Model) {
@@ -928,6 +941,28 @@ mod tests {
         assert_eq!(sent(&mut harness).len(), 1);
         // the dialog is gone
         assert!(harness.query_by_label("Run").is_none());
+    }
+
+    #[test]
+    fn confirming_is_refused_once_the_action_is_disabled() {
+        let reboot = ActionDescriptor {
+            confirm: true,
+            ..action("reboot", vec![])
+        };
+        let mut harness = harness(vec![reboot.clone()]);
+        harness.get_by_label(&format!("{PLAY} Run")).click();
+        harness.run_steps(2);
+        // the target disables the action while the dialog is open
+        let disabled = ActionDescriptor {
+            enabled: false,
+            ..reboot
+        };
+        harness.state_mut().model.actions.set(vec![disabled]);
+        harness.run_steps(2);
+        harness.get_by_label("Run").click();
+        harness.run_steps(2);
+        assert!(sent(&mut harness).is_empty());
+        harness.get_by_label("The target cannot carry out the action now");
     }
 
     #[test]
