@@ -83,7 +83,9 @@ impl State {
                         }
                         ewebsock::WsMessage::Binary(msg) => {
                             if let Some(result) = self.model.receive(&msg) {
-                                self.invoker.receive(&result, now);
+                                let model = &self.model;
+                                self.invoker
+                                    .receive(&result, now, |path| model.readback_samples(path));
                             }
                         }
                         _ => {

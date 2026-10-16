@@ -104,7 +104,8 @@ it has one, and what became of its latest invocation.
 
 The inputs start from the readback, the default of the parameter or its
 lowest value. Checkboxes and choices with a readback follow it, so they show
-the state of the target. blip only sends an action when the user does: never
+the state of the target. After a change they keep the new value until a
+readback sample arrives that is newer than the target's answer. blip only sends an action when the user does: never
 on its own, at startup or when it connects again.
 
 The last column shows a spinner while the target has not answered, a check
