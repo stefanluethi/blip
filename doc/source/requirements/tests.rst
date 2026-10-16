@@ -92,6 +92,16 @@ Test Cases
    encoded by the Python outpost, and reject byte strings, non-text map keys,
    duplicate fields and integers out of range.
 
+.. test:: Frames are split into their messages
+   :id: TEST_BLIP_CBOR_SEQUENCE
+   :status: implemented
+   :component: blip
+   :verifies: REQ_PROTO_SEQUENCE
+
+   ``blip/src/app/model.rs::a_cbor_sequence_is_split_into_its_items`` --
+   splits a CBOR sequence of a value and a log record into both messages, and
+   one cut off or broken in the middle into the messages before and an error.
+
 .. test:: Integers are kept exactly
    :id: TEST_BLIP_NUMBERS
    :status: implemented
