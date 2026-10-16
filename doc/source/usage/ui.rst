@@ -13,7 +13,8 @@ Window
 
 Top panel
    The menu, see `Menu`_, and below it the WebSocket address, **Connect**
-   and **Clear Data**, which removes all received data.
+   and **Clear Data**, which removes all received data but the announced
+   actions.
 
 Left panel
    The **Traces** of the selected plot, as a tree that branches at each
@@ -75,6 +76,46 @@ Plot
 Logs
    Table of received ``Log`` records with timestamp, level, component and
    message. Records outside the shown time range are greyed out.
+
+Actions
+   A form of the actions the target announced, to carry them out on the
+   target, e.g. set a motor setpoint or a log level. See `Actions`_.
+
+Actions
+-------
+
+An actions view lists an action per row: its name (hover it for the
+description and path), its input, the current value of its readback trace if
+it has one, and what became of its latest invocation.
+
+* An action without parameters is a **Run** button.
+* An action with one parameter is sent as soon as its input changes: a
+  checkbox for a bool, buttons or a dropdown for a choice, a slider for a
+  number with a minimum and a maximum, sent while it is dragged (at most ten
+  times a second, and the final value on release), a number field otherwise,
+  and a text field for a string, sent with :kbd:`Enter`.
+* An action with several parameters lists them below its row and is sent with
+  its **Send** button.
+* An action that asks for confirmation is sent after confirming it in a
+  dialog.
+
+The inputs start from the readback, the default of the parameter or its
+lowest value. Checkboxes and choices with a readback follow it, so they show
+the state of the target. blip only sends an action when the user does: never
+on its own, at startup or when it connects again.
+
+The last column shows a spinner while the target has not answered, a check
+mark for a moment once it carried the action out, a warning if it rejected
+the action (hover it for the reason) and a clock if it did not answer within
+five seconds. Each invocation also shows as a log record of the component
+``actions`` in the log views, rejected ones as warnings.
+
+The actions are disabled while blip is not connected, e.g. while a recording
+is open, and while the target cannot carry them out. In the properties, an
+actions view shows **All** actions, also those announced later, or the
+**Chosen** ones; chosen actions the target does not announce are listed
+greyed out. **Number inputs** switches numbers with a minimum and a maximum
+between a slider and a field.
 
 Properties
 ----------

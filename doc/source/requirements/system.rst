@@ -115,14 +115,66 @@ Connectivity
    or ``null`` for no value, encoded as a plain CBOR data item without type
    tags.
 
-.. req:: Send actions to the target
+Control
+-------
+
+.. req:: Announce actions
+   :id: REQ_CTRL_ANNOUNCE
+   :status: implemented
+   :component: proto, bridge
+   :satisfies: STK_CONTROL
+
+   The target shall announce the actions it can carry out with their
+   parameters (bool, integer, float, choice or string, with bounds, unit and
+   default), an optional readback trace, whether they need confirmation and
+   whether they are enabled. Each announcement shall replace the previous one,
+   and blip clients connecting later shall get the latest.
+
+.. req:: Invoke actions
    :id: REQ_CTRL_ACTION
-   :status: draft
+   :status: implemented
    :component: blip, bridge
    :satisfies: STK_CONTROL
 
-   blip shall send ``Action`` messages to the connected target, and the
-   bridge shall forward them to the device.
+   blip shall send invocations of announced actions with their arguments to
+   the connected target. The bridge shall check the arguments against the
+   parameters and carry out the invocations of an action one after another in
+   the order they arrived.
+
+.. req:: Action feedback
+   :id: REQ_CTRL_FEEDBACK
+   :status: implemented
+   :component: blip, bridge
+   :satisfies: STK_CONTROL
+
+   The target shall answer each invocation to the client that sent it with
+   whether it carried it out or the reason it rejected it. blip shall show
+   whether the latest invocation of an action is pending, accepted, rejected
+   with the reason, or unanswered after a timeout. The bridge shall log each
+   invocation and its outcome to all clients.
+
+.. req:: Actions view
+   :id: REQ_CTRL_VIEW
+   :status: implemented
+   :component: blip
+   :satisfies: STK_CONTROL
+
+   blip shall offer a view of actions placed with the layout, showing buttons,
+   checkboxes, choices, sliders, number and text fields by the kinds of their
+   parameters, and the value of their readback traces. Sliders shall send
+   while dragged at a limited rate, actions with several parameters shall be
+   sent with a separate Send button.
+
+.. req:: Actions only on request
+   :id: REQ_CTRL_SAFE
+   :status: implemented
+   :component: blip
+   :satisfies: STK_CONTROL
+
+   blip shall send an action only when the user operates its input, never on
+   its own at startup or on reconnecting, ask before sending actions that
+   need confirmation, and disable actions while not connected or while the
+   target cannot carry them out.
 
 Platforms
 ---------
@@ -185,6 +237,18 @@ Bridge
    The bridge shall forward COBS-framed CBOR messages between a serial port
    and WebSocket clients.
 
+.. req:: User-provided protocols
+   :id: REQ_BRIDGE_PROTOCOL
+   :status: implemented
+   :component: bridge
+   :satisfies: STK_DEVICE_IF, STK_CONTROL
+
+   The bridge shall load the protocol that talks to the target from a Python
+   file or module provided by the user, configured with options converted by
+   the type hints of its constructor. A protocol shall declare its actions as
+   Python functions whose parameters are taken from their type hints, and may
+   change them at runtime.
+
 .. req:: Socket bridge
    :id: REQ_BRIDGE_SOCKET
    :status: implemented
@@ -192,17 +256,17 @@ Bridge
    :satisfies: STK_DEVICE_IF
 
    The bridge shall forward messages between a TCP or UDP endpoint and
-   WebSocket clients.
+   WebSocket clients, and forward invocations to the endpoint.
 
 .. req:: Simulator
    :id: REQ_BRIDGE_SIM
-   :status: verified
+   :status: implemented
    :component: bridge
-   :satisfies: STK_DEVICE_IF
+   :satisfies: STK_DEVICE_IF, STK_CONTROL
 
    The bridge shall provide a simulator mode that streams synthetic CPU load
    and sensor values, and log records of all severity levels, without
-   hardware.
+   hardware, and offers actions that change what it streams.
 
 .. req:: Record messages
    :id: REQ_BRIDGE_RECORD
@@ -220,4 +284,5 @@ Bridge
    :satisfies: STK_REVIEW, STK_DEVICE_IF
 
    The bridge shall send the messages of a recording file to blip unchanged,
-   at the pace of their timestamps or faster.
+   except that recorded actions are disabled, at the pace of their timestamps
+   or faster.
