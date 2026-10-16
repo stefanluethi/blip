@@ -104,9 +104,15 @@ recording**), and the bridge writes the same format with ``--record``. A
 recording is a CBOR sequence (RFC 8742), i.e. CBOR items one after another
 without anything around them, compressed with gzip:
 
-#. A header, the map ``{"format": "blip recording", "version": 1}``.
+#. A header, the map ``{"format": "blip recording", "version": 2}``.
 #. The ``Message`` of each binary frame, byte for byte as received, in the
    order of arrival.
+#. Since version 2, a text string before the messages of another connection
+   with the name of that connection, see :doc:`/usage/ui`. Messages are maps, so
+   a name cannot be taken for a message. Messages before the first name, and
+   all messages of version 1, have no connection name. The bridge writes
+   version 1, it reads version 2 and replays the messages of all its
+   connections without their names.
 
 As the frames are stored as received, a recording keeps everything that was
 sent, also messages blip could not read. Appending a frame is writing its
