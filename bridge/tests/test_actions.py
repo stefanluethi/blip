@@ -247,6 +247,23 @@ async def test_a_slow_action_holds_up_only_its_own_invocations():
         await server.stop()
 
 
+async def test_declared_actions_are_announced_once_at_startup():
+    sent = []
+
+    async def capture(frame: bytes) -> None:
+        sent.append(cbor2.loads(frame))
+
+    target = Target()
+    target.attach(capture)
+    # the registry is built on first use, here in a running loop
+    assert len(target.actions) == 4
+    await asyncio.sleep(0.05)
+    assert sent == []
+    target.actions.set_enabled(False, "reboot")
+    await asyncio.sleep(0.05)
+    assert [next(iter(message)) for message in sent] == ["Actions"]
+
+
 def test_messages_are_told_apart_by_their_prefix():
     from bridge.proto import ACTION_RESULT_PREFIX, ACTIONS_PREFIX, Message
 

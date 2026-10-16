@@ -31,15 +31,18 @@ class Protocol:
         """The actions offered to blip, starting with the methods decorated with
         @action. Changing them announces them to blip again."""
         if self._actions is None:
-            self._actions = Actions(on_change=self._actions_changed)
+            actions = Actions()
             for info, method in declared_actions(self):
-                self._actions.add(
+                actions.add(
                     info.path,
                     method,
                     description=info.description,
                     readback=info.readback,
                     confirm=info.confirm,
                 )
+            # only now, so the declared actions are announced once, by the bridge
+            actions.on_change = self._actions_changed
+            self._actions = actions
         return self._actions
 
     async def run(self) -> None:
