@@ -177,6 +177,43 @@ impl ViewType {
     }
 }
 
+/// Id of the flag that a plot zoomed by the mouse wheel contained the pointer.
+fn wheel_zoom_id() -> egui::Id {
+    egui::Id::new("wheel zoom")
+}
+
+/// Lets the mouse wheel zoom the plot of `response` without holding Ctrl, when the
+/// app passes its input through [`zoom_with_wheel`].
+pub fn zoom_on_wheel(response: &egui::Response) {
+    if response.contains_pointer() && response.enabled() {
+        response
+            .ctx
+            .data_mut(|data| data.insert_temp(wheel_zoom_id(), true));
+    }
+}
+
+/// Turns the vertical mouse wheel events of `raw_input` without modifiers into zooming,
+/// as with Ctrl, if a plot passed to [`zoom_on_wheel`] contained the pointer in the last
+/// pass. The plot then zooms along its zoomable axes, and the smoothed rest of the
+/// scroll stays a zoom instead of scrolling what the pointer moves on to.
+pub fn zoom_with_wheel(ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+    let over_plot = ctx.data_mut(|data| data.remove_temp::<bool>(wheel_zoom_id()));
+    if over_plot != Some(true) {
+        return;
+    }
+    let zoom_modifier = ctx.options(|options| options.input_options.zoom_modifier);
+    for event in &mut raw_input.events {
+        if let egui::Event::MouseWheel {
+            delta, modifiers, ..
+        } = event
+            && modifiers.is_none()
+            && delta.y.abs() >= delta.x.abs()
+        {
+            *modifiers = zoom_modifier;
+        }
+    }
+}
+
 /// A text colour readable on `background`.
 pub fn text_color_on(background: egui::Color32) -> egui::Color32 {
     let luminance = 0.299 * f32::from(background.r())
@@ -475,9 +512,86 @@ pub fn with_unit(value: String, unit: Option<&str>) -> String {
     }
 }
 
+/// Scrolls the mouse wheel by `delta` points at `pos` without modifiers, with the input
+/// passed through [`zoom_with_wheel`] as by the app, and runs until the smoothed scroll
+/// has been applied.
+#[cfg(test)]
+pub fn scroll_wheel<State>(
+    harness: &mut egui_kittest::Harness<'_, State>,
+    pos: egui::Pos2,
+    delta: f32,
+) {
+    harness.hover_at(pos);
+    harness.run();
+    let ctx = harness.ctx.clone();
+    let input = harness.input_mut();
+    input.events.push(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, delta),
+        phase: egui::TouchPhase::Move,
+        modifiers: egui::Modifiers::NONE,
+    });
+    zoom_with_wheel(&ctx, input);
+    // the scroll is smoothed over several frames
+    harness.run_steps(60);
+    harness.run();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui_kittest::Harness;
+
+    /// A harness showing a plot of a line that can be zoomed by the mouse wheel, as the
+    /// XY and heatmap views, in a ui that is `enabled` or not. Its state is the shown
+    /// bounds.
+    fn plot_harness(enabled: bool) -> Harness<'static, Option<egui_plot::PlotBounds>> {
+        Harness::builder()
+            .with_size(egui::vec2(400.0, 300.0))
+            .build_ui_state(
+                move |ui, bounds: &mut Option<egui_plot::PlotBounds>| {
+                    ui.add_enabled_ui(enabled, |ui| {
+                        let plot = egui_plot::Plot::new("plot").show(ui, |plot_ui| {
+                            let points: Vec<[f64; 2]> =
+                                (0..=10).map(|i| [f64::from(i), f64::from(i)]).collect();
+                            plot_ui.line(egui_plot::Line::new("", points));
+                        });
+                        zoom_on_wheel(&plot.response);
+                        *bounds = Some(*plot.transform.bounds());
+                    });
+                },
+                None,
+            )
+    }
+
+    fn widths(bounds: &egui_plot::PlotBounds) -> [f64; 2] {
+        [bounds.width(), bounds.height()]
+    }
+
+    #[test]
+    fn the_wheel_zooms_a_plot_along_both_axes_without_panning_it() {
+        let mut harness = plot_harness(true);
+        harness.run();
+        let before = harness.state().unwrap();
+
+        // scrolling up zooms in around the pointer
+        scroll_wheel(&mut harness, egui::pos2(200.0, 150.0), 100.0);
+        let zoomed = harness.state().unwrap();
+        let ([width, height], [width_before, height_before]) = (widths(&zoomed), widths(&before));
+        assert!(width < width_before * 0.9, "{width} {width_before}");
+        assert!(height < height_before * 0.9, "{height} {height_before}");
+        // zoomed in around a point inside, not moved along y
+        assert!(zoomed.min()[1] > before.min()[1] && zoomed.max()[1] < before.max()[1]);
+    }
+
+    #[test]
+    fn the_wheel_does_not_zoom_a_disabled_plot() {
+        let mut harness = plot_harness(false);
+        harness.run();
+        let before = harness.state().unwrap();
+        scroll_wheel(&mut harness, egui::pos2(200.0, 150.0), 100.0);
+        assert_eq!(widths(&harness.state().unwrap()), widths(&before));
+    }
 
     #[test]
     fn short_names_are_the_last_level() {

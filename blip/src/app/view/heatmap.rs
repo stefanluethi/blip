@@ -352,6 +352,7 @@ impl Heatmap {
             })
         });
 
+        super::zoom_on_wheel(&response.response);
         if let Some((row, column, value)) = response.inner {
             response.response.on_hover_ui_at_pointer(|ui| {
                 ui.label(format!("[{row}][{column}] = {}", text.with_unit(value)));
@@ -384,7 +385,7 @@ impl Heatmap {
                 }
                 egui_plot::HoverPosition::Elsewhere { .. } => None,
             });
-        plot.show(ui, |plot_ui| {
+        let response = plot.show(ui, |plot_ui| {
             if let Some((min, max)) = fixed_range {
                 plot_ui.set_plot_bounds_y(min..=max);
             }
@@ -402,6 +403,7 @@ impl Heatmap {
                     .radius(2.5),
             );
         });
+        super::zoom_on_wheel(&response.response);
     }
 
     /// Shows the colour scale from the low values at the bottom to the high ones at the

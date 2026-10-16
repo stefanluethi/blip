@@ -232,10 +232,15 @@ impl TimeRange {
     }
 
     /// Applies a pan or zoom of a plot to `[start, end]` seconds. Zooming keeps
-    /// following the newest data in live mode and keeps playing, panning pauses.
+    /// following the newest data in live mode and keeps playing, panning pauses. Zooming
+    /// beyond the shortest or longest window changes nothing.
     pub fn pan_zoom(&mut self, start: f64, end: f64) {
+        let changed = |window: f64| (window - self.window).abs() > self.window * 1.0e-6;
+        let zoomed = changed(end - start);
         let window = (end - start).clamp(MIN_WINDOW, MAX_WINDOW);
-        let zoomed = (window - self.window).abs() > self.window * 1.0e-6;
+        if zoomed && !changed(window) {
+            return;
+        }
         self.window = window;
         if !zoomed {
             self.move_end(end);
@@ -510,6 +515,20 @@ mod tests {
         time.pan_zoom(135.0, 145.0);
         assert!(time.is_live());
         assert_eq!(time.range(), Some((140.0, 150.0)));
+    }
+
+    #[test]
+    fn zooming_beyond_the_window_limits_neither_pans_nor_pauses() {
+        let mut time = time_range(100.0, 150.0, MIN_WINDOW);
+        time.pan_zoom(149.0, 149.0 + MIN_WINDOW / 2.0);
+        assert!(time.is_live());
+        assert_eq!(time.range(), Some((150.0 - MIN_WINDOW, 150.0)));
+
+        let mut time = time_range(100.0, 150.0, MAX_WINDOW);
+        time.pause();
+        let range = time.range();
+        time.pan_zoom(120.0 - MAX_WINDOW, 130.0 + MAX_WINDOW);
+        assert_eq!(time.range(), range);
     }
 
     #[test]

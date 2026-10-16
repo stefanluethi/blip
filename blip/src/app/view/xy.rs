@@ -178,7 +178,7 @@ impl Xy {
         let range = time.range();
         let cursor = time.cursor();
         let ring_color = ui.visuals().strong_text_color();
-        plot.show(ui, |plot_ui| {
+        let response = plot.show(ui, |plot_ui| {
             let (Some(x), Some(range)) = (x, range) else {
                 return;
             };
@@ -206,6 +206,7 @@ impl Xy {
                 }
             }
         });
+        super::zoom_on_wheel(&response.response);
     }
 }
 
