@@ -37,6 +37,8 @@ enum Change {
     None,
     /// The input is dragged, send at most every [`DRAG_INTERVAL`](crate::app::model::actions::DRAG_INTERVAL).
     Dragging,
+    /// The input was released after dragging, send its value unless sent already.
+    Released,
     /// The input got its new value, send it now.
     Done,
 }
@@ -192,17 +194,19 @@ fn input_ui(ui: &mut egui::Ui, path: &str, param: &Param, value: &mut Data, fiel
             if changed { Change::Done } else { Change::None }
         }
         ParamKind::Int { min, max } => {
-            let mut number = as_f64(value).unwrap_or(0.0);
+            let before = as_f64(value).unwrap_or(0.0);
+            let mut number = before;
             let bounds = (min.map(|v| v as f64), max.map(|v| v as f64));
             let response = number_ui(ui, &mut number, bounds, Some(1.0), field, &unit_suffix);
             *value = integer(number.round() as i64);
-            change_of(&response)
+            change_of(&response, number != before)
         }
         ParamKind::Float { min, max, step } => {
-            let mut number = as_f64(value).unwrap_or(0.0);
+            let before = as_f64(value).unwrap_or(0.0);
+            let mut number = before;
             let response = number_ui(ui, &mut number, (*min, *max), *step, field, &unit_suffix);
             *value = Data::Float(number);
-            change_of(&response)
+            change_of(&response, number != before)
         }
         ParamKind::String => {
             let mut text = match value {
@@ -220,17 +224,20 @@ fn input_ui(ui: &mut egui::Ui, path: &str, param: &Param, value: &mut Data, fiel
     }
 }
 
-/// How a slider or number field changed: dragging while dragged, done when released,
-/// typed in or changed with the keys.
-fn change_of(response: &egui::Response) -> Change {
-    if response.drag_stopped() {
-        Change::Done
-    } else if response.changed() && response.dragged() {
-        Change::Dragging
-    } else if response.changed() {
-        Change::Done
-    } else {
+/// How a slider or number field whose number `changed` changed: dragging while
+/// dragged, released when let go without a change, done when typed in, changed with
+/// the keys or by the frame that lets go. A click counts as a short drag. The response
+/// of a field being typed in reports each key as a change, so whether the number
+/// changed is told apart.
+fn change_of(response: &egui::Response, changed: bool) -> Change {
+    if response.drag_stopped() && !changed {
+        Change::Released
+    } else if !changed {
         Change::None
+    } else if response.dragged() && !response.drag_stopped() {
+        Change::Dragging
+    } else {
+        Change::Done
     }
 }
 
@@ -256,7 +263,9 @@ fn number_ui(
                 (Some(min), Some(max)) => ((max - min) / 200.0).max(step.unwrap_or(0.0)),
                 _ => step.unwrap_or(0.1),
             };
+            // a typed number applies on Enter, not with each key
             let mut drag = egui::DragValue::new(number)
+                .update_while_editing(false)
                 .speed(speed)
                 .range(min.unwrap_or(f64::NEG_INFINITY)..=max.unwrap_or(f64::INFINITY))
                 .suffix(suffix);
@@ -461,10 +470,12 @@ impl Actions {
                 path: action.path.clone(),
                 args,
             });
-        } else if change == Change::Dragging {
-            invoker.invoke_dragging(&action.path, args, now);
         } else {
-            invoker.invoke(&action.path, args, now);
+            match change {
+                Change::Dragging => invoker.invoke_dragging(&action.path, args, now),
+                Change::Released => invoker.finish_dragging(&action.path, args, now),
+                _ => invoker.invoke(&action.path, args, now),
+            }
         }
     }
 
@@ -857,5 +868,53 @@ mod tests {
         assert!(harness.query_by_label("a").is_none());
         harness.get_by_label("b");
         harness.get_by_label("not announced by the target");
+    }
+
+    #[test]
+    fn clicking_a_slider_sends_its_new_value_once() {
+        let percent = ParamKind::Int {
+            min: Some(0),
+            max: Some(100),
+        };
+        let mut harness = harness(vec![action("level", vec![named("p", percent)])]);
+        harness.get_by_role(egui::accesskit::Role::Slider).click();
+        harness.run_steps(3);
+        let sent = sent(&mut harness);
+        assert_eq!(sent.len(), 1);
+        assert_ne!(
+            sent[0].1,
+            Data::Record(vec![("p".to_owned(), Data::Uint(0))])
+        );
+    }
+
+    #[test]
+    fn typed_numbers_are_sent_on_enter_only() {
+        let ratio = ParamKind::Float {
+            min: None,
+            max: None,
+            step: None,
+        };
+        let mut harness = harness(vec![action("ratio", vec![named("r", ratio)])]);
+        harness
+            .get_by_role(egui::accesskit::Role::SpinButton)
+            .click();
+        harness.run_steps(2);
+        // neither clicking the field nor typing sends
+        harness
+            .get_by_role(egui::accesskit::Role::SpinButton)
+            .type_text("125");
+        harness.run_steps(2);
+        assert!(sent(&mut harness).is_empty());
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(2);
+        let value = |args: &Data| match args {
+            Data::Record(fields) => fields[0].1.clone(),
+            _ => Data::Null,
+        };
+        let sent: Vec<Data> = sent(&mut harness)
+            .iter()
+            .map(|(_, args)| value(args))
+            .collect();
+        assert_eq!(sent, [Data::Float(125.0)]);
     }
 }
