@@ -353,8 +353,7 @@ mod tests {
             let mut trace = Trace::new(path.to_owned(), Some(3));
             trace.samples = Samples::Arrays {
                 shape: vec![len],
-                kind: None,
-                values: vec![],
+                elements: Default::default(),
             };
             trace
         };

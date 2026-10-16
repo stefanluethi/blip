@@ -79,7 +79,7 @@ impl Layout {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::model::traces::DisplayFormat;
+    use crate::app::model::numbers::DisplayFormat;
     use crate::app::view::ViewKind;
     use crate::app::view::plot::Interpolation;
     use egui_kittest::Harness;

@@ -1,9 +1,6 @@
 use super::time_axis::{self, closest_index, visible_range, within};
 use super::{Formats, ViewContext, Viewable, short_names, with_unit};
-use crate::app::model::{
-    Model,
-    traces::{NumberKind, Series},
-};
+use crate::app::model::{Model, numbers::NumberKind, traces::Series};
 use crate::app::time::{TimeBase, timestamp_to_seconds};
 use std::cmp::min;
 use std::collections::BTreeSet;
@@ -231,9 +228,9 @@ impl Plot {
             .show(ui, |ui| {
                 for (path, name, color) in self.selected_path_iter() {
                     let value = model.traces.series(path).and_then(|series| {
-                        let value = series.value(closest_index(series.timestamps, t)?);
-                        let text = series.kind.format_as(value, None, formats.of(path));
-                        let unit = model.traces.unit(path).filter(|_| !value.is_nan());
+                        let value = series.number(closest_index(series.timestamps, t)?);
+                        let text = value.format(None, formats.of(path));
+                        let unit = model.traces.unit(path).filter(|_| !value.is_null());
                         Some(with_unit(text, unit))
                     });
                     if let Some(value) = value {

@@ -1,153 +1,7 @@
+use super::numbers::{DisplayFormat, Number, NumberKind, Numbers};
 use proto::Data;
 use std::collections::BTreeMap;
 use std::ops::Range;
-
-/// How the numbers of a trace are written.
-#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
-pub enum DisplayFormat {
-    /// As decimals, bools as `true` and `false`.
-    #[default]
-    Default,
-    /// Integers and whole floats in hexadecimal, e.g. `0x1f`.
-    Hex,
-    /// Integers and whole floats in binary, e.g. `0b101`.
-    Binary,
-    /// Numbers with an exponent, e.g. `1.5e3`.
-    Scientific,
-}
-
-impl DisplayFormat {
-    pub const ALL: [DisplayFormat; 4] = [
-        DisplayFormat::Default,
-        DisplayFormat::Hex,
-        DisplayFormat::Binary,
-        DisplayFormat::Scientific,
-    ];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            DisplayFormat::Default => "Default",
-            DisplayFormat::Hex => "Hex",
-            DisplayFormat::Binary => "Binary",
-            DisplayFormat::Scientific => "Scientific",
-        }
-    }
-}
-
-/// The kind of the numbers of a trace or of the elements of an array trace, all
-/// stored as `f64` with NaN for null.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NumberKind {
-    Integer,
-    Float,
-    /// Stored as 0 and 1.
-    Bool,
-}
-
-impl NumberKind {
-    /// The number and its kind if `data` is a number or a bool.
-    fn of(data: &Data) -> Option<(f64, Self)> {
-        match *data {
-            Data::Uint(number) => Some((number as f64, Self::Integer)),
-            Data::Int(number) => Some((number as f64, Self::Integer)),
-            Data::Float(number) => Some((number, Self::Float)),
-            Data::Bool(value) => Some((f64::from(u8::from(value)), Self::Bool)),
-            _ => None,
-        }
-    }
-
-    /// The kind of a trace of this kind after receiving a number of kind `other`, or
-    /// `None` if they do not mix. Integer and float mix, so a producer may send `0` in a
-    /// float trace.
-    fn merge(self, other: Self) -> Option<Self> {
-        match (self, other) {
-            _ if self == other => Some(self),
-            (Self::Integer, Self::Float) | (Self::Float, Self::Integer) => Some(Self::Float),
-            _ => None,
-        }
-    }
-
-    fn name(self) -> &'static str {
-        match self {
-            Self::Integer => "int",
-            Self::Float => "float",
-            Self::Bool => "bool",
-        }
-    }
-
-    /// `value` written as a value of this kind.
-    pub fn format(self, value: f64) -> String {
-        match self {
-            Self::Float => value.to_string(),
-            _ if value.is_nan() => "null".to_owned(),
-            Self::Integer => value.to_string(),
-            Self::Bool => (value != 0.0).to_string(),
-        }
-    }
-
-    /// `value` written as a value of this kind, a float with at most `digits`
-    /// significant digits or all of them if `digits` is `None`.
-    pub fn format_digits(self, value: f64, digits: Option<usize>) -> String {
-        match (self, digits) {
-            (Self::Float, Some(digits)) => format_significant(value, digits),
-            _ => self.format(value),
-        }
-    }
-
-    /// `value` written as a value of this kind in `format`, as by [`Self::format_digits`]
-    /// where the format does not apply: to bools, nulls and, in hex and binary, to
-    /// floats that are not whole numbers.
-    pub fn format_as(self, value: f64, digits: Option<usize>, format: DisplayFormat) -> String {
-        let is_number = self != Self::Bool && value.is_finite();
-        let whole = (is_number && value.fract() == 0.0 && value.abs() < 2f64.powi(63))
-            .then_some(value as i64);
-        let sign = if value < 0.0 { "-" } else { "" };
-        match (format, whole) {
-            (DisplayFormat::Hex, Some(whole)) => format!("{sign}0x{:x}", whole.unsigned_abs()),
-            (DisplayFormat::Binary, Some(whole)) => format!("{sign}0b{:b}", whole.unsigned_abs()),
-            (DisplayFormat::Scientific, _) if is_number => {
-                let text = match digits {
-                    Some(digits) => format!("{:.*e}", digits.max(1) - 1, value),
-                    None => format!("{value:e}"),
-                };
-                match text.split_once('e') {
-                    Some((mantissa, exponent)) => format!("{}e{exponent}", trim_zeros(mantissa)),
-                    None => text,
-                }
-            }
-            _ => self.format_digits(value, digits),
-        }
-    }
-}
-
-/// `value` with at most `digits` significant digits and no trailing zeros, e.g.
-/// `0.0123`. Integer digits are kept, large and small values are written with an
-/// exponent.
-pub fn format_significant(value: f64, digits: usize) -> String {
-    if value == 0.0 || !value.is_finite() {
-        return value.to_string();
-    }
-    let digits = digits.max(1);
-    let magnitude = value.abs().log10().floor() as i32;
-    if magnitude >= digits.max(6) as i32 || magnitude < -4 {
-        let text = format!("{:.*e}", digits - 1, value);
-        return match text.split_once('e') {
-            Some((mantissa, exponent)) => format!("{}e{exponent}", trim_zeros(mantissa)),
-            None => text,
-        };
-    }
-    let decimals = (digits as i32 - 1 - magnitude).max(0) as usize;
-    trim_zeros(&format!("{value:.decimals$}")).to_owned()
-}
-
-/// `number` without trailing zeros after its decimal point.
-fn trim_zeros(number: &str) -> &str {
-    if number.contains('.') {
-        number.trim_end_matches('0').trim_end_matches('.')
-    } else {
-        number
-    }
-}
 
 fn data_kind_name(data: &Data) -> &'static str {
     match data {
@@ -166,76 +20,56 @@ fn data_kind_name(data: &Data) -> &'static str {
 pub enum Samples {
     /// Only nulls so far, so the kind is not known yet.
     Empty,
-    /// Numbers or bools, NaN for null.
-    Numbers {
-        kind: NumberKind,
-        values: Vec<f64>,
-    },
+    /// Numbers or bools.
+    Numbers(Numbers),
     Strings(Vec<Option<String>>),
     /// Arrays of numbers or bools with the same `shape` in every sample. The elements
-    /// of each sample follow each other in row-major order, NaN for null. `kind` is
-    /// `None` while all elements were null.
+    /// of each sample follow each other in row-major order. Their kind is unknown
+    /// while all elements were null.
     Arrays {
         shape: Vec<usize>,
-        kind: Option<NumberKind>,
-        values: Vec<f64>,
+        elements: Numbers,
     },
 }
 
 impl Samples {
     /// Samples of the kind of `data`, starting with `count` nulls.
     fn with_nulls(data: &Data, count: usize) -> Result<Self, String> {
+        let mut numbers = Numbers::default();
         Ok(match data {
             Data::String(_) => Self::Strings(vec![None; count]),
             Data::Array(_) => {
                 let shape = array_shape(data);
-                let values = vec![f64::NAN; count * shape.iter().product::<usize>()];
+                numbers.push_nulls(count * shape.iter().product::<usize>());
                 Self::Arrays {
                     shape,
-                    kind: None,
-                    values,
+                    elements: numbers,
                 }
             }
-            _ => {
-                let (_, kind) = NumberKind::of(data)
-                    .ok_or_else(|| format!("a trace cannot hold a {}", data_kind_name(data)))?;
-                Self::Numbers {
-                    kind,
-                    values: vec![f64::NAN; count],
-                }
+            _ if Number::of(data).is_some() => {
+                numbers.push_nulls(count);
+                Self::Numbers(numbers)
             }
+            _ => return Err(format!("a trace cannot hold a {}", data_kind_name(data))),
         })
     }
 
     fn push(&mut self, data: &Data) -> Result<(), String> {
         match (self, data) {
             (Self::Empty, Data::Null) => {}
-            (Self::Numbers { values, .. }, Data::Null) => values.push(f64::NAN),
-            (Self::Numbers { kind, values }, data) => {
-                let mismatch = || format!("expected {}, got {}", kind.name(), data_kind_name(data));
-                let (value, other) = NumberKind::of(data).ok_or_else(mismatch)?;
-                *kind = kind.merge(other).ok_or_else(mismatch)?;
-                values.push(value);
+            (Self::Numbers(numbers), data) => {
+                let number = Number::of(data).ok_or_else(|| {
+                    let kind = numbers.kind().map_or("null", NumberKind::name);
+                    format!("expected {kind}, got {}", data_kind_name(data))
+                })?;
+                numbers.extend(&[number])?;
             }
             (Self::Strings(values), Data::Null) => values.push(None),
             (Self::Strings(values), Data::String(value)) => values.push(Some(value.clone())),
-            (
-                Self::Arrays {
-                    shape,
-                    kind,
-                    values,
-                },
-                data,
-            ) => {
-                let start = values.len();
-                let mut new_kind = *kind;
-                match flatten(data, shape, &mut new_kind, values) {
-                    Ok(()) => *kind = new_kind,
-                    Err(error) => {
-                        values.truncate(start);
-                        return Err(error);
-                    }
-                }
+            (Self::Arrays { shape, elements }, data) => {
+                let mut numbers = Vec::with_capacity(shape.iter().product());
+                flatten(data, shape, &mut numbers)?;
+                elements.extend(&numbers)?;
             }
             (samples, data) => {
                 return Err(format!(
@@ -249,17 +83,22 @@ impl Samples {
     }
 
     /// The elements of the `index`th sample of an array trace, in row-major order.
-    pub fn array_sample(&self, index: usize) -> Option<&[f64]> {
-        let Self::Arrays { shape, values, .. } = self else {
+    pub fn array_sample(&self, index: usize) -> Option<Elements<'_>> {
+        let Self::Arrays { shape, elements } = self else {
             return None;
         };
         let len = shape.iter().product::<usize>();
-        values.get(index * len..(index + 1) * len)
+        ((index + 1) * len <= elements.len()).then_some(Elements {
+            numbers: elements,
+            start: index * len,
+            len,
+        })
     }
 
     /// The `index`th sample written as text, arrays with at most `max_len` elements per
-    /// dimension and a line per row as in [`format_array`], and numbers in `format`, floats with at most `digits` significant digits or all of them if
-    /// `digits` is `None`.
+    /// dimension and a line per row as in [`format_array`], and numbers in `format`,
+    /// floats with at most `digits` significant digits or all of them if `digits` is
+    /// `None`.
     pub fn format(
         &self,
         index: usize,
@@ -269,13 +108,15 @@ impl Samples {
     ) -> String {
         match self {
             Self::Empty => "null".to_owned(),
-            Self::Numbers { kind, values } => kind.format_as(values[index], digits, format),
+            Self::Numbers(numbers) => numbers.get(index).format(digits, format),
             Self::Strings(values) => values[index].clone().unwrap_or_else(|| "null".to_owned()),
-            Self::Arrays { shape, kind, .. } => {
-                let elements = self.array_sample(index).unwrap_or_default();
-                let kind = kind.unwrap_or(NumberKind::Float);
-                format_array(shape, elements, max_len, &|value| {
-                    kind.format_as(value, digits, format)
+            Self::Arrays { shape, .. } => {
+                let elements: Vec<Number> = self
+                    .array_sample(index)
+                    .map(|elements| elements.iter().collect())
+                    .unwrap_or_default();
+                format_array(shape, &elements, max_len, &|number: Number| {
+                    number.format(digits, format)
                 })
             }
         }
@@ -285,17 +126,36 @@ impl Samples {
     pub fn type_label(&self) -> String {
         match self {
             Self::Empty => "null".to_owned(),
-            Self::Numbers { kind, .. } => kind.name().to_owned(),
+            Self::Numbers(numbers) => numbers.kind().map_or("null", NumberKind::name).to_owned(),
             Self::Strings(_) => "string".to_owned(),
-            Self::Arrays { shape, kind, .. } => {
+            Self::Arrays { shape, elements } => {
                 let dimensions: Vec<String> = shape.iter().map(usize::to_string).collect();
                 format!(
                     "{}[{}]",
-                    kind.map_or("null", NumberKind::name),
+                    elements.kind().map_or("null", NumberKind::name),
                     dimensions.join("×")
                 )
             }
         }
+    }
+}
+
+/// The elements of one sample of an array trace.
+#[derive(Clone, Copy)]
+pub struct Elements<'a> {
+    numbers: &'a Numbers,
+    start: usize,
+    len: usize,
+}
+
+impl<'a> Elements<'a> {
+    pub fn get(&self, index: usize) -> Option<Number> {
+        (index < self.len).then(|| self.numbers.get(self.start + index))
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = Number> + 'a {
+        let numbers = self.numbers;
+        (self.start..self.start + self.len).map(|index| numbers.get(index))
     }
 }
 
@@ -309,11 +169,11 @@ impl Samples {
 /// ```
 ///
 /// with an empty line between the 2D arrays of a 3D one, and so on.
-fn format_array(
+fn format_array<T: Copy>(
     shape: &[usize],
-    elements: &[f64],
+    elements: &[T],
     max_len: usize,
-    format: &dyn Fn(f64) -> String,
+    format: &dyn Fn(T) -> String,
 ) -> String {
     let columns = shape.last().copied().unwrap_or(1);
     let is_shown = |mut flat_index: usize| {
@@ -389,16 +249,13 @@ fn array_shape(mut data: &Data) -> Vec<usize> {
     shape
 }
 
-/// Appends the elements of the array `data` of `shape` to `values` in row-major order,
-/// and merges their kinds into `kind`.
-fn flatten(
-    data: &Data,
-    shape: &[usize],
-    kind: &mut Option<NumberKind>,
-    values: &mut Vec<f64>,
-) -> Result<(), String> {
+/// Appends the elements of the array `data` of `shape` to `numbers` in row-major
+/// order.
+fn flatten(data: &Data, shape: &[usize], numbers: &mut Vec<Number>) -> Result<(), String> {
     match (shape.split_first(), data) {
-        (_, Data::Null) => values.extend(std::iter::repeat_n(f64::NAN, shape.iter().product())),
+        (_, Data::Null) => {
+            numbers.extend(std::iter::repeat_n(Number::Null, shape.iter().product()))
+        }
         (Some((&len, inner)), Data::Array(elements)) => {
             if elements.len() != len {
                 return Err(format!(
@@ -407,25 +264,16 @@ fn flatten(
                 ));
             }
             for element in elements {
-                flatten(element, inner, kind, values)?;
+                flatten(element, inner, numbers)?;
             }
         }
         (Some(_), data) => return Err(format!("expected an array, got {}", data_kind_name(data))),
-        (None, data) => {
-            let (value, other) = NumberKind::of(data).ok_or_else(|| {
-                format!(
-                    "array elements must be numbers or bools, got {}",
-                    data_kind_name(data)
-                )
-            })?;
-            *kind = Some(match *kind {
-                None => other,
-                Some(current) => current.merge(other).ok_or_else(|| {
-                    format!("expected {} elements, got {}", current.name(), other.name())
-                })?,
-            });
-            values.push(value);
-        }
+        (None, data) => numbers.push(Number::of(data).ok_or_else(|| {
+            format!(
+                "array elements must be numbers or bools, got {}",
+                data_kind_name(data)
+            )
+        })?),
     }
     Ok(())
 }
@@ -465,15 +313,15 @@ impl Trace {
 
     /// The numbers of a numeric trace.
     fn series(&self) -> Option<Series<'_>> {
-        let Samples::Numbers { kind, values } = &self.samples else {
+        let Samples::Numbers(numbers) = &self.samples else {
             return None;
         };
         Some(Series {
             timestamps: &self.timestamps,
-            values,
+            numbers,
             stride: 1,
             offset: 0,
-            kind: *kind,
+            kind: numbers.kind().unwrap_or(NumberKind::Float),
         })
     }
 }
@@ -482,10 +330,10 @@ impl Trace {
 #[derive(Clone, Copy)]
 pub struct Series<'a> {
     pub timestamps: &'a [u64],
-    values: &'a [f64],
-    /// Distance between the values of two samples in `values`.
+    numbers: &'a Numbers,
+    /// Distance between the values of two samples in `numbers`.
     stride: usize,
-    /// Index of the value of the first sample in `values`.
+    /// Index of the value of the first sample in `numbers`.
     offset: usize,
     pub kind: NumberKind,
 }
@@ -495,16 +343,21 @@ impl Series<'_> {
         self.timestamps.len()
     }
 
-    /// The value of the `index`th sample, NaN for null.
+    /// The value of the `index`th sample as a float for plotting, NaN for null.
     pub fn value(&self, index: usize) -> f64 {
-        self.values[index * self.stride + self.offset]
+        self.number(index).as_f64()
+    }
+
+    /// The value of the `index`th sample.
+    pub fn number(&self, index: usize) -> Number {
+        self.numbers.get(index * self.stride + self.offset)
     }
 
     /// The samples within `range`.
     pub fn slice(&self, range: Range<usize>) -> Self {
         Self {
             timestamps: &self.timestamps[range.clone()],
-            values: &self.values[range.start * self.stride..range.end * self.stride],
+            offset: self.offset + range.start * self.stride,
             ..*self
         }
     }
@@ -586,12 +439,7 @@ impl Traces {
         }
         let (path, indices) = parse_element_path(path)?;
         let trace = self.map.get(path)?;
-        let Samples::Arrays {
-            shape,
-            kind,
-            values,
-        } = &trace.samples
-        else {
+        let Samples::Arrays { shape, elements } = &trace.samples else {
             return None;
         };
         if indices.len() != shape.len()
@@ -605,10 +453,10 @@ impl Traces {
             .fold(0, |offset, (index, len)| offset * len + index);
         Some(Series {
             timestamps: &trace.timestamps,
-            values,
+            numbers: elements,
             stride: shape.iter().product(),
             offset,
-            kind: kind.unwrap_or(NumberKind::Float),
+            kind: elements.kind().unwrap_or(NumberKind::Float),
         })
     }
 
@@ -894,29 +742,38 @@ mod tests {
         assert_eq!(format("f", 0, 8, Some(6)), "0.0314146");
         assert_eq!(format("f", 0, 8, None), "0.03141463462364013");
         let samples = &traces.get("m").unwrap().samples;
-        assert_eq!(samples.array_sample(0).unwrap()[3], 3.0);
+        assert_eq!(
+            samples.array_sample(0).unwrap().get(3),
+            Some(Number::Float(3.0))
+        );
         assert!(samples.array_sample(1).is_none());
     }
 
     #[test]
-    fn numbers_are_written_in_their_display_format() {
-        use DisplayFormat::{Binary, Hex, Scientific};
-        let int = NumberKind::Integer;
-        assert_eq!(int.format_as(31.0, None, Hex), "0x1f");
-        assert_eq!(int.format_as(-5.0, None, Binary), "-0b101");
-        assert_eq!(int.format_as(f64::NAN, None, Hex), "null");
-        assert_eq!(int.format_as(1500.0, None, Scientific), "1.5e3");
-        let float = NumberKind::Float;
-        assert_eq!(float.format_as(16.0, None, Hex), "0x10");
-        assert_eq!(float.format_as(0.5, Some(3), Hex), "0.5");
-        assert_eq!(
-            float.format_as(0.000_123_45, Some(3), Scientific),
-            "1.23e-4"
-        );
-        assert_eq!(NumberKind::Bool.format_as(1.0, None, Binary), "true");
+    fn array_elements_are_written_in_their_display_format() {
         let traces = traces(&[("a", Data::Array(vec![Data::Uint(10), Data::Uint(255)]))]);
         let samples = &traces.get("a").unwrap().samples;
-        assert_eq!(samples.format(0, 8, None, Hex), "[0xa, 0xff]");
+        assert_eq!(
+            samples.format(0, 8, None, DisplayFormat::Hex),
+            "[0xa, 0xff]"
+        );
+    }
+
+    #[test]
+    fn integers_are_exact() {
+        let big = Data::Uint((1 << 53) + 1);
+        let traces = traces(&[("a", big.clone()), ("m", Data::Array(vec![big]))]);
+        let samples = |path| &traces.get(path).unwrap().samples;
+        assert_eq!(
+            samples("a").format(0, 8, None, DisplayFormat::Default),
+            "9007199254740993"
+        );
+        assert_eq!(
+            samples("m").format(0, 8, None, DisplayFormat::Default),
+            "[9007199254740993]"
+        );
+        let series = traces.series("m[0]").unwrap();
+        assert_eq!(series.number(0), Number::Int((1 << 53) + 1));
     }
 
     #[test]
@@ -942,26 +799,5 @@ mod tests {
             "[[[ 1],\n  [ 2]],\n\n [[ 3],\n  [40]]]"
         );
         assert_eq!(format_array(&[0], &[], 8, &format), "[]");
-    }
-
-    #[test]
-    fn floats_are_shortened_to_significant_digits() {
-        assert_eq!(format_significant(22.024_154_775, 6), "22.0242");
-        assert_eq!(format_significant(25.1234, 3), "25.1");
-        assert_eq!(format_significant(0.012_345, 3), "0.0123");
-        assert_eq!(format_significant(1234.4, 3), "1234");
-        assert_eq!(format_significant(-60.0, 3), "-60");
-        assert_eq!(format_significant(9.996, 3), "10");
-        assert_eq!(format_significant(1.0e7, 3), "1e7");
-        assert_eq!(format_significant(1.234_5e-6, 3), "1.23e-6");
-        assert_eq!(format_significant(0.0, 3), "0");
-    }
-
-    #[test]
-    fn number_kinds_format_their_values() {
-        assert_eq!(NumberKind::Integer.format(5.0), "5");
-        assert_eq!(NumberKind::Bool.format(1.0), "true");
-        assert_eq!(NumberKind::Bool.format(f64::NAN), "null");
-        assert_eq!(NumberKind::Float.format(0.5), "0.5");
     }
 }
