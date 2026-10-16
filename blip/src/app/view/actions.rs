@@ -95,9 +95,30 @@ fn as_f64(data: &Data) -> Option<f64> {
     }
 }
 
+/// The integer in `data`, exactly, or a float rounded.
+fn as_integer(data: &Data) -> Option<i128> {
+    match *data {
+        Data::Uint(value) => Some(value.into()),
+        Data::Int(value) => Some(value.into()),
+        Data::Float(value) if value.is_finite() => Some(value.round() as i128),
+        _ => None,
+    }
+}
+
+/// An integer within the bounds of a parameter, and within the integers on the wire.
+fn clamp_integer(value: i128, min: Option<i64>, max: Option<i64>) -> i128 {
+    let min = min.map_or(i64::MIN.into(), i128::from);
+    let max = max.map_or(u64::MAX.into(), i128::from);
+    // not `clamp`, which panics for bounds the wrong way round
+    value.max(min).min(max)
+}
+
 /// An integer as data, unsigned unless negative as on the wire.
-fn integer(value: i64) -> Data {
-    u64::try_from(value).map_or(Data::Int(value), Data::Uint)
+fn integer(value: i128) -> Data {
+    match u64::try_from(value) {
+        Ok(value) => Data::Uint(value),
+        Err(_) => Data::Int(i64::try_from(value).unwrap_or(i64::MIN)),
+    }
 }
 
 /// `data` as a value of `param`, or `None` if it does not fit.
@@ -110,16 +131,12 @@ fn fit(param: &Param, data: &Data) -> Option<Data> {
             options.contains(value).then(|| data.clone())
         }
         (ParamKind::Int { min, max }, data) => {
-            let value = as_f64(data)?.round() as i64;
-            Some(integer(
-                value.clamp(min.unwrap_or(i64::MIN), max.unwrap_or(i64::MAX)),
-            ))
+            Some(integer(clamp_integer(as_integer(data)?, *min, *max)))
         }
         (ParamKind::Float { min, max, .. }, data) => {
             let value = as_f64(data)?;
-            Some(Data::Float(
-                value.clamp(min.unwrap_or(f64::MIN), max.unwrap_or(f64::MAX)),
-            ))
+            let value = value.max(min.unwrap_or(f64::MIN));
+            Some(Data::Float(value.min(max.unwrap_or(f64::MAX))))
         }
         _ => None,
     }
@@ -136,7 +153,7 @@ fn initial(param: &Param, readback: Option<Data>) -> Data {
     }
     match &param.kind {
         ParamKind::Bool => Data::Bool(false),
-        ParamKind::Int { min, .. } => integer(min.unwrap_or(0).max(0)),
+        ParamKind::Int { min, max } => integer(clamp_integer(0, *min, *max)),
         ParamKind::Float { min, .. } => Data::Float(min.unwrap_or(0.0).max(0.0)),
         ParamKind::Enum(options) => options
             .first()
@@ -193,13 +210,28 @@ fn input_ui(ui: &mut egui::Ui, path: &str, param: &Param, value: &mut Data, fiel
             *value = Data::String(selected);
             if changed { Change::Done } else { Change::None }
         }
-        ParamKind::Int { min, max } => {
+        ParamKind::Int {
+            min: Some(low),
+            max: Some(high),
+        } if !field => {
             let before = as_f64(value).unwrap_or(0.0);
             let mut number = before;
-            let bounds = (min.map(|v| v as f64), max.map(|v| v as f64));
-            let response = number_ui(ui, &mut number, bounds, Some(1.0), field, &unit_suffix);
-            *value = integer(number.round() as i64);
-            change_of(&response, number != before)
+            let bounds = (Some(*low as f64), Some(*high as f64));
+            let response = number_ui(ui, &mut number, bounds, Some(1.0), false, &unit_suffix);
+            let changed = number != before;
+            // the value itself stays exact unless the slider moves
+            if changed {
+                *value = integer(clamp_integer(
+                    number.round() as i128,
+                    Some(*low),
+                    Some(*high),
+                ));
+            }
+            change_of(&response, changed)
+        }
+        ParamKind::Int { min, max } => {
+            let id = ui.id().with(("integer", path, &param.name));
+            integer_field(ui, id, value, (*min, *max), &param.unit)
         }
         ParamKind::Float { min, max, step } => {
             let before = as_f64(value).unwrap_or(0.0);
@@ -275,6 +307,47 @@ fn number_ui(
             ui.add(drag)
         }
     }
+}
+
+/// Shows a field to type an integer for `value`, exact also beyond the integers a
+/// float holds. The typed number applies on Enter or when leaving the field, clamped
+/// to `bounds`; text that is no integer is dropped.
+fn integer_field(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    value: &mut Data,
+    (min, max): (Option<i64>, Option<i64>),
+    unit: &str,
+) -> Change {
+    let current = match *value {
+        Data::Uint(value) => value.to_string(),
+        Data::Int(value) => value.to_string(),
+        _ => String::new(),
+    };
+    let mut text: String = ui.data(|data| data.get_temp(id)).unwrap_or(current);
+    let response = ui.add(
+        egui::TextEdit::singleline(&mut text)
+            .id(id)
+            .desired_width(INPUT_WIDTH - 60.0),
+    );
+    if !unit.is_empty() {
+        ui.label(unit);
+    }
+    if response.has_focus() {
+        ui.data_mut(|data| data.insert_temp(id, text));
+        return Change::None;
+    }
+    ui.data_mut(|data| data.remove::<String>(id));
+    let entered = response.lost_focus() && !ui.input(|input| input.key_pressed(egui::Key::Escape));
+    let Some(number) = text.trim().parse::<i128>().ok().filter(|_| entered) else {
+        return Change::None;
+    };
+    let number = integer(clamp_integer(number, min, max));
+    if number == *value {
+        return Change::None;
+    }
+    *value = number;
+    Change::Done
 }
 
 /// The decimals that show multiples of `step`.
@@ -681,6 +754,31 @@ mod tests {
     }
 
     #[test]
+    fn integers_fit_exactly_and_bounds_the_wrong_way_round_do_not_panic() {
+        let unbounded = param(ParamKind::Int {
+            min: None,
+            max: None,
+        });
+        let big = Data::Uint((1 << 53) + 1);
+        assert_eq!(fit(&unbounded, &big), Some(big.clone()));
+        assert_eq!(
+            fit(&unbounded, &Data::Uint(u64::MAX)),
+            Some(Data::Uint(u64::MAX))
+        );
+        let reversed = param(ParamKind::Int {
+            min: Some(5),
+            max: Some(1),
+        });
+        assert!(fit(&reversed, &Data::Uint(3)).is_some());
+        let reversed = param(ParamKind::Float {
+            min: Some(5.0),
+            max: Some(1.0),
+            step: None,
+        });
+        assert!(fit(&reversed, &Data::Float(3.0)).is_some());
+    }
+
+    #[test]
     fn inputs_start_from_the_readback_the_default_or_the_lowest_value() {
         let mut speed = param(ParamKind::Int {
             min: Some(100),
@@ -885,6 +983,33 @@ mod tests {
             sent[0].1,
             Data::Record(vec![("p".to_owned(), Data::Uint(0))])
         );
+    }
+
+    #[test]
+    fn typed_integers_are_sent_exactly_on_enter() {
+        let register = ParamKind::Int {
+            min: None,
+            max: None,
+        };
+        let mut harness = harness(vec![action("poke", vec![named("v", register)])]);
+        let field = || egui::accesskit::Role::TextInput;
+        harness.get_by_role(field()).focus();
+        harness.run_steps(2);
+        harness.get_by_role(field()).type_text("9007199254740993");
+        harness.run_steps(2);
+        assert!(sent(&mut harness).is_empty());
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(2);
+        let args = Data::Record(vec![("v".to_owned(), Data::Uint((1 << 53) + 1))]);
+        assert_eq!(sent(&mut harness), [("poke".to_owned(), args)]);
+
+        // text that is no integer is dropped
+        harness.get_by_role(field()).focus();
+        harness.run_steps(2);
+        harness.get_by_role(field()).type_text("x");
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(2);
+        assert!(sent(&mut harness).is_empty());
     }
 
     #[test]

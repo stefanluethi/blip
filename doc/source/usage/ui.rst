@@ -95,7 +95,8 @@ it has one, and what became of its latest invocation.
   times a second, and the final value on release), a number field otherwise,
   sent when dragged like a slider or once a typed number is entered with
   :kbd:`Enter` or by leaving the field, and a text field for a string, sent
-  with :kbd:`Enter`. Clicking a field to type in it sends nothing.
+  with :kbd:`Enter`. Clicking a field to type in it sends nothing. Integers
+  are typed in a text field and kept exact, also beyond 2\ :sup:`53`.
 * An action with several parameters lists them below its row and is sent with
   its **Send** button.
 * An action that asks for confirmation is sent after confirming it in a
