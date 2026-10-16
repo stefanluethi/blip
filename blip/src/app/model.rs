@@ -13,24 +13,34 @@ use crate::app::model::traces::Traces;
 pub struct Model {
     pub traces: Traces,
     pub logs: Logs,
-    /// The actions the target announced.
+    /// The actions the targets announced.
     pub actions: Actions,
     /// The received frames, to save them.
     pub recording: Recording,
 }
 
 impl Model {
-    /// Records a received frame and applies the message in it. Returns the answer to
-    /// an invocation, for the invoker.
-    pub fn receive(&mut self, frame: &[u8]) -> Option<proto::ActionResult> {
-        self.recording.push(frame);
+    /// Records a frame received from `source`, the name of its connection, and applies
+    /// the message in it. The paths of its traces and actions and the components of its
+    /// logs start with the source, unless it has no name. Returns the answer to an
+    /// invocation, for the invoker.
+    pub fn receive(&mut self, source: &str, frame: &[u8]) -> Option<proto::ActionResult> {
+        self.recording.push(source, frame);
         match serde_cbor_2::from_slice::<proto::Message>(frame) {
-            Ok(proto::Message::Value(value)) => self.traces.append(&value),
-            Ok(proto::Message::ValueMetadata(metadata)) => {
-                self.traces.set_unit(&metadata.path, &metadata.unit);
+            Ok(proto::Message::Value(mut value)) => {
+                value.path = sourced(source, &value.path);
+                self.traces.append(&value);
             }
-            Ok(proto::Message::Log(record)) => self.logs.push(LogEntry::from_proto(&record)),
-            Ok(proto::Message::Actions(actions)) => self.actions.set(actions),
+            Ok(proto::Message::ValueMetadata(metadata)) => {
+                let path = sourced(source, &metadata.path);
+                self.traces.set_unit(&path, &metadata.unit);
+            }
+            Ok(proto::Message::Log(record)) => {
+                let mut entry = LogEntry::from_proto(&record);
+                entry.component = sourced(source, &entry.component);
+                self.logs.push(entry);
+            }
+            Ok(proto::Message::Actions(actions)) => self.actions.set(source, actions),
             Ok(proto::Message::ActionResult(result)) => return Some(result),
             Err(error) => log::warn!("error parsing message: {error}"),
         }
@@ -55,5 +65,73 @@ impl Model {
             .reduce(|(first_a, last_a), (first_b, last_b)| {
                 (first_a.min(first_b), last_a.max(last_b))
             })
+    }
+}
+
+/// `name` below `source`, i.e. `"{source}/{name}"`, or `name` if the source has no name.
+fn sourced(source: &str, name: &str) -> String {
+    if source.is_empty() {
+        name.to_owned()
+    } else {
+        format!("{source}/{name}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame(message: &proto::Message) -> Vec<u8> {
+        serde_cbor_2::to_vec(message).unwrap()
+    }
+
+    #[test]
+    fn traces_and_logs_are_put_below_their_source() {
+        let value = |path: &str| {
+            frame(&proto::Message::Value(proto::Value {
+                timestamp: 1,
+                path: path.to_owned(),
+                value: proto::Data::Uint(1),
+            }))
+        };
+        let log = frame(&proto::Message::Log(proto::LogRecord {
+            timestamp: 1,
+            level: 2,
+            component: "motor".to_owned(),
+            message: "hi".to_owned(),
+        }));
+        let mut model = Model::default();
+        model.receive("", &value("cpu"));
+        model.receive("a", &value("cpu"));
+        model.receive("b", &value("cpu"));
+        model.receive("b", &log);
+        for path in ["cpu", "a/cpu", "b/cpu"] {
+            assert!(model.traces.get(path).is_some(), "{path} is missing");
+        }
+        assert_eq!(model.logs.entries[0].component, "b/motor");
+        assert_eq!(model.recording.len(), 4);
+    }
+
+    #[test]
+    fn actions_are_put_below_their_source_and_answers_returned() {
+        let actions = frame(&proto::Message::Actions(vec![proto::ActionDescriptor {
+            path: "motor/speed".to_owned(),
+            description: String::new(),
+            params: vec![],
+            readback: Some("motor/rpm".to_owned()),
+            confirm: false,
+            enabled: true,
+        }]));
+        let result = proto::ActionResult {
+            id: 3,
+            result: Ok(()),
+        };
+        let mut model = Model::default();
+        assert_eq!(model.receive("b", &actions), None);
+        let speed = model.actions.announced("b/motor/speed").unwrap();
+        assert_eq!(speed.target_path, "motor/speed");
+        assert_eq!(speed.descriptor.readback.as_deref(), Some("b/motor/rpm"));
+        let answer = frame(&proto::Message::ActionResult(result.clone()));
+        assert_eq!(model.receive("b", &answer), Some(result));
     }
 }

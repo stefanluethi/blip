@@ -1,7 +1,8 @@
-//! The actions the target announced, and the invocations blip sends to carry them out.
+//! The actions the targets announced, and the invocations blip sends to carry them out.
 
+use super::{Model, sourced};
 use proto::{ActionDescriptor, ActionResult, Data, Invocation, Request};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Seconds after which an invocation without an answer counts as unanswered.
 pub const ANSWER_TIMEOUT: f64 = 5.0;
@@ -10,24 +11,58 @@ pub const SHOW_ACCEPTED: f64 = 1.5;
 /// The least seconds between the invocations sent while a slider is dragged.
 pub const DRAG_INTERVAL: f64 = 0.1;
 
-/// The actions as last announced by the target.
+/// An action announced by the target of a connection.
+pub struct Announced {
+    /// The name of the connection.
+    pub source: String,
+    /// The path the target knows the action by.
+    pub target_path: String,
+    /// The action, its path and readback below the source like the paths of traces.
+    pub descriptor: ActionDescriptor,
+}
+
+/// The actions as last announced by the target of each connection.
 #[derive(Default)]
 pub struct Actions {
-    list: Vec<ActionDescriptor>,
+    /// The actions of each source together, in the order they were announced first.
+    list: Vec<Announced>,
 }
 
 impl Actions {
-    /// Replaces the actions, the target announces all of them each time.
-    pub fn set(&mut self, list: Vec<ActionDescriptor>) {
-        self.list = list;
+    /// Replaces the actions of `source`, whose target announces all of them each time.
+    /// They keep their place among the actions of other sources.
+    pub fn set(&mut self, source: &str, actions: Vec<ActionDescriptor>) {
+        let at = self.list.iter().position(|action| action.source == source);
+        self.list.retain(|action| action.source != source);
+        let at = at.unwrap_or(self.list.len());
+        let announced = actions.into_iter().map(|mut descriptor| {
+            let target_path = std::mem::take(&mut descriptor.path);
+            descriptor.path = sourced(source, &target_path);
+            descriptor.readback = descriptor
+                .readback
+                .map(|readback| sourced(source, &readback));
+            Announced {
+                source: source.to_owned(),
+                target_path,
+                descriptor,
+            }
+        });
+        self.list.splice(at..at, announced);
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &ActionDescriptor> {
-        self.list.iter()
+        self.list.iter().map(|action| &action.descriptor)
     }
 
     pub fn get(&self, path: &str) -> Option<&ActionDescriptor> {
-        self.list.iter().find(|action| action.path == path)
+        self.announced(path).map(|action| &action.descriptor)
+    }
+
+    /// The action at `path`, with the connection to send it to.
+    pub fn announced(&self, path: &str) -> Option<&Announced> {
+        self.list
+            .iter()
+            .find(|action| action.descriptor.path == path)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -63,8 +98,8 @@ struct Dragged {
 /// seconds, as egui counts them.
 #[derive(Default)]
 pub struct Invoker {
-    /// Whether blip is connected to a bridge, so actions can be invoked.
-    pub connected: bool,
+    /// The names of the open connections, whose actions can be invoked.
+    pub connected: HashSet<String>,
     next_id: u32,
     /// The paths and send times of the invocations without answer, by id.
     pending: HashMap<u32, (String, f64)>,
@@ -135,17 +170,27 @@ impl Invoker {
         self.latest.insert(path.to_owned(), (id, Outcome::Pending));
     }
 
-    /// Takes the answer of the target to an invocation. `readback_samples` tells the
-    /// number of samples the readback trace of an action has so far.
-    pub fn receive(
-        &mut self,
-        result: &ActionResult,
-        now: f64,
-        readback_samples: impl FnOnce(&str) -> usize,
-    ) {
-        let Some((path, _)) = self.pending.remove(&result.id) else {
+    /// Whether the action of `model` at `path` can be invoked, as its connection is open.
+    pub fn is_connected(&self, model: &Model, path: &str) -> bool {
+        model
+            .actions
+            .announced(path)
+            .is_some_and(|action| self.connected.contains(&action.source))
+    }
+
+    /// Takes the answer to an invocation received from the connection `source`. Answers
+    /// from another connection than the one of the action are ignored.
+    pub fn receive(&mut self, source: &str, result: &ActionResult, now: f64, model: &Model) {
+        let from_action = self.pending.get(&result.id).is_some_and(|(path, _)| {
+            model
+                .actions
+                .announced(path)
+                .is_some_and(|action| action.source == source)
+        });
+        if !from_action {
             return;
-        };
+        }
+        let (path, _) = self.pending.remove(&result.id).expect("pending");
         // only the latest invocation of an action shows
         if let Some((id, outcome)) = self.latest.get_mut(&path)
             && *id == result.id
@@ -156,7 +201,7 @@ impl Invoker {
             };
             if result.result.is_ok() {
                 self.readback_marks
-                    .insert(path.clone(), readback_samples(&path));
+                    .insert(path.clone(), model.readback_samples(&path));
             }
         }
     }
@@ -230,10 +275,11 @@ impl Invoker {
         std::mem::take(&mut self.outbox)
     }
 
-    /// Forgets the invocations, e.g. when the connection ends. The inputs are kept.
-    pub fn reset(&mut self, connected: bool) {
+    /// Forgets the invocations, e.g. when a recording replaces the data. The inputs and
+    /// the open connections are kept.
+    pub fn reset(&mut self) {
         *self = Self {
-            connected,
+            connected: std::mem::take(&mut self.connected),
             inputs: std::mem::take(&mut self.inputs),
             ..Self::default()
         };
@@ -263,6 +309,39 @@ mod tests {
         }
     }
 
+    fn descriptor(path: &str, readback: Option<&str>) -> ActionDescriptor {
+        ActionDescriptor {
+            path: path.to_owned(),
+            description: String::new(),
+            params: vec![],
+            readback: readback.map(str::to_owned),
+            confirm: false,
+            enabled: true,
+        }
+    }
+
+    /// A model of the actions used here, announced by a connection without a name, and
+    /// `samples` samples of the readback of "enable".
+    fn model(samples: u64) -> Model {
+        let mut model = Model::default();
+        model.actions.set(
+            "",
+            vec![
+                descriptor("speed", None),
+                descriptor("reboot", None),
+                descriptor("enable", Some("on")),
+            ],
+        );
+        for timestamp in 0..samples {
+            model.traces.append(&proto::Value {
+                timestamp,
+                path: "on".to_owned(),
+                value: Data::Bool(true),
+            });
+        }
+        model
+    }
+
     #[test]
     fn invocations_are_sent_with_new_ids_and_answered() {
         let mut invoker = Invoker::default();
@@ -277,8 +356,8 @@ mod tests {
         );
         assert_eq!(invoker.outcome("speed", 0.0), Some(&Outcome::Pending));
 
-        invoker.receive(&answer(0, Ok(())), 1.0, |_| 0);
-        invoker.receive(&answer(1, Err("busy")), 1.0, |_| 0);
+        invoker.receive("", &answer(0, Ok(())), 1.0, &model(0));
+        invoker.receive("", &answer(1, Err("busy")), 1.0, &model(0));
         assert_eq!(invoker.outcome("speed", 2.0), Some(&Outcome::Accepted(1.0)));
         assert_eq!(invoker.outcome("speed", 1.0 + SHOW_ACCEPTED + 0.1), None);
         assert_eq!(
@@ -286,8 +365,8 @@ mod tests {
             Some(&Outcome::Rejected("busy".to_owned()))
         );
         // unknown and repeated answers change nothing
-        invoker.receive(&answer(1, Ok(())), 2.0, |_| 0);
-        invoker.receive(&answer(7, Ok(())), 2.0, |_| 0);
+        invoker.receive("", &answer(1, Ok(())), 2.0, &model(0));
+        invoker.receive("", &answer(7, Ok(())), 2.0, &model(0));
         assert_eq!(
             invoker.outcome("reboot", 100.0),
             Some(&Outcome::Rejected("busy".to_owned()))
@@ -299,9 +378,9 @@ mod tests {
         let mut invoker = Invoker::default();
         invoker.invoke("speed", args(1), 0.0);
         invoker.invoke("speed", args(2), 0.0);
-        invoker.receive(&answer(0, Err("old")), 0.5, |_| 0);
+        invoker.receive("", &answer(0, Err("old")), 0.5, &model(0));
         assert_eq!(invoker.outcome("speed", 0.5), Some(&Outcome::Pending));
-        invoker.receive(&answer(1, Ok(())), 0.6, |_| 0);
+        invoker.receive("", &answer(1, Ok(())), 0.6, &model(0));
         assert_eq!(invoker.outcome("speed", 0.6), Some(&Outcome::Accepted(0.6)));
     }
 
@@ -312,16 +391,44 @@ mod tests {
         invoker.invoke("enable", vec![], 0.0);
         assert!(!invoker.follows_readback("enable", 10));
         // accepted when the readback had 10 samples, which show the state before
-        invoker.receive(&answer(0, Ok(())), 0.1, |path| {
-            assert_eq!(path, "enable");
-            10
-        });
+        invoker.receive("", &answer(0, Ok(())), 0.1, &model(10));
         assert!(!invoker.follows_readback("enable", 10));
         assert!(invoker.follows_readback("enable", 11));
         // a rejected invocation changed nothing, the readback is right
         invoker.invoke("enable", vec![], 1.0);
-        invoker.receive(&answer(1, Err("no")), 1.1, |_| 20);
+        invoker.receive("", &answer(1, Err("no")), 1.1, &model(20));
         assert!(invoker.follows_readback("enable", 11));
+    }
+
+    #[test]
+    fn answers_count_only_from_the_connection_of_the_action() {
+        let mut invoker = Invoker::default();
+        invoker.invoke("speed", args(1), 0.0);
+        invoker.receive("other", &answer(0, Err("not mine")), 0.1, &model(0));
+        assert_eq!(invoker.outcome("speed", 0.1), Some(&Outcome::Pending));
+        invoker.receive("", &answer(0, Ok(())), 0.2, &model(0));
+        assert_eq!(invoker.outcome("speed", 0.2), Some(&Outcome::Accepted(0.2)));
+    }
+
+    #[test]
+    fn actions_are_kept_per_connection_below_its_name() {
+        let mut actions = Actions::default();
+        actions.set("a", vec![descriptor("speed", Some("rpm"))]);
+        actions.set("b", vec![descriptor("speed", None)]);
+        // announcing again replaces the actions of the connection in their place
+        actions.set(
+            "a",
+            vec![descriptor("speed", Some("rpm")), descriptor("stop", None)],
+        );
+        let paths: Vec<&str> = actions.iter().map(|a| a.path.as_str()).collect();
+        assert_eq!(paths, ["a/speed", "a/stop", "b/speed"]);
+        let speed = actions.announced("a/speed").unwrap();
+        assert_eq!(
+            (speed.source.as_str(), speed.target_path.as_str()),
+            ("a", "speed")
+        );
+        assert_eq!(speed.descriptor.readback.as_deref(), Some("a/rpm"));
+        assert_eq!(actions.get("b/speed").unwrap().readback, None);
     }
 
     #[test]
@@ -334,7 +441,7 @@ mod tests {
         assert_eq!(invoker.outcome("speed", 0.0), Some(&Outcome::Unanswered));
         assert!(!invoker.is_waiting(ANSWER_TIMEOUT + 0.1));
         // a late answer changes nothing
-        invoker.receive(&answer(0, Ok(())), 6.0, |_| 0);
+        invoker.receive("", &answer(0, Ok(())), 6.0, &model(0));
         assert_eq!(invoker.outcome("speed", 6.0), Some(&Outcome::Unanswered));
     }
 
@@ -380,7 +487,7 @@ mod tests {
             .inputs
             .insert(("speed".to_owned(), "rpm".to_owned()), Data::Uint(5));
         invoker.invoke("speed", args(1), 0.0);
-        invoker.reset(false);
+        invoker.reset();
         assert!(invoker.take_outbox().is_empty());
         assert_eq!(invoker.outcome("speed", 0.0), None);
         assert_eq!(invoker.inputs.len(), 1);

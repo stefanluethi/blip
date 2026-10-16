@@ -93,8 +93,9 @@ Connectivity
    :component: blip, bridge
    :satisfies: STK_LIVE_OBSERVE
 
-   blip shall connect to a user-configurable WebSocket address and receive
-   messages as binary frames.
+   blip shall connect to user-configurable WebSocket addresses, several at
+   once, and receive messages as binary frames, keeping the data of each
+   connection apart by its name.
 
 .. req:: CBOR wire protocol
    :id: REQ_PROTO_CBOR
@@ -200,7 +201,7 @@ Platforms
    :status: implemented
    :component: blip
 
-   blip shall persist the layout of the views and the target address across
+   blip shall persist the layout of the views and the target addresses across
    restarts.
 
 Files

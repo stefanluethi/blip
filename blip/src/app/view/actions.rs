@@ -43,10 +43,14 @@ enum Change {
     Done,
 }
 
-/// Why actions cannot be invoked now, if they cannot.
-fn disabled_reason(invoker: &Invoker, action: &ActionDescriptor) -> Option<&'static str> {
-    if !invoker.connected {
-        Some("Not connected to a target")
+/// Why the action of `model` cannot be invoked now, if it cannot.
+fn disabled_reason(
+    invoker: &Invoker,
+    model: &Model,
+    action: &ActionDescriptor,
+) -> Option<&'static str> {
+    if !invoker.is_connected(model, &action.path) {
+        Some("Not connected to its target")
     } else if !action.enabled {
         Some("The target cannot carry out the action now")
     } else {
@@ -431,7 +435,7 @@ impl Actions {
         confirm: &mut Option<Confirmation>,
     ) {
         let invoker = &mut *context.invoker;
-        let disabled = disabled_reason(invoker, action);
+        let disabled = disabled_reason(invoker, context.model, action);
         let readback = action
             .readback
             .as_deref()
@@ -561,7 +565,7 @@ impl Actions {
         };
         let invoker = &mut *context.invoker;
         let disabled = match context.model.actions.get(&confirmation.path) {
-            Some(action) => disabled_reason(invoker, action),
+            Some(action) => disabled_reason(invoker, context.model, action),
             None => Some("The target no longer announces the action"),
         };
         let mut decided = false;
@@ -598,13 +602,15 @@ impl Viewable for Actions {
         let (announced, missing) = self.rows(model);
         if announced.is_empty() && missing.is_empty() {
             ui.centered_and_justified(|ui| {
-                ui.weak(if model.actions.is_empty() && !context.invoker.connected {
-                    "Connect to a target to see its actions"
-                } else if model.actions.is_empty() {
-                    "The target announced no actions"
-                } else {
-                    "Choose the actions to show in the properties"
-                });
+                ui.weak(
+                    if model.actions.is_empty() && context.invoker.connected.is_empty() {
+                        "Connect to a target to see its actions"
+                    } else if model.actions.is_empty() {
+                        "The target announced no actions"
+                    } else {
+                        "Choose the actions to show in the properties"
+                    },
+                );
             });
             return;
         }
@@ -847,9 +853,9 @@ mod tests {
 
     fn harness(actions: Vec<ActionDescriptor>) -> egui_kittest::Harness<'static, State> {
         let mut model = Model::default();
-        model.actions.set(actions);
+        model.actions.set("", actions);
         let mut invoker = Invoker::default();
-        invoker.connected = true;
+        invoker.connected.insert(String::new());
         let state = State {
             view: Actions::new(),
             model,
@@ -957,7 +963,7 @@ mod tests {
             enabled: false,
             ..reboot
         };
-        harness.state_mut().model.actions.set(vec![disabled]);
+        harness.state_mut().model.actions.set("", vec![disabled]);
         harness.run_steps(2);
         harness.get_by_label("Run").click();
         harness.run_steps(2);
@@ -985,10 +991,10 @@ mod tests {
             };
             (count(true), count(false))
         };
-        harness.state_mut().invoker.connected = false;
+        harness.state_mut().invoker.connected.clear();
         harness.run_steps(2);
         assert_eq!(buttons(&harness), (2, 0));
-        harness.state_mut().invoker.connected = true;
+        harness.state_mut().invoker.connected.insert(String::new());
         harness.run_steps(2);
         assert_eq!(buttons(&harness), (1, 1));
     }
