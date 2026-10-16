@@ -144,6 +144,18 @@ Test Cases
    outpost to a WebSocket client while recording what is sent, checking that
    both are the recorded frames byte for byte.
 
+.. test:: Outpost splits the batches of socket targets
+   :id: TEST_OUTPOST_SOCKET
+   :status: implemented
+   :component: outpost
+   :verifies: REQ_OUTPOST_SOCKET
+
+   ``outpost/tests/test_socket.py`` -- forwards several messages of one TCP
+   read and of one UDP datagram one by one, a message split over reads once
+   it is complete, keeps an ``Actions`` and drops an ``ActionResult`` within a
+   batch, drops undecodable data and messages that do not end, and keeps
+   reconnecting after errors.
+
 .. test:: Action messages encode as plain CBOR
    :id: TEST_PROTO_ACTIONS
    :status: implemented

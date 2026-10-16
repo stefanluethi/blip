@@ -282,7 +282,11 @@ Outpost
    :satisfies: STK_DEVICE_IF
 
    The outpost shall forward messages between a TCP or UDP endpoint and
-   WebSocket clients, and forward invocations to the endpoint.
+   WebSocket clients, and forward invocations to the endpoint. The endpoint
+   may send several messages at once as a CBOR sequence (RFC 8742): a UDP
+   datagram holds complete messages, a TCP stream may split them anywhere.
+   The outpost shall forward each complete message and drop data that is no
+   CBOR without stopping.
 
 .. req:: Simulator
    :id: REQ_OUTPOST_SIM

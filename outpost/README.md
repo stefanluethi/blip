@@ -52,9 +52,12 @@ The protocols that come with the outpost:
 - `simulator`: synthetic telemetry, logs and demo actions.
 - `replay`: replays a recording (`-o path=recording.blip`, `-o speed=2` replays twice
   as fast). The actions of the recording are shown disabled.
-- `tcp` and `udp`: pass the data of a target that speaks the blip protocol through
-  unchanged (`-o remote_host=… -o remote_port=… -o listen=true`), and forward
-  invocations to it.
+- `tcp` and `udp`: pass the messages of a target that speaks the blip protocol
+  through unchanged (`-o remote_host=… -o remote_port=… -o listen=true`), and
+  forward invocations to it. The target may send several messages at once as a
+  CBOR sequence (RFC 8742), their CBOR items one after another: a UDP datagram
+  holds complete messages, over TCP they may be split anywhere. The outpost
+  forwards each complete message, and drops data that is no CBOR.
 
 Record the messages sent to blip with any protocol, to open them in blip later
 (**File > Open recording**):
