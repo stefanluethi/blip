@@ -4,10 +4,10 @@ Using the UI
 Connecting
 ----------
 
-The **Connections** panel below the properties lists the bridges and targets
+The **Connections** panel below the properties lists the outposts and targets
 by their name and WebSocket address, starting with
-``ws://127.0.0.1:3000/ws/bridge`` of a bridge started with its defaults, named
-``bridge``. Several of them can be connected at once.
+``ws://127.0.0.1:3000/ws/outpost`` of an outpost started with its defaults, named
+``outpost``. Several of them can be connected at once.
 
 * Add an address with the **+** button, Enter keeps it, Escape drops it. The
   new connection is named after the last part of the path of the address,
@@ -28,7 +28,7 @@ readbacks, e.g. ``robby/motor/speed``. Each action is sent to its own
 connection, with the path its target knows. Views keep the paths with the name,
 so a layout shows the same traces after reconnecting. A connection whose name
 is empty adds nothing to the paths, as do the messages of a recording saved by
-the bridge or by an older blip. The names of two connections differ, unless
+the outpost or by an older blip. The names of two connections differ, unless
 they are empty.
 
 Each target sends its own timestamps. Targets sending the time since boot
@@ -169,7 +169,7 @@ layout.
 * A view has its name and type, the sections of its type, e.g. the y axis,
   lines and legend of a plot, and the **Number format** of its traces: how
   their numbers are written in the view (decimal, hex, binary or scientific),
-  next to their unit as sent by the bridge. Hex and binary apply to whole
+  next to their unit as sent by the outpost. Hex and binary apply to whole
   numbers only, strings and bools have no format.
 * An XY view plots the traces selected in the left panel against one of them.
   Its **Axes** set which trace is on the x axis, the others are on the y

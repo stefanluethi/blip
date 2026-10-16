@@ -105,7 +105,7 @@ needs_fields = {
         },
     },
     "component": {
-        "description": "Affected component(s): blip, proto, bridge",
+        "description": "Affected component(s): blip, proto, outpost",
         "schema": {"type": "string"},
     },
     "priority": {

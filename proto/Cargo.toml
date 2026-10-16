@@ -1,6 +1,6 @@
 [package]
 name = "proto"
-description = "Wire protocol between the bridge and blip"
+description = "Wire protocol between the outpost and blip"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true

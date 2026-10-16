@@ -4,22 +4,22 @@ Lightweight web tracing tool for embedded systems.
 
 blip shows live values as plots and log records as tables. It runs in the
 browser (WASM) or as a native app, built with [egui](https://github.com/emilk/egui).
-A small Python bridge connects an embedded target (or a simulator) to blip over
+A small Python service, the outpost, connects an embedded target (or a simulator) to blip over
 a WebSocket, using CBOR-encoded messages.
 
 Try the web app at <https://stefanluethi.github.io/blip/> and read the
 documentation at <https://stefanluethi.github.io/blip/docs/>.
 
 ```
-embedded target  <-- TCP / UDP -->  bridge (Python)  <-- WebSocket / CBOR -->  blip (Rust)
+embedded target  <-- TCP / UDP -->  outpost (Python)  <-- WebSocket / CBOR -->  blip (Rust)
 ```
 
-| Directory | Contents |
-|-----------|----------|
-| `blip/`   | GUI app (Rust, egui), web and native |
-| `proto/`  | Wire protocol types shared between blip and embedded targets |
-| `bridge/` | Device-to-WebSocket bridge (Python) |
-| `doc/`    | User documentation (Sphinx) |
+| Directory  | Contents |
+|------------|----------|
+| `blip/`    | GUI app (Rust, egui), web and native |
+| `proto/`   | Wire protocol types shared between blip and embedded targets |
+| `outpost/` | Target-side service connecting devices to blip (Python) |
+| `doc/`     | User documentation (Sphinx) |
 
 ## Prerequisites
 
@@ -31,7 +31,7 @@ embedded target  <-- TCP / UDP -->  bridge (Python)  <-- WebSocket / CBOR -->  b
   cargo install --locked trunk
   ```
 
-- [uv](https://docs.astral.sh/uv/) for the bridge and the documentation
+- [uv](https://docs.astral.sh/uv/) for the outpost and the documentation
 - [Graphviz](https://graphviz.org) (`dot`) for building the documentation
 
 ## Build
@@ -53,10 +53,10 @@ trunk build --release
 
 The output goes to `blip/dist/`. Serve it with any static file server.
 
-### bridge
+### outpost
 
 ```bash
-cd bridge
+cd outpost
 uv sync
 ```
 
@@ -71,12 +71,12 @@ See [`doc/README.md`](doc/README.md) for more options.
 
 ## Run
 
-Start the bridge with the simulator (no hardware needed). It serves
-`ws://127.0.0.1:3000/ws/bridge`:
+Start the outpost with the simulator (no hardware needed). It serves
+`ws://127.0.0.1:3000/ws/outpost`:
 
 ```bash
-cd bridge
-uv run bridge --protocol simulator --port 3000
+cd outpost
+uv run outpost --protocol simulator --port 3000
 ```
 
 Then start blip, either in the browser:
@@ -92,13 +92,13 @@ or natively:
 cargo run --release -p blip
 ```
 
-To bridge a real TCP endpoint instead of the simulator:
+To connect a real TCP endpoint instead of the simulator:
 
 ```bash
-uv run bridge --protocol tcp --remote-host 127.0.0.1 --remote-port 9000
+uv run outpost --protocol tcp --remote-host 127.0.0.1 --remote-port 9000
 ```
 
-Run `uv run bridge --help` for all options.
+Run `uv run outpost --help` for all options.
 
 ## Checks
 

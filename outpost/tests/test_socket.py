@@ -2,8 +2,8 @@
 
 import asyncio
 
-import bridge.protocols.socket as socket_protocol
-from bridge.protocols.socket import SocketProtocol
+import outpost.protocols.socket as socket_protocol
+from outpost.protocols.socket import SocketProtocol
 
 
 async def test_unexpected_errors_reconnect_instead_of_stopping(monkeypatch):

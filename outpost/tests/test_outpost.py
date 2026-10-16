@@ -1,17 +1,17 @@
-"""Integration tests for protocol to websocket bridge."""
+"""Integration tests for protocol to websocket outpost."""
 
 import asyncio
 import websockets
 
-from bridge.server import BridgeServer
-from bridge.protocols.simulator import SimulatorProtocol
-from bridge.proto import decode_cbor_message
+from outpost.server import OutpostServer
+from outpost.protocols.simulator import SimulatorProtocol
+from outpost.proto import decode_cbor_message
 
 
-async def test_simulator_bridge():
+async def test_simulator_outpost():
     # 1. Start server with SimulatorProtocol
     proto = SimulatorProtocol(interval_ms=10)
-    server = BridgeServer(protocol=proto, host="127.0.0.1", port=3999, path="/ws/test")
+    server = OutpostServer(protocol=proto, host="127.0.0.1", port=3999, path="/ws/test")
     await server.start()
 
     await asyncio.sleep(0.05)
@@ -39,9 +39,9 @@ async def test_simulator_bridge():
         await server.stop()
 
 
-async def test_simulator_bridge_logs():
+async def test_simulator_outpost_logs():
     proto = SimulatorProtocol(interval_ms=10, log_interval_ms=20)
-    server = BridgeServer(protocol=proto, host="127.0.0.1", port=3998, path="/ws/test")
+    server = OutpostServer(protocol=proto, host="127.0.0.1", port=3998, path="/ws/test")
     await server.start()
 
     await asyncio.sleep(0.05)
@@ -70,9 +70,9 @@ async def test_simulator_bridge_logs():
         await server.stop()
 
 
-async def test_simulator_bridge_typed_values():
+async def test_simulator_outpost_typed_values():
     proto = SimulatorProtocol(interval_ms=10)
-    server = BridgeServer(protocol=proto, host="127.0.0.1", port=3995, path="/ws/test")
+    server = OutpostServer(protocol=proto, host="127.0.0.1", port=3995, path="/ws/test")
     await server.start()
 
     await asyncio.sleep(0.05)
@@ -120,9 +120,9 @@ async def test_simulator_bridge_typed_values():
         await server.stop()
 
 
-async def test_simulator_bridge_units():
+async def test_simulator_outpost_units():
     proto = SimulatorProtocol(interval_ms=10)
-    server = BridgeServer(protocol=proto, host="127.0.0.1", port=3994, path="/ws/test")
+    server = OutpostServer(protocol=proto, host="127.0.0.1", port=3994, path="/ws/test")
     await server.start()
 
     try:
@@ -144,8 +144,8 @@ async def test_simulator_bridge_units():
 
 
 async def test_simulator_actions_change_what_it_sends(monkeypatch):
-    import bridge.protocols.simulator as simulator
-    from bridge import ActionError, LogLevel
+    import outpost.protocols.simulator as simulator
+    from outpost import ActionError, LogLevel
 
     proto = SimulatorProtocol(interval_ms=10)
     paths = [d["path"] for d in proto.actions.descriptors()]
@@ -190,8 +190,8 @@ async def test_simulator_actions_change_what_it_sends(monkeypatch):
 
 
 if __name__ == "__main__":
-    asyncio.run(test_simulator_bridge())
-    asyncio.run(test_simulator_bridge_logs())
-    asyncio.run(test_simulator_bridge_typed_values())
-    asyncio.run(test_simulator_bridge_units())
+    asyncio.run(test_simulator_outpost())
+    asyncio.run(test_simulator_outpost_logs())
+    asyncio.run(test_simulator_outpost_typed_values())
+    asyncio.run(test_simulator_outpost_units())
     print("ALL TESTS PASSED SUCCESSFULLY!")

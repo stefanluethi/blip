@@ -6,9 +6,9 @@ from typing import Optional
 
 import cbor2
 
-from bridge import ActionError, Protocol
+from outpost import ActionError, Protocol
 
-logger = logging.getLogger("bridge.socket")
+logger = logging.getLogger("outpost.socket")
 
 # Seconds before connecting again after an error
 RETRY_DELAY_SEC = 3.0
@@ -18,7 +18,7 @@ class SocketProtocol(Protocol):
     """Passes the data a target sends over TCP or UDP to blip unchanged, and forwards
     the invocations of blip to the target as Invoke requests. The target announces its
     actions itself, an invocation succeeds once it is forwarded. The ActionResult
-    messages of the target are dropped by the bridge, which answered already."""
+    messages of the target are dropped by the outpost, which answered already."""
 
     def __init__(
         self,
@@ -65,7 +65,7 @@ class SocketProtocol(Protocol):
                 logger.info(f"Connected to TCP server {self.host}:{self.port}")
                 await self._forward(reader)
                 logger.warning("TCP server closed connection.")
-            # any error, so the bridge keeps serving blip; cancelling is no Exception
+            # any error, so the outpost keeps serving blip; cancelling is no Exception
             except Exception as e:
                 logger.error(f"TCP client error: {e}. Reconnecting in {RETRY_DELAY_SEC:.0f} seconds...")
             self.writer = None

@@ -1,4 +1,4 @@
-"""The command line of the bridge, and `run` to serve a protocol."""
+"""The command line of the outpost, and `run` to serve a protocol."""
 
 import asyncio
 import logging
@@ -9,12 +9,12 @@ from typing import Optional, Tuple, Union
 
 import click
 
-from bridge.loading import LoadError, create_protocol, describe_options, load_protocol
-from bridge.protocol import Protocol
-from bridge.recording import RecordingWriter
-from bridge.server import BridgeServer
+from outpost.loading import LoadError, create_protocol, describe_options, load_protocol
+from outpost.protocol import Protocol
+from outpost.recording import RecordingWriter
+from outpost.server import OutpostServer
 
-logger = logging.getLogger("bridge.main")
+logger = logging.getLogger("outpost.main")
 
 
 def setup_logging(verbose: bool) -> None:
@@ -32,14 +32,14 @@ def run(
     *,
     host: str = "127.0.0.1",
     port: int = 3000,
-    path: str = "/ws/bridge",
+    path: str = "/ws/outpost",
     record: Optional[Union[str, Path]] = None,
 ) -> None:
     """Serves `protocol` to blip on ws://host:port/path until interrupted, recording
     the messages sent to blip to the file `record` if given. Raises the exception the
     protocol stopped with, if any."""
     recorder = RecordingWriter(record) if record else None
-    server = BridgeServer(protocol=protocol, host=host, port=port, path=path, recorder=recorder)
+    server = OutpostServer(protocol=protocol, host=host, port=port, path=path, recorder=recorder)
 
     async def serve() -> None:
         await server.start()
@@ -87,7 +87,7 @@ def run(
 @click.option("--protocol-help", is_flag=True, help="Show the options of the protocol and exit.")
 @click.option("--host", "-h", default="127.0.0.1", help="WebSocket server bind address.")
 @click.option("--port", default=3000, type=int, help="WebSocket server port.")
-@click.option("--path", default="/ws/bridge", help="WebSocket server endpoint path.")
+@click.option("--path", default="/ws/outpost", help="WebSocket server endpoint path.")
 @click.option(
     "--record", type=click.Path(dir_okay=False),
     help="Record the messages sent to blip to this file (gzip-compressed CBOR sequence)."
@@ -115,7 +115,7 @@ def main(
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
-    logger.info(f"Initializing Bridge (Protocol: '{protocol}')")
+    logger.info(f"Initializing Outpost (Protocol: '{protocol}')")
     try:
         run(instance, host=host, port=port, path=path, record=record)
     except Exception as e:

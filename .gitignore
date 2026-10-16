@@ -12,7 +12,7 @@ target_wasm
 # https://github.com/lycheeverse/lychee
 .lycheecache
 
-# Python (bridge)
+# Python (outpost)
 __pycache__/
 .venv/
 

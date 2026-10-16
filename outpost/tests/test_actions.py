@@ -8,8 +8,8 @@ import cbor2
 import pytest
 import websockets
 
-from bridge import ActionError, Actions, LogLevel, Protocol, Range, Unit, action
-from bridge.server import BridgeServer
+from outpost import ActionError, Actions, LogLevel, Protocol, Range, Unit, action
+from outpost.server import OutpostServer
 
 
 class Color(enum.Enum):
@@ -171,8 +171,8 @@ def test_changes_notify():
 # The tests below serve a target and talk to it like blip
 
 
-async def serve(target: Protocol, port: int) -> BridgeServer:
-    server = BridgeServer(protocol=target, host="127.0.0.1", port=port, path="/ws/test")
+async def serve(target: Protocol, port: int) -> OutpostServer:
+    server = OutpostServer(protocol=target, host="127.0.0.1", port=port, path="/ws/test")
     await server.start()
     return server
 
@@ -265,7 +265,7 @@ async def test_declared_actions_are_announced_once_at_startup():
 
 
 def test_messages_are_told_apart_by_their_prefix():
-    from bridge.proto import ACTION_RESULT_PREFIX, ACTIONS_PREFIX, Message
+    from outpost.proto import ACTION_RESULT_PREFIX, ACTIONS_PREFIX, Message
 
     assert Message.create_actions([]).encode_cbor().startswith(ACTIONS_PREFIX)
     assert Message.create_action_result(1, "no").encode_cbor().startswith(ACTION_RESULT_PREFIX)
@@ -273,7 +273,7 @@ def test_messages_are_told_apart_by_their_prefix():
 
 
 async def test_answers_sent_by_the_protocol_are_dropped():
-    from bridge.proto import Message
+    from outpost.proto import Message
 
     target = Target()
     server = await serve(target, 3983)

@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "bridge"
+name = "outpost"
 version = "0.1.0"
-description = "A protocol-agnostic bridge to WebSocket server supporting Sockets and Simulation"
+description = "Connects a target to blip over WebSocket, with user-provided protocols, sockets, simulation and recording"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -16,10 +16,10 @@ dependencies = [
 ]
 
 [project.scripts]
-bridge = "bridge.main:main"
+outpost = "outpost.main:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/bridge"]
+packages = ["src/outpost"]
 
 [dependency-groups]
 dev = [

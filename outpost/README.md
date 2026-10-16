@@ -1,13 +1,13 @@
-# Bridge
+# Outpost
 
-An asynchronous bridge connecting a target to blip over WebSocket. The bridge serves
+An asynchronous service next to a target, connecting it to blip over WebSocket. It serves
 blip, records the messages and carries out the actions blip invokes. How it talks to
 the target is a **protocol**, a Python class provided by the user of blip.
 
 ## Features
 
 - **User-provided protocols**: a protocol is a small Python class against the public
-  API (`from bridge import Protocol, action, ...`), loaded from a file or module.
+  API (`from outpost import Protocol, action, ...`), loaded from a file or module.
 - **Actions**: Python functions of the protocol that blip shows as buttons, fields,
   sliders and dropdowns, with their parameters taken from the type hints.
 - **Simulator**: streams CPU load, simulated sensor measurements and synthetic log
@@ -31,23 +31,23 @@ Run the tests:
 uv run pytest
 ```
 
-### Running the Bridge
+### Running the Outpost
 
-The simulator is the default protocol. It serves `ws://127.0.0.1:3000/ws/bridge`:
+The simulator is the default protocol. It serves `ws://127.0.0.1:3000/ws/outpost`:
 
 ```bash
-uv run bridge --protocol simulator --port 3000
+uv run outpost --protocol simulator --port 3000
 ```
 
 The options of a protocol are set with `--option key=value` (`-o`), converted by the
 type hints of its constructor. `--protocol-help` lists them:
 
 ```bash
-uv run bridge --protocol simulator --protocol-help
-uv run bridge --protocol simulator -o interval_ms=10 -o log_interval_ms=200
+uv run outpost --protocol simulator --protocol-help
+uv run outpost --protocol simulator -o interval_ms=10 -o log_interval_ms=200
 ```
 
-The protocols that come with the bridge:
+The protocols that come with the outpost:
 
 - `simulator`: synthetic telemetry, logs and demo actions.
 - `replay`: replays a recording (`-o path=recording.blip`, `-o speed=2` replays twice
@@ -60,19 +60,19 @@ Record the messages sent to blip with any protocol, to open them in blip later
 (**File > Open recording**):
 
 ```bash
-uv run bridge --protocol simulator --record simulator.blip
+uv run outpost --protocol simulator --record simulator.blip
 ```
 
 ### Writing a Protocol
 
-A protocol implements `run`, which the bridge runs while it serves and cancels when it
+A protocol implements `run`, which the outpost runs while it serves and cancels when it
 shuts down. It sends to blip with `send_value`, `send_metadata`, `send_log` or `send`.
 Methods decorated with `@action` are its actions, sharing the link to the target:
 
 ```python
 from typing import Annotated, Literal
 
-from bridge import ActionError, LogLevel, Protocol, Range, Unit, action
+from outpost import ActionError, LogLevel, Protocol, Range, Unit, action
 
 
 class MyTarget(Protocol):
@@ -100,10 +100,10 @@ Run it by naming its file, followed by `:ClassName` if the file defines several
 protocols, or its module:
 
 ```bash
-uv run bridge --protocol ./my_target.py -o host=192.168.1.70
+uv run outpost --protocol ./my_target.py -o host=192.168.1.70
 ```
 
-Or serve it from a script of your own with `bridge.run(MyTarget("192.168.1.70"))`.
+Or serve it from a script of your own with `outpost.run(MyTarget("192.168.1.70"))`.
 
 Actions are carried out one after another per action, in the order blip sent them. An
 action succeeds when it returns and is rejected when it raises, `ActionError` with the
@@ -125,4 +125,4 @@ Messages sent in binary WebSocket frames match the Rust `proto` crate, see
 - **LogRecord**: `{ timestamp: int (ns), level: int, component: str, message: str }`
 - **Actions**: the list of all actions and their parameters
 - **ActionResult**: `{ id: int, result: {"Ok": null} | {"Err": str} }`, the answer to an invocation
-- **Request** (blip to the bridge): `{"Invoke": { id: int, path: str, args: dict }}`
+- **Request** (blip to the outpost): `{"Invoke": { id: int, path: str, args: dict }}`

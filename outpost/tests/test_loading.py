@@ -4,21 +4,21 @@ from pathlib import Path
 
 import pytest
 
-from bridge.loading import (
+from outpost.loading import (
     LoadError,
     create_protocol,
     describe_options,
     load_protocol,
     parse_spec,
 )
-from bridge.protocols.simulator import SimulatorProtocol
-from bridge.protocols.socket import SocketProtocol
+from outpost.protocols.simulator import SimulatorProtocol
+from outpost.protocols.socket import SocketProtocol
 
 USER_PROTOCOL = '''
 from pathlib import Path
 from typing import Optional
 
-from bridge import Protocol
+from outpost import Protocol
 
 
 class Target(Protocol):
@@ -73,7 +73,7 @@ def test_a_file_named_like_a_module_does_not_shadow_it(tmp_path):
 
     (tmp_path / "target_helpers.py").write_text("PORT = 4242\n", encoding="utf-8")
     source = (
-        "import json\nfrom target_helpers import PORT\nfrom bridge import Protocol\n\n"
+        "import json\nfrom target_helpers import PORT\nfrom outpost import Protocol\n\n"
         "class Json(Protocol):\n"
         "    def __init__(self, port: int = PORT) -> None:\n"
         "        self.text = json.dumps({'port': port})\n\n"
