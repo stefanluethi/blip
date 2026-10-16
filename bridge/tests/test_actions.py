@@ -247,6 +247,36 @@ async def test_a_slow_action_holds_up_only_its_own_invocations():
         await server.stop()
 
 
+async def test_a_change_while_a_client_connects_reaches_it():
+    target = Target()
+    server = await serve(target, 3984)
+    send = server._send
+    first = []
+
+    async def changing_send(client, message):
+        # the actions change while the cached list is sent to the new client
+        if not first:
+            first.append(message)
+            target.actions.set_enabled(False, "reboot")
+            await asyncio.sleep(0.05)
+        await send(client, message)
+
+    server._send = changing_send
+    try:
+        async with websockets.connect("ws://127.0.0.1:3984/ws/test") as ws:
+            latest = None
+            try:
+                while True:
+                    latest = await asyncio.wait_for(receive(ws, "Actions"), timeout=0.3)
+            except asyncio.TimeoutError:
+                pass
+            assert latest is not None
+            # the last list the client got is the changed one
+            assert {a["path"]: a for a in latest}["reboot"]["enabled"] is False
+    finally:
+        await server.stop()
+
+
 async def test_changed_actions_are_announced_to_all_clients():
     target = Target()
     server = await serve(target, 3986)
