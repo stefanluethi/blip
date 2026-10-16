@@ -1,4 +1,4 @@
-# sonde: API and usage draft
+# sonde
 
 sonde is a C++17 library that collects traces on an embedded target or in a unit test and
 encodes them as blip messages. It hands them over in batches, which the firmware sends
@@ -10,7 +10,8 @@ firmware / unit test
            └─(recording file)────────────────────────────────────────────────> blip
 ```
 
-Status: draft for discussion, nothing implemented yet.
+Status: implemented as described here, except [actions](#later-actions). See
+[Build](#build) for building and testing it.
 
 ## Goals
 
@@ -111,7 +112,11 @@ Within a tracer, the storage is a **single-producer single-consumer queue of bat
   acquire and written with release; each index is written by one side only. That needs no
   locks and no compare-and-swap, so it also works on Cortex-M0 (no `LDREX`/`STREX`), from
   ISRs, and on multicore MCUs. sonde `static_assert`s that the atomics are always
-  lock-free.
+  lock-free, except on ARMv6-M (Cortex-M0/M0+): there `is_always_lock_free` is false
+  since read-modify-write operations need a library call, while the loads and stores
+  sonde uses are single instructions.
+- The commit requests of the consumer are a counter that only the consumer writes; the
+  producer remembers the count it has seen.
 - The producer never blocks: when no batch is free it drops the message, returns
   `Status::Full` and counts it in `dropped()`. Tracing does not change the timing of the
   traced code because the link is slow.
@@ -287,7 +292,12 @@ public:
 
 Messages are atomic: each message is encoded by a fresh tinycbor encoder into the free part
 of the open batch. If it does not fit, the batch keeps its size; the tracer commits it and
-encodes the message into the next free batch, or drops it if there is none.
+encodes the message into the next free batch, or drops it if there is none. tinycbor counts
+the bytes a message needs beyond the free part, so a message larger than a batch is dropped
+as `TooLarge` without committing the open batch. A message that moves to the next batch is
+encoded twice, so fill functions and `encode` functions should not have side effects.
+
+Without a clock (`nullptr`), messages traced without a timestamp get the timestamp 0.
 
 ### Values
 
@@ -351,6 +361,7 @@ namespace sonde {
 
 /// Writes a blip recording: the header {"format": "blip recording", "version": 1} and
 /// then the batches, uncompressed. blip opens the file directly, the outpost replays it.
+/// Missing directories of the path are created.
 class FileSink final : public Sink {
 public:
     explicit FileSink(const char* path);
@@ -557,22 +568,41 @@ TEST_CASE("controller traces its state each step") {
 ```
 sonde/
   CMakeLists.txt
+  cmake/               toolchain file for arm-none-eabi-gcc
   include/sonde/       sonde.hpp, file_sink.hpp
   src/                 tracer.cpp, encoder.cpp, file_sink.cpp
-  tests/               Catch2 tests
+  tests/               Catch2 tests, data/recording.blip
   examples/            desktop and a bare-metal sketch
+```
+
+Build and run the tests, with any generator (e.g. Ninja, or Visual Studio on Windows):
+
+```bash
+cmake -S . -B build
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+Cross-compile the library and the bare-metal sketch for a Cortex-M:
+
+```bash
+cmake -S . -B build-m0 -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DSONDE_CPU=cortex-m0
+cmake --build build-m0
 ```
 
 | CMake option           | Default | Meaning |
 |------------------------|---------|---------|
 | `SONDE_HOSTED`         | `ON` unless cross-compiling | file sinks, system clock |
 | `SONDE_FETCH_TINYCBOR` | `ON`    | fetch tinycbor with FetchContent; `OFF` uses a `tinycbor` target the project provides (vendored in firmware) |
-| `SONDE_BUILD_TESTS`    | `ON` if top-level project | fetch Catch2 v3 and build the tests |
+| `SONDE_BUILD_TESTS`    | `ON` if top-level project and hosted | fetch Catch2 v3 and build the tests |
+| `SONDE_BUILD_EXAMPLES` | `ON` if top-level project | build the examples |
+| `SONDE_WERROR`         | `OFF`   | treat the warnings of sonde as errors |
 | `SONDE_LOGF_MAX`       | `128`   | bytes of a `logf` message |
 
 tinycbor has no CMake build of its own that fits, so sonde builds a small static library
 from its encoder sources (and the parser, for the tests and later for actions), pinned to
-a tagged release.
+the release v0.6.1. On a Cortex-M, sonde and tinycbor take about 7 KB of code before the
+linker drops unused sections.
 
 Firmware uses it with:
 
@@ -593,7 +623,9 @@ target_link_libraries(firmware PRIVATE sonde::sonde)
   batch the consumer takes decodes, and the messages taken plus `dropped()` add up to
   the messages traced.
 - `FileSink` writes a recording the outpost's `read_frames` reads; a Rust test in `proto`
-  decodes a recording written by sonde.
+  decodes a recording written by sonde. The recording is `tests/data/recording.blip`,
+  which the sonde tests compare with what sonde writes; `SONDE_UPDATE_FIXTURES=1` writes
+  it anew. The Rust test also checks that serde encodes the messages to the same bytes.
 - CI builds the library also with `-fno-exceptions -fno-rtti` and for an Arm Cortex-M0
   and M4 target (`arm-none-eabi-gcc`), without the hosted parts.
 
@@ -601,11 +633,8 @@ target_link_libraries(firmware PRIVATE sonde::sonde)
 
 - **blip reads batches** (done): a WebSocket frame may hold several messages as a CBOR
   sequence, so a UDP datagram of sonde passes through the outpost as one frame.
-- **Socket passthrough keeps messages whole.** Today the outpost forwards each raw TCP
-  read (up to 4096 bytes) as one WebSocket frame, which may end in half a message. It
-  also looks at the start of each frame only to keep the latest `Actions` and to drop
-  `ActionResult`s, which misses them inside a batch. The socket protocol has to cut the
-  TCP stream at message boundaries and look at each message of a batch.
+- **Socket passthrough keeps messages whole** (done): the outpost cuts the TCP stream at
+  message boundaries and looks at each message of a batch.
 - **Timestamp domain.** `proto` gets a way to say whether timestamps are uptime or UTC,
   see [Timestamps](#timestamps). Not needed for the first version.
 - **Recording header.** Nothing changes: a sonde recording is a version 1 recording.

@@ -5,13 +5,15 @@ Lightweight web tracing tool for embedded systems.
 blip shows live values as plots and log records as tables. It runs in the
 browser (WASM) or as a native app, built with [egui](https://github.com/emilk/egui).
 A small Python service, the outpost, connects an embedded target (or a simulator) to blip over
-a WebSocket, using CBOR-encoded messages.
+a WebSocket, using CBOR-encoded messages. sonde, a C++ library, encodes those messages on the
+target or in unit tests.
 
 Try the web app at <https://stefanluethi.github.io/blip/> and read the
 documentation at <https://stefanluethi.github.io/blip/docs/>.
 
 ```
 embedded target  <-- TCP / UDP -->  outpost (Python)  <-- WebSocket / CBOR -->  blip (Rust)
+  └─ sonde (C++)
 ```
 
 | Directory  | Contents |
@@ -19,6 +21,7 @@ embedded target  <-- TCP / UDP -->  outpost (Python)  <-- WebSocket / CBOR -->  
 | `blip/`    | GUI app (Rust, egui), web and native |
 | `proto/`   | Wire protocol types shared between blip and embedded targets |
 | `outpost/` | Target-side service connecting devices to blip (Python) |
+| `sonde/`   | Tracing library for targets and unit tests (C++17), see [`sonde/README.md`](sonde/README.md) |
 | `doc/`     | User documentation (Sphinx) |
 
 ## Prerequisites
