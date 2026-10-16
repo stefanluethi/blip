@@ -642,10 +642,12 @@ mod tests {
         let renamed = renaming.clone();
         let model = Model::default();
         let mut time = TimeRange::default();
+        let mut invoker = crate::app::model::actions::Invoker::default();
         let mut harness = Harness::builder().build_ui(move |ui| {
             let mut context = ViewContext {
                 model: &model,
                 time: &mut time,
+                invoker: &mut invoker,
                 formats: &crate::app::view::NO_FORMATS,
             };
             layout.ui(ui, &mut context);

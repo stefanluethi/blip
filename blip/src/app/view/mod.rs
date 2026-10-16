@@ -1,3 +1,4 @@
+pub mod actions;
 pub mod heatmap;
 pub mod log_table;
 pub mod plot;
@@ -8,6 +9,7 @@ pub mod trace_selection;
 pub mod xy;
 
 use crate::app::model::Model;
+use crate::app::model::actions::Invoker;
 use crate::app::model::numbers::{DisplayFormat, NumberKind};
 use crate::app::model::traces::{Samples, Trace};
 use crate::app::time::TimeRange;
@@ -18,6 +20,8 @@ use trace_selection::MAX_LISTED_ELEMENTS;
 pub struct ViewContext<'a> {
     pub model: &'a Model,
     pub time: &'a mut TimeRange,
+    /// Sends the invocations of actions.
+    pub invoker: &'a mut Invoker,
     /// The display formats of the traces of the shown view.
     pub formats: &'a Formats,
 }
@@ -68,6 +72,7 @@ pub enum ViewKind {
     Xy(xy::Xy),
     Heatmap(heatmap::Heatmap),
     Logs(log_table::LogTable),
+    Actions(actions::Actions),
 }
 
 /// The kinds of views the user can add.
@@ -79,6 +84,7 @@ pub enum ViewType {
     Xy,
     Heatmap,
     Logs,
+    Actions,
 }
 
 /// What a view can show of a trace.
@@ -92,13 +98,14 @@ pub enum Selectable {
 }
 
 impl ViewType {
-    pub const ALL: [ViewType; 6] = [
+    pub const ALL: [ViewType; 7] = [
         ViewType::Plot,
         ViewType::States,
         ViewType::Table,
         ViewType::Xy,
         ViewType::Heatmap,
         ViewType::Logs,
+        ViewType::Actions,
     ];
 
     pub fn name(self) -> &'static str {
@@ -109,6 +116,7 @@ impl ViewType {
             ViewType::Xy => "XY",
             ViewType::Heatmap => "Heatmap",
             ViewType::Logs => "Logs",
+            ViewType::Actions => "Actions",
         }
     }
 
@@ -120,6 +128,7 @@ impl ViewType {
             ViewType::Xy => egui_phosphor::regular::CHART_SCATTER,
             ViewType::Heatmap => egui_phosphor::regular::GRID_NINE,
             ViewType::Logs => egui_phosphor::regular::LIST_BULLETS,
+            ViewType::Actions => egui_phosphor::regular::SLIDERS_HORIZONTAL,
         }
     }
 
@@ -127,6 +136,7 @@ impl ViewType {
     pub fn selectable(self, trace: &Trace) -> Selectable {
         match (self, &trace.samples) {
             (ViewType::Logs, _) => Selectable::No("Log views show no traces".to_owned()),
+            (ViewType::Actions, _) => Selectable::No("Action views show no traces".to_owned()),
             (ViewType::Plot | ViewType::Xy, Samples::Strings(_)) => {
                 Selectable::No("Plots show numbers".to_owned())
             }
@@ -158,7 +168,7 @@ impl ViewType {
     /// Whether a view of this type writes the values of its traces as text, so their
     /// display formats apply.
     pub fn writes_values(self) -> bool {
-        !matches!(self, ViewType::Xy | ViewType::Logs)
+        !matches!(self, ViewType::Xy | ViewType::Logs | ViewType::Actions)
     }
 
     /// Whether a view of this type shows one trace only.
@@ -315,6 +325,7 @@ impl View {
             ViewType::Xy => ViewKind::Xy(xy::Xy::new()),
             ViewType::Heatmap => ViewKind::Heatmap(heatmap::Heatmap::new()),
             ViewType::Logs => ViewKind::Logs(log_table::LogTable::new()),
+            ViewType::Actions => ViewKind::Actions(actions::Actions::new()),
         };
         Self {
             name,
@@ -331,11 +342,12 @@ impl View {
             ViewKind::Xy(_) => ViewType::Xy,
             ViewKind::Heatmap(_) => ViewType::Heatmap,
             ViewKind::Logs(_) => ViewType::Logs,
+            ViewKind::Actions(_) => ViewType::Actions,
         }
     }
 
     pub fn shows_traces(&self) -> bool {
-        !matches!(self.kind, ViewKind::Logs(_))
+        !matches!(self.kind, ViewKind::Logs(_) | ViewKind::Actions(_))
     }
 
     /// The paths of the traces the view shows and its type, or `None` if it does not
@@ -348,7 +360,7 @@ impl View {
             ViewKind::Table(table) => &mut table.traces,
             ViewKind::Xy(xy) => &mut xy.traces,
             ViewKind::Heatmap(heatmap) => &mut heatmap.traces,
-            ViewKind::Logs(_) => return None,
+            ViewKind::Logs(_) | ViewKind::Actions(_) => return None,
         };
         Some((paths, view_type))
     }
@@ -359,6 +371,7 @@ impl Viewable for View {
         let context = &mut ViewContext {
             model: context.model,
             time: context.time,
+            invoker: context.invoker,
             formats: &self.formats,
         };
         match &mut self.kind {
@@ -368,6 +381,7 @@ impl Viewable for View {
             ViewKind::Xy(xy) => xy.view(ui, context),
             ViewKind::Heatmap(heatmap) => heatmap.view(ui, context),
             ViewKind::Logs(logs) => logs.view(ui, context),
+            ViewKind::Actions(actions) => actions.view(ui, context),
         }
     }
 
@@ -379,6 +393,7 @@ impl Viewable for View {
             ViewKind::Xy(xy) => xy.properties_ui(ui, model),
             ViewKind::Heatmap(heatmap) => heatmap.properties_ui(ui, model),
             ViewKind::Logs(logs) => logs.properties_ui(ui, model),
+            ViewKind::Actions(actions) => actions.properties_ui(ui, model),
         }
         self.number_format_ui(ui, model);
     }
