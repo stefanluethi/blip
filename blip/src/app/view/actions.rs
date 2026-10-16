@@ -143,9 +143,9 @@ fn initial(param: &Param, readback: Option<Data>) -> Data {
     }
 }
 
-/// Shows an input for `value` of `param`. Numbers with both bounds get a slider unless
-/// `field`.
-fn input_ui(ui: &mut egui::Ui, param: &Param, value: &mut Data, field: bool) -> Change {
+/// Shows an input for `value` of `param` of the action at `path`. Numbers with both
+/// bounds get a slider unless `field`.
+fn input_ui(ui: &mut egui::Ui, path: &str, param: &Param, value: &mut Data, field: bool) -> Change {
     let unit_suffix = if param.unit.is_empty() {
         String::new()
     } else {
@@ -177,7 +177,7 @@ fn input_ui(ui: &mut egui::Ui, param: &Param, value: &mut Data, field: bool) -> 
                     }
                 });
             } else {
-                egui::ComboBox::from_id_salt(ui.id().with(("choice", &param.name)))
+                egui::ComboBox::from_id_salt(ui.id().with(("choice", path, &param.name)))
                     .selected_text(&selected)
                     .width(INPUT_WIDTH)
                     .show_ui(ui, |ui| {
@@ -400,7 +400,7 @@ impl Actions {
             } else if !send_button {
                 let field = self.uses_field(&action.path, &action.params[0].name);
                 ui.horizontal(|ui| {
-                    change = input_ui(ui, &action.params[0], &mut values[0], field);
+                    change = input_ui(ui, &action.path, &action.params[0], &mut values[0], field);
                 })
                 .response
             } else {
@@ -425,7 +425,7 @@ impl Actions {
                 });
                 ui.add_enabled_ui(disabled.is_none(), |ui| {
                     let field = self.uses_field(&action.path, &param.name);
-                    ui.horizontal(|ui| input_ui(ui, param, value, field));
+                    ui.horizontal(|ui| input_ui(ui, &action.path, param, value, field));
                 });
                 ui.label("");
                 ui.label("");
@@ -501,7 +501,9 @@ impl Viewable for Actions {
         let (announced, missing) = self.rows(model);
         if announced.is_empty() && missing.is_empty() {
             ui.centered_and_justified(|ui| {
-                ui.weak(if model.actions.is_empty() {
+                ui.weak(if model.actions.is_empty() && !context.invoker.connected {
+                    "Connect to a target to see its actions"
+                } else if model.actions.is_empty() {
                     "The target announced no actions"
                 } else {
                     "Choose the actions to show in the properties"
@@ -608,25 +610,26 @@ impl Viewable for Actions {
         if bounded.is_empty() {
             return;
         }
+        let names = short_names(bounded.iter().map(|(path, _)| path.as_str()));
         properties_section(ui, "Number inputs", |ui| {
-            for (path, param) in bounded {
+            for ((path, param), name) in bounded.iter().zip(names) {
                 let key = format!("{path}:{param}");
                 let mut field = self.fields.contains(&key);
-                let label = if model
+                let single = model
                     .actions
-                    .get(&path)
-                    .is_some_and(|a| a.params.len() == 1)
-                {
-                    path.clone()
+                    .get(path)
+                    .is_some_and(|action| action.params.len() == 1);
+                let label = if single {
+                    name.to_owned()
                 } else {
-                    format!("{path} {param}")
+                    format!("{name} {param}")
                 };
-                super::choice_row(
-                    ui,
-                    &label,
-                    &mut field,
-                    &[(false, "Slider"), (true, "Field")],
-                );
+                ui.label(label).on_hover_text(path);
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut field, false, "Slider");
+                    ui.selectable_value(&mut field, true, "Field");
+                });
+                ui.end_row();
                 if field {
                     self.fields.insert(key);
                 } else {
