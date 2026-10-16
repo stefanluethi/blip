@@ -33,18 +33,18 @@ Components
    :satisfies: REQ_PROTO_CBOR, REQ_CTRL_ANNOUNCE
 
    Rust crate defining the serde-serialisable wire types. It is the single
-   source of truth for the message schema; the bridge mirrors it in
-   ``bridge/src/bridge/proto.py``.
+   source of truth for the message schema; the outpost mirrors it in
+   ``outpost/src/outpost/proto.py``.
 
-.. arch:: bridge
-   :id: ARCH_BRIDGE
+.. arch:: outpost
+   :id: ARCH_OUTPOST
    :status: implemented
-   :component: bridge
-   :satisfies: REQ_BRIDGE_SOCKET, REQ_BRIDGE_SIM, REQ_BRIDGE_PROTOCOL, REQ_CONN_WS, REQ_CTRL_ANNOUNCE, REQ_CTRL_ACTION, REQ_CTRL_FEEDBACK
+   :component: outpost
+   :satisfies: REQ_OUTPOST_SOCKET, REQ_OUTPOST_SIM, REQ_OUTPOST_PROTOCOL, REQ_CONN_WS, REQ_CTRL_ANNOUNCE, REQ_CTRL_ACTION, REQ_CTRL_FEEDBACK
 
-   Python package (``bridge/src/bridge``) managed with ``uv``. It is a
+   Python package (``outpost/src/outpost``) managed with ``uv``. It is a
    framework: the protocol that talks to a target is provided by the user and
-   only uses the public API exported by ``bridge/__init__.py``.
+   only uses the public API exported by ``outpost/__init__.py``.
 
    * ``protocol.py`` -- ``Protocol``, the base class of protocols: ``run``
      talks to the target, ``send_*`` send to blip, ``invoke`` carries out
@@ -52,7 +52,7 @@ Components
    * ``actions.py`` -- ``@action`` and the ``Actions`` registry, which takes
      the parameters of actions from the type hints of their functions, checks
      the arguments and runs the invocations of an action one after another.
-   * ``server.py`` -- ``BridgeServer``, an asyncio WebSocket server that
+   * ``server.py`` -- ``OutpostServer``, an asyncio WebSocket server that
      broadcasts protocol messages to all connected clients, sends the list of
      actions to clients connecting later, and passes the invocations of each
      client to the protocol, answering that client and logging to all.
@@ -61,7 +61,7 @@ Components
      its constructor.
    * ``protocols/`` -- the built-in ``simulator`` (also the reference
      protocol), ``replay`` and ``socket`` (TCP/UDP passthrough).
-   * ``main.py`` -- ``click`` based command line entry point (``bridge``) and
+   * ``main.py`` -- ``click`` based command line entry point (``outpost``) and
      ``run`` to serve a protocol from a script.
 
 Component traceability

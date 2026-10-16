@@ -103,7 +103,7 @@ Connectivity
 .. req:: WebSocket connection
    :id: REQ_CONN_WS
    :status: implemented
-   :component: blip, bridge
+   :component: blip, outpost
    :satisfies: STK_LIVE_OBSERVE
 
    blip shall connect to user-configurable WebSocket addresses, several at
@@ -135,7 +135,7 @@ Control
 .. req:: Announce actions
    :id: REQ_CTRL_ANNOUNCE
    :status: implemented
-   :component: proto, bridge
+   :component: proto, outpost
    :satisfies: STK_CONTROL
 
    The target shall announce the actions it can carry out with their
@@ -147,24 +147,24 @@ Control
 .. req:: Invoke actions
    :id: REQ_CTRL_ACTION
    :status: implemented
-   :component: blip, bridge
+   :component: blip, outpost
    :satisfies: STK_CONTROL
 
    blip shall send invocations of announced actions with their arguments to
-   the connected target. The bridge shall check the arguments against the
+   the connected target. The outpost shall check the arguments against the
    parameters and carry out the invocations of an action one after another in
    the order they arrived.
 
 .. req:: Action feedback
    :id: REQ_CTRL_FEEDBACK
    :status: implemented
-   :component: blip, bridge
+   :component: blip, outpost
    :satisfies: STK_CONTROL
 
    The target shall answer each invocation to the client that sent it with
    whether it carried it out or the reason it rejected it. blip shall show
    whether the latest invocation of an action is pending, accepted, rejected
-   with the reason, or unanswered after a timeout. The bridge shall log each
+   with the reason, or unanswered after a timeout. The outpost shall log each
    invocation and its outcome to all clients.
 
 .. req:: Actions view
@@ -239,64 +239,64 @@ Files
    blip shall save the layout of the views to a JSON file and open layout
    files saved by the same or an older version of blip.
 
-Bridge
-------
+Outpost
+-------
 
-.. req:: Serial bridge
-   :id: REQ_BRIDGE_SERIAL
+.. req:: Serial outpost
+   :id: REQ_OUTPOST_SERIAL
    :status: approved
-   :component: bridge
+   :component: outpost
    :satisfies: STK_DEVICE_IF
 
-   The bridge shall forward COBS-framed CBOR messages between a serial port
+   The outpost shall forward COBS-framed CBOR messages between a serial port
    and WebSocket clients.
 
 .. req:: User-provided protocols
-   :id: REQ_BRIDGE_PROTOCOL
+   :id: REQ_OUTPOST_PROTOCOL
    :status: implemented
-   :component: bridge
+   :component: outpost
    :satisfies: STK_DEVICE_IF, STK_CONTROL
 
-   The bridge shall load the protocol that talks to the target from a Python
+   The outpost shall load the protocol that talks to the target from a Python
    file or module provided by the user, configured with options converted by
    the type hints of its constructor. A protocol shall declare its actions as
    Python functions whose parameters are taken from their type hints, and may
    change them at runtime.
 
-.. req:: Socket bridge
-   :id: REQ_BRIDGE_SOCKET
+.. req:: Socket outpost
+   :id: REQ_OUTPOST_SOCKET
    :status: implemented
-   :component: bridge
+   :component: outpost
    :satisfies: STK_DEVICE_IF
 
-   The bridge shall forward messages between a TCP or UDP endpoint and
+   The outpost shall forward messages between a TCP or UDP endpoint and
    WebSocket clients, and forward invocations to the endpoint.
 
 .. req:: Simulator
-   :id: REQ_BRIDGE_SIM
+   :id: REQ_OUTPOST_SIM
    :status: implemented
-   :component: bridge
+   :component: outpost
    :satisfies: STK_DEVICE_IF, STK_CONTROL
 
-   The bridge shall provide a simulator mode that streams synthetic CPU load
+   The outpost shall provide a simulator mode that streams synthetic CPU load
    and sensor values, and log records of all severity levels, without
    hardware, and offers actions that change what it streams.
 
 .. req:: Record messages
-   :id: REQ_BRIDGE_RECORD
+   :id: REQ_OUTPOST_RECORD
    :status: implemented
-   :component: bridge
+   :component: outpost
    :satisfies: STK_REVIEW
 
-   The bridge shall record the messages it sends to blip to a recording file
+   The outpost shall record the messages it sends to blip to a recording file
    that blip opens.
 
 .. req:: Replay recordings
-   :id: REQ_BRIDGE_REPLAY
+   :id: REQ_OUTPOST_REPLAY
    :status: implemented
-   :component: bridge
+   :component: outpost
    :satisfies: STK_REVIEW, STK_DEVICE_IF
 
-   The bridge shall send the messages of a recording file to blip unchanged,
+   The outpost shall send the messages of a recording file to blip unchanged,
    except that recorded actions are disabled, at the pace of their timestamps
    or faster.

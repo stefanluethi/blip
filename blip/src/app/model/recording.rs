@@ -2,7 +2,7 @@
 //!
 //! A recording file is a CBOR sequence (RFC 8742): a [`Header`] followed by the
 //! messages, each the CBOR item of a WebSocket frame, compressed with gzip. Uncompressed
-//! files and files of several gzip members, e.g. appended to by the bridge, are read as
+//! files and files of several gzip members, e.g. appended to by the outpost, are read as
 //! well.
 //!
 //! Since version 2, a text string between the messages names the connection the
@@ -218,7 +218,7 @@ mod tests {
         assert!(is_recording(&file));
         assert_eq!(read(&file).0, [frame(1)]);
 
-        // a header in a gzip member and each frame in one of its own, as the bridge
+        // a header in a gzip member and each frame in one of its own, as the outpost
         // appends them
         let gzip = |bytes: &[u8]| {
             let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
@@ -246,8 +246,8 @@ mod tests {
     }
 
     #[test]
-    fn reads_recordings_of_the_python_bridge() {
-        // gzip.compress(header() + frames, mtime=0) of bridge.recording, with the
+    fn reads_recordings_of_the_python_outpost() {
+        // gzip.compress(header() + frames, mtime=0) of outpost.recording, with the
         // frames of the metadata of `speed`, the value 2^53 + 1 and a log record
         let hex = "1f8b080000000000020a4dca411282300c4661ca35dc7020ddba0fed4fc94cd366dad0fb801e14\
                    71a36ffbbe63594a15b23c27d6a9c2971a38c7d8511b97ec767952daf0805120a32328d98aa640\

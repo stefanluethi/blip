@@ -1,11 +1,11 @@
-//! The connections panel: the WebSocket addresses of bridges and targets, to connect to
+//! The connections panel: the WebSocket addresses of outposts and targets, to connect to
 //! any number of them at once.
 
 use egui_phosphor::regular;
 use std::collections::{HashMap, HashSet};
 
-/// Where a bridge started with its defaults listens.
-const DEFAULT_ADDRESS: &str = "ws://127.0.0.1:3000/ws/bridge";
+/// Where an outpost started with its defaults listens.
+const DEFAULT_ADDRESS: &str = "ws://127.0.0.1:3000/ws/outpost";
 
 const CONNECTED_COLOR: egui::Color32 = egui::Color32::from_rgb(39, 174, 96);
 const FAILED_COLOR: egui::Color32 = egui::Color32::from_rgb(235, 87, 87);
@@ -239,7 +239,7 @@ impl Connections {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .button(regular::PLUS)
-                    .on_hover_text("Add the WebSocket address of a bridge or target")
+                    .on_hover_text("Add the WebSocket address of an outpost or target")
                     .clicked()
                 {
                     actions.push(Action::StartEdit(Edited::New, Field::Address));
@@ -271,7 +271,7 @@ impl Connections {
                         });
                     }
                     _ if self.connections.is_empty() => {
-                        ui.weak("Add the address of a bridge or target with +");
+                        ui.weak("Add the address of an outpost or target with +");
                     }
                     _ => {}
                 }
@@ -548,12 +548,12 @@ mod tests {
 
     #[test]
     fn connections_are_named_after_their_address() {
-        assert_eq!(name_of("ws://127.0.0.1:3000/ws/bridge"), "bridge");
+        assert_eq!(name_of("ws://127.0.0.1:3000/ws/outpost"), "outpost");
         assert_eq!(name_of("ws://robby/"), "robby");
         assert_eq!(name_of("ws://host:80/a?b"), "a");
         assert_eq!(name_of(""), "connection");
-        let connections = connections(&["ws://a/ws/bridge", "ws://b/ws/bridge", "ws://c/robby"]);
-        assert_eq!(names(&connections), ["bridge", "bridge 2", "robby"]);
+        let connections = connections(&["ws://a/ws/outpost", "ws://b/ws/outpost", "ws://c/robby"]);
+        assert_eq!(names(&connections), ["outpost", "outpost 2", "robby"]);
     }
 
     #[test]

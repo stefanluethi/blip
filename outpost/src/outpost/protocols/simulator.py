@@ -1,6 +1,6 @@
 """Simulator protocol implementation matching Rust simulator app.
 
-It only uses the public API of the bridge, so it is the reference for protocols of
+It only uses the public API of the outpost, so it is the reference for protocols of
 users. Its actions change what it sends: the motor follows its speed setpoint, the log
 level filters its log records and the ambient temperature shows in the thermal frame.
 """
@@ -13,9 +13,9 @@ import time
 from typing import Annotated
 import psutil
 
-from bridge import ActionError, LogLevel, Message, Protocol, Range, Unit, action
+from outpost import ActionError, LogLevel, Message, Protocol, Range, Unit, action
 
-logger = logging.getLogger("bridge.simulator")
+logger = logging.getLogger("outpost.simulator")
 
 TRACE, DEBUG, INFO, WARN, ERROR = LogLevel
 

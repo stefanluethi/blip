@@ -13,7 +13,7 @@ Prerequisites
 
      cargo install --locked trunk
 
-* `uv <https://docs.astral.sh/uv/>`_ for the Python bridge and this
+* `uv <https://docs.astral.sh/uv/>`_ for the Python outpost and this
   documentation.
 
 .. |ge| unicode:: U+2265
@@ -29,9 +29,9 @@ Web (output in ``blip/dist``)::
 
    cd blip && trunk build --release
 
-Installing the bridge
----------------------
+Installing the outpost
+----------------------
 
 ::
 
-   cd bridge && uv sync
+   cd outpost && uv sync

@@ -1,34 +1,34 @@
 Test Cases
 ==========
 
-.. test:: Simulator bridge streams values
-   :id: TEST_BRIDGE_SIM
+.. test:: Simulator outpost streams values
+   :id: TEST_OUTPOST_SIM
    :status: implemented
-   :component: bridge
-   :verifies: REQ_BRIDGE_SIM, REQ_PROTO_CBOR
+   :component: outpost
+   :verifies: REQ_OUTPOST_SIM, REQ_PROTO_CBOR
 
-   ``bridge/tests/test_bridge.py::test_simulator_bridge`` -- connects a
-   WebSocket client to the bridge in simulator mode and checks that valid
+   ``outpost/tests/test_outpost.py::test_simulator_outpost`` -- connects a
+   WebSocket client to the outpost in simulator mode and checks that valid
    CBOR messages are received.
 
-.. test:: Simulator bridge streams logs
-   :id: TEST_BRIDGE_SIM_LOGS
+.. test:: Simulator outpost streams logs
+   :id: TEST_OUTPOST_SIM_LOGS
    :status: implemented
-   :component: bridge
-   :verifies: REQ_BRIDGE_SIM, REQ_PROTO_CBOR
+   :component: outpost
+   :verifies: REQ_OUTPOST_SIM, REQ_PROTO_CBOR
 
-   ``bridge/tests/test_bridge.py::test_simulator_bridge_logs`` -- connects a
-   WebSocket client to the bridge in simulator mode and checks that well-formed
+   ``outpost/tests/test_outpost.py::test_simulator_outpost_logs`` -- connects a
+   WebSocket client to the outpost in simulator mode and checks that well-formed
    ``Log`` records are received.
 
-.. test:: Simulator bridge streams typed values
-   :id: TEST_BRIDGE_SIM_TYPES
+.. test:: Simulator outpost streams typed values
+   :id: TEST_OUTPOST_SIM_TYPES
    :status: implemented
-   :component: bridge
-   :verifies: REQ_BRIDGE_SIM, REQ_PROTO_TYPES
+   :component: outpost
+   :verifies: REQ_OUTPOST_SIM, REQ_PROTO_TYPES
 
-   ``bridge/tests/test_bridge.py::test_simulator_bridge_typed_values`` --
-   connects a WebSocket client to the bridge in simulator mode and checks that
+   ``outpost/tests/test_outpost.py::test_simulator_outpost_typed_values`` --
+   connects a WebSocket client to the outpost in simulator mode and checks that
    records, arrays, integers, bools, strings and nulls arrive as plain CBOR
    items.
 
@@ -76,7 +76,7 @@ Test Cases
 
    ``proto/src/data.rs`` unit tests -- encode every kind of ``Data`` to the
    expected CBOR bytes, round-trip nested arrays and records, decode values
-   encoded by the Python bridge, and reject byte strings, non-text map keys,
+   encoded by the Python outpost, and reject byte strings, non-text map keys,
    duplicate fields and integers out of range.
 
 .. test:: Integers are kept exactly
@@ -98,7 +98,7 @@ Test Cases
 
    ``blip/src/app/model/recording.rs`` tests -- save frames and read them
    back unchanged, read uncompressed files, files of several gzip members and
-   files written by the Python bridge, read a cut off file up to the cut and
+   files written by the Python outpost, read a cut off file up to the cut and
    reject other files.
 
 .. test:: Layouts are saved as JSON
@@ -110,15 +110,15 @@ Test Cases
    ``blip/src/app/layout/file.rs::layouts_survive_json`` -- saves a layout
    with a view of each type as JSON and checks it loads unchanged.
 
-.. test:: Bridge records and replays
-   :id: TEST_BRIDGE_RECORDING
+.. test:: Outpost records and replays
+   :id: TEST_OUTPOST_RECORDING
    :status: implemented
-   :component: bridge
-   :verifies: REQ_BRIDGE_RECORD, REQ_BRIDGE_REPLAY
+   :component: outpost
+   :verifies: REQ_OUTPOST_RECORD, REQ_OUTPOST_REPLAY
 
-   ``bridge/tests/test_recording.py`` -- writes and reads recording files,
+   ``outpost/tests/test_recording.py`` -- writes and reads recording files,
    also cut off and uncompressed ones, and replays a recording through the
-   bridge to a WebSocket client while recording what is sent, checking that
+   outpost to a WebSocket client while recording what is sent, checking that
    both are the recorded frames byte for byte.
 
 .. test:: Action messages encode as plain CBOR
@@ -131,37 +131,37 @@ Test Cases
    the documented CBOR maps, parameter kinds as strings or maps, and decode
    announcements whose optional fields are left out.
 
-.. test:: Bridge announces, checks and carries out actions
-   :id: TEST_BRIDGE_ACTIONS
+.. test:: Outpost announces, checks and carries out actions
+   :id: TEST_OUTPOST_ACTIONS
    :status: implemented
-   :component: bridge
-   :verifies: REQ_CTRL_ANNOUNCE, REQ_CTRL_ACTION, REQ_CTRL_FEEDBACK, REQ_BRIDGE_PROTOCOL
+   :component: outpost
+   :verifies: REQ_CTRL_ANNOUNCE, REQ_CTRL_ACTION, REQ_CTRL_FEEDBACK, REQ_OUTPOST_PROTOCOL
 
-   ``bridge/tests/test_actions.py`` -- takes the parameters of actions from
+   ``outpost/tests/test_actions.py`` -- takes the parameters of actions from
    their type hints and rejects unsupported ones, checks and converts
    arguments, rejects disabled actions and those that raise, sends the
    actions to connecting clients and changed ones to all, answers only the
    invoking client, logs to all, and runs a slow action without holding up
    others.
 
-.. test:: Bridge loads user-provided protocols
-   :id: TEST_BRIDGE_LOADING
+.. test:: Outpost loads user-provided protocols
+   :id: TEST_OUTPOST_LOADING
    :status: implemented
-   :component: bridge
-   :verifies: REQ_BRIDGE_PROTOCOL
+   :component: outpost
+   :verifies: REQ_OUTPOST_PROTOCOL
 
-   ``bridge/tests/test_loading.py`` -- loads built-in protocols by name and
+   ``outpost/tests/test_loading.py`` -- loads built-in protocols by name and
    user protocols from files with and without a class name, converts the
    options by the type hints of the constructor and reports unknown, missing
    and invalid ones.
 
 .. test:: Simulator actions change what it sends
-   :id: TEST_BRIDGE_SIM_ACTIONS
+   :id: TEST_OUTPOST_SIM_ACTIONS
    :status: implemented
-   :component: bridge
-   :verifies: REQ_BRIDGE_SIM
+   :component: outpost
+   :verifies: REQ_OUTPOST_SIM
 
-   ``bridge/tests/test_bridge.py::test_simulator_actions_change_what_it_sends``
+   ``outpost/tests/test_outpost.py::test_simulator_actions_change_what_it_sends``
    -- the motor follows its setpoint and rejects it while disabled, the log
    level filters log records and is sent as its readback, and the
    calibration is disabled while it runs.

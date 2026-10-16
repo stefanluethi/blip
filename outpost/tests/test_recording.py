@@ -6,10 +6,10 @@ import gzip
 import cbor2
 import websockets
 
-from bridge.proto import Message
-from bridge.protocols.replay import ReplayProtocol, timestamp
-from bridge.recording import FORMAT, VERSION, RecordingWriter, read_frames
-from bridge.server import BridgeServer
+from outpost.proto import Message
+from outpost.protocols.replay import ReplayProtocol, timestamp
+from outpost.recording import FORMAT, VERSION, RecordingWriter, read_frames
+from outpost.server import OutpostServer
 
 
 def frames() -> list[bytes]:
@@ -73,7 +73,7 @@ async def test_replay_sends_and_records_the_frames_unchanged(tmp_path):
     write(original, frames())
 
     proto = ReplayProtocol(original, speed=1.0)
-    server = BridgeServer(
+    server = OutpostServer(
         protocol=proto, host="127.0.0.1", port=3997, path="/ws/test",
         recorder=RecordingWriter(copy),
     )

@@ -8,11 +8,11 @@ from typing import Optional
 
 import cbor2
 
-from bridge import ActionError, Protocol
-from bridge.proto import ACTIONS_PREFIX
-from bridge.recording import read_frames
+from outpost import ActionError, Protocol
+from outpost.proto import ACTIONS_PREFIX
+from outpost.recording import read_frames
 
-logger = logging.getLogger("bridge.replay")
+logger = logging.getLogger("outpost.replay")
 
 
 def timestamp(frame: bytes) -> Optional[int]:
@@ -52,7 +52,7 @@ class ReplayProtocol(Protocol):
         self.path = Path(path)
         self.speed = speed
         self.client_connected = asyncio.Event()
-        # read now, so a missing or wrong file stops the bridge at startup
+        # read now, so a missing or wrong file stops the outpost at startup
         self._frames = list(read_frames(self.path))
         logger.info(f"Replaying {len(self._frames)} messages of {self.path} at {self.speed}x")
 

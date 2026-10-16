@@ -22,7 +22,7 @@ import typing
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
 
-logger = logging.getLogger("bridge.actions")
+logger = logging.getLogger("outpost.actions")
 
 # The attribute holding the ActionInfo of a function decorated with @action
 _ACTION_ATTRIBUTE = "__blip_action__"

@@ -3,7 +3,7 @@ one after another as a CBOR sequence (RFC 8742), compressed with gzip.
 
 blip opens these files, and saves the messages it received in the same format. Since
 version 2, a text string between the messages names the connection of blip the messages
-after it were received from. The bridge writes version 1, of one connection."""
+after it were received from. The outpost writes version 1, of one connection."""
 
 import gzip
 import io
@@ -15,7 +15,7 @@ from typing import Iterator, Union
 
 import cbor2
 
-logger = logging.getLogger("bridge.recording")
+logger = logging.getLogger("outpost.recording")
 
 FORMAT = "blip recording"
 # The version written, of the messages of one connection.
@@ -24,7 +24,7 @@ VERSION = 1
 READ_VERSION = 2
 
 # The written messages are flushed this often, so a file is readable up to about
-# this long before the bridge stopped, also if it was killed.
+# this long before the outpost stopped, also if it was killed.
 FLUSH_INTERVAL_SEC = 1.0
 
 
@@ -95,7 +95,7 @@ def read_frames(path: Union[str, Path]) -> Iterator[bytes]:
         raise ValueError(f"{path} is not a blip recording")
     if first.get("version", 0) > READ_VERSION:
         raise ValueError(
-            f"{path} has version {first['version']}, the bridge reads up to {READ_VERSION}"
+            f"{path} has version {first['version']}, the outpost reads up to {READ_VERSION}"
         )
 
     start = stream.tell()

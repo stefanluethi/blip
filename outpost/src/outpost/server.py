@@ -7,12 +7,12 @@ from typing import Any, Optional, Set
 import websockets
 from websockets.server import WebSocketServerProtocol, serve
 
-from bridge.actions import ActionError
-from bridge.proto import ACTION_RESULT_PREFIX, ACTIONS_PREFIX, LogLevel, Message, decode_request
-from bridge.protocol import Protocol
-from bridge.recording import RecordingWriter
+from outpost.actions import ActionError
+from outpost.proto import ACTION_RESULT_PREFIX, ACTIONS_PREFIX, LogLevel, Message, decode_request
+from outpost.protocol import Protocol
+from outpost.recording import RecordingWriter
 
-logger = logging.getLogger("bridge.server")
+logger = logging.getLogger("outpost.server")
 
 # The component of the log records about invocations
 ACTIONS_COMPONENT = "actions"
@@ -27,7 +27,7 @@ def describe(path: str, args: Any) -> str:
     return f"{path}({arguments})"
 
 
-class BridgeServer:
+class OutpostServer:
     """WebSocket server sending the messages of a protocol to all blip clients and
     passing the invocations of each client to the protocol."""
 
@@ -36,7 +36,7 @@ class BridgeServer:
         protocol: Protocol,
         host: str = "127.0.0.1",
         port: int = 3000,
-        path: str = "/ws/bridge",
+        path: str = "/ws/outpost",
         recorder: Optional[RecordingWriter] = None,
     ) -> None:
         self.protocol = protocol
@@ -59,7 +59,7 @@ class BridgeServer:
     async def broadcast(self, message: bytes) -> None:
         """Sends a message of the protocol to all clients, but answers to invocations."""
         if message.startswith(ACTION_RESULT_PREFIX):
-            # e.g. of a target that knows the actions itself, or of a replay: the bridge
+            # e.g. of a target that knows the actions itself, or of a replay: the outpost
             # answers the invoking client itself, and these ids are not that client's
             logger.debug("Dropping an ActionResult of the protocol")
             return

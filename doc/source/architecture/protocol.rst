@@ -108,7 +108,7 @@ The target announces the actions it can carry out, e.g. setting a motor
 setpoint, a log level or enabling a function, and blip invokes them.
 
 An ``Actions`` message lists all actions and replaces the list sent before, so
-actions that are gone disappear in blip. The bridge sends the list to each
+actions that are gone disappear in blip. The outpost sends the list to each
 client that connects and to all clients whenever it changes.
 
 .. list-table:: ``ActionDescriptor``
@@ -159,7 +159,7 @@ connection, the ``path`` of the action and its arguments as a record by
 parameter name. The target answers the client that sent it with an
 ``ActionResult`` of the same ``id``, ``{"Ok": null}`` if it carried the action
 out, ``{"Err": "reason"}`` if it rejected it. Whether the action had the
-desired effect shows in the traces, e.g. the readback. The bridge answers the
+desired effect shows in the traces, e.g. the readback. The outpost answers the
 invocations itself and drops ``ActionResult`` messages a protocol sends, e.g.
 those of a passthrough target or of a replayed recording.
 
@@ -175,7 +175,7 @@ Recording files
 ---------------
 
 blip saves the received messages to a recording file (**File > Save
-recording**), and the bridge writes the same format with ``--record``. A
+recording**), and the outpost writes the same format with ``--record``. A
 recording is a CBOR sequence (RFC 8742), i.e. CBOR items one after another
 without anything around them, compressed with gzip:
 
@@ -185,13 +185,13 @@ without anything around them, compressed with gzip:
 #. Since version 2, a text string before the messages of another connection
    with the name of that connection, see :doc:`/usage/ui`. Messages are maps, so
    a name cannot be taken for a message. Messages before the first name, and
-   all messages of version 1, have no connection name. The bridge writes
+   all messages of version 1, have no connection name. The outpost writes
    version 1, it reads version 2 and replays the messages of all its
    connections without their names.
 
 As the frames are stored as received, a recording keeps everything that was
 sent, also messages blip could not read. Appending a frame is writing its
-bytes, so a recording that was cut off, e.g. when the bridge was killed, is
+bytes, so a recording that was cut off, e.g. when the outpost was killed, is
 read up to the last whole message. Readers accept files of several gzip
 members one after another, as appending to a gzip file creates them, and
 uncompressed files.

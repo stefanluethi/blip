@@ -107,7 +107,7 @@ class Message:
 
     @classmethod
     def create_actions(cls, descriptors: List[Dict[str, Any]]) -> "Message":
-        """The list of all actions, see bridge.actions."""
+        """The list of all actions, see outpost.actions."""
         return cls(variant="Actions", data=descriptors)
 
     @classmethod

@@ -1,22 +1,22 @@
-"""The base class of protocols, which connect the bridge to a target."""
+"""The base class of protocols, which connect the outpost to a target."""
 
 import asyncio
 import logging
 from typing import Any, Awaitable, Callable, Optional, Set, Union
 
-from bridge.actions import Actions, declared_actions
-from bridge.proto import Data, Message
+from outpost.actions import Actions, declared_actions
+from outpost.proto import Data, Message
 
-logger = logging.getLogger("bridge.protocol")
+logger = logging.getLogger("outpost.protocol")
 
 SendCallback = Callable[[bytes], Awaitable[None]]
 
 
 class Protocol:
-    """Connects the bridge to a target: translates what the target sends to blip
+    """Connects the outpost to a target: translates what the target sends to blip
     messages and carries out the actions blip invokes.
 
-    A protocol implements `run`, which the bridge runs while it serves and cancels
+    A protocol implements `run`, which the outpost runs while it serves and cancels
     when it shuts down. Methods decorated with `@action` are its actions, more can be
     added at runtime through `actions`. The keyword arguments of the constructor are
     the options set with ``--option`` on the command line, converted by their type
@@ -40,14 +40,14 @@ class Protocol:
                     readback=info.readback,
                     confirm=info.confirm,
                 )
-            # only now, so the declared actions are announced once, by the bridge
+            # only now, so the declared actions are announced once, by the outpost
             actions.on_change = self._actions_changed
             self._actions = actions
         return self._actions
 
     async def run(self) -> None:
         """Talks to the target until cancelled. Returning ends the protocol but not the
-        bridge, raising an exception stops the bridge."""
+        outpost, raising an exception stops the outpost."""
         raise NotImplementedError
 
     async def on_client_connected(self) -> None:
@@ -91,7 +91,7 @@ class Protocol:
         await self.send(Message.create_actions(self.actions.descriptors()))
 
     def attach(self, send: Optional[SendCallback]) -> None:
-        """Sets where `send` sends messages to, called by the bridge."""
+        """Sets where `send` sends messages to, called by the outpost."""
         self._send_callback = send
 
     _announcing: Set["asyncio.Task[Any]"] = set()

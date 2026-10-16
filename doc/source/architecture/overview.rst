@@ -13,14 +13,14 @@ CBOR-encoded message schema:
       edge [fontname="sans-serif", fontsize=10];
 
       target [label="Embedded target\n(firmware)"];
-      bridge [label="bridge\n(Python)"];
+      outpost [label="outpost\n(Python)"];
       blip   [label="blip\n(Rust / egui, web + native)"];
       proto  [label="proto\n(shared schema)", shape=note, fillcolor="#fff8dc"];
 
-      target -> bridge [label="TCP / UDP", dir=both];
-      bridge -> blip   [label="WebSocket\nCBOR frames", dir=both];
+      target -> outpost [label="TCP / UDP", dir=both];
+      outpost -> blip   [label="WebSocket\nCBOR frames", dir=both];
       proto  -> blip   [style=dashed, arrowhead=none];
-      proto  -> bridge [style=dashed, arrowhead=none, label="mirrored"];
+      proto  -> outpost [style=dashed, arrowhead=none, label="mirrored"];
    }
 
 .. list-table:: Building blocks
@@ -38,9 +38,9 @@ CBOR-encoded message schema:
      - Rust
      - Wire protocol types (``Message``, ``Action``) shared between blip and
        embedded targets.
-   * - ``bridge``
+   * - ``outpost``
      - Python
-     - Asynchronous bridge from a device protocol (TCP/UDP, simulator) to a
+     - Asynchronous service connecting a device protocol (TCP/UDP, simulator) to a
        WebSocket server.
 
 See :doc:`components` for details and :doc:`protocol` for the message schema.

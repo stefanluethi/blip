@@ -33,7 +33,7 @@ Options and links
    One of ``draft``, ``approved``, ``implemented``, ``verified``,
    ``rejected``.
 ``:component:``
-   Affected component(s): ``blip``, ``proto``, ``bridge``.
+   Affected component(s): ``blip``, ``proto``, ``outpost``.
 ``:priority:``
    ``high``, ``medium`` or ``low``.
 ``:rationale:``

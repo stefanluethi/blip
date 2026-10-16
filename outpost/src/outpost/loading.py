@@ -11,7 +11,7 @@ import typing
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
-from bridge.protocol import Protocol
+from outpost.protocol import Protocol
 
 
 # Numbers the module names of protocol files, which may share their names
@@ -23,10 +23,10 @@ class LoadError(Exception):
 
 
 def builtin_protocols() -> Dict[str, Callable[..., Protocol]]:
-    """The protocols that come with the bridge by name."""
-    from bridge.protocols.replay import ReplayProtocol
-    from bridge.protocols.simulator import SimulatorProtocol
-    from bridge.protocols.socket import SocketProtocol
+    """The protocols that come with the outpost by name."""
+    from outpost.protocols.replay import ReplayProtocol
+    from outpost.protocols.simulator import SimulatorProtocol
+    from outpost.protocols.socket import SocketProtocol
 
     return {
         "simulator": SimulatorProtocol,

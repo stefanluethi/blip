@@ -3,7 +3,7 @@ blip documentation
 
 **blip** is a lightweight web tracing tool for embedded systems. It visualises
 live telemetry (values and log records) streamed from a target device, either
-directly or through the Python ``bridge``.
+directly or through the Python ``outpost``.
 
 This documentation is organised in three parts:
 
