@@ -1,3 +1,4 @@
+mod connections;
 mod files;
 mod layout;
 mod model;
@@ -12,7 +13,7 @@ use view::ViewContext;
 const OPEN_RECORDING: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
 const SAVE_RECORDING: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
 
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(serde::Deserialize, serde::Serialize, Default)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct State {
     time: time::TimeRange,
@@ -20,133 +21,8 @@ pub struct State {
     #[serde(skip)]
     model: model::Model,
 
-    target_address: String,
-
-    #[serde(skip)]
-    ws_receiver: Option<ewebsock::WsReceiver>,
-    #[serde(skip)]
-    ws_sender: Option<ewebsock::WsSender>,
     #[serde(skip)]
     invoker: model::actions::Invoker,
-}
-
-impl Default for State {
-    fn default() -> Self {
-        Self {
-            target_address: "ws://localhost/ws/simulator".to_owned(),
-            time: time::TimeRange::default(),
-            model: model::Model::default(),
-            ws_receiver: None,
-            ws_sender: None,
-            invoker: model::actions::Invoker::default(),
-        }
-    }
-}
-
-impl State {
-    fn websocket_connect(&mut self, ctx: egui::Context) {
-        let wakeup = move || ctx.request_repaint();
-        let options = ewebsock::Options {
-            max_incoming_frame_size: 2048,
-            ..Default::default()
-        };
-        let (sender, receiver) =
-            ewebsock::connect_with_wakeup(self.target_address.clone(), options, wakeup).unwrap();
-        self.model = model::Model::default();
-        self.invoker.reset(false);
-        self.ws_receiver = Some(receiver);
-        self.ws_sender = Some(sender);
-    }
-
-    fn websocket_disconnect(&mut self) {
-        if let Some(sender) = self.ws_sender.as_mut() {
-            sender.close();
-            log::info!("ws disconnected")
-        }
-        self.ws_receiver = None;
-        self.ws_sender = None;
-        self.invoker.reset(false);
-    }
-
-    /// Handles the received events, returns whether the connection ended.
-    fn websocket_receive(&mut self, now: f64) -> bool {
-        if let Some(receiver) = self.ws_receiver.as_ref() {
-            while let Some(event) = receiver.try_recv() {
-                match event {
-                    ewebsock::WsEvent::Opened => {
-                        log::info!("ws connected");
-                        self.invoker.connected = true;
-                    }
-                    ewebsock::WsEvent::Message(message) => match message {
-                        ewebsock::WsMessage::Text(msg) => {
-                            log::info!("{}", msg);
-                        }
-                        ewebsock::WsMessage::Binary(msg) => {
-                            if let Some(result) = self.model.receive(&msg) {
-                                let model = &self.model;
-                                self.invoker
-                                    .receive(&result, now, |path| model.readback_samples(path));
-                            }
-                        }
-                        _ => {
-                            log::warn!("ws unknown message received");
-                        }
-                    },
-                    ewebsock::WsEvent::Error(e) => {
-                        log::warn!("ws error: {}", e);
-                        return true;
-                    }
-                    ewebsock::WsEvent::Closed => {
-                        log::info!("ws disconnected");
-                        return true;
-                    }
-                };
-            }
-        }
-        false
-    }
-
-    /// Sends the invocations of the views, or drops them if not connected.
-    fn websocket_send(&mut self) {
-        for request in self.invoker.take_outbox() {
-            let Some(sender) = self.ws_sender.as_mut() else {
-                continue;
-            };
-            let packet = serde_cbor_2::to_vec(&request).expect("requests encode");
-            log::debug!(
-                "send request {}",
-                hex_string::HexString::from_bytes(&packet).as_string()
-            );
-            sender.send(ewebsock::WsMessage::Binary(packet));
-        }
-    }
-
-    fn settings_ui(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.label("websocket address:");
-            ui.text_edit_singleline(&mut self.target_address);
-            if ui
-                .button(if self.ws_receiver.is_none() {
-                    "Connect"
-                } else {
-                    "Disconnect"
-                })
-                .clicked()
-            {
-                if self.ws_receiver.is_none() {
-                    self.websocket_connect(ui.ctx().clone());
-                } else {
-                    self.websocket_disconnect();
-                }
-            }
-            if ui.button("Clear Data").clicked() {
-                // the target announces its actions once, so they are kept
-                let actions = std::mem::take(&mut self.model.actions);
-                self.model = model::Model::default();
-                self.model.actions = actions;
-            }
-        });
-    }
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -158,6 +34,7 @@ const LAYOUT_KEY: &str = "layout";
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct App {
     state: State,
+    connections: connections::Connections,
     #[serde(skip)]
     layout: layout::Layout,
     /// The search of the traces panel.
@@ -218,14 +95,25 @@ impl App {
                 {
                     self.files.open(files::Kind::Recording, ui.ctx());
                 }
-                let recording = &self.state.model.recording;
+                let recorded = !self.state.model.recording.is_empty();
+                let messages = self.state.model.recording.len();
                 let save = shortcut("Save recording…", &SAVE_RECORDING);
                 if ui
-                    .add_enabled(!recording.is_empty(), save)
-                    .on_hover_text(format!("{} messages received", recording.len()))
+                    .add_enabled(recorded, save)
+                    .on_hover_text(format!("{messages} messages received"))
                     .clicked()
                 {
                     self.save_recording();
+                }
+                if ui
+                    .add_enabled(recorded, egui::Button::new("Clear data"))
+                    .on_hover_text("Remove all received data")
+                    .clicked()
+                {
+                    // targets announce their actions once, so they are kept
+                    let actions = std::mem::take(&mut self.state.model.actions);
+                    self.state.model = model::Model::default();
+                    self.state.model.actions = actions;
                 }
                 ui.separator();
                 if ui.button("Open layout…").clicked() {
@@ -285,11 +173,12 @@ impl App {
     fn open(&mut self, file: &files::File) -> Result<(), String> {
         if model::recording::is_recording(&file.bytes) {
             let mut model = model::Model::default();
-            let loaded = model::recording::read_file(&file.bytes, |frame| {
-                model.receive(frame);
+            let loaded = model::recording::read_file(&file.bytes, |source, frame| {
+                model.receive(source, frame);
             })
             .map_err(|error| format!("{} cannot be opened: {error}", file.name))?;
-            self.state.websocket_disconnect();
+            self.connections.disconnect_all();
+            self.state.invoker.reset();
             self.state.model = model;
             self.state.time.fit(&self.state.model);
             if let Some(problem) = loaded.problem {
@@ -307,6 +196,23 @@ impl App {
                 .ok_or_else(|| format!("{} is a layout of a newer version of blip", file.name))?;
         }
         Ok(())
+    }
+
+    /// Sends the invocations of the views to the connections of their actions, with the
+    /// paths their targets know them by.
+    fn send_invocations(&mut self) {
+        for proto::Request::Invoke(mut invocation) in self.state.invoker.take_outbox() {
+            let Some(action) = self.state.model.actions.announced(&invocation.path) else {
+                log::warn!(
+                    "dropping an invocation of {}, which is gone",
+                    invocation.path
+                );
+                continue;
+            };
+            invocation.path = action.target_path.clone();
+            self.connections
+                .send(&action.source, &proto::Request::Invoke(invocation));
+        }
     }
 
     /// Shows the notice, if any, until the user closes it.
@@ -358,10 +264,14 @@ impl App {
 impl eframe::App for App {
     fn logic(&mut self, ctx: &Context, _frame: &mut Frame) {
         let now = ctx.input(|input| input.time);
-        if self.state.websocket_receive(now) {
-            self.state.websocket_disconnect();
-        }
-        self.state.invoker.update(now);
+        let State { model, invoker, .. } = &mut self.state;
+        self.connections.receive(|source, frame| {
+            if let Some(result) = model.receive(source, frame) {
+                invoker.receive(source, &result, now, model);
+            }
+        });
+        invoker.connected = self.connections.open_names();
+        invoker.update(now);
         self.files.receive_dropped(ctx);
         while let Some(file) = self.files.try_recv() {
             if let Err(error) = file.and_then(|file| self.open(&file)) {
@@ -371,10 +281,7 @@ impl eframe::App for App {
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.shortcuts(ui.ctx());
-        egui::Panel::top("top panel").show(ui, |ui| {
-            self.menu_ui(ui);
-            self.state.settings_ui(ui);
-        });
+        egui::Panel::top("top panel").show(ui, |ui| self.menu_ui(ui));
 
         self.state.time.update(&self.state.model);
 
@@ -399,7 +306,16 @@ impl eframe::App for App {
         egui::Panel::right("properties panel")
             .resizable(true)
             .default_size(240.0)
-            .show(ui, |ui| self.layout.properties_ui(ui, &self.state.model));
+            .show(ui, |ui| {
+                // the connections below, resizable by dragging the border to the properties
+                egui::Panel::bottom("connections panel")
+                    .resizable(true)
+                    .default_size(160.0)
+                    .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(0, 4)))
+                    .show(ui, |ui| self.connections.ui(ui));
+                ui.add_space(4.0);
+                self.layout.properties_ui(ui, &self.state.model);
+            });
 
         egui::CentralPanel::default()
             .frame(egui::Frame::central_panel(ui.style()).inner_margin(egui::Margin::ZERO))
@@ -412,7 +328,7 @@ impl eframe::App for App {
                 };
                 self.layout.ui(ui, &mut context);
             });
-        self.state.websocket_send();
+        self.send_invocations();
         let now = ui.input(|input| input.time);
         if self.state.invoker.is_waiting(now) {
             ui.ctx()

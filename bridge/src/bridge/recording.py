@@ -1,7 +1,9 @@
 """Recording files of blip: a header and the CBOR messages as sent in WebSocket frames,
 one after another as a CBOR sequence (RFC 8742), compressed with gzip.
 
-blip opens these files, and saves the messages it received in the same format."""
+blip opens these files, and saves the messages it received in the same format. Since
+version 2, a text string between the messages names the connection of blip the messages
+after it were received from. The bridge writes version 1, of one connection."""
 
 import gzip
 import io
@@ -16,7 +18,10 @@ import cbor2
 logger = logging.getLogger("bridge.recording")
 
 FORMAT = "blip recording"
+# The version written, of the messages of one connection.
 VERSION = 1
+# The newest version read.
+READ_VERSION = 2
 
 # The written messages are flushed this often, so a file is readable up to about
 # this long before the bridge stopped, also if it was killed.
@@ -77,7 +82,8 @@ def _decompress(data: bytes, path: Union[str, Path]) -> bytes:
 def read_frames(path: Union[str, Path]) -> Iterator[bytes]:
     """The messages of a recording file as their CBOR items, byte for byte as recorded.
     Also reads uncompressed files. A file cut off in the middle of a message ends with
-    the message before."""
+    the message before. The messages of all connections of a recording by blip are read
+    one after another, without the names of their connections."""
     data = Path(path).read_bytes()
     if data.startswith(b"\x1f\x8b"):
         data = _decompress(data, path)
@@ -87,16 +93,20 @@ def read_frames(path: Union[str, Path]) -> Iterator[bytes]:
     first = decoder.decode()
     if not isinstance(first, dict) or first.get("format") != FORMAT:
         raise ValueError(f"{path} is not a blip recording")
-    if first.get("version", 0) > VERSION:
-        raise ValueError(f"{path} has version {first['version']}, the bridge reads up to {VERSION}")
+    if first.get("version", 0) > READ_VERSION:
+        raise ValueError(
+            f"{path} has version {first['version']}, the bridge reads up to {READ_VERSION}"
+        )
 
     start = stream.tell()
     while start < len(data):
         try:
-            decoder.decode()
+            item = decoder.decode()
         except (cbor2.CBORDecodeError, EOFError) as e:
             logger.warning(f"{path} ends with a message that cannot be read: {e}")
             return
         end = stream.tell()
-        yield data[start:end]
+        # messages are maps, a text string names the connection of the messages after it
+        if not isinstance(item, str):
+            yield data[start:end]
         start = end

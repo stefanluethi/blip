@@ -4,6 +4,10 @@
 //! messages, each the CBOR item of a WebSocket frame, compressed with gzip. Uncompressed
 //! files and files of several gzip members, e.g. appended to by the bridge, are read as
 //! well.
+//!
+//! Since version 2, a text string between the messages names the connection the
+//! messages after it were received from, the source. Messages before the first name
+//! have no source, as all messages of version 1, which are those of one connection.
 
 use flate2::{Compression, read::MultiGzDecoder, write::GzEncoder};
 use std::io::{Read, Write};
@@ -11,7 +15,7 @@ use std::io::{Read, Write};
 /// The value of [`Header::format`].
 const FORMAT: &str = "blip recording";
 /// Version of the format written by [`Recording::to_file`].
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 
 /// The first item of a recording file.
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -24,9 +28,11 @@ struct Header {
 /// The frames received since the data was last cleared.
 #[derive(Default)]
 pub struct Recording {
-    /// The frames one after another.
+    /// The frames one after another, and the names of their sources where it changes.
     frames: Vec<u8>,
     len: usize,
+    /// The source of the last frame.
+    source: String,
 }
 
 /// What [`read_file`] found in a recording file.
@@ -38,7 +44,12 @@ pub struct Loaded {
 }
 
 impl Recording {
-    pub fn push(&mut self, frame: &[u8]) {
+    /// Records `frame` received from `source`, the name of its connection.
+    pub fn push(&mut self, source: &str, frame: &[u8]) {
+        if source != self.source {
+            serde_cbor_2::to_writer(&mut self.frames, &source).expect("writing to memory");
+            source.clone_into(&mut self.source);
+        }
         self.frames.extend_from_slice(frame);
         self.len += 1;
     }
@@ -77,9 +88,9 @@ pub fn is_recording(file: &[u8]) -> bool {
         .is_some_and(|header| header.is_ok_and(|header| header.format == FORMAT))
 }
 
-/// Calls `receive` with each frame of the recording `file` in the order they were
-/// received.
-pub fn read_file(file: &[u8], mut receive: impl FnMut(&[u8])) -> Result<Loaded, String> {
+/// Calls `receive` with the source and each frame of the recording `file` in the order
+/// they were received.
+pub fn read_file(file: &[u8], mut receive: impl FnMut(&str, &[u8])) -> Result<Loaded, String> {
     let mut problem = None;
     let decompressed;
     let bytes = if file.starts_with(&[0x1f, 0x8b]) {
@@ -111,14 +122,21 @@ pub fn read_file(file: &[u8], mut receive: impl FnMut(&[u8])) -> Result<Loaded, 
     let mut frames =
         serde_cbor_2::Deserializer::from_slice(bytes).into_iter::<serde::de::IgnoredAny>();
     let (mut start, mut messages) = (0, 0);
+    let mut source = String::new();
     while let Some(item) = frames.next() {
         if let Err(error) = item {
             problem.get_or_insert_with(|| format!("a message cannot be read: {error}"));
             break;
         }
         let end = frames.byte_offset();
-        receive(&bytes[start..end]);
+        let item = &bytes[start..end];
         start = end;
+        // messages are maps, a text string names the source
+        if let Ok(name) = serde_cbor_2::from_slice::<String>(item) {
+            source = name;
+            continue;
+        }
+        receive(&source, item);
         messages += 1;
     }
     Ok(Loaded { messages, problem })
@@ -138,8 +156,21 @@ mod tests {
     }
 
     fn read(file: &[u8]) -> (Vec<Vec<u8>>, Result<Loaded, String>) {
+        let (sourced, loaded) = read_sourced(file);
+        (
+            sourced.into_iter().map(|(_, frame)| frame).collect(),
+            loaded,
+        )
+    }
+
+    /// The source of each frame and the frame.
+    type Sourced = Vec<(String, Vec<u8>)>;
+
+    fn read_sourced(file: &[u8]) -> (Sourced, Result<Loaded, String>) {
         let mut frames = vec![];
-        let loaded = read_file(file, |frame| frames.push(frame.to_vec()));
+        let loaded = read_file(file, |source, frame| {
+            frames.push((source.to_owned(), frame.to_vec()));
+        });
         (frames, loaded)
     }
 
@@ -148,7 +179,7 @@ mod tests {
         let mut recording = Recording::default();
         let sent = [frame(1), frame(2), frame(1 << 40)];
         for frame in &sent {
-            recording.push(frame);
+            recording.push("", frame);
         }
         let file = recording.to_file();
         assert!(is_recording(&file));
@@ -165,10 +196,26 @@ mod tests {
     }
 
     #[test]
+    fn the_sources_of_the_frames_are_recorded() {
+        let mut recording = Recording::default();
+        recording.push("", &frame(0));
+        recording.push("a", &frame(1));
+        recording.push("a", &frame(2));
+        recording.push("b", &frame(3));
+        recording.push("", &frame(4));
+        assert_eq!(recording.len(), 5);
+        let (frames, loaded) = read_sourced(&recording.to_file());
+        let sources: Vec<&str> = frames.iter().map(|(source, _)| source.as_str()).collect();
+        assert_eq!(sources, ["", "a", "a", "b", ""]);
+        assert_eq!(frames[3].1, frame(3));
+        assert_eq!(loaded.unwrap().messages, 5);
+    }
+
+    #[test]
     fn uncompressed_and_appended_files_are_read() {
         let mut file = serde_cbor_2::to_vec(&Header {
             format: FORMAT.to_owned(),
-            version: VERSION,
+            version: 1,
         })
         .unwrap();
         file.extend(frame(1));
@@ -191,7 +238,7 @@ mod tests {
     fn a_cut_off_file_loads_up_to_the_cut() {
         let mut recording = Recording::default();
         for timestamp in 0..1000 {
-            recording.push(&frame(timestamp));
+            recording.push("", &frame(timestamp));
         }
         let file = recording.to_file();
         let (frames, loaded) = read(&file[..file.len() / 2]);
