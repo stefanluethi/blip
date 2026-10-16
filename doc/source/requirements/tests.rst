@@ -104,3 +104,62 @@ Test Cases
    also cut off and uncompressed ones, and replays a recording through the
    bridge to a WebSocket client while recording what is sent, checking that
    both are the recorded frames byte for byte.
+
+.. test:: Action messages encode as plain CBOR
+   :id: TEST_PROTO_ACTIONS
+   :status: implemented
+   :component: proto
+   :verifies: REQ_CTRL_ANNOUNCE, REQ_CTRL_FEEDBACK
+
+   ``proto/src/action.rs`` unit tests -- encode invocations and results as
+   the documented CBOR maps, parameter kinds as strings or maps, and decode
+   announcements whose optional fields are left out.
+
+.. test:: Bridge announces, checks and carries out actions
+   :id: TEST_BRIDGE_ACTIONS
+   :status: implemented
+   :component: bridge
+   :verifies: REQ_CTRL_ANNOUNCE, REQ_CTRL_ACTION, REQ_CTRL_FEEDBACK, REQ_BRIDGE_PROTOCOL
+
+   ``bridge/tests/test_actions.py`` -- takes the parameters of actions from
+   their type hints and rejects unsupported ones, checks and converts
+   arguments, rejects disabled actions and those that raise, sends the
+   actions to connecting clients and changed ones to all, answers only the
+   invoking client, logs to all, and runs a slow action without holding up
+   others.
+
+.. test:: Bridge loads user-provided protocols
+   :id: TEST_BRIDGE_LOADING
+   :status: implemented
+   :component: bridge
+   :verifies: REQ_BRIDGE_PROTOCOL
+
+   ``bridge/tests/test_loading.py`` -- loads built-in protocols by name and
+   user protocols from files with and without a class name, converts the
+   options by the type hints of the constructor and reports unknown, missing
+   and invalid ones.
+
+.. test:: Simulator actions change what it sends
+   :id: TEST_BRIDGE_SIM_ACTIONS
+   :status: implemented
+   :component: bridge
+   :verifies: REQ_BRIDGE_SIM
+
+   ``bridge/tests/test_bridge.py::test_simulator_actions_change_what_it_sends``
+   -- the motor follows its setpoint and rejects it while disabled, the log
+   level filters log records and is sent as its readback, and the
+   calibration is disabled while it runs.
+
+.. test:: blip invokes actions and shows their outcome
+   :id: TEST_BLIP_ACTIONS
+   :status: implemented
+   :component: blip
+   :verifies: REQ_CTRL_ACTION, REQ_CTRL_FEEDBACK, REQ_CTRL_VIEW, REQ_CTRL_SAFE
+
+   ``blip/src/app/model/actions.rs`` and ``blip/src/app/view/actions.rs``
+   tests -- send invocations with new ids, show only the outcome of the latest
+   invocation of an action, time out unanswered ones, send at most every
+   interval while dragging and the final value on release; send buttons and
+   checkboxes right away and actions with several parameters with their Send
+   button, ask before confirmed actions, disable actions while disconnected
+   or disabled, and start inputs from the readback or the default.
