@@ -50,6 +50,15 @@ pub enum Outcome {
     Unanswered,
 }
 
+/// What was sent of an action while its input is dragged.
+struct Dragged {
+    /// When the latest arguments were sent.
+    sent_at: f64,
+    sent: Args,
+    /// Newer arguments held back to keep to [`DRAG_INTERVAL`].
+    held: Option<Args>,
+}
+
 /// Sends the invocations of actions and keeps track of their answers. Times are in
 /// seconds, as egui counts them.
 #[derive(Default)]
@@ -61,9 +70,8 @@ pub struct Invoker {
     pending: HashMap<u32, (String, f64)>,
     /// The id of the latest invocation of each action and its outcome, by path.
     latest: HashMap<String, (u32, Outcome)>,
-    /// When each action was last sent while dragging, and the arguments held back to
-    /// keep to [`DRAG_INTERVAL`], by path.
-    dragged: HashMap<String, (f64, Option<Args>)>,
+    /// The actions whose input is dragged, by path.
+    dragged: HashMap<String, Dragged>,
     /// The requests to send.
     outbox: Vec<Request>,
     /// The values in the inputs of the parameters by action path and parameter name,
@@ -83,12 +91,32 @@ impl Invoker {
     /// interval has passed, unless newer ones replace them.
     pub fn invoke_dragging(&mut self, path: &str, args: Args, now: f64) {
         match self.dragged.get_mut(path) {
-            Some((sent, held)) if now - *sent < DRAG_INTERVAL => *held = Some(args),
-            _ => {
-                self.send(path, args, now);
-                self.dragged.insert(path.to_owned(), (now, None));
+            Some(dragged) if now - dragged.sent_at < DRAG_INTERVAL => {
+                dragged.held = (args != dragged.sent).then_some(args);
             }
+            _ => self.send_dragged(path, args, now),
         }
+    }
+
+    /// Sends the final arguments when the input of the action at `path` is released,
+    /// unless they were sent already. Nothing is sent for an input that was pressed
+    /// without changing it, e.g. clicked to type a number.
+    pub fn finish_dragging(&mut self, path: &str, args: Args, now: f64) {
+        if let Some(dragged) = self.dragged.remove(path)
+            && args != dragged.sent
+        {
+            self.send(path, args, now);
+        }
+    }
+
+    fn send_dragged(&mut self, path: &str, args: Args, now: f64) {
+        self.send(path, args.clone(), now);
+        let dragged = Dragged {
+            sent_at: now,
+            sent: args,
+            held: None,
+        };
+        self.dragged.insert(path.to_owned(), dragged);
     }
 
     fn send(&mut self, path: &str, args: Args, now: f64) {
@@ -125,12 +153,11 @@ impl Invoker {
         let due: Vec<(String, Args)> = self
             .dragged
             .iter_mut()
-            .filter(|(_, (sent, held))| held.is_some() && now - *sent >= DRAG_INTERVAL)
-            .filter_map(|(path, (_, held))| Some((path.clone(), held.take()?)))
+            .filter(|(_, dragged)| now - dragged.sent_at >= DRAG_INTERVAL)
+            .filter_map(|(path, dragged)| Some((path.clone(), dragged.held.take()?)))
             .collect();
         for (path, args) in due {
-            self.send(&path, args, now);
-            self.dragged.insert(path, (now, None));
+            self.send_dragged(&path, args, now);
         }
 
         let expired: Vec<u32> = self
@@ -163,7 +190,7 @@ impl Invoker {
     /// repaints.
     pub fn is_waiting(&self, now: f64) -> bool {
         !self.pending.is_empty()
-            || self.dragged.values().any(|(_, held)| held.is_some())
+            || self.dragged.values().any(|dragged| dragged.held.is_some())
             || self.latest.values().any(
                 |(_, outcome)| matches!(outcome, Outcome::Accepted(at) if now - at <= SHOW_ACCEPTED),
             )
@@ -284,12 +311,18 @@ mod tests {
         // releasing sends the final value right away, dropping held back ones
         invoker.invoke_dragging("speed", args(4), 0.5);
         invoker.invoke_dragging("speed", args(5), 0.52);
-        invoker.invoke("speed", args(6), 0.55);
+        invoker.finish_dragging("speed", args(6), 0.55);
         invoker.update(1.0);
         assert_eq!(
             values(sent(&mut invoker)),
             [Data::Record(args(4)), Data::Record(args(6))]
         );
+
+        // releasing at the value sent last, or without dragging, sends nothing
+        invoker.invoke_dragging("speed", args(7), 2.0);
+        invoker.finish_dragging("speed", args(7), 2.05);
+        invoker.finish_dragging("speed", args(8), 3.0);
+        assert_eq!(values(sent(&mut invoker)), [Data::Record(args(7))]);
     }
 
     #[test]
