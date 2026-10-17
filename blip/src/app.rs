@@ -3,6 +3,7 @@ mod files;
 mod layout;
 mod model;
 mod time;
+mod toasts;
 mod view;
 
 use eframe::Frame;
@@ -114,9 +115,9 @@ pub struct App {
     trace_search: String,
     #[serde(skip)]
     files: files::Files,
-    /// A message for the user, e.g. why a file could not be opened.
+    /// The notices for the user, e.g. why a file could not be opened.
     #[serde(skip)]
-    notice: Option<String>,
+    toasts: toasts::Toasts,
 }
 
 impl App {
@@ -227,14 +228,14 @@ impl App {
         let name = format!("{}.blip", chrono::Local::now().format("%Y-%m-%d-%H%M%S"));
         let file = self.state.model.recording.to_file();
         if let Err(error) = files::save(files::Kind::Recording, &name, &file) {
-            self.notice = Some(error);
+            self.toasts.error(error);
         }
     }
 
     fn save_layout(&mut self) {
         let file = serde_json::to_vec_pretty(&self.layout.to_file()).expect("layouts are JSON");
         if let Err(error) = files::save(files::Kind::Layout, "layout.json", &file) {
-            self.notice = Some(error);
+            self.toasts.error(error);
         }
     }
 
@@ -252,7 +253,7 @@ impl App {
             self.state.model = model;
             self.state.time.fit(&self.state.model);
             if let Some(problem) = loaded.problem {
-                self.notice = Some(format!(
+                self.toasts.warning(format!(
                     "{} was opened up to message {}, {problem}",
                     file.name, loaded.messages
                 ));
@@ -282,26 +283,6 @@ impl App {
             invocation.path = action.target_path.clone();
             self.connections
                 .send(&action.source, &proto::Request::Invoke(invocation));
-        }
-    }
-
-    /// Shows the notice, if any, until the user closes it.
-    fn notice_ui(&mut self, ctx: &Context) {
-        let Some(notice) = &self.notice else {
-            return;
-        };
-        let modal = egui::Modal::new(egui::Id::new("notice")).show(ctx, |ui| {
-            ui.set_max_width(400.0);
-            ui.label(notice);
-            ui.add_space(8.0);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                if ui.button("OK").clicked() {
-                    ui.close();
-                }
-            });
-        });
-        if modal.should_close() {
-            self.notice = None;
         }
     }
 
@@ -343,10 +324,13 @@ impl eframe::App for App {
             .receive(|source, frame| state.receive(source, frame, now));
         state.invoker.connected = self.connections.open_names();
         state.invoker.update(now);
+        for error in self.connections.take_errors() {
+            self.toasts.error(error);
+        }
         self.files.receive_dropped(ctx);
         while let Some(file) = self.files.try_recv() {
             if let Err(error) = file.and_then(|file| self.open(&file)) {
-                self.notice = Some(error);
+                self.toasts.error(error);
             }
         }
     }
@@ -390,7 +374,7 @@ impl eframe::App for App {
                 self.layout.properties_ui(ui, &self.state.model);
             });
 
-        egui::CentralPanel::default()
+        let central = egui::CentralPanel::default()
             .frame(egui::Frame::central_panel(ui.style()).inner_margin(egui::Margin::ZERO))
             .show(ui, |ui| {
                 let mut context = ViewContext {
@@ -407,7 +391,7 @@ impl eframe::App for App {
                 .request_repaint_after_secs(model::actions::DRAG_INTERVAL as f32);
         }
 
-        self.notice_ui(ui.ctx());
+        self.toasts.ui(ui.ctx(), central.response.rect);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -548,5 +532,25 @@ mod tests {
         app.open(&file).unwrap();
         assert!(!app.state.recording);
         assert!(app.state.model.has_samples());
+    }
+
+    #[test]
+    fn a_recording_opened_in_part_is_toasted() {
+        let mut recorded = model::Model::default();
+        for timestamp in 0..1000 {
+            recorded.receive("a", &value(timestamp));
+        }
+        let mut bytes = recorded.recording.to_file();
+        bytes.truncate(bytes.len() / 2);
+        let file = files::File {
+            name: "a.blip".to_owned(),
+            bytes,
+        };
+        let mut app = App::default();
+        app.open(&file).unwrap();
+        let shown = app.toasts.shown();
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown[0].0, toasts::Level::Warning);
+        assert!(shown[0].1.starts_with("a.blip was opened up to message"));
     }
 }

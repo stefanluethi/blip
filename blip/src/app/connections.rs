@@ -21,6 +21,9 @@ pub struct Connections {
     /// Why connecting to an address failed, until it is connected again.
     #[serde(skip)]
     failed: HashMap<String, String>,
+    /// What went wrong since [`Self::take_errors`] was last called, to tell the user.
+    #[serde(skip)]
+    errors: Vec<String>,
     #[serde(skip)]
     editing: Option<Editing>,
 }
@@ -34,6 +37,7 @@ impl Default for Connections {
             }],
             sockets: vec![],
             failed: HashMap::new(),
+            errors: vec![],
             editing: None,
         }
     }
@@ -130,6 +134,8 @@ impl Connections {
             }),
             Err(error) => {
                 log::warn!("ws cannot connect to {address}: {error}");
+                self.errors
+                    .push(format!("Cannot connect to {address}: {error}"));
                 self.failed.insert(address, error);
             }
         }
@@ -162,6 +168,7 @@ impl Connections {
     /// message or several as a CBOR sequence, e.g. a batch of a target.
     pub fn receive(&mut self, mut receive: impl FnMut(&str, &[u8])) {
         let failed = &mut self.failed;
+        let errors = &mut self.errors;
         self.sockets.retain_mut(|socket| {
             while let Some(event) = socket.receiver.try_recv() {
                 match event {
@@ -187,17 +194,30 @@ impl Connections {
                     ewebsock::WsEvent::Error(error) => {
                         log::warn!("ws error of {}: {error}", socket.address);
                         socket.sender.close();
+                        errors.push(if socket.open {
+                            format!("The connection to {} broke: {error}", socket.address)
+                        } else {
+                            format!("Cannot connect to {}: {error}", socket.address)
+                        });
                         failed.insert(socket.address.clone(), error);
                         return false;
                     }
                     ewebsock::WsEvent::Closed => {
                         log::info!("ws disconnected from {}", socket.address);
+                        // the user's disconnecting drops the socket before it is closed
+                        errors.push(format!("{} closed the connection", socket.address));
                         return false;
                     }
                 }
             }
             true
         });
+    }
+
+    /// Takes what went wrong since the last call, e.g. why connecting failed, to tell the
+    /// user.
+    pub fn take_errors(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.errors)
     }
 
     /// Sends `request` to the open connection named `name`, or drops it if there is none.
@@ -667,5 +687,9 @@ mod tests {
             connections.status("no address"),
             Status::Failed(_)
         ));
+        let errors = connections.take_errors();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].starts_with("Cannot connect to no address: "));
+        assert!(connections.take_errors().is_empty());
     }
 }

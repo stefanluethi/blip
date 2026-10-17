@@ -110,6 +110,16 @@ Connectivity
    once, and receive messages as binary frames, keeping the data of each
    connection apart by its name.
 
+.. req:: Notify errors
+   :id: REQ_CONN_ERRORS
+   :status: implemented
+   :component: blip
+   :satisfies: STK_LIVE_OBSERVE
+
+   blip shall tell the user when connecting fails, a connection breaks or is
+   closed by the other end, and when a file cannot be opened or saved, with a
+   notice that disappears on its own.
+
 .. req:: CBOR wire protocol
    :id: REQ_PROTO_CBOR
    :status: implemented

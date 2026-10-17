@@ -37,7 +37,9 @@ were started at the same time.
 
 The dot before each connection shows its state: hollow when disconnected,
 a spinner while connecting, green when connected and red when connecting
-failed or the connection broke. Hover the red dot for the reason.
+failed or the connection broke. Hover the red dot for the reason, which is
+also shown as a notice, see `Window`_, as is a connection closed by its
+outpost or target.
 
 Window
 ------
@@ -61,7 +63,12 @@ Right panel
    to resize them.
 
 Center
-   The views, laid out as edited in the layout panel.
+   The views, laid out as edited in the layout panel. Errors, e.g. when
+   connecting fails or a file cannot be opened or saved, and warnings, e.g.
+   when a recording file is cut off, show as notices stacked in its bottom
+   right corner. They disappear after a few seconds, later while the pointer
+   rests on them, or when closed with their **×** button. An error that
+   repeats while it is shown is counted instead of shown again.
 
 Bottom panel
    The time range shown by all views.

@@ -75,7 +75,8 @@ impl Files {
     #[cfg(target_arch = "wasm32")]
     pub fn open(&self, kind: Kind, ctx: &egui::Context) {
         if let Err(error) = web::open(kind, self.sender.clone(), ctx.clone()) {
-            log::warn!("cannot open a file: {error:?}");
+            let error = format!("A file cannot be opened: {error:?}");
+            self.sender.send(Err(error)).ok();
         }
     }
 
@@ -122,7 +123,7 @@ pub fn save(kind: Kind, name: &str, bytes: &[u8]) -> Result<(), String> {
 /// Lets the user save `bytes` as a file of `kind` named `name` by default.
 #[cfg(target_arch = "wasm32")]
 pub fn save(_kind: Kind, name: &str, bytes: &[u8]) -> Result<(), String> {
-    web::download(name, bytes).map_err(|error| format!("the download failed: {error:?}"))
+    web::download(name, bytes).map_err(|error| format!("The download failed: {error:?}"))
 }
 
 #[cfg(target_arch = "wasm32")]
