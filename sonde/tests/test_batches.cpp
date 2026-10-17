@@ -209,3 +209,82 @@ TEST_CASE("the messages of a batch the sink fails to take are dropped") {
     CHECK(tracer.dropped() == 3);
     CHECK(tracer.commit() == Status::Ok);
 }
+
+// A static tracer is constant-initialized: its constructor works in a constant expression.
+namespace {
+sonde::Storage<64, 2> constant_storage;
+[[maybe_unused]] constexpr sonde::Tracer constant_tracer{constant_storage, nullptr};
+[[maybe_unused]] constexpr sonde::Tracer constant_tracer_with_default_clock{constant_storage};
+}  // namespace
+
+namespace changing {
+
+/// Encodes as many elements as `first` the first time, then as `later`; a negative
+/// count announces one element more than it adds.
+int encodings = 0;
+
+struct Samples {
+    int first;
+    int later;
+};
+
+void encode(sonde::Encoder& encoder, const Samples& samples) {
+    const int count = encodings++ == 0 ? samples.first : samples.later;
+    const auto elements = static_cast<std::size_t>(count < 0 ? -count : count);
+    encoder.array(elements + (count < 0 ? 1 : 0), [&](sonde::Array& array) {
+        for (std::size_t i = 0; i < elements; ++i) {
+            array.add(1);
+        }
+    });
+}
+
+}  // namespace changing
+
+TEST_CASE("a message that encodes differently in the next batch is checked again") {
+    sonde::Storage<2 * message_bytes + 10, 2> storage;
+    sonde::Tracer tracer{storage, nullptr};
+
+    SECTION("too large the second time") {
+        changing::encodings = 0;
+        tracer.value("a", 1u);
+        // 53 bytes, which do not fit after the first message, then 234 bytes
+        CHECK(tracer.value("a", changing::Samples{20, 200}) == Status::TooLarge);
+        CHECK(tracer.dropped() == 1);
+    }
+    SECTION("invalid the second time") {
+        changing::encodings = 0;
+        tracer.value("a", 1u);
+        CHECK(tracer.value("a", changing::Samples{20, -2}) == Status::Invalid);
+        CHECK(tracer.dropped() == 0);
+    }
+
+    CHECK(values(tracer.take()) == Values{1});
+    tracer.release();
+    CHECK(tracer.commit() == Status::Ok);  // the open batch is empty
+    CHECK(!tracer.take());
+    CHECK(tracer.value("a", 2u) == Status::Ok);
+    CHECK(tracer.commit() == Status::Ok);
+    CHECK(values(tracer.take()) == Values{2});
+}
+
+namespace {
+int clock_reads = 0;
+std::uint64_t counting_clock() {
+    ++clock_reads;
+    return 0;
+}
+}  // namespace
+
+TEST_CASE("the clock is not read for a message without a batch") {
+    sonde::Storage<message_bytes, 1> storage;
+    sonde::Tracer tracer{storage, &counting_clock};
+    clock_reads = 0;
+    CHECK(tracer.value("a", 1u) == Status::Ok);
+    CHECK(tracer.value("a", 2u) == Status::Full);  // commits the first batch
+    CHECK(clock_reads == 2);
+    CHECK(tracer.value("a", 3u) == Status::Full);
+    CHECK(tracer.log(sonde::Level::Info, "", "x") == Status::Full);
+    CHECK(clock_reads == 2);
+    CHECK(tracer.value(sonde::Timestamp{0}, "a", 4u) == Status::Full);
+    CHECK(clock_reads == 2);
+}

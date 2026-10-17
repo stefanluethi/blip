@@ -15,6 +15,10 @@
 
 #include <cbor.h>
 
+#ifndef SONDE_HOSTED
+#define SONDE_HOSTED 0
+#endif
+
 #if defined(__GNUC__)
 #define SONDE_PRINTF(format_index, first_arg) \
     __attribute__((format(printf, format_index, first_arg)))
@@ -36,9 +40,20 @@ struct Timestamp {
 /// has to be safe there, e.g. in an ISR.
 using Clock = std::uint64_t (*)();
 
+#if SONDE_HOSTED
+/// UTC in nanoseconds since the Unix epoch, from the system clock (hosted builds).
+std::uint64_t system_clock_ns();
+#endif
+
 /// The default clock: UTC from the system clock in hosted builds, none (nullptr) on
 /// targets, which pass their own. Without a clock, messages are timestamped 0.
-Clock default_clock();
+constexpr Clock default_clock() {
+#if SONDE_HOSTED
+    return &system_clock_ns;
+#else
+    return nullptr;
+#endif
+}
 
 /// The levels of log records as blip knows them (proto: LogRecord::level).
 enum class Level : std::uint8_t { Trace = 0, Debug = 1, Info = 2, Warn = 3, Error = 4 };
@@ -76,10 +91,20 @@ struct Batch {
 
 class Record;
 class Array;
+class Encoder;
 
-/// Encodes one Data item.
+namespace detail {
+/// Encodes the object at the pointer, of a type the function knows.
+using EncodeFn = void (*)(Encoder&, const void*);
+}  // namespace detail
+
+/// Encodes one Data item. It refers to the item being encoded, so it is not copied; the
+/// same holds for Record and Array.
 class Encoder {
 public:
+    Encoder(const Encoder&) = delete;
+    Encoder& operator=(const Encoder&) = delete;
+
     template <typename T>
     void encode(const T& value);
     void null();
@@ -119,6 +144,9 @@ private:
 
 class Record {
 public:
+    Record(const Record&) = delete;
+    Record& operator=(const Record&) = delete;
+
     template <typename T>
     void field(std::string_view name, const T& value) {
         encoder_.encode(name);
@@ -127,12 +155,15 @@ public:
 
 private:
     friend class Encoder;
-    explicit Record(Encoder encoder) : encoder_{encoder} {}
+    Record(CborEncoder* cbor, CborError* error) : encoder_{cbor, error} {}
     Encoder encoder_;
 };
 
 class Array {
 public:
+    Array(const Array&) = delete;
+    Array& operator=(const Array&) = delete;
+
     template <typename T>
     void add(const T& value) {
         encoder_.encode(value);
@@ -140,7 +171,7 @@ public:
 
 private:
     friend class Encoder;
-    explicit Array(Encoder encoder) : encoder_{encoder} {}
+    Array(CborEncoder* cbor, CborError* error) : encoder_{cbor, error} {}
     Encoder encoder_;
 };
 
@@ -284,7 +315,7 @@ void Encoder::record(std::size_t fields, F&& fill) {
     if (!open_map(container, fields)) {
         return;
     }
-    Record filled{Encoder{&container, error_}};
+    Record filled{&container, error_};
     fill(filled);
     close(container);
 }
@@ -295,7 +326,7 @@ void Encoder::array(std::size_t elements, F&& fill) {
     if (!open_array(container, elements)) {
         return;
     }
-    Array filled{Encoder{&container, error_}};
+    Array filled{&container, error_};
     fill(filled);
     close(container);
 }
@@ -346,16 +377,21 @@ protected:
 /// The batches are a single-producer single-consumer queue: the producer traces, the
 /// consumer takes the ready batches and releases them once they are sent. With a sink,
 /// producer and consumer are one context and each ready batch goes to the sink.
+///
+/// The constructors are constexpr, so a static tracer is initialized before any code
+/// runs, e.g. an ISR that fires before the static constructors.
 class Tracer {
 public:
     /// Producer and consumer: the consumer takes the batches.
     template <std::size_t BatchBytes, std::size_t Batches>
-    explicit Tracer(Storage<BatchBytes, Batches>& storage, Clock clock = default_clock())
+    constexpr explicit Tracer(Storage<BatchBytes, Batches>& storage,
+                              Clock clock = default_clock())
         : Tracer{storage.bytes_, BatchBytes, Batches, storage.sizes_, nullptr, clock} {}
 
     /// One context: each ready batch goes to the sink right away.
     template <std::size_t BatchBytes, std::size_t Batches>
-    Tracer(Storage<BatchBytes, Batches>& storage, Sink& sink, Clock clock = default_clock())
+    constexpr Tracer(Storage<BatchBytes, Batches>& storage, Sink& sink,
+                     Clock clock = default_clock())
         : Tracer{storage.bytes_, BatchBytes, Batches, storage.sizes_, &sink, clock} {}
 
     Tracer(const Tracer&) = delete;
@@ -366,11 +402,11 @@ public:
     // proto: Message::Value, timestamped by the clock or explicitly
     template <typename T>
     Status value(std::string_view path, const T& value) {
-        return value_with(now(), path, &encode_value<T>, &value);
+        return value_with(nullptr, path, &encode_value<T>, &value);
     }
     template <typename T>
     Status value(Timestamp timestamp, std::string_view path, const T& value) {
-        return value_with(timestamp, path, &encode_value<T>, &value);
+        return value_with(&timestamp, path, &encode_value<T>, &value);
     }
 
     // proto: Message::ValueMetadata
@@ -404,28 +440,46 @@ public:
     std::uint32_t dropped() const;
 
 private:
-    using EncodeValue = void (*)(Encoder&, const void*);
-    using EncodeMessage = void (*)(Encoder&, const void*);
-
     template <typename T>
     static void encode_value(Encoder& encoder, const void* value) {
         encoder.encode(*static_cast<const T*>(value));
     }
 
-    Tracer(std::uint8_t* bytes, std::size_t batch_bytes, std::size_t batches,
-           std::size_t* sizes, Sink* sink, Clock clock);
+    constexpr Tracer(std::uint8_t* bytes, std::size_t batch_bytes, std::size_t batches,
+                     std::size_t* sizes, Sink* sink, Clock clock)
+        : bytes_{bytes},
+          batch_bytes_{batch_bytes},
+          batches_{static_cast<std::uint32_t>(batches)},
+          sizes_{sizes},
+          sink_{sink},
+          clock_{clock} {}
 
-    Timestamp now() const;
-    Status value_with(Timestamp timestamp, std::string_view path, EncodeValue encode,
-                      const void* value);
-    /// Encodes a message into the open batch and commits on request.
-    Status emit(EncodeMessage encode, const void* message);
-    Status append(EncodeMessage encode, const void* message);
+    // A timestamp of nullptr is read from the clock, once the message has a batch.
+    Status value_with(const Timestamp* timestamp, std::string_view path,
+                      detail::EncodeFn encode, const void* value);
+    Status log_with(const Timestamp* timestamp, Level level, std::string_view component,
+                    std::string_view message);
+    /// Encodes a message into the open batch and commits on request. If `clock_time` is
+    /// not nullptr, it is set from the clock before the message is encoded.
+    Status emit(detail::EncodeFn encode, const void* message, Timestamp* clock_time);
+    Status append(detail::EncodeFn encode, const void* message, Timestamp* clock_time);
+    struct Encoded;
+    Encoded encode_into(std::uint8_t* at, std::size_t space, detail::EncodeFn encode,
+                        const void* message) const;
     /// Commits the open batch, without looking at the requests.
     Status commit_open();
     /// The open batch, or nullptr if all batches are ready or taken.
     std::uint8_t* open_batch() const;
-    std::uint32_t next(std::uint32_t index) const;
+    /// The batch of an index of the queue.
+    std::uint32_t slot(std::uint32_t index) const {
+        return index < batches_ ? index : index - batches_;
+    }
+    std::uint8_t* batch(std::uint32_t index) const {
+        return bytes_ + slot(index) * batch_bytes_;
+    }
+    std::uint32_t next(std::uint32_t index) const {
+        return index + 1 == 2 * batches_ ? 0 : index + 1;
+    }
     void drop(std::uint32_t messages);
 
     std::uint8_t* const bytes_;
@@ -447,14 +501,18 @@ private:
     std::atomic<std::uint32_t> requests_{0};  // consumer: commit requests made
     std::atomic<std::uint32_t> dropped_{0};   // producer
 
-    // The queue only loads and stores the atomics, it needs no read-modify-write. Those
-    // are single instructions on 32-bit targets; ARMv6-M (Cortex-M0/M0+) has no atomic
-    // read-modify-write, so is_always_lock_free is false there although loads and stores
-    // are.
-#if !defined(__ARM_ARCH_6M__)
-    static_assert(std::atomic<std::uint32_t>::is_always_lock_free,
-                  "sonde needs lock-free 32-bit atomics");
+    // The queue only loads and stores the atomics, it needs no read-modify-write. GCC
+    // emits plain loads and stores with barriers for atomics of up to a word, also where
+    // read-modify-write needs a library call and is_always_lock_free is false, e.g. on
+    // ARMv6-M (Cortex-M0/M0+) or RISC-V without the A extension. An int of 32 bits
+    // stands for a word of 32 bits; on 8- and 16-bit targets the loads are not atomic.
+#if defined(__GNUC__) && !defined(__clang__)
+    static constexpr bool word_loads_and_stores = sizeof(int) >= sizeof(std::uint32_t);
+#else
+    static constexpr bool word_loads_and_stores = false;
 #endif
+    static_assert(std::atomic<std::uint32_t>::is_always_lock_free || word_loads_and_stores,
+                  "sonde needs lock-free loads and stores of 32-bit atomics");
 };
 
 }  // namespace sonde

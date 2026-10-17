@@ -13,6 +13,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <type_traits>
 
 using sonde::Status;
 using test::Bytes;
@@ -45,6 +46,13 @@ Bytes encoded(const T& value) {
 }
 
 }  // namespace
+
+// The encoders refer to the item being encoded, a copy would outlive it.
+static_assert(!std::is_copy_constructible_v<sonde::Encoder>);
+static_assert(!std::is_copy_assignable_v<sonde::Encoder>);
+static_assert(!std::is_copy_constructible_v<sonde::Record>);
+static_assert(!std::is_copy_constructible_v<sonde::Array>);
+static_assert(!std::is_move_constructible_v<sonde::Record>);
 
 // --- Data ---------------------------------------------------------------------------
 

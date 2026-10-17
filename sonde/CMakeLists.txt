@@ -32,26 +32,35 @@ if(POLICY CMP0135)
     cmake_policy(SET CMP0135 NEW)  # extracted files get the time of extraction
 endif()
 
-if(SONDE_FETCH_TINYCBOR)
+# Adds the tinycbor library, in a function so that its options do not reach the project.
+function(sonde_add_tinycbor)
     include(FetchContent)
-    FetchContent_Declare(tinycbor
-        URL https://github.com/intel/tinycbor/archive/refs/tags/v0.6.1.tar.gz
-        URL_HASH SHA256=0f9944496d1143935e9c996bc6233ca0dd5451299def33ef400a409942f8f34b
-    )
-    # tinycbor has no CMakeLists.txt, so this only fetches its sources
-    FetchContent_MakeAvailable(tinycbor)
-
-    set(tinycbor_src ${tinycbor_SOURCE_DIR}/src)
-    add_library(tinycbor STATIC
-        ${tinycbor_src}/cborencoder.c
-        ${tinycbor_src}/cborerrorstrings.c
-        ${tinycbor_src}/cborparser.c
-    )
-    target_include_directories(tinycbor SYSTEM PUBLIC ${tinycbor_src})
-    set_target_properties(tinycbor PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON)
-    if(MSVC)
-        target_compile_definitions(tinycbor PRIVATE _CRT_SECURE_NO_WARNINGS)
+    set(options)
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.25)
+        list(APPEND options SYSTEM)  # no warnings of sonde for the headers of tinycbor
     endif()
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.28)
+        list(APPEND options EXCLUDE_FROM_ALL)  # nor the install rules of tinycbor
+    endif()
+    FetchContent_Declare(tinycbor
+        URL https://github.com/intel/tinycbor/archive/refs/tags/v7.0.tar.gz
+        URL_HASH SHA256=8b1b76001b9f987677f2ea7aa814fba1f810ff6cbbffa62ea3bac612c55b1a56
+        ${options}
+    )
+    # Only the library: options of tinycbor take these variables (CMP0077), not the cache
+    set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
+    set(BUILD_TOOLS OFF)
+    set(BUILD_EXAMPLES OFF)
+    set(BUILD_TESTING OFF)
+    set(WITH_CBOR2JSON OFF)
+    # only the conversion to JSON, which is off, needs open_memstream; this saves its
+    # check and the warning where it is missing
+    set(HAVE_OPEN_MEMSTREAM ON)
+    FetchContent_MakeAvailable(tinycbor)
+endfunction()
+
+if(SONDE_FETCH_TINYCBOR)
+    sonde_add_tinycbor()
 elseif(NOT TARGET tinycbor)
     message(FATAL_ERROR "SONDE_FETCH_TINYCBOR is OFF, but there is no tinycbor target")
 endif()
