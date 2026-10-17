@@ -142,8 +142,8 @@ Actions
 Actions
 -------
 
-An actions view lists all announced actions, or only those checked in the
-left panel while it is selected, an action per row: its name (hover it for the description, the path
+An actions view lists the actions checked in the left panel while it is
+selected, none when it is added, an action per row: its name (hover it for the description, the path
 and the outpost it is sent to), its input, the current value of its readback
 trace if it has one, and what became of its latest invocation.
 
@@ -179,20 +179,17 @@ Checked actions that no outpost announces, or that the chosen outpost does not
 announce, are listed greyed out; the left panel lists them too, to uncheck
 them. The properties of an actions view set:
 
-* **Show**: **All** announced actions, also those announced later, or the
-  **Chosen** ones. Unchecking an action in the left panel shows the chosen
-  ones, all others.
-
-and for each of its actions:
-
-* **Outposts**: the outpost the action is sent to, among those announcing
-  it. Until one is chosen, it is the first outpost that announced the action.
-  A chosen outpost that no longer announces it is listed greyed out. Its
-  answers, and whether it is connected, are those of that outpost.
-* **Readbacks**: the trace showing the state the action sets, which the
-  readback column shows and checkboxes and choices follow. **As announced**,
-  the default, is the readback the outpost the action is sent to announces;
-  a chosen trace or **None** stays, also when the outpost changes.
+* **Outpost**: the outpost all its actions are sent to, among those that
+  announced actions. **First announcing**, the default, sends each action to
+  the first outpost announcing it whose connection is open, else to the first
+  announcing it, so the actions keep working when connecting to an outpost of
+  another name. A chosen outpost that announces no actions any more is listed
+  greyed out. The answers of an action, and whether it is connected, are
+  those of the outpost it is sent to.
+* **Readbacks**: for each action whether it has the readback its outpost
+  announces, the trace showing the state the action sets, which the readback
+  column shows and checkboxes and choices follow. The checkbox is disabled if
+  the outpost announces none.
 * **Number inputs** switches numbers with a minimum and a maximum between a
   slider and a field.
 

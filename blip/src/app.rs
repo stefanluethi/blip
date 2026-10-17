@@ -376,9 +376,9 @@ impl App {
                 let model = &self.state.model;
                 let search = &self.trace_search;
                 match view {
-                    Some(view) => view.edit_selection(model, |selection| {
-                        view::trace_selection::show(ui, model, search, selection);
-                    }),
+                    Some(view) => {
+                        view::trace_selection::show(ui, model, search, view.selection_mut());
+                    }
                     None => view::trace_selection::show(ui, model, search, None),
                 }
             });
@@ -446,7 +446,11 @@ impl eframe::App for App {
                         self.connections.ui(ui, self.state.recording, unsaved);
                     });
                 ui.add_space(4.0);
-                self.layout.properties_ui(ui, &self.state.model);
+                let context = view::PropertiesContext {
+                    model: &self.state.model,
+                    connected: &self.state.invoker.connected,
+                };
+                self.layout.properties_ui(ui, &context);
             });
 
         let central = egui::CentralPanel::default()

@@ -5,11 +5,12 @@
 //! every [`DRAG_INTERVAL`](crate::app::model::actions::DRAG_INTERVAL)), a number or text field on Enter. An action with several
 //! parameters, or one that asks for confirmation, is sent with its Send button.
 //!
-//! An action is known by its path, which several outposts may announce. Each action
-//! is sent to the outpost chosen for it in the properties, and its readback is the
-//! trace chosen there, else the one that outpost announces.
+//! An action is known by its path, which several outposts may announce. The actions
+//! are sent to the outpost chosen in the properties, by default each to the first
+//! outpost announcing it, and their readback is the trace that outpost announces
+//! unless it is turned off there.
 
-use super::{ViewContext, Viewable, properties_section, short_names};
+use super::{PropertiesContext, ViewContext, Viewable, properties_section, short_names};
 use crate::app::model::Model;
 use crate::app::model::actions::{ActionId, Args, Invoker, Outcome};
 use crate::app::model::numbers::{DisplayFormat, Number};
@@ -17,7 +18,7 @@ use crate::app::model::traces::Samples;
 use egui::RichText;
 use egui_phosphor::regular::{CHECK_CIRCLE, CLOCK_COUNTDOWN, PLAY, WARNING_CIRCLE};
 use proto::{ActionDescriptor, Data, Param, ParamKind};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeSet, HashSet};
 
 /// Choices of at most this many options are buttons side by side, longer ones a
 /// dropdown.
@@ -31,20 +32,27 @@ const PROPERTY_WIDTH: f32 = 140.0;
 #[derive(serde::Deserialize, serde::Serialize, Clone, Default)]
 #[serde(default)]
 pub struct Actions {
-    /// The paths of the shown actions, checked in the tree of the left panel, all
-    /// announced actions if `None`.
-    pub shown: Option<BTreeSet<String>>,
+    /// The paths of the shown actions, checked in the tree of the left panel. Layouts
+    /// of older versions that showed all actions show none.
+    #[serde(deserialize_with = "null_as_empty")]
+    pub shown: BTreeSet<String>,
     /// The numeric parameters with bounds entered in a field instead of a slider, by
     /// the path of the action and the parameter name joined with ":".
     pub fields: BTreeSet<String>,
-    /// The name of the connection of the outpost each action is sent to, by the path
-    /// of the action. An action without one is sent to the first outpost announcing
-    /// it, see [`Actions::outpost`].
-    pub outposts: BTreeMap<String, String>,
-    /// The path of the readback trace chosen for each action by its path, `None` for
-    /// no readback. An action without one has the readback its outpost announces, see
-    /// [`Actions::readback`].
-    pub readbacks: BTreeMap<String, Option<String>>,
+    /// The name of the connection of the outpost the actions are sent to, `None` to
+    /// send each to the first outpost announcing it, see [`Actions::outpost`].
+    pub outpost: Option<String>,
+    /// The paths of the actions whose readback, the trace their outpost announces, is
+    /// turned off.
+    pub readbacks_off: BTreeSet<String>,
+}
+
+/// A set of paths, empty for `null`.
+fn null_as_empty<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<BTreeSet<String>, D::Error> {
+    let paths: Option<BTreeSet<String>> = serde::Deserialize::deserialize(deserializer)?;
+    Ok(paths.unwrap_or_default())
 }
 
 /// A shown action, as the view lists it.
@@ -450,51 +458,67 @@ impl Actions {
 
     /// The name of the connection of the outpost the action at `path` is sent to: the
     /// one chosen in the properties, also while it does not announce the action, else
-    /// the first outpost announcing it, `None` if none does.
-    fn outpost<'a>(&'a self, model: &'a Model, path: &str) -> Option<&'a str> {
-        match self.outposts.get(path) {
-            Some(source) => Some(source),
-            None => model
+    /// the first outpost announcing it whose connection is open, else the first
+    /// announcing it, `None` if none does. So the actions keep working when the
+    /// connection changes to an outpost of another name, while the actions of the one
+    /// before are still known.
+    fn outpost<'a>(
+        &'a self,
+        model: &'a Model,
+        connected: &HashSet<String>,
+        path: &str,
+    ) -> Option<&'a str> {
+        if let Some(source) = &self.outpost {
+            return Some(source);
+        }
+        let announcers = || {
+            model
                 .actions
                 .announcers(path)
-                .next()
-                .map(|action| action.source.as_str()),
-        }
+                .map(|action| action.source.as_str())
+        };
+        announcers()
+            .find(|source| connected.contains(*source))
+            .or_else(|| announcers().next())
     }
 
     /// The action at `path` as the outpost it is sent to announces it, if it does.
-    fn announced<'a>(&self, model: &'a Model, path: &str) -> Option<&'a ActionDescriptor> {
-        let outpost = self.outpost(model, path)?;
+    fn announced<'a>(
+        &self,
+        model: &'a Model,
+        connected: &HashSet<String>,
+        path: &str,
+    ) -> Option<&'a ActionDescriptor> {
+        let outpost = self.outpost(model, connected, path)?;
         model.actions.announced(outpost, path)
     }
 
-    /// The path of the readback trace of the action at `path`: the one chosen in the
-    /// properties, which may be none, else `announced`, the one its outpost announces.
-    fn readback<'a>(&'a self, path: &str, announced: Option<&'a str>) -> Option<&'a str> {
-        match self.readbacks.get(path) {
-            Some(chosen) => chosen.as_deref(),
-            None => announced,
+    /// The path of the readback trace of `action`: the one its outpost announces,
+    /// unless turned off in the properties.
+    fn readback<'a>(&self, action: &'a ActionDescriptor) -> Option<&'a str> {
+        if self.readbacks_off.contains(&action.path) {
+            None
+        } else {
+            action.readback.as_deref()
         }
     }
 
     /// The shown actions in the order they were announced first, followed by the
     /// shown actions no outpost announces.
-    fn rows<'a>(&'a self, model: &'a Model) -> Vec<Row<'a>> {
-        let announced = model.actions.paths().filter(|path| {
-            self.shown
-                .as_ref()
-                .is_none_or(|shown| shown.contains(*path))
-        });
+    fn rows<'a>(&'a self, model: &'a Model, connected: &HashSet<String>) -> Vec<Row<'a>> {
+        let announced = model
+            .actions
+            .paths()
+            .filter(|path| self.shown.contains(*path));
         let missing = self
             .shown
             .iter()
-            .flatten()
             .map(String::as_str)
             .filter(|path| model.actions.announcers(path).next().is_none());
         announced
             .chain(missing)
             .map(|path| {
-                let outpost = self.outpost(model, path);
+                let outpost = self.outpost(model, connected, path);
                 Row {
                     path,
                     outpost,
@@ -697,110 +721,79 @@ impl Actions {
         }
     }
 
-    /// Shows a dropdown to choose the outpost the action at `path` is sent to among
-    /// those announcing it. One chosen before that no longer announces it is listed
-    /// greyed out.
-    fn outpost_ui(&mut self, ui: &mut egui::Ui, model: &Model, path: &str) {
-        let mut sources: Vec<&str> = model
-            .actions
-            .announcers(path)
-            .map(|action| action.source.as_str())
-            .collect();
-        let current = self.outpost(model, path).map(str::to_owned);
-        if let Some(current) = &current
-            && !sources.contains(&current.as_str())
-        {
-            sources.push(current);
-        }
-        let text = |source: &str| {
-            let text = RichText::new(outpost_name(source));
-            let announces = model.actions.announced(source, path).is_some();
-            if announces { text } else { text.weak() }
-        };
-        let selected = match &current {
-            Some(current) => text(current),
-            None => RichText::new("none").weak(),
-        };
-        let mut chosen = None;
-        egui::ComboBox::from_id_salt(("action outpost", path))
-            .selected_text(selected)
-            .width(PROPERTY_WIDTH)
-            .truncate()
-            .show_ui(ui, |ui| {
-                for &source in &sources {
-                    let selected = current.as_deref() == Some(source);
-                    if ui.selectable_label(selected, text(source)).clicked() {
-                        chosen = Some(source.to_owned());
-                    }
-                }
-            })
-            .response
-            .on_hover_text("The outpost the action is sent to, by default the first announcing it");
-        if let Some(source) = chosen {
-            self.outposts.insert(path.to_owned(), source);
-        }
-    }
-
-    /// Shows a dropdown to choose the readback trace of the action at `path`: the one
-    /// its outpost announces, none or one of the traces. One chosen before that was not
-    /// received is listed greyed out.
-    fn readback_ui(&mut self, ui: &mut egui::Ui, model: &Model, path: &str) {
-        let announced = self
-            .announced(model, path)
-            .and_then(|action| action.readback.as_deref());
-        // `None` follows the announcement, `Some(None)` is no readback
-        let current: Option<Option<&str>> = self.readbacks.get(path).map(Option::as_deref);
-        let mut options: Vec<Option<Option<&str>>> = [None, Some(None)]
-            .into_iter()
-            .chain(
-                model
-                    .traces
-                    .iter()
-                    .map(|trace| Some(Some(trace.path.as_str()))),
-            )
+    /// Shows a dropdown to choose the outpost the actions are sent to among those that
+    /// announced actions, or for each the first announcing it. One chosen before that
+    /// announces none is listed greyed out.
+    fn outpost_ui(&mut self, ui: &mut egui::Ui, model: &Model) {
+        let current = self.outpost.as_deref();
+        let mut options: Vec<Option<&str>> = std::iter::once(None)
+            .chain(model.actions.sources().map(Some))
             .collect();
         if !options.contains(&current) {
             options.push(current);
         }
-        let text = |option: Option<Option<&str>>| match option {
-            None => RichText::new(format!("As announced: {}", announced.unwrap_or("none"))),
-            Some(None) => RichText::new("None"),
-            Some(Some(trace)) if model.traces.get(trace).is_some() => RichText::new(trace),
-            Some(Some(trace)) => RichText::new(trace).weak(),
+        let text = |option: Option<&str>| match option {
+            None => RichText::new("First announcing"),
+            Some(source) if model.actions.sources().any(|known| known == source) => {
+                RichText::new(outpost_name(source))
+            }
+            Some(source) => RichText::new(outpost_name(source)).weak(),
         };
         let mut chosen = None;
-        egui::ComboBox::from_id_salt(("action readback", path))
+        egui::ComboBox::from_id_salt("actions outpost")
             .selected_text(text(current))
             .width(PROPERTY_WIDTH)
             .truncate()
             .show_ui(ui, |ui| {
                 for &option in &options {
                     if ui.selectable_label(option == current, text(option)).clicked() {
-                        chosen = Some(option.map(|trace| trace.map(str::to_owned)));
+                        chosen = Some(option.map(str::to_owned));
                     }
                 }
             })
             .response
             .on_hover_text(
-                "The trace showing the state the action sets, by default the one its outpost announces",
+                "The outpost the actions are sent to, by default each to the first announcing it, preferring open connections",
             );
-        match chosen {
-            Some(None) => {
-                self.readbacks.remove(path);
+        if let Some(chosen) = chosen {
+            self.outpost = chosen;
+        }
+    }
+
+    /// Shows a checkbox whether the action at `path` has the readback its outpost
+    /// announces, disabled if it announces none.
+    fn readback_ui(&mut self, ui: &mut egui::Ui, context: &PropertiesContext<'_>, path: &str) {
+        let announced = self
+            .announced(context.model, context.connected, path)
+            .and_then(|action| action.readback.as_deref());
+        let mut on = announced.is_some() && !self.readbacks_off.contains(path);
+        let checkbox = egui::Checkbox::new(&mut on, announced.unwrap_or("none announced"));
+        let response = ui
+            .add_enabled(announced.is_some(), checkbox)
+            .on_hover_text(
+                "Whether the trace its outpost announces shows the state the action sets",
+            )
+            .on_disabled_hover_text("Its outpost announces no readback");
+        if response.changed() {
+            if on {
+                self.readbacks_off.remove(path);
+            } else {
+                self.readbacks_off.insert(path.to_owned());
             }
-            Some(Some(trace)) => {
-                self.readbacks.insert(path.to_owned(), trace);
-            }
-            None => {}
         }
     }
 
     /// Shows whether the numbers with a minimum and a maximum of the actions at
     /// `paths` are entered with a slider or a field.
-    fn number_inputs_ui(&mut self, ui: &mut egui::Ui, model: &Model, paths: &[String]) {
+    fn number_inputs_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        context: &PropertiesContext<'_>,
+        paths: &[String],
+    ) {
         let bounded: Vec<(&ActionDescriptor, &str)> = paths
             .iter()
-            .filter_map(|path| self.announced(model, path))
+            .filter_map(|path| self.announced(context.model, context.connected, path))
             .flat_map(|action| {
                 action.params.iter().filter_map(move |param| {
                     let bounded = match param.kind {
@@ -845,7 +838,7 @@ impl Viewable for Actions {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         let now = ui.input(|input| input.time);
         let model = context.model;
-        let rows = self.rows(model);
+        let rows = self.rows(model, &context.invoker.connected);
         if rows.is_empty() {
             ui.centered_and_justified(|ui| {
                 ui.weak(
@@ -877,11 +870,10 @@ impl Viewable for Actions {
                                     Self::missing_ui(ui, row, name);
                                     continue;
                                 };
-                                let announced = action.readback.as_deref();
                                 let shown = Shown {
                                     id: ActionId::new(outpost, row.path),
                                     action,
-                                    readback: self.readback(row.path, announced),
+                                    readback: self.readback(action),
                                     name,
                                 };
                                 self.action_ui(ui, context, &shown, now, &mut confirm);
@@ -895,26 +887,19 @@ impl Viewable for Actions {
         Self::confirm_ui(ui, context, confirm_id, now);
     }
 
-    fn properties_ui(&mut self, ui: &mut egui::Ui, model: &Model) {
+    fn properties_ui(&mut self, ui: &mut egui::Ui, context: &PropertiesContext<'_>) {
         let paths: Vec<String> = self
-            .rows(model)
+            .rows(context.model, context.connected)
             .iter()
             .map(|row| row.path.to_owned())
             .collect();
         properties_section(ui, "Actions", |ui| {
-            let mut all = self.shown.is_none();
-            super::choice_row(ui, "Show", &mut all, &[(true, "All"), (false, "Chosen")]);
-            if all != self.shown.is_none() {
-                // the chosen ones start from all, to uncheck some in the tree
-                self.shown = (!all).then(|| model.actions.paths().map(str::to_owned).collect());
-            }
+            ui.label("Outpost");
+            self.outpost_ui(ui, context.model);
+            ui.end_row();
             if paths.is_empty() {
                 ui.label("");
-                ui.weak(if all {
-                    "The outposts announced no actions"
-                } else {
-                    "Check the actions to show in the tree on the left"
-                });
+                ui.weak("Check the actions to show in the tree on the left");
                 ui.end_row();
             }
         });
@@ -922,21 +907,14 @@ impl Viewable for Actions {
             return;
         }
         let names = short_names(paths.iter().map(String::as_str));
-        properties_section(ui, "Outposts", |ui| {
-            for (path, name) in paths.iter().zip(&names) {
-                ui.label(*name).on_hover_text(path);
-                self.outpost_ui(ui, model, path);
-                ui.end_row();
-            }
-        });
         properties_section(ui, "Readbacks", |ui| {
             for (path, name) in paths.iter().zip(&names) {
                 ui.label(*name).on_hover_text(path);
-                self.readback_ui(ui, model, path);
+                self.readback_ui(ui, context, path);
                 ui.end_row();
             }
         });
-        self.number_inputs_ui(ui, model, &paths);
+        self.number_inputs_ui(ui, context, &paths);
     }
 }
 
@@ -1052,7 +1030,7 @@ mod tests {
     /// name.
     fn harness(actions: Vec<ActionDescriptor>) -> egui_kittest::Harness<'static, State> {
         let mut view = Actions::new();
-        view.shown = Some(actions.iter().map(|action| action.path.clone()).collect());
+        view.shown = actions.iter().map(|action| action.path.clone()).collect();
         let mut model = Model::default();
         model.actions.set("", actions);
         let mut invoker = Invoker::default();
@@ -1214,58 +1192,42 @@ mod tests {
     #[test]
     fn chosen_actions_show_also_when_not_announced() {
         let mut harness = harness(vec![action("a", vec![]), action("b", vec![])]);
-        harness.state_mut().view.shown = Some(["b".to_owned(), "gone".to_owned()].into());
+        harness.state_mut().view.shown = ["b".to_owned(), "gone".to_owned()].into();
         harness.run_steps(2);
         assert!(harness.query_by_label("a").is_none());
         harness.get_by_label("b");
         harness.get_by_label("not announced by any outpost");
-        // an action whose chosen outpost does not announce it
-        let view = &mut harness.state_mut().view;
-        view.outposts.insert("b".to_owned(), "robby".to_owned());
+        // an action the chosen outpost does not announce
+        harness.state_mut().view.outpost = Some("robby".to_owned());
         harness.run_steps(2);
-        harness.get_by_label("not announced by robby");
+        assert_eq!(
+            harness.get_all_by_label("not announced by robby").count(),
+            2
+        );
     }
 
     #[test]
     fn only_the_actions_checked_in_the_tree_show() {
         let mut harness = harness(vec![action("a", vec![])]);
-        harness.state_mut().view.shown = Some(BTreeSet::new());
+        harness.state_mut().view.shown = BTreeSet::new();
         harness.run_steps(2);
         harness.get_by_label("Check the actions to show in the tree on the left");
     }
 
     #[test]
-    fn views_show_all_actions_until_some_are_unchecked() {
-        let mut harness = harness(vec![action("a", vec![])]);
-        harness.state_mut().view.shown = None;
-        harness.run_steps(2);
-        harness.get_by_label("a");
-        // also those announced later
-        let state = harness.state_mut();
-        state
-            .model
-            .actions
-            .set("", vec![action("a", vec![]), action("b", vec![])]);
-        harness.run_steps(2);
-        harness.get_by_label("b");
+    fn new_views_show_no_actions_until_checked() {
+        use crate::app::view::{View, ViewType};
 
-        // unchecking one in the tree shows the others only
-        use crate::app::view::{View, ViewKind, ViewType};
-        let shown = |view: &View| match &view.kind {
-            ViewKind::Actions(actions) => actions.shown.clone(),
-            _ => unreachable!(),
-        };
-        let model = &harness.state().model;
         let mut view = View::new(ViewType::Actions, "actions".to_owned());
-        assert_eq!(shown(&view), None);
-        view.edit_selection(model, |selection| {
-            assert_eq!(selection.unwrap().0.len(), 2);
-        });
-        assert_eq!(shown(&view), None);
-        view.edit_selection(model, |selection| {
-            selection.unwrap().0.remove("a");
-        });
-        assert_eq!(shown(&view), Some(["b".to_owned()].into()));
+        let (shown, _) = view.selection_mut().unwrap();
+        assert!(shown.is_empty());
+        shown.insert("a".to_owned());
+        match &view.kind {
+            super::super::ViewKind::Actions(actions) => {
+                assert_eq!(actions.shown, ["a".to_owned()].into());
+            }
+            _ => unreachable!(),
+        }
     }
 
     #[test]
@@ -1274,7 +1236,7 @@ mod tests {
         let state = harness.state_mut();
         state.model.actions.set("a", vec![action("reset", vec![])]);
         state.model.actions.set("b", vec![action("reset", vec![])]);
-        state.view.shown = Some(["reset".to_owned()].into());
+        state.view.shown = ["reset".to_owned()].into();
         state.invoker.connected = ["a".to_owned(), "b".to_owned()].into();
         harness.run_steps(2);
         let run = format!("{PLAY} Run");
@@ -1286,7 +1248,7 @@ mod tests {
             [("a".to_owned(), "reset".to_owned())]
         );
 
-        harness.state_mut().view.outposts = [("reset".to_owned(), "b".to_owned())].into();
+        harness.state_mut().view.outpost = Some("b".to_owned());
         harness.run_steps(2);
         harness.get_by_label(&run).click();
         harness.run_steps(2);
@@ -1302,46 +1264,69 @@ mod tests {
     }
 
     #[test]
-    fn the_chosen_readback_shows_and_starts_the_inputs() {
-        let readback = |path: &str| ActionDescriptor {
-            readback: Some(path.to_owned()),
+    fn by_default_actions_are_sent_to_an_open_connection() {
+        let mut harness = harness(vec![]);
+        let state = harness.state_mut();
+        // the outpost connected before, whose actions are still known, and the one now
+        state
+            .model
+            .actions
+            .set("old", vec![action("reset", vec![])]);
+        state
+            .model
+            .actions
+            .set("new", vec![action("reset", vec![])]);
+        state.view.shown = ["reset".to_owned()].into();
+        state.invoker.connected = ["new".to_owned()].into();
+        harness.run_steps(2);
+        harness.get_by_label(&format!("{PLAY} Run")).click();
+        harness.run_steps(2);
+        assert_eq!(
+            sent_to(&mut harness),
+            [("new".to_owned(), "reset".to_owned())]
+        );
+        // with none open, the first announcing it shows, disabled
+        harness.state_mut().invoker.connected.clear();
+        harness.run_steps(2);
+        let run = format!("{PLAY} Run");
+        assert!(harness.get_by_label(&run).accesskit_node().is_disabled());
+    }
+
+    #[test]
+    fn the_announced_readback_shows_and_starts_the_inputs_unless_off() {
+        let enable = ActionDescriptor {
+            readback: Some("on".to_owned()),
             ..action("enable", vec![named("on", ParamKind::Bool)])
         };
-        let mut harness = harness(vec![readback("announced")]);
-        let model = &mut harness.state_mut().model;
-        for (path, value) in [("announced", false), ("chosen", true)] {
-            model.traces.append(&proto::Value {
-                timestamp: 0,
-                path: path.to_owned(),
-                value: Data::Bool(value),
-            });
-        }
+        let mut harness = harness(vec![enable]);
+        harness.state_mut().model.traces.append(&proto::Value {
+            timestamp: 0,
+            path: "on".to_owned(),
+            value: Data::Bool(true),
+        });
         let checked = |harness: &egui_kittest::Harness<'_, State>| {
             let checkbox = harness.get_by_role(egui::accesskit::Role::CheckBox);
             checkbox.accesskit_node().toggled() == Some(egui::accesskit::Toggled::True)
         };
         harness.run_steps(2);
-        harness.get_by_label("false");
-        assert!(!checked(&harness));
-
-        let view = &mut harness.state_mut().view;
-        view.readbacks
-            .insert("enable".to_owned(), Some("chosen".to_owned()));
-        harness.run_steps(2);
         harness.get_by_label("true");
         assert!(checked(&harness));
 
-        // no readback
-        let view = &mut harness.state_mut().view;
-        view.readbacks.insert("enable".to_owned(), None);
+        // the readback turned off
+        harness.state_mut().invoker.inputs.clear();
+        harness
+            .state_mut()
+            .view
+            .readbacks_off
+            .insert("enable".to_owned());
         harness.run_steps(2);
         assert!(harness.query_by_label("true").is_none());
-        assert!(harness.query_by_label("false").is_none());
+        assert!(!checked(&harness));
     }
 
     /// A harness showing the properties of an actions view showing "speed", which the
-    /// connections "a" and "b" announce, "a" with the readback "rpm", and the traces
-    /// "rpm" and "temp".
+    /// connections "a" and "b" announce, "a" with the readback "rpm", with no
+    /// connection open.
     fn properties_harness() -> egui_kittest::Harness<'static, (Actions, Model)> {
         let mut model = Model::default();
         let speed = |readback: Option<&str>| ActionDescriptor {
@@ -1350,19 +1335,19 @@ mod tests {
         };
         model.actions.set("a", vec![speed(Some("rpm"))]);
         model.actions.set("b", vec![speed(None)]);
-        for path in ["rpm", "temp"] {
-            model.traces.append(&proto::Value {
-                timestamp: 0,
-                path: path.to_owned(),
-                value: Data::Uint(1),
-            });
-        }
         let mut view = Actions::new();
-        view.shown = Some(["speed".to_owned()].into());
+        view.shown = ["speed".to_owned()].into();
         let mut harness = egui_kittest::Harness::builder()
             .with_size(egui::vec2(300.0, 600.0))
             .build_ui_state(
-                |ui, (view, model): &mut (Actions, Model)| view.properties_ui(ui, model),
+                |ui, (view, model): &mut (Actions, Model)| {
+                    let connected = HashSet::new();
+                    let context = PropertiesContext {
+                        model,
+                        connected: &connected,
+                    };
+                    view.properties_ui(ui, &context);
+                },
                 (view, model),
             );
         harness.run();
@@ -1390,67 +1375,68 @@ mod tests {
         harness.run();
     }
 
-    #[test]
-    fn the_outpost_of_an_action_is_chosen_among_those_announcing_it() {
-        let mut harness = properties_harness();
-        choose(&mut harness, "a", "b");
-        let view = &harness.state().0;
-        assert_eq!(view.outposts.get("speed").map(String::as_str), Some("b"));
-        // the readback follows the outpost, which announces none
-        harness.get_by(|node| {
-            node.role() == egui::accesskit::Role::ComboBox
-                && node.value().as_deref() == Some("As announced: none")
-        });
-
-        // a chosen outpost that is gone is still listed
-        harness.state_mut().0.outposts = [("speed".to_owned(), "gone".to_owned())].into();
-        harness.run();
-        choose(&mut harness, "gone", "a");
-        let view = &harness.state().0;
-        assert_eq!(view.outposts.get("speed").map(String::as_str), Some("a"));
+    /// The checkbox of the readback in the properties of `harness`.
+    fn readback_checkbox<'a>(
+        harness: &'a egui_kittest::Harness<'_, (Actions, Model)>,
+    ) -> egui_kittest::Node<'a> {
+        harness.get_by_role(egui::accesskit::Role::CheckBox)
     }
 
     #[test]
-    fn the_readback_of_an_action_is_chosen_among_the_traces() {
+    fn the_outpost_of_the_actions_is_chosen_among_those_announcing_actions() {
         let mut harness = properties_harness();
-        choose(&mut harness, "As announced: rpm", "temp");
-        let readbacks = |harness: &egui_kittest::Harness<'_, (Actions, Model)>| {
-            harness.state().0.readbacks.clone()
-        };
+        choose(&mut harness, "First announcing", "b");
+        assert_eq!(harness.state().0.outpost.as_deref(), Some("b"));
+        // the readback follows the outpost, which announces none
+        let checkbox = readback_checkbox(&harness);
+        assert!(checkbox.accesskit_node().is_disabled());
         assert_eq!(
-            readbacks(&harness),
-            [("speed".to_owned(), Some("temp".to_owned()))].into()
+            checkbox.accesskit_node().label().as_deref(),
+            Some("none announced")
         );
-        choose(&mut harness, "temp", "None");
-        assert_eq!(readbacks(&harness), [("speed".to_owned(), None)].into());
-        // a chosen trace stays chosen also when it is the announced one
-        choose(&mut harness, "None", "rpm");
-        let rpm = [("speed".to_owned(), Some("rpm".to_owned()))].into();
-        assert_eq!(readbacks(&harness), rpm);
-        choose(&mut harness, "a", "b");
-        assert_eq!(readbacks(&harness), rpm);
-        choose(&mut harness, "b", "a");
-        // following the announcement again
-        choose(&mut harness, "rpm", "As announced: rpm");
-        assert!(readbacks(&harness).is_empty());
+
+        // a chosen outpost that is gone is still listed
+        harness.state_mut().0.outpost = Some("gone".to_owned());
+        harness.run();
+        choose(&mut harness, "gone", "First announcing");
+        assert_eq!(harness.state().0.outpost, None);
+    }
+
+    #[test]
+    fn the_announced_readback_is_turned_off_and_on() {
+        let mut harness = properties_harness();
+        let toggled = |harness: &egui_kittest::Harness<'_, (Actions, Model)>| {
+            readback_checkbox(harness).accesskit_node().toggled()
+                == Some(egui::accesskit::Toggled::True)
+        };
+        assert!(toggled(&harness));
+        readback_checkbox(&harness).click();
+        harness.run();
+        assert_eq!(harness.state().0.readbacks_off, ["speed".to_owned()].into());
+        assert!(!toggled(&harness));
+        readback_checkbox(&harness).click();
+        harness.run();
+        assert!(harness.state().0.readbacks_off.is_empty());
     }
 
     #[test]
     fn layouts_of_older_versions_load() {
         let all: Actions = serde_json::from_str(r#"{"shown": null, "fields": []}"#).unwrap();
-        assert!(all.shown.is_none() && all.outposts.is_empty());
-        let chosen: Actions = serde_json::from_str(r#"{"shown": ["a"]}"#).unwrap();
-        assert_eq!(chosen.shown, Some(["a".to_owned()].into()));
+        assert!(all.shown.is_empty() && all.outpost.is_none());
+        let chosen: Actions = serde_json::from_str(
+            r#"{"shown": ["a"], "outposts": {"a": "robby"}, "readbacks": {"a": null}}"#,
+        )
+        .unwrap();
+        assert_eq!(chosen.shown, ["a".to_owned()].into());
+        assert!(chosen.outpost.is_none() && chosen.readbacks_off.is_empty());
 
         let mut view = Actions::new();
-        view.outposts.insert("a".to_owned(), "robby".to_owned());
-        view.readbacks.insert("a".to_owned(), None);
-        view.readbacks
-            .insert("b".to_owned(), Some("rpm".to_owned()));
+        view.outpost = Some("robby".to_owned());
+        view.readbacks_off.insert("a".to_owned());
         let json = serde_json::to_string(&view).unwrap();
         let loaded: Actions = serde_json::from_str(&json).unwrap();
-        assert_eq!(loaded.outposts, view.outposts);
-        assert_eq!(loaded.readbacks, view.readbacks);
+        assert_eq!(loaded.outpost, view.outpost);
+        assert_eq!(loaded.readbacks_off, view.readbacks_off);
     }
 
     #[test]

@@ -3,7 +3,7 @@
 //! be shown at the cursor time as a line over its indices.
 
 use super::time_axis::{self, index_at};
-use super::{ViewContext, Viewable, text_color_on, with_unit};
+use super::{PropertiesContext, ViewContext, Viewable, text_color_on, with_unit};
 use crate::app::model::Model;
 use crate::app::model::numbers::{DisplayFormat, Number, format_significant};
 use crate::app::model::traces::{Samples, Trace};
@@ -478,7 +478,8 @@ impl Viewable for Heatmap {
         self.contents_ui(ui, trace, text, shape, context.time);
     }
 
-    fn properties_ui(&mut self, ui: &mut egui::Ui, model: &Model) {
+    fn properties_ui(&mut self, ui: &mut egui::Ui, context: &PropertiesContext<'_>) {
+        let model = context.model;
         let dimensions = self
             .traces
             .first()

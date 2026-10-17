@@ -1,5 +1,5 @@
 use super::time_axis::{self, closest_index, visible_range, within};
-use super::{Formats, ViewContext, Viewable, short_names, with_unit};
+use super::{Formats, PropertiesContext, ViewContext, Viewable, short_names, with_unit};
 use crate::app::model::{Model, numbers::NumberKind, traces::Series};
 use crate::app::time::{TimeBase, timestamp_to_seconds};
 use std::cmp::min;
@@ -368,7 +368,8 @@ impl Viewable for Plot {
         self.show_plot(context, ui);
     }
 
-    fn properties_ui(&mut self, ui: &mut egui::Ui, model: &Model) {
+    fn properties_ui(&mut self, ui: &mut egui::Ui, context: &PropertiesContext<'_>) {
+        let model = context.model;
         let unit = super::common_unit(model, self.traces.iter().map(String::as_str))
             .unwrap_or_default()
             .to_owned();

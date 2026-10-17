@@ -1,12 +1,11 @@
 //! The properties panel: the properties of the selected view or group.
 
 use super::{GroupKind, Layout};
-use crate::app::model::Model;
-use crate::app::view::{Viewable, properties_section};
+use crate::app::view::{PropertiesContext, Viewable, properties_section};
 use egui_tiles::{Tile, TileId};
 
 impl Layout {
-    pub fn properties_ui(&mut self, ui: &mut egui::Ui, model: &Model) {
+    pub fn properties_ui(&mut self, ui: &mut egui::Ui, context: &PropertiesContext<'_>) {
         ui.strong("Properties");
         let Some(tile_id) = self
             .selected
@@ -20,7 +19,7 @@ impl Layout {
             .auto_shrink([false, false])
             .show(ui, |ui| match self.container(tile_id).map(GroupKind::of) {
                 Some(kind) => self.group_ui(ui, tile_id, kind),
-                None => self.view_ui(ui, tile_id, model),
+                None => self.view_ui(ui, tile_id, context),
             });
     }
 
@@ -44,7 +43,7 @@ impl Layout {
         });
     }
 
-    fn view_ui(&mut self, ui: &mut egui::Ui, tile_id: TileId, model: &Model) {
+    fn view_ui(&mut self, ui: &mut egui::Ui, tile_id: TileId, context: &PropertiesContext<'_>) {
         properties_section(ui, "View", |ui| {
             ui.label("Name");
             self.name_ui(ui, tile_id);
@@ -57,7 +56,7 @@ impl Layout {
             }
         });
         if let Some(Tile::Pane(view)) = self.tree.tiles.get_mut(tile_id) {
-            view.properties_ui(ui, model);
+            view.properties_ui(ui, context);
         }
     }
 
@@ -79,6 +78,7 @@ impl Layout {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::model::Model;
     use crate::app::model::numbers::DisplayFormat;
     use crate::app::view::ViewKind;
     use crate::app::view::plot::Interpolation;
@@ -103,7 +103,14 @@ mod tests {
         Harness::builder()
             .with_size(egui::vec2(300.0, 800.0))
             .build_ui_state(
-                move |ui, layout: &mut Layout| layout.properties_ui(ui, &model),
+                move |ui, layout: &mut Layout| {
+                    let connected = Default::default();
+                    let context = PropertiesContext {
+                        model: &model,
+                        connected: &connected,
+                    };
+                    layout.properties_ui(ui, &context);
+                },
                 layout,
             )
     }

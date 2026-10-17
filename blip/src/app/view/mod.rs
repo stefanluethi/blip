@@ -13,7 +13,7 @@ use crate::app::model::actions::Invoker;
 use crate::app::model::numbers::{DisplayFormat, NumberKind};
 use crate::app::model::traces::{Samples, Trace};
 use crate::app::time::TimeRange;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use trace_selection::MAX_LISTED_ELEMENTS;
 
 /// What views get from the app to show their contents.
@@ -48,11 +48,18 @@ impl Formats {
     }
 }
 
+/// What views get from the app to show their properties.
+pub struct PropertiesContext<'a> {
+    pub model: &'a Model,
+    /// The names of the open connections.
+    pub connected: &'a HashSet<String>,
+}
+
 pub trait Viewable {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>);
 
     /// Shows the properties of the view in the properties panel, in sections.
-    fn properties_ui(&mut self, _ui: &mut egui::Ui, _model: &Model) {}
+    fn properties_ui(&mut self, _ui: &mut egui::Ui, _context: &PropertiesContext<'_>) {}
 }
 
 /// A view in the layout, shown as a pane in the center.
@@ -394,7 +401,7 @@ impl View {
     }
 
     /// The paths of the traces the view shows, or of the chosen actions for an actions
-    /// view, and its type, or `None` if it shows neither or all announced actions.
+    /// view, and its type, or `None` if it shows neither.
     pub fn selection_mut(&mut self) -> Option<(&mut BTreeSet<String>, ViewType)> {
         let view_type = self.view_type();
         let paths = match &mut self.kind {
@@ -403,32 +410,10 @@ impl View {
             ViewKind::Table(table) => &mut table.traces,
             ViewKind::Xy(xy) => &mut xy.traces,
             ViewKind::Heatmap(heatmap) => &mut heatmap.traces,
-            ViewKind::Actions(actions) => actions.shown.as_mut()?,
+            ViewKind::Actions(actions) => &mut actions.shown,
             ViewKind::Logs(_) => return None,
         };
         Some((paths, view_type))
-    }
-
-    /// Lets `edit` change the paths of the traces or actions the view shows, see
-    /// [`Self::selection_mut`]. An actions view showing all announced actions of
-    /// `model` offers them all, and shows only the chosen ones once `edit` changes them.
-    pub fn edit_selection<R>(
-        &mut self,
-        model: &Model,
-        edit: impl FnOnce(Option<(&mut BTreeSet<String>, ViewType)>) -> R,
-    ) -> R {
-        if let ViewKind::Actions(actions) = &mut self.kind
-            && actions.shown.is_none()
-        {
-            let all: BTreeSet<String> = model.actions.paths().map(str::to_owned).collect();
-            let mut chosen = all.clone();
-            let result = edit(Some((&mut chosen, ViewType::Actions)));
-            if chosen != all {
-                actions.shown = Some(chosen);
-            }
-            return result;
-        }
-        edit(self.selection_mut())
     }
 }
 
@@ -451,17 +436,17 @@ impl Viewable for View {
         }
     }
 
-    fn properties_ui(&mut self, ui: &mut egui::Ui, model: &Model) {
+    fn properties_ui(&mut self, ui: &mut egui::Ui, context: &PropertiesContext<'_>) {
         match &mut self.kind {
-            ViewKind::Plot(plot) => plot.properties_ui(ui, model),
-            ViewKind::States(states) => states.properties_ui(ui, model),
-            ViewKind::Table(table) => table.properties_ui(ui, model),
-            ViewKind::Xy(xy) => xy.properties_ui(ui, model),
-            ViewKind::Heatmap(heatmap) => heatmap.properties_ui(ui, model),
-            ViewKind::Logs(logs) => logs.properties_ui(ui, model),
-            ViewKind::Actions(actions) => actions.properties_ui(ui, model),
+            ViewKind::Plot(plot) => plot.properties_ui(ui, context),
+            ViewKind::States(states) => states.properties_ui(ui, context),
+            ViewKind::Table(table) => table.properties_ui(ui, context),
+            ViewKind::Xy(xy) => xy.properties_ui(ui, context),
+            ViewKind::Heatmap(heatmap) => heatmap.properties_ui(ui, context),
+            ViewKind::Logs(logs) => logs.properties_ui(ui, context),
+            ViewKind::Actions(actions) => actions.properties_ui(ui, context),
         }
-        self.number_format_ui(ui, model);
+        self.number_format_ui(ui, context.model);
     }
 }
 

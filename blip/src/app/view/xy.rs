@@ -2,7 +2,7 @@
 //! position as a path.
 
 use super::time_axis::{index_at, within};
-use super::{ViewContext, Viewable, short_names};
+use super::{PropertiesContext, ViewContext, Viewable, short_names};
 use crate::app::model::Model;
 use crate::app::model::traces::Series;
 use crate::app::time::TimeRange;
@@ -219,7 +219,7 @@ impl Viewable for Xy {
         self.show_plot(ui, context.model, context.time);
     }
 
-    fn properties_ui(&mut self, ui: &mut egui::Ui, _model: &Model) {
+    fn properties_ui(&mut self, ui: &mut egui::Ui, _context: &PropertiesContext<'_>) {
         let x_path = self.x_path().map(str::to_owned);
         let paths: Vec<String> = self.traces.iter().cloned().collect();
         let names = short_names(paths.iter().map(String::as_str));

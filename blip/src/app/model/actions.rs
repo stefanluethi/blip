@@ -50,6 +50,16 @@ impl Actions {
             .filter(move |path| seen.insert(*path))
     }
 
+    /// The names of the connections whose outposts announced actions, each once, in the
+    /// order they announced first.
+    pub fn sources(&self) -> impl Iterator<Item = &str> {
+        let mut seen = HashSet::new();
+        self.list
+            .iter()
+            .map(|action| action.source.as_str())
+            .filter(move |source| seen.insert(*source))
+    }
+
     /// The announcements of the action at `path`, one per outpost announcing it, in
     /// the order they were announced first.
     pub fn announcers(&self, path: &str) -> impl Iterator<Item = &Announced> {
@@ -509,6 +519,7 @@ mod tests {
             .map(|action| action.source.as_str())
             .collect();
         assert_eq!(sources, ["a", "b"]);
+        assert_eq!(actions.sources().collect::<Vec<_>>(), ["a", "b"]);
         let readback = |source| actions.announced(source, "speed").unwrap().readback.clone();
         assert_eq!(readback("a").as_deref(), Some("rpm"));
         assert_eq!(readback("b"), None);

@@ -2,7 +2,7 @@
 
 use super::time_axis::index_at;
 use super::trace_selection::{TraceTree, type_icon};
-use super::{Formats, ViewContext, Viewable, short_names};
+use super::{Formats, PropertiesContext, ViewContext, Viewable, short_names};
 use crate::app::model::Model;
 use crate::app::model::traces::{Samples, Trace};
 use egui_extras::{Column, TableBuilder};
@@ -245,7 +245,7 @@ impl Viewable for Table {
         self.show_table(ui, context.model, context.formats, context.time.cursor());
     }
 
-    fn properties_ui(&mut self, ui: &mut egui::Ui, _model: &Model) {
+    fn properties_ui(&mut self, ui: &mut egui::Ui, _context: &PropertiesContext<'_>) {
         super::properties_section(ui, "Rows", |ui| {
             super::choice_row(
                 ui,

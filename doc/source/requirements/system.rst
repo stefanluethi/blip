@@ -110,8 +110,9 @@ Connectivity
    once, and receive messages as binary frames. It shall show the paths of
    traces, logs and actions as the targets send them, leaving their
    organization to the user, keep the samples of a path several targets send
-   in the order of their timestamps, and send each action to the connection
-   chosen for it among those announcing it. While recording, blip shall keep
+   in the order of their timestamps, and send the actions to the connection
+   chosen for them, by default each to the first with an open connection
+   announcing it. While recording, blip shall keep
    the user from connecting, disconnecting and editing the connections, but
    for connecting again those that broke. A connection opening while no other is
    open shall start afresh, without the data, traces and actions received or
@@ -207,9 +208,9 @@ Control
    parameters, and the value of their readback traces. Sliders shall send
    while dragged at a limited rate, actions with several parameters shall be
    sent with a separate Send button. The user shall choose the actions a view
-   shows in the tree of the traces, where actions are marked as such, and per
-   action the connection it is sent to among those announcing it and its
-   readback trace, by default the one announced.
+   shows in the tree of the traces, where actions are marked as such, per
+   view the connection the actions are sent to, and per action whether it has
+   the readback trace announced.
 
 .. req:: Actions only on request
    :id: REQ_CTRL_SAFE

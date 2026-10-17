@@ -2,7 +2,9 @@
 //! trace, one band for each run of equal values.
 
 use super::time_axis::{self, index_at, visible_range};
-use super::{Formats, ViewContext, Viewable, short_names, text_color_on, with_unit};
+use super::{
+    Formats, PropertiesContext, ViewContext, Viewable, short_names, text_color_on, with_unit,
+};
 use crate::app::model::Model;
 use crate::app::model::numbers::{DisplayFormat, NumberKind};
 use crate::app::model::traces::{Samples, Series};
@@ -343,7 +345,7 @@ impl Viewable for States {
         self.show_states(context, ui);
     }
 
-    fn properties_ui(&mut self, ui: &mut egui::Ui, _model: &Model) {
+    fn properties_ui(&mut self, ui: &mut egui::Ui, _context: &PropertiesContext<'_>) {
         super::properties_section(ui, "Bands", |ui| {
             ui.label("Height");
             ui.add(egui::Slider::new(&mut self.band_height, 0.2..=1.0))
