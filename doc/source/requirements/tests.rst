@@ -123,10 +123,13 @@ Test Cases
    ``blip/src/app.rs`` tests -- name connections after their address, add
    them with the + button, open several at once, pass on when the first one
    opens before its messages and start afresh then unless recording, keep
-   them from being changed while recording, report why an invalid
+   them from being changed while recording but connect again those that
+   broke, ask before dropping an unsaved recording, report why an invalid
    address fails to connect, show errors and warnings as toasts until they
    expire or are closed, count a repeated one instead of stacking it, and
-   warn when a recording is opened in part.
+   warn when a recording is opened in part; ``blip/src/app/model/traces.rs``
+   tests -- put the samples of a path in the order of their timestamps,
+   also when several connections send it.
 
 .. test:: Recordings are saved and opened
    :id: TEST_BLIP_RECORDING
@@ -232,5 +235,7 @@ Test Cases
    confirmed actions, disable actions while disconnected or disabled, and
    start inputs from the readback or the default; send each action to the
    outpost chosen for it, by default the first announcing it, show and follow
-   the chosen readback, choose both in the properties, list the actions in the
-   tree of the traces and check them there only for actions views.
+   the chosen readback, choose both in the properties, keep the inputs per
+   outpost, show all actions until some are unchecked, list the actions in the
+   tree of the traces, also those shown but not announced, and check them
+   there only for actions views.

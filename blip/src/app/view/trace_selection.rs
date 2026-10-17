@@ -21,6 +21,8 @@ pub struct TraceTree<'a> {
     pub trace: Option<&'a Trace>,
     /// The path of the action if one ends at this node.
     pub action: Option<&'a str>,
+    /// Whether the action is shown by the view, but no outpost announces it.
+    pub unannounced: bool,
     /// Children by path segment, record fields with their leading ".", e.g. ".acc".
     pub children: BTreeMap<&'a str, TraceTree<'a>>,
 }
@@ -45,6 +47,16 @@ impl<'a> TraceTree<'a> {
     pub fn add_actions(&mut self, paths: impl Iterator<Item = &'a str>) {
         for path in paths {
             self.node_mut(segments(path)).action = Some(path);
+        }
+    }
+
+    /// Adds the actions at `paths` that a view shows but no outpost announces, so they
+    /// can be unchecked.
+    pub fn add_unannounced_actions(&mut self, paths: impl Iterator<Item = &'a str>) {
+        for path in paths {
+            let node = self.node_mut(segments(path));
+            node.action = Some(path);
+            node.unannounced = true;
         }
     }
 
@@ -198,9 +210,18 @@ fn action_path(path: &str, view_type: ViewType) -> Option<String> {
 
 /// Shows the action at `path` labelled `label` with the action icon: a checkbox,
 /// disabled unless the view shows actions.
-fn show_action(ui: &mut Ui, label: &str, path: &str, selection: &mut Selection<'_>) {
+fn show_action(
+    ui: &mut Ui,
+    label: &str,
+    path: &str,
+    unannounced: bool,
+    selection: &mut Selection<'_>,
+) {
     let paths = Vec::from_iter(action_path(path, selection.view_type));
     let mut hover = format!("{path}\nAction");
+    if unannounced {
+        hover.push_str(", not announced by any outpost");
+    }
     if paths.is_empty() {
         hover.push_str("\nOnly actions views show actions");
     }
@@ -217,7 +238,7 @@ fn show_leaves(ui: &mut Ui, label: &str, node: &TraceTree<'_>, selection: &mut S
         show_trace(ui, label, trace, selection);
     }
     if let Some(path) = node.action {
-        show_action(ui, label, path, selection);
+        show_action(ui, label, path, node.unannounced, selection);
     }
 }
 
@@ -321,6 +342,17 @@ pub fn show(
             .filter(|trace| matches(&trace.path, search)),
     );
     tree.add_actions(model.actions.paths().filter(|path| matches(path, search)));
+    // shown actions no outpost announces, copied apart from the selection edited below
+    let unannounced: Vec<String> = match &selection {
+        Some((paths, view_type)) if view_type.shows_actions() => paths
+            .iter()
+            .filter(|path| model.actions.announcers(path).next().is_none())
+            .filter(|path| matches(path, search))
+            .cloned()
+            .collect(),
+        _ => vec![],
+    };
+    tree.add_unannounced_actions(unannounced.iter().map(String::as_str));
     if tree.children.is_empty() {
         if model.traces.iter().next().is_none() && model.actions.is_empty() {
             ui.weak("No traces or actions received");
@@ -572,6 +604,21 @@ mod tests {
         harness.state_mut().0 = "rpm".to_owned();
         harness.run();
         assert!(harness.query_by_label_contains("speed").is_none());
+    }
+
+    #[test]
+    fn shown_actions_no_outpost_announces_can_be_unchecked() {
+        use egui_kittest::kittest::Queryable;
+
+        let mut harness = tree_harness(ViewType::Actions);
+        harness.state_mut().1 = BTreeSet::from(["gone/reset".to_owned()]);
+        harness.run();
+        harness.get_by_label_contains("reset").click();
+        harness.run();
+        assert!(harness.state().1.is_empty());
+        // once unchecked, it is gone from the tree
+        harness.run();
+        assert!(harness.query_by_label_contains("reset").is_none());
     }
 
     #[test]

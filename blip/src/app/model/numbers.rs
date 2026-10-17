@@ -380,17 +380,47 @@ impl Numbers {
         Ok(())
     }
 
+    /// Moves the last `count` numbers to `start`, after the numbers before it, e.g. the
+    /// elements of a sample that arrived late.
+    pub fn move_last_to(&mut self, start: usize, count: usize) {
+        match &mut self.values {
+            Values::Null => {}
+            Values::Int(values) => values[start..].rotate_right(count),
+            Values::Uint(values) => values[start..].rotate_right(count),
+            Values::Float(values) => values[start..].rotate_right(count),
+            Values::Bool(values) => values[start..].rotate_right(count),
+        }
+        let mut nulls: Vec<bool> = (start..self.len).map(|index| self.is_null(index)).collect();
+        nulls.rotate_right(count);
+        for (index, null) in (start..).zip(nulls) {
+            self.set_null(index, null);
+        }
+    }
+
+    /// Marks the number at `index` as null or not.
+    fn set_null(&mut self, index: usize, null: bool) {
+        let word = index / 64;
+        if self.nulls.len() <= word {
+            if !null {
+                return;
+            }
+            self.nulls.resize(word + 1, 0);
+        }
+        let bit = 1 << (index % 64);
+        if null {
+            self.nulls[word] |= bit;
+        } else {
+            self.nulls[word] &= !bit;
+        }
+    }
+
     /// Appends `number`, which the storage holds.
     fn push_unchecked(&mut self, number: Number) {
         let index = self.len;
         self.values.push(number);
         self.len += 1;
         if number.is_null() {
-            let word = index / 64;
-            if self.nulls.len() <= word {
-                self.nulls.resize(word + 1, 0);
-            }
-            self.nulls[word] |= 1 << (index % 64);
+            self.set_null(index, true);
         }
     }
 }

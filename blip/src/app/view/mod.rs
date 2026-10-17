@@ -393,8 +393,8 @@ impl View {
         !matches!(self.kind, ViewKind::Logs(_))
     }
 
-    /// The paths of the traces the view shows, or of the actions for an actions view,
-    /// and its type, or `None` if it shows neither.
+    /// The paths of the traces the view shows, or of the chosen actions for an actions
+    /// view, and its type, or `None` if it shows neither or all announced actions.
     pub fn selection_mut(&mut self) -> Option<(&mut BTreeSet<String>, ViewType)> {
         let view_type = self.view_type();
         let paths = match &mut self.kind {
@@ -403,10 +403,32 @@ impl View {
             ViewKind::Table(table) => &mut table.traces,
             ViewKind::Xy(xy) => &mut xy.traces,
             ViewKind::Heatmap(heatmap) => &mut heatmap.traces,
-            ViewKind::Actions(actions) => &mut actions.shown,
+            ViewKind::Actions(actions) => actions.shown.as_mut()?,
             ViewKind::Logs(_) => return None,
         };
         Some((paths, view_type))
+    }
+
+    /// Lets `edit` change the paths of the traces or actions the view shows, see
+    /// [`Self::selection_mut`]. An actions view showing all announced actions of
+    /// `model` offers them all, and shows only the chosen ones once `edit` changes them.
+    pub fn edit_selection<R>(
+        &mut self,
+        model: &Model,
+        edit: impl FnOnce(Option<(&mut BTreeSet<String>, ViewType)>) -> R,
+    ) -> R {
+        if let ViewKind::Actions(actions) = &mut self.kind
+            && actions.shown.is_none()
+        {
+            let all: BTreeSet<String> = model.actions.paths().map(str::to_owned).collect();
+            let mut chosen = all.clone();
+            let result = edit(Some((&mut chosen, ViewType::Actions)));
+            if chosen != all {
+                actions.shown = Some(chosen);
+            }
+            return result;
+        }
+        edit(self.selection_mut())
     }
 }
 

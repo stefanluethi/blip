@@ -21,18 +21,21 @@ by their name and WebSocket address, starting with
 * A connection that opens while no other is open starts afresh: the data,
   traces and actions received before or of an opened recording are dropped,
   also the units and actions **Clear data** keeps, and the traces panel
-  starts anew, see `Window`_. Save a recording before to keep them.
+  starts anew, see `Window`_. While a recording is not saved, connecting asks
+  first.
 * Right-click a connection to connect or disconnect it, to rename it, to edit
   its address or to delete it. Rename it while it is disconnected.
 * While recording, the connections cannot be changed: they cannot be
   connected, disconnected, added, edited or deleted. Stop recording to change
-  them.
+  them. Only a connection that was connected when the recording started and
+  broke can be connected again, and the recording goes on.
 
 The paths of the traces, the components of the logs and the paths of the
 actions are shown as the outposts send them, e.g. ``cpu/load``, without the
 name of the connection: organizing them is up to the user, e.g. by the paths
 each outpost sends. Traces of the same path from several connections are one
-trace. Several outposts may announce an action at the same path, an actions
+trace, its samples in the order of their timestamps, as are the log records.
+Several outposts may announce an action at the same path, an actions
 view sends it to the outpost chosen in its properties, see `Actions`_. A saved
 recording keeps the name of the connection of each message. The names of two
 connections differ, unless they are empty.
@@ -139,8 +142,8 @@ Actions
 Actions
 -------
 
-An actions view lists the actions checked in the left panel while it is
-selected, an action per row: its name (hover it for the description, the path
+An actions view lists all announced actions, or only those checked in the
+left panel while it is selected, an action per row: its name (hover it for the description, the path
 and the outpost it is sent to), its input, the current value of its readback
 trace if it has one, and what became of its latest invocation.
 
@@ -173,22 +176,25 @@ five seconds. Each invocation also shows as a log record of the component
 An action is disabled while the connection of its outpost is not connected,
 e.g. while a recording is open, and while its target cannot carry it out.
 Checked actions that no outpost announces, or that the chosen outpost does not
-announce, are listed greyed out. The properties of an actions view set for
-each of its actions:
+announce, are listed greyed out; the left panel lists them too, to uncheck
+them. The properties of an actions view set:
+
+* **Show**: **All** announced actions, also those announced later, or the
+  **Chosen** ones. Unchecking an action in the left panel shows the chosen
+  ones, all others.
+
+and for each of its actions:
 
 * **Outposts**: the outpost the action is sent to, among those announcing
   it. Until one is chosen, it is the first outpost that announced the action.
   A chosen outpost that no longer announces it is listed greyed out. Its
   answers, and whether it is connected, are those of that outpost.
 * **Readbacks**: the trace showing the state the action sets, which the
-  readback column shows and checkboxes and choices follow. It is the readback
-  the outpost announces until another trace or **None** is chosen; choosing
-  the announced one again follows the announcement.
+  readback column shows and checkboxes and choices follow. **As announced**,
+  the default, is the readback the outpost the action is sent to announces;
+  a chosen trace or **None** stays, also when the outpost changes.
 * **Number inputs** switches numbers with a minimum and a maximum between a
   slider and a field.
-
-An actions view saved by an older blip to show all actions shows none until
-they are checked.
 
 Properties
 ----------
@@ -239,7 +245,8 @@ All views show the same time range, set in the bottom panel:
   actions can still be invoked. A recording starts only while a connection is
   open. Starting it clears the data as **File > Clear data** does and follows
   the newest data live. Stopping it keeps the data, also when the connections
-  close. While recording, the connections cannot be changed. blip starts
+  close. While recording, the connections cannot be changed but connected
+  again. blip starts
   without recording, as does opening a recording file.
 * **Pause** stops the range where it is, while recording goes on, to inspect
   the data. **Play** moves the range on from there at the pace of the

@@ -82,6 +82,19 @@ impl Samples {
         Ok(())
     }
 
+    /// Moves the last sample to `index`, after the samples before it.
+    fn move_last_to(&mut self, index: usize) {
+        match self {
+            Self::Empty => {}
+            Self::Numbers(numbers) => numbers.move_last_to(index, 1),
+            Self::Strings(values) => values[index..].rotate_right(1),
+            Self::Arrays { shape, elements } => {
+                let len = shape.iter().product();
+                elements.move_last_to(index * len, len);
+            }
+        }
+    }
+
     /// The elements of the `index`th sample of an array trace, in row-major order.
     pub fn array_sample(&self, index: usize) -> Option<Elements<'_>> {
         let Self::Arrays { shape, elements } = self else {
@@ -280,7 +293,8 @@ fn flatten(data: &Data, shape: &[usize], numbers: &mut Vec<Number>) -> Result<()
 
 pub struct Trace {
     pub path: String,
-    /// Ascending, as values are appended in arrival order.
+    /// Ascending: a sample older than the newest, e.g. of another outpost sending the
+    /// same path, is put in its place, after those with the same timestamp.
     pub timestamps: Vec<u64>,
     pub samples: Samples,
     /// For a field of a record, the index of the `.` in `path` before the first field
@@ -301,13 +315,19 @@ impl Trace {
         }
     }
 
-    /// Appends a sample, unless its kind does not match the previous samples.
+    /// Adds a sample in the order of the timestamps, unless its kind does not match the
+    /// previous samples.
     fn push(&mut self, timestamp: u64, data: &Data) -> Result<(), String> {
         if self.samples == Samples::Empty && *data != Data::Null {
             self.samples = Samples::with_nulls(data, self.timestamps.len())?;
         }
         self.samples.push(data)?;
         self.timestamps.push(timestamp);
+        let at = self.timestamps.partition_point(|&t| t <= timestamp);
+        if at < self.timestamps.len() {
+            self.timestamps[at..].rotate_right(1);
+            self.samples.move_last_to(at);
+        }
         Ok(())
     }
 
@@ -602,6 +622,42 @@ mod tests {
         assert_eq!(fields_start("sensors/imu.acc.z"), Some(11));
         // a dot in a path that is not a record is part of the name
         assert_eq!(fields_start("v1.2"), None);
+    }
+
+    #[test]
+    fn late_samples_are_put_in_the_order_of_their_timestamps() {
+        let mut traces = Traces::new();
+        let mut push = |timestamp, path: &str, data: Data| {
+            traces.append(&proto::Value {
+                timestamp,
+                path: path.to_owned(),
+                value: data,
+            });
+        };
+        for (timestamp, value) in [(10, 1.0), (30, 3.0), (20, 2.0), (5, 0.5), (30, 4.0)] {
+            push(timestamp, "n", Data::Float(value));
+            push(timestamp, "s", Data::String(value.to_string()));
+            push(timestamp, "a", array(&[value, -value]));
+        }
+        push(25, "n", Data::Null);
+
+        let n = traces.get("n").unwrap();
+        assert_eq!(n.timestamps, [5, 10, 20, 25, 30, 30]);
+        assert_values(values(&traces, "n"), &[0.5, 1.0, 2.0, f64::NAN, 3.0, 4.0]);
+        let Samples::Numbers(numbers) = &n.samples else {
+            panic!("numbers expected");
+        };
+        assert!(numbers.is_null(3) && !numbers.is_null(4));
+        let s = traces.get("s").unwrap();
+        let texts: Vec<String> = (0..5)
+            .map(|index| s.samples.format(index, 4, None, DisplayFormat::Default))
+            .collect();
+        assert_eq!(texts, ["0.5", "1", "2", "3", "4"]);
+        let a = traces.get("a").unwrap();
+        let second: Vec<Number> = (0..5)
+            .map(|index| a.samples.array_sample(index).unwrap().get(1).unwrap())
+            .collect();
+        assert_eq!(second, [-0.5, -1.0, -2.0, -3.0, -4.0].map(Number::Float));
     }
 
     #[test]

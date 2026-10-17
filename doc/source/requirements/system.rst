@@ -109,11 +109,13 @@ Connectivity
    blip shall connect to user-configurable WebSocket addresses, several at
    once, and receive messages as binary frames. It shall show the paths of
    traces, logs and actions as the targets send them, leaving their
-   organization to the user, and send each action to the connection chosen
-   for it among those announcing it. While recording, blip shall keep the
-   user from connecting, disconnecting and editing the connections. A
-   connection opening while no other is open shall start afresh, without the
-   data, traces and actions received or opened before.
+   organization to the user, keep the samples of a path several targets send
+   in the order of their timestamps, and send each action to the connection
+   chosen for it among those announcing it. While recording, blip shall keep
+   the user from connecting, disconnecting and editing the connections, but
+   for connecting again those that broke. A connection opening while no other is
+   open shall start afresh, without the data, traces and actions received or
+   opened before; blip shall ask before while a recording is not saved.
 
 .. req:: Notify errors
    :id: REQ_CONN_ERRORS

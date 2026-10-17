@@ -105,11 +105,16 @@ impl Default for Logs {
 }
 
 impl Logs {
+    /// Adds `entry` in the order of the times, after the entries of the same time, e.g.
+    /// also when another outpost sends it late.
     pub fn push(&mut self, entry: LogEntry) {
         if self.entries.len() >= self.max_entries {
             self.entries.pop_front();
         }
-        self.entries.push_back(entry);
+        let at = self
+            .entries
+            .partition_point(|known| known.time <= entry.time);
+        self.entries.insert(at, entry);
     }
 
     /// Times of the first and the newest entry.

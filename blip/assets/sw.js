@@ -58,7 +58,8 @@ self.addEventListener('fetch', function (e) {
     return;
   }
   e.respondWith(
-    fetch(e.request, { cache: 'no-cache' }).then(function (response) {
+    /* A new request for the URL, as a navigation request cannot be changed */
+    fetch(url.href, { cache: 'no-cache' }).then(function (response) {
       if (response.ok) {
         var copy = response.clone();
         e.waitUntil(caches.open(cacheName).then(function (cache) {

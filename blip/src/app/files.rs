@@ -106,24 +106,29 @@ impl Files {
     }
 }
 
-/// Lets the user save `bytes` as a file of `kind` named `name` by default.
+/// Lets the user save `bytes` as a file of `kind` named `name` by default. Returns
+/// whether it was saved, not if the user cancelled.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn save(kind: Kind, name: &str, bytes: &[u8]) -> Result<(), String> {
+pub fn save(kind: Kind, name: &str, bytes: &[u8]) -> Result<bool, String> {
     let Some(path) = rfd::FileDialog::new()
         .add_filter(kind.name(), &[kind.extension()])
         .set_file_name(name)
         .save_file()
     else {
-        return Ok(());
+        return Ok(false);
     };
     std::fs::write(&path, bytes)
+        .map(|()| true)
         .map_err(|error| format!("{} cannot be written: {error}", path.display()))
 }
 
-/// Lets the user save `bytes` as a file of `kind` named `name` by default.
+/// Lets the user save `bytes` as a file of `kind` named `name` by default. Returns
+/// whether it was saved, as far as the browser tells: once it is downloaded.
 #[cfg(target_arch = "wasm32")]
-pub fn save(_kind: Kind, name: &str, bytes: &[u8]) -> Result<(), String> {
-    web::download(name, bytes).map_err(|error| format!("The download failed: {error:?}"))
+pub fn save(_kind: Kind, name: &str, bytes: &[u8]) -> Result<bool, String> {
+    web::download(name, bytes)
+        .map(|()| true)
+        .map_err(|error| format!("The download failed: {error:?}"))
 }
 
 #[cfg(target_arch = "wasm32")]

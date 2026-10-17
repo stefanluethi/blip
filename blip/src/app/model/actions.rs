@@ -143,9 +143,9 @@ pub struct Invoker {
     dragged: HashMap<ActionId, Dragged>,
     /// The requests to send, each with the name of the connection to send it to.
     outbox: Vec<(String, Request)>,
-    /// The values in the inputs of the parameters by action path and parameter name,
-    /// shared by the views showing an action.
-    pub inputs: HashMap<(String, String), Data>,
+    /// The values in the inputs of the parameters by action and parameter name, shared
+    /// by the views showing an action on the same outpost.
+    pub inputs: HashMap<(ActionId, String), Data>,
 }
 
 impl Invoker {
@@ -585,7 +585,7 @@ mod tests {
         let mut invoker = Invoker::default();
         invoker
             .inputs
-            .insert(("speed".to_owned(), "rpm".to_owned()), Data::Uint(5));
+            .insert((unnamed("speed"), "rpm".to_owned()), Data::Uint(5));
         let speed = unnamed("speed");
         invoker.invoke(&speed, None, args(1), 0.0);
         invoker.reset();
