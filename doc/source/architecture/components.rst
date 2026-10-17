@@ -24,7 +24,8 @@ Components
    * ``app/view`` -- views: time-series ``plot``, ``states`` over time,
      ``table`` of values, ``xy`` plot, ``heatmap`` of arrays,
      ``log_table`` and the ``actions`` form; ``time_axis`` shared by the views
-     over time, and the ``trace_selection`` of the selected view.
+     over time, and the ``trace_selection``, the tree of the traces and
+     actions to choose those of the selected view.
 
 .. arch:: proto crate
    :id: ARCH_PROTO

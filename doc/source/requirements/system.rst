@@ -107,8 +107,10 @@ Connectivity
    :satisfies: STK_LIVE_OBSERVE
 
    blip shall connect to user-configurable WebSocket addresses, several at
-   once, and receive messages as binary frames, keeping the data of each
-   connection apart by its name.
+   once, and receive messages as binary frames. It shall show the paths of
+   traces, logs and actions as the targets send them, leaving their
+   organization to the user, and keep the connection each action was
+   announced by to send it there.
 
 .. req:: CBOR wire protocol
    :id: REQ_PROTO_CBOR
@@ -189,7 +191,10 @@ Control
    checkboxes, choices, sliders, number and text fields by the kinds of their
    parameters, and the value of their readback traces. Sliders shall send
    while dragged at a limited rate, actions with several parameters shall be
-   sent with a separate Send button.
+   sent with a separate Send button. The user shall choose the actions a view
+   shows in the tree of the traces, where actions are marked as such, and per
+   action the connection it is sent to among those announcing it and its
+   readback trace, by default the one announced.
 
 .. req:: Actions only on request
    :id: REQ_CTRL_SAFE
