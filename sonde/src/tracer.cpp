@@ -15,8 +15,6 @@ static_assert(SONDE_LOGF_MAX >= 1, "SONDE_LOGF_MAX needs a byte for the NUL");
 
 namespace sonde {
 
-namespace {
-
 #if SONDE_HOSTED
 std::uint64_t system_clock_ns() {
     using namespace std::chrono;
@@ -25,9 +23,11 @@ std::uint64_t system_clock_ns() {
 }
 #endif
 
+namespace {
+
 /// A value encoded by a function, the data of a Value message.
 struct Erased {
-    void (*encode)(Encoder&, const void*);
+    detail::EncodeFn encode;
     const void* value;
 };
 
@@ -110,38 +110,28 @@ std::size_t whole_utf8(const char* text, std::size_t size) {
 
 }  // namespace
 
-Clock default_clock() {
-#if SONDE_HOSTED
-    return &system_clock_ns;
-#else
-    return nullptr;
-#endif
-}
-
-Tracer::Tracer(std::uint8_t* bytes, std::size_t batch_bytes, std::size_t batches,
-               std::size_t* sizes, Sink* sink, Clock clock)
-    : bytes_{bytes},
-      batch_bytes_{batch_bytes},
-      batches_{static_cast<std::uint32_t>(batches)},
-      sizes_{sizes},
-      sink_{sink},
-      clock_{clock} {}
+/// A message encoded into a batch, or what kept it out.
+struct Tracer::Encoded {
+    /// Ok if it is encoded, or Invalid; TooLarge if it does not fit into the space.
+    Status status;
+    /// The bytes it takes, also if it does not fit.
+    std::size_t size;
+};
 
 // --- Producer -----------------------------------------------------------------------
 
 Status Tracer::metadata(std::string_view path, std::string_view unit) {
     const MetadataMessage message{path, unit};
-    return emit(&write_metadata, &message);
+    return emit(&write_metadata, &message, nullptr);
 }
 
 Status Tracer::log(Level level, std::string_view component, std::string_view message) {
-    return log(now(), level, component, message);
+    return log_with(nullptr, level, component, message);
 }
 
 Status Tracer::log(Timestamp timestamp, Level level, std::string_view component,
                    std::string_view message) {
-    const LogMessage log{timestamp, level, component, message};
-    return emit(&write_log, &log);
+    return log_with(&timestamp, level, component, message);
 }
 
 Status Tracer::logf(Level level, std::string_view component, const char* format, ...) {
@@ -166,18 +156,22 @@ Status Tracer::commit() {
     return commit_open();
 }
 
-Timestamp Tracer::now() const {
-    return Timestamp{clock_ != nullptr ? clock_() : 0};
+Status Tracer::value_with(const Timestamp* timestamp, std::string_view path,
+                          detail::EncodeFn encode, const void* value) {
+    ValueMessage message{timestamp != nullptr ? *timestamp : Timestamp{0}, path,
+                         Erased{encode, value}};
+    return emit(&write_value, &message, timestamp == nullptr ? &message.timestamp : nullptr);
 }
 
-Status Tracer::value_with(Timestamp timestamp, std::string_view path, EncodeValue encode,
-                          const void* value) {
-    const ValueMessage message{timestamp, path, Erased{encode, value}};
-    return emit(&write_value, &message);
+Status Tracer::log_with(const Timestamp* timestamp, Level level, std::string_view component,
+                        std::string_view message) {
+    LogMessage log{timestamp != nullptr ? *timestamp : Timestamp{0}, level, component,
+                   message};
+    return emit(&write_log, &log, timestamp == nullptr ? &log.timestamp : nullptr);
 }
 
-Status Tracer::emit(EncodeMessage encode, const void* message) {
-    Status status = append(encode, message);
+Status Tracer::emit(detail::EncodeFn encode, const void* message, Timestamp* clock_time) {
+    Status status = append(encode, message, clock_time);
     const std::uint32_t requests = requests_.load(std::memory_order_acquire);
     if (requests != requests_seen_) {
         requests_seen_ = requests;
@@ -189,48 +183,71 @@ Status Tracer::emit(EncodeMessage encode, const void* message) {
     return status;
 }
 
-Status Tracer::append(EncodeMessage encode, const void* message) {
-    std::uint8_t* batch = open_batch();
-    if (batch == nullptr) {
+Status Tracer::append(detail::EncodeFn encode, const void* message, Timestamp* clock_time) {
+    std::uint8_t* open = open_batch();
+    if (open == nullptr) {
         drop(1);
         return Status::Full;
+    }
+    // read only now, so that a full queue costs no reading of the clock
+    if (clock_time != nullptr && clock_ != nullptr) {
+        *clock_time = Timestamp{clock_()};
     }
 
     // Each message gets a fresh encoder on the free part of the open batch, which only
     // grows by the message once it is encoded whole.
-    std::uint8_t* const free = batch + open_size_;
     const std::size_t space = batch_bytes_ - open_size_;
-    CborError error = CborNoError;
-    CborEncoder cbor;
-    cbor_encoder_init(&cbor, free, space, 0);
-    Encoder encoder{&cbor, &error};
-    encode(encoder, message);
-    if (error != CborNoError) {
-        return Status::Invalid;
-    }
-    const std::size_t missing = cbor_encoder_get_extra_bytes_needed(&cbor);
-    if (missing == 0) {
-        open_size_ += cbor_encoder_get_buffer_size(&cbor, free);
+    Encoded encoded = encode_into(open + open_size_, space, encode, message);
+    if (encoded.status == Status::Ok) {
+        open_size_ += encoded.size;
         ++open_messages_;
         return Status::Ok;
     }
-    if (space + missing > batch_bytes_) {
+    if (encoded.status == Status::Invalid) {
+        return Status::Invalid;
+    }
+    if (encoded.size > batch_bytes_) {
         drop(1);
         return Status::TooLarge;
     }
 
     // It fits into an empty batch, so the open one holds messages: the next one gets it.
     const Status committed = commit_open();
-    batch = open_batch();
-    if (batch == nullptr) {
+    open = open_batch();
+    if (open == nullptr) {
         drop(1);
         return Status::Full;
     }
-    cbor_encoder_init(&cbor, batch, batch_bytes_, 0);
+    // Encoded anew, since a message is encoded at its place. The checks hold if the
+    // encoding differs the second time, e.g. of a value read from hardware.
+    encoded = encode_into(open, batch_bytes_, encode, message);
+    if (encoded.status == Status::Ok) {
+        open_size_ = encoded.size;
+        open_messages_ = 1;
+        return committed;
+    }
+    if (encoded.status == Status::TooLarge) {
+        drop(1);
+    }
+    return encoded.status;
+}
+
+Tracer::Encoded Tracer::encode_into(std::uint8_t* at, std::size_t space,
+                                    detail::EncodeFn encode, const void* message) const {
+    CborError error = CborNoError;
+    CborEncoder cbor;
+    cbor_encoder_init(&cbor, at, space, 0);
+    Encoder encoder{&cbor, &error};
     encode(encoder, message);
-    open_size_ = cbor_encoder_get_buffer_size(&cbor, batch);
-    open_messages_ = 1;
-    return committed;
+    if (error != CborNoError) {
+        return {Status::Invalid, 0};
+    }
+    // tinycbor goes on counting the bytes needed when it runs out of space
+    const std::size_t missing = cbor_encoder_get_extra_bytes_needed(&cbor);
+    if (missing != 0) {
+        return {Status::TooLarge, space + missing};
+    }
+    return {Status::Ok, cbor_encoder_get_buffer_size(&cbor, at)};
 }
 
 Status Tracer::commit_open() {
@@ -238,15 +255,14 @@ Status Tracer::commit_open() {
         return Status::Ok;
     }
     const std::uint32_t write = write_.load(std::memory_order_relaxed);
-    const std::uint32_t slot = write < batches_ ? write : write - batches_;
     Status status = Status::Ok;
     if (sink_ != nullptr) {
-        if (!sink_->write(bytes_ + slot * batch_bytes_, open_size_)) {
+        if (!sink_->write(batch(write), open_size_)) {
             drop(open_messages_);
             status = Status::SinkError;
         }
     } else {
-        sizes_[slot] = open_size_;
+        sizes_[slot(write)] = open_size_;
         write_.store(next(write), std::memory_order_release);
     }
     open_size_ = 0;
@@ -264,12 +280,7 @@ std::uint8_t* Tracer::open_batch() const {
             return nullptr;
         }
     }
-    const std::uint32_t slot = write < batches_ ? write : write - batches_;
-    return bytes_ + slot * batch_bytes_;
-}
-
-std::uint32_t Tracer::next(std::uint32_t index) const {
-    return index + 1 == 2 * batches_ ? 0 : index + 1;
+    return batch(write);
 }
 
 void Tracer::drop(std::uint32_t messages) {
@@ -285,8 +296,7 @@ Batch Tracer::take() {
     if (read == write_.load(std::memory_order_acquire)) {
         return Batch{nullptr, 0};
     }
-    const std::uint32_t slot = read < batches_ ? read : read - batches_;
-    return Batch{bytes_ + slot * batch_bytes_, sizes_[slot]};
+    return Batch{batch(read), sizes_[slot(read)]};
 }
 
 void Tracer::release() {

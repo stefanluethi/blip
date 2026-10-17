@@ -112,9 +112,10 @@ Within a tracer, the storage is a **single-producer single-consumer queue of bat
   acquire and written with release; each index is written by one side only. That needs no
   locks and no compare-and-swap, so it also works on Cortex-M0 (no `LDREX`/`STREX`), from
   ISRs, and on multicore MCUs. sonde `static_assert`s that the atomics are always
-  lock-free, except on ARMv6-M (Cortex-M0/M0+): there `is_always_lock_free` is false
-  since read-modify-write operations need a library call, while the loads and stores
-  sonde uses are single instructions.
+  lock-free, or, with GCC on a 32-bit target, that their loads and stores are: there
+  GCC emits plain loads and stores for them also where read-modify-write operations need
+  a library call and `is_always_lock_free` is false, e.g. on ARMv6-M (Cortex-M0/M0+) or
+  RISC-V without the A extension.
 - The commit requests of the consumer are a counter that only the consumer writes; the
   producer remembers the count it has seen.
 - The producer never blocks: when no batch is free it drops the message, returns
@@ -161,9 +162,12 @@ struct Timestamp {
 /// has to be safe there, e.g. in an ISR.
 using Clock = std::uint64_t (*)();
 
-/// The default clock: UTC from the system clock in hosted builds, none (nullptr) on
-/// targets, which pass their own.
-Clock default_clock();
+/// UTC in nanoseconds since the Unix epoch, from the system clock (hosted builds).
+std::uint64_t system_clock_ns();
+
+/// The default clock: system_clock_ns in hosted builds, none (nullptr) on targets, which
+/// pass their own.
+constexpr Clock default_clock();
 
 /// The levels of log records as blip knows them (proto: LogRecord::level).
 enum class Level : std::uint8_t { Trace = 0, Debug = 1, Info = 2, Warn = 3, Error = 4 };
@@ -240,11 +244,13 @@ class Tracer {
 public:
     /// Producer and consumer: the consumer takes the batches.
     template <std::size_t BatchBytes, std::size_t Batches>
-    explicit Tracer(Storage<BatchBytes, Batches>& storage, Clock clock = default_clock());
+    constexpr explicit Tracer(Storage<BatchBytes, Batches>& storage,
+                              Clock clock = default_clock());
 
     /// One context: each ready batch goes to the sink right away.
     template <std::size_t BatchBytes, std::size_t Batches>
-    Tracer(Storage<BatchBytes, Batches>& storage, Sink& sink, Clock clock = default_clock());
+    constexpr Tracer(Storage<BatchBytes, Batches>& storage, Sink& sink,
+                     Clock clock = default_clock());
 
     Tracer(const Tracer&) = delete;
     Tracer& operator=(const Tracer&) = delete;
@@ -290,14 +296,25 @@ public:
 }  // namespace sonde
 ```
 
+`Encoder`, `Record` and `Array` refer to the item being encoded, so they cannot be
+copied; a copy would outlive it.
+
 Messages are atomic: each message is encoded by a fresh tinycbor encoder into the free part
 of the open batch. If it does not fit, the batch keeps its size; the tracer commits it and
 encodes the message into the next free batch, or drops it if there is none. tinycbor counts
 the bytes a message needs beyond the free part, so a message larger than a batch is dropped
 as `TooLarge` without committing the open batch. A message that moves to the next batch is
-encoded twice, so fill functions and `encode` functions should not have side effects.
+encoded twice, so fill functions and `encode` functions should not have side effects. If
+the second encoding differs, e.g. of a value read from hardware, it is checked again and
+the message may still end as `TooLarge` or `Invalid`.
 
-Without a clock (`nullptr`), messages traced without a timestamp get the timestamp 0.
+The clock is read once a message has a batch, so tracing into a full queue costs no
+reading of the clock. Without a clock (`nullptr`), messages traced without a timestamp get
+the timestamp 0.
+
+The constructors are `constexpr`, so a static tracer is constant-initialized: it is ready
+before any code runs, e.g. an ISR that fires before the static constructors, or the
+constructor of a static object in another file.
 
 ### Values
 
@@ -593,16 +610,16 @@ cmake --build build-m0
 | CMake option           | Default | Meaning |
 |------------------------|---------|---------|
 | `SONDE_HOSTED`         | `ON` unless cross-compiling | file sinks, system clock |
-| `SONDE_FETCH_TINYCBOR` | `ON`    | fetch tinycbor with FetchContent; `OFF` uses a `tinycbor` target the project provides (vendored in firmware) |
+| `SONDE_FETCH_TINYCBOR` | `ON`    | fetch tinycbor with FetchContent; `OFF` uses a `tinycbor` target the project provides (vendored in firmware); the tests also need its parser |
 | `SONDE_BUILD_TESTS`    | `ON` if top-level project and hosted | fetch Catch2 v3 and build the tests |
 | `SONDE_BUILD_EXAMPLES` | `ON` if top-level project | build the examples |
 | `SONDE_WERROR`         | `OFF`   | treat the warnings of sonde as errors |
 | `SONDE_LOGF_MAX`       | `128`   | bytes of a `logf` message |
 
-tinycbor has no CMake build of its own that fits, so sonde builds a small static library
-from its encoder sources (and the parser, for the tests and later for actions), pinned to
-the release v0.6.1. On a Cortex-M, sonde and tinycbor take about 7 KB of code before the
-linker drops unused sections.
+tinycbor is pinned to the release v7.0 and built with its own CMake build, only the
+library: without its tools, examples, tests and conversion to JSON, and with
+`EXCLUDE_FROM_ALL` (CMake 3.28) so that it adds no install rules. On a Cortex-M, the
+linker keeps only the parts of tinycbor that sonde calls.
 
 Firmware uses it with:
 
