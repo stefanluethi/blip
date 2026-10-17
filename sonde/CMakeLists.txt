@@ -57,6 +57,11 @@ function(sonde_add_tinycbor)
     # check and the warning where it is missing
     set(HAVE_OPEN_MEMSTREAM ON)
     FetchContent_MakeAvailable(tinycbor)
+    # sonde does not print CBOR as text, and the printer needs PRIu64, which inttypes.h
+    # does not define with the arm-none-eabi-gcc and newlib of Ubuntu
+    get_target_property(sources tinycbor SOURCES)
+    list(FILTER sources EXCLUDE REGEX "cborpretty(_stdio)?\\.c$")
+    set_target_properties(tinycbor PROPERTIES SOURCES "${sources}")
 endfunction()
 
 if(SONDE_FETCH_TINYCBOR)
