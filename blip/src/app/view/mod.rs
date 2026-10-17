@@ -175,6 +175,11 @@ impl ViewType {
     pub fn shows_one_trace(self) -> bool {
         self == ViewType::Heatmap
     }
+
+    /// Whether a view of this type shows the actions chosen in the tree, and no traces.
+    pub fn shows_actions(self) -> bool {
+        self == ViewType::Actions
+    }
 }
 
 /// Id of the flag that a plot zoomed by the mouse wheel contained the pointer.
@@ -383,12 +388,13 @@ impl View {
         }
     }
 
-    pub fn shows_traces(&self) -> bool {
-        !matches!(self.kind, ViewKind::Logs(_) | ViewKind::Actions(_))
+    /// Whether the view shows traces or actions chosen in the tree of the left panel.
+    pub fn has_selection(&self) -> bool {
+        !matches!(self.kind, ViewKind::Logs(_))
     }
 
-    /// The paths of the traces the view shows and its type, or `None` if it does not
-    /// show traces.
+    /// The paths of the traces the view shows, or of the actions for an actions view,
+    /// and its type, or `None` if it shows neither.
     pub fn selection_mut(&mut self) -> Option<(&mut BTreeSet<String>, ViewType)> {
         let view_type = self.view_type();
         let paths = match &mut self.kind {
@@ -397,7 +403,8 @@ impl View {
             ViewKind::Table(table) => &mut table.traces,
             ViewKind::Xy(xy) => &mut xy.traces,
             ViewKind::Heatmap(heatmap) => &mut heatmap.traces,
-            ViewKind::Logs(_) | ViewKind::Actions(_) => return None,
+            ViewKind::Actions(actions) => &mut actions.shown,
+            ViewKind::Logs(_) => return None,
         };
         Some((paths, view_type))
     }

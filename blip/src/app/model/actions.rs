@@ -1,6 +1,6 @@
 //! The actions the targets announced, and the invocations blip sends to carry them out.
 
-use super::{Model, sourced};
+use super::Model;
 use proto::{ActionDescriptor, ActionResult, Data, Invocation, Request};
 use std::collections::{HashMap, HashSet};
 
@@ -11,17 +11,16 @@ pub const SHOW_ACCEPTED: f64 = 1.5;
 /// The least seconds between the invocations sent while a slider is dragged.
 pub const DRAG_INTERVAL: f64 = 0.1;
 
-/// An action announced by the target of a connection.
+/// An action announced by the outpost of a connection.
 pub struct Announced {
     /// The name of the connection.
     pub source: String,
-    /// The path the target knows the action by.
-    pub target_path: String,
-    /// The action, its path and readback below the source like the paths of traces.
+    /// The action, with its path and readback as the outpost sent them.
     pub descriptor: ActionDescriptor,
 }
 
-/// The actions as last announced by the target of each connection.
+/// The actions as last announced by the outpost of each connection. Several outposts
+/// may announce an action at the same path, each is kept.
 #[derive(Default)]
 pub struct Actions {
     /// The actions of each source together, in the order they were announced first.
@@ -29,44 +28,63 @@ pub struct Actions {
 }
 
 impl Actions {
-    /// Replaces the actions of `source`, whose target announces all of them each time.
+    /// Replaces the actions of `source`, whose outpost announces all of them each time.
     /// They keep their place among the actions of other sources.
     pub fn set(&mut self, source: &str, actions: Vec<ActionDescriptor>) {
         let at = self.list.iter().position(|action| action.source == source);
         self.list.retain(|action| action.source != source);
         let at = at.unwrap_or(self.list.len());
-        let announced = actions.into_iter().map(|mut descriptor| {
-            let target_path = std::mem::take(&mut descriptor.path);
-            descriptor.path = sourced(source, &target_path);
-            descriptor.readback = descriptor
-                .readback
-                .map(|readback| sourced(source, &readback));
-            Announced {
-                source: source.to_owned(),
-                target_path,
-                descriptor,
-            }
+        let announced = actions.into_iter().map(|descriptor| Announced {
+            source: source.to_owned(),
+            descriptor,
         });
         self.list.splice(at..at, announced);
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &ActionDescriptor> {
-        self.list.iter().map(|action| &action.descriptor)
-    }
-
-    pub fn get(&self, path: &str) -> Option<&ActionDescriptor> {
-        self.announced(path).map(|action| &action.descriptor)
-    }
-
-    /// The action at `path`, with the connection to send it to.
-    pub fn announced(&self, path: &str) -> Option<&Announced> {
+    /// The paths of the actions, each once, in the order they were announced first.
+    pub fn paths(&self) -> impl Iterator<Item = &str> {
+        let mut seen = HashSet::new();
         self.list
             .iter()
-            .find(|action| action.descriptor.path == path)
+            .map(|action| action.descriptor.path.as_str())
+            .filter(move |path| seen.insert(*path))
+    }
+
+    /// The announcements of the action at `path`, one per outpost announcing it, in
+    /// the order they were announced first.
+    pub fn announcers(&self, path: &str) -> impl Iterator<Item = &Announced> {
+        self.list
+            .iter()
+            .filter(move |action| action.descriptor.path == path)
+    }
+
+    /// The action at `path` as the outpost of the connection `source` announced it.
+    pub fn announced(&self, source: &str, path: &str) -> Option<&ActionDescriptor> {
+        self.announcers(path)
+            .find(|action| action.source == source)
+            .map(|action| &action.descriptor)
     }
 
     pub fn is_empty(&self) -> bool {
         self.list.is_empty()
+    }
+}
+
+/// An action of the outpost of a connection, to which its invocations are sent.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct ActionId {
+    /// The name of the connection.
+    pub source: String,
+    /// The path of the action.
+    pub path: String,
+}
+
+impl ActionId {
+    pub fn new(source: &str, path: &str) -> Self {
+        Self {
+            source: source.to_owned(),
+            path: path.to_owned(),
+        }
     }
 }
 
@@ -92,6 +110,18 @@ struct Dragged {
     sent: Args,
     /// Newer arguments held back to keep to [`DRAG_INTERVAL`].
     held: Option<Args>,
+    /// The path of the readback trace of the action.
+    readback: Option<String>,
+}
+
+/// An invocation without an answer.
+struct Pending {
+    action: ActionId,
+    /// The path of the readback trace of the action, to mark its samples when the
+    /// invocation is accepted.
+    readback: Option<String>,
+    /// When it was sent.
+    sent_at: f64,
 }
 
 /// Sends the invocations of actions and keeps track of their answers. Times are in
@@ -101,98 +131,115 @@ pub struct Invoker {
     /// The names of the open connections, whose actions can be invoked.
     pub connected: HashSet<String>,
     next_id: u32,
-    /// The paths and send times of the invocations without answer, by id.
-    pending: HashMap<u32, (String, f64)>,
-    /// The id of the latest invocation of each action and its outcome, by path.
-    latest: HashMap<String, (u32, Outcome)>,
-    /// The number of samples the readback trace of each action had when the target
-    /// accepted its latest invocation, by path. Samples up to then may show the state
-    /// before the action.
-    readback_marks: HashMap<String, usize>,
-    /// The actions whose input is dragged, by path.
-    dragged: HashMap<String, Dragged>,
-    /// The requests to send.
-    outbox: Vec<Request>,
+    /// The invocations without answer, by id.
+    pending: HashMap<u32, Pending>,
+    /// The id of the latest invocation of each action and its outcome.
+    latest: HashMap<ActionId, (u32, Outcome)>,
+    /// The number of samples the readback trace of each action had when the outpost
+    /// accepted its latest invocation. Samples up to then may show the state before
+    /// the action.
+    readback_marks: HashMap<ActionId, usize>,
+    /// The actions whose input is dragged.
+    dragged: HashMap<ActionId, Dragged>,
+    /// The requests to send, each with the name of the connection to send it to.
+    outbox: Vec<(String, Request)>,
     /// The values in the inputs of the parameters by action path and parameter name,
     /// shared by the views showing an action.
     pub inputs: HashMap<(String, String), Data>,
 }
 
 impl Invoker {
-    /// Asks the target to carry out the action at `path`.
-    pub fn invoke(&mut self, path: &str, args: Args, now: f64) {
-        self.dragged.remove(path);
-        self.send(path, args, now);
+    /// Asks the outpost to carry out `action`, whose state shows in the trace at
+    /// `readback`, if any.
+    pub fn invoke(&mut self, action: &ActionId, readback: Option<&str>, args: Args, now: f64) {
+        self.dragged.remove(action);
+        self.send(action, readback, args, now);
     }
 
-    /// Invokes the action at `path` while an input is dragged, at most every
-    /// [`DRAG_INTERVAL`]. Arguments held back are sent by [`Self::update`] once the
-    /// interval has passed, unless newer ones replace them.
-    pub fn invoke_dragging(&mut self, path: &str, args: Args, now: f64) {
-        match self.dragged.get_mut(path) {
+    /// Invokes `action` while an input is dragged, at most every [`DRAG_INTERVAL`].
+    /// Arguments held back are sent by [`Self::update`] once the interval has passed,
+    /// unless newer ones replace them.
+    pub fn invoke_dragging(
+        &mut self,
+        action: &ActionId,
+        readback: Option<&str>,
+        args: Args,
+        now: f64,
+    ) {
+        match self.dragged.get_mut(action) {
             Some(dragged) if now - dragged.sent_at < DRAG_INTERVAL => {
                 dragged.held = (args != dragged.sent).then_some(args);
             }
-            _ => self.send_dragged(path, args, now),
+            _ => self.send_dragged(action, readback, args, now),
         }
     }
 
-    /// Sends the final arguments when the input of the action at `path` is released,
-    /// unless they were sent already. Nothing is sent for an input that was pressed
-    /// without changing it, e.g. clicked to type a number.
-    pub fn finish_dragging(&mut self, path: &str, args: Args, now: f64) {
-        if let Some(dragged) = self.dragged.remove(path)
+    /// Sends the final arguments when the input of `action` is released, unless they
+    /// were sent already. Nothing is sent for an input that was pressed without
+    /// changing it, e.g. clicked to type a number.
+    pub fn finish_dragging(
+        &mut self,
+        action: &ActionId,
+        readback: Option<&str>,
+        args: Args,
+        now: f64,
+    ) {
+        if let Some(dragged) = self.dragged.remove(action)
             && args != dragged.sent
         {
-            self.send(path, args, now);
+            self.send(action, readback, args, now);
         }
     }
 
-    fn send_dragged(&mut self, path: &str, args: Args, now: f64) {
-        self.send(path, args.clone(), now);
+    fn send_dragged(&mut self, action: &ActionId, readback: Option<&str>, args: Args, now: f64) {
+        self.send(action, readback, args.clone(), now);
         let dragged = Dragged {
             sent_at: now,
             sent: args,
             held: None,
+            readback: readback.map(str::to_owned),
         };
-        self.dragged.insert(path.to_owned(), dragged);
+        self.dragged.insert(action.clone(), dragged);
     }
 
-    fn send(&mut self, path: &str, args: Args, now: f64) {
+    fn send(&mut self, action: &ActionId, readback: Option<&str>, args: Args, now: f64) {
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
-        self.outbox.push(Request::Invoke(Invocation {
+        let invocation = Invocation {
             id,
-            path: path.to_owned(),
+            path: action.path.clone(),
             args: Data::Record(args),
-        }));
-        self.pending.insert(id, (path.to_owned(), now));
-        self.latest.insert(path.to_owned(), (id, Outcome::Pending));
+        };
+        self.outbox
+            .push((action.source.clone(), Request::Invoke(invocation)));
+        let pending = Pending {
+            action: action.clone(),
+            readback: readback.map(str::to_owned),
+            sent_at: now,
+        };
+        self.pending.insert(id, pending);
+        self.latest.insert(action.clone(), (id, Outcome::Pending));
     }
 
-    /// Whether the action of `model` at `path` can be invoked, as its connection is open.
-    pub fn is_connected(&self, model: &Model, path: &str) -> bool {
-        model
-            .actions
-            .announced(path)
-            .is_some_and(|action| self.connected.contains(&action.source))
+    /// Whether `action` can be invoked, as the connection of its outpost is open.
+    pub fn is_connected(&self, action: &ActionId) -> bool {
+        self.connected.contains(&action.source)
     }
 
-    /// Takes the answer to an invocation received from the connection `source`. Answers
-    /// from another connection than the one of the action are ignored.
+    /// Takes the answer to an invocation received from the connection `source`.
+    /// Answers from another connection than the one the invocation was sent to are
+    /// ignored.
     pub fn receive(&mut self, source: &str, result: &ActionResult, now: f64, model: &Model) {
-        let from_action = self.pending.get(&result.id).is_some_and(|(path, _)| {
-            model
-                .actions
-                .announced(path)
-                .is_some_and(|action| action.source == source)
-        });
-        if !from_action {
+        let from_outpost = self
+            .pending
+            .get(&result.id)
+            .is_some_and(|pending| pending.action.source == source);
+        if !from_outpost {
             return;
         }
-        let (path, _) = self.pending.remove(&result.id).expect("pending");
+        let pending = self.pending.remove(&result.id).expect("pending");
         // only the latest invocation of an action shows
-        if let Some((id, outcome)) = self.latest.get_mut(&path)
+        if let Some((id, outcome)) = self.latest.get_mut(&pending.action)
             && *id == result.id
         {
             *outcome = match &result.result {
@@ -200,22 +247,22 @@ impl Invoker {
                 Err(reason) => Outcome::Rejected(reason.clone()),
             };
             if result.result.is_ok() {
-                self.readback_marks
-                    .insert(path.clone(), model.readback_samples(&path));
+                let samples = model.readback_samples(pending.readback.as_deref());
+                self.readback_marks.insert(pending.action, samples);
             }
         }
     }
 
-    /// Whether an input of the action at `path` shows the readback, given the number
-    /// of samples of its readback trace: not while the latest invocation is pending,
-    /// and once it was accepted only from a sample that arrived after the answer, as
-    /// earlier ones may show the state before.
-    pub fn follows_readback(&self, path: &str, readback_samples: usize) -> bool {
-        match self.latest.get(path) {
+    /// Whether an input of `action` shows the readback, given the number of samples of
+    /// its readback trace: not while the latest invocation is pending, and once it
+    /// was accepted only from a sample that arrived after the answer, as earlier ones
+    /// may show the state before.
+    pub fn follows_readback(&self, action: &ActionId, readback_samples: usize) -> bool {
+        match self.latest.get(action) {
             Some((_, Outcome::Pending)) => false,
             Some((_, Outcome::Accepted(_))) => self
                 .readback_marks
-                .get(path)
+                .get(action)
                 .is_none_or(|&mark| readback_samples > mark),
             _ => true,
         }
@@ -224,25 +271,28 @@ impl Invoker {
     /// Sends held back arguments that are due and gives up on invocations that were
     /// not answered in time.
     pub fn update(&mut self, now: f64) {
-        let due: Vec<(String, Args)> = self
+        let due: Vec<(ActionId, Option<String>, Args)> = self
             .dragged
             .iter_mut()
             .filter(|(_, dragged)| now - dragged.sent_at >= DRAG_INTERVAL)
-            .filter_map(|(path, dragged)| Some((path.clone(), dragged.held.take()?)))
+            .filter_map(|(action, dragged)| {
+                let held = dragged.held.take()?;
+                Some((action.clone(), dragged.readback.clone(), held))
+            })
             .collect();
-        for (path, args) in due {
-            self.send_dragged(&path, args, now);
+        for (action, readback, args) in due {
+            self.send_dragged(&action, readback.as_deref(), args, now);
         }
 
         let expired: Vec<u32> = self
             .pending
             .iter()
-            .filter(|(_, (_, sent))| now - sent > ANSWER_TIMEOUT)
+            .filter(|(_, pending)| now - pending.sent_at > ANSWER_TIMEOUT)
             .map(|(&id, _)| id)
             .collect();
         for id in expired {
-            let (path, _) = self.pending.remove(&id).expect("listed as pending");
-            if let Some((latest, outcome)) = self.latest.get_mut(&path)
+            let pending = self.pending.remove(&id).expect("listed as pending");
+            if let Some((latest, outcome)) = self.latest.get_mut(&pending.action)
                 && *latest == id
             {
                 *outcome = Outcome::Unanswered;
@@ -250,10 +300,10 @@ impl Invoker {
         }
     }
 
-    /// The outcome of the latest invocation of the action at `path` to show, none once
-    /// an accepted one was shown for [`SHOW_ACCEPTED`].
-    pub fn outcome(&self, path: &str, now: f64) -> Option<&Outcome> {
-        let (_, outcome) = self.latest.get(path)?;
+    /// The outcome of the latest invocation of `action` to show, none once an accepted
+    /// one was shown for [`SHOW_ACCEPTED`].
+    pub fn outcome(&self, action: &ActionId, now: f64) -> Option<&Outcome> {
+        let (_, outcome) = self.latest.get(action)?;
         match outcome {
             Outcome::Accepted(at) if now - at > SHOW_ACCEPTED => None,
             outcome => Some(outcome),
@@ -270,8 +320,8 @@ impl Invoker {
             )
     }
 
-    /// The requests to send.
-    pub fn take_outbox(&mut self) -> Vec<Request> {
+    /// The requests to send, each with the name of the connection to send it to.
+    pub fn take_outbox(&mut self) -> Vec<(String, Request)> {
         std::mem::take(&mut self.outbox)
     }
 
@@ -300,11 +350,15 @@ mod tests {
         vec![("rpm".to_owned(), Data::Uint(rpm))]
     }
 
-    fn sent(invoker: &mut Invoker) -> Vec<(u32, String, Data)> {
+    /// The ids, connections, paths and arguments of the invocations sent since the
+    /// last call.
+    fn sent(invoker: &mut Invoker) -> Vec<(u32, String, String, Data)> {
         invoker
             .take_outbox()
             .into_iter()
-            .map(|Request::Invoke(invocation)| (invocation.id, invocation.path, invocation.args))
+            .map(|(source, Request::Invoke(invocation))| {
+                (invocation.id, source, invocation.path, invocation.args)
+            })
             .collect()
     }
 
@@ -326,18 +380,14 @@ mod tests {
         }
     }
 
-    /// A model of the actions used here, announced by a connection without a name, and
-    /// `samples` samples of the readback of "enable".
+    /// The action at `path` of the connection without a name.
+    fn unnamed(path: &str) -> ActionId {
+        ActionId::new("", path)
+    }
+
+    /// A model with `samples` samples of the trace "on", the readback of "enable".
     fn model(samples: u64) -> Model {
         let mut model = Model::default();
-        model.actions.set(
-            "",
-            vec![
-                descriptor("speed", None),
-                descriptor("reboot", None),
-                descriptor("enable", Some("on")),
-            ],
-        );
         for timestamp in 0..samples {
             model.traces.append(&proto::Value {
                 timestamp,
@@ -351,30 +401,31 @@ mod tests {
     #[test]
     fn invocations_are_sent_with_new_ids_and_answered() {
         let mut invoker = Invoker::default();
-        invoker.invoke("speed", args(1), 0.0);
-        invoker.invoke("reboot", vec![], 0.0);
+        let (speed, reboot) = (unnamed("speed"), ActionId::new("b", "reboot"));
+        invoker.invoke(&speed, None, args(1), 0.0);
+        invoker.invoke(&reboot, None, vec![], 0.0);
         assert_eq!(
             sent(&mut invoker),
             [
-                (0, "speed".to_owned(), Data::Record(args(1))),
-                (1, "reboot".to_owned(), Data::Record(vec![]))
+                (0, String::new(), "speed".to_owned(), Data::Record(args(1))),
+                (1, "b".to_owned(), "reboot".to_owned(), Data::Record(vec![]))
             ]
         );
-        assert_eq!(invoker.outcome("speed", 0.0), Some(&Outcome::Pending));
+        assert_eq!(invoker.outcome(&speed, 0.0), Some(&Outcome::Pending));
 
         invoker.receive("", &answer(0, Ok(())), 1.0, &model(0));
-        invoker.receive("", &answer(1, Err("busy")), 1.0, &model(0));
-        assert_eq!(invoker.outcome("speed", 2.0), Some(&Outcome::Accepted(1.0)));
-        assert_eq!(invoker.outcome("speed", 1.0 + SHOW_ACCEPTED + 0.1), None);
+        invoker.receive("b", &answer(1, Err("busy")), 1.0, &model(0));
+        assert_eq!(invoker.outcome(&speed, 2.0), Some(&Outcome::Accepted(1.0)));
+        assert_eq!(invoker.outcome(&speed, 1.0 + SHOW_ACCEPTED + 0.1), None);
         assert_eq!(
-            invoker.outcome("reboot", 100.0),
+            invoker.outcome(&reboot, 100.0),
             Some(&Outcome::Rejected("busy".to_owned()))
         );
         // unknown and repeated answers change nothing
-        invoker.receive("", &answer(1, Ok(())), 2.0, &model(0));
+        invoker.receive("b", &answer(1, Ok(())), 2.0, &model(0));
         invoker.receive("", &answer(7, Ok(())), 2.0, &model(0));
         assert_eq!(
-            invoker.outcome("reboot", 100.0),
+            invoker.outcome(&reboot, 100.0),
             Some(&Outcome::Rejected("busy".to_owned()))
         );
     }
@@ -382,87 +433,113 @@ mod tests {
     #[test]
     fn only_the_latest_invocation_of_an_action_shows() {
         let mut invoker = Invoker::default();
-        invoker.invoke("speed", args(1), 0.0);
-        invoker.invoke("speed", args(2), 0.0);
+        let speed = unnamed("speed");
+        invoker.invoke(&speed, None, args(1), 0.0);
+        invoker.invoke(&speed, None, args(2), 0.0);
         invoker.receive("", &answer(0, Err("old")), 0.5, &model(0));
-        assert_eq!(invoker.outcome("speed", 0.5), Some(&Outcome::Pending));
+        assert_eq!(invoker.outcome(&speed, 0.5), Some(&Outcome::Pending));
         invoker.receive("", &answer(1, Ok(())), 0.6, &model(0));
-        assert_eq!(invoker.outcome("speed", 0.6), Some(&Outcome::Accepted(0.6)));
+        assert_eq!(invoker.outcome(&speed, 0.6), Some(&Outcome::Accepted(0.6)));
+    }
+
+    #[test]
+    fn the_same_path_of_several_outposts_has_its_own_outcomes() {
+        let mut invoker = Invoker::default();
+        let (a, b) = (ActionId::new("a", "speed"), ActionId::new("b", "speed"));
+        invoker.invoke(&a, None, args(1), 0.0);
+        invoker.invoke(&b, None, args(2), 0.0);
+        invoker.receive("b", &answer(1, Err("no")), 0.1, &model(0));
+        assert_eq!(invoker.outcome(&a, 0.1), Some(&Outcome::Pending));
+        assert_eq!(
+            invoker.outcome(&b, 0.1),
+            Some(&Outcome::Rejected("no".to_owned()))
+        );
     }
 
     #[test]
     fn inputs_follow_the_readback_once_it_is_newer_than_the_answer() {
         let mut invoker = Invoker::default();
-        assert!(invoker.follows_readback("enable", 0));
-        invoker.invoke("enable", vec![], 0.0);
-        assert!(!invoker.follows_readback("enable", 10));
+        let enable = unnamed("enable");
+        assert!(invoker.follows_readback(&enable, 0));
+        invoker.invoke(&enable, Some("on"), vec![], 0.0);
+        assert!(!invoker.follows_readback(&enable, 10));
         // accepted when the readback had 10 samples, which show the state before
         invoker.receive("", &answer(0, Ok(())), 0.1, &model(10));
-        assert!(!invoker.follows_readback("enable", 10));
-        assert!(invoker.follows_readback("enable", 11));
+        assert!(!invoker.follows_readback(&enable, 10));
+        assert!(invoker.follows_readback(&enable, 11));
         // after clearing the data, the readback starts again from no samples
         invoker.forget_readback_marks();
-        assert!(invoker.follows_readback("enable", 1));
+        assert!(invoker.follows_readback(&enable, 1));
         // a rejected invocation changed nothing, the readback is right
-        invoker.invoke("enable", vec![], 1.0);
+        invoker.invoke(&enable, Some("on"), vec![], 1.0);
         invoker.receive("", &answer(1, Err("no")), 1.1, &model(20));
-        assert!(invoker.follows_readback("enable", 11));
+        assert!(invoker.follows_readback(&enable, 11));
     }
 
     #[test]
-    fn answers_count_only_from_the_connection_of_the_action() {
+    fn answers_count_only_from_the_connection_of_the_invocation() {
         let mut invoker = Invoker::default();
-        invoker.invoke("speed", args(1), 0.0);
+        let speed = unnamed("speed");
+        invoker.invoke(&speed, None, args(1), 0.0);
         invoker.receive("other", &answer(0, Err("not mine")), 0.1, &model(0));
-        assert_eq!(invoker.outcome("speed", 0.1), Some(&Outcome::Pending));
+        assert_eq!(invoker.outcome(&speed, 0.1), Some(&Outcome::Pending));
         invoker.receive("", &answer(0, Ok(())), 0.2, &model(0));
-        assert_eq!(invoker.outcome("speed", 0.2), Some(&Outcome::Accepted(0.2)));
+        assert_eq!(invoker.outcome(&speed, 0.2), Some(&Outcome::Accepted(0.2)));
     }
 
     #[test]
-    fn actions_are_kept_per_connection_below_its_name() {
+    fn actions_are_kept_per_connection_with_their_paths() {
         let mut actions = Actions::default();
         actions.set("a", vec![descriptor("speed", Some("rpm"))]);
-        actions.set("b", vec![descriptor("speed", None)]);
+        actions.set(
+            "b",
+            vec![descriptor("speed", None), descriptor("park", None)],
+        );
         // announcing again replaces the actions of the connection in their place
         actions.set(
             "a",
             vec![descriptor("speed", Some("rpm")), descriptor("stop", None)],
         );
-        let paths: Vec<&str> = actions.iter().map(|a| a.path.as_str()).collect();
-        assert_eq!(paths, ["a/speed", "a/stop", "b/speed"]);
-        let speed = actions.announced("a/speed").unwrap();
         assert_eq!(
-            (speed.source.as_str(), speed.target_path.as_str()),
-            ("a", "speed")
+            actions.paths().collect::<Vec<_>>(),
+            ["speed", "stop", "park"]
         );
-        assert_eq!(speed.descriptor.readback.as_deref(), Some("a/rpm"));
-        assert_eq!(actions.get("b/speed").unwrap().readback, None);
+        let sources: Vec<&str> = actions
+            .announcers("speed")
+            .map(|action| action.source.as_str())
+            .collect();
+        assert_eq!(sources, ["a", "b"]);
+        let readback = |source| actions.announced(source, "speed").unwrap().readback.clone();
+        assert_eq!(readback("a").as_deref(), Some("rpm"));
+        assert_eq!(readback("b"), None);
+        assert!(actions.announced("b", "stop").is_none());
     }
 
     #[test]
     fn unanswered_invocations_time_out() {
         let mut invoker = Invoker::default();
-        invoker.invoke("speed", args(1), 0.0);
+        let speed = unnamed("speed");
+        invoker.invoke(&speed, None, args(1), 0.0);
         invoker.update(ANSWER_TIMEOUT);
-        assert_eq!(invoker.outcome("speed", 0.0), Some(&Outcome::Pending));
+        assert_eq!(invoker.outcome(&speed, 0.0), Some(&Outcome::Pending));
         invoker.update(ANSWER_TIMEOUT + 0.1);
-        assert_eq!(invoker.outcome("speed", 0.0), Some(&Outcome::Unanswered));
+        assert_eq!(invoker.outcome(&speed, 0.0), Some(&Outcome::Unanswered));
         assert!(!invoker.is_waiting(ANSWER_TIMEOUT + 0.1));
         // a late answer changes nothing
         invoker.receive("", &answer(0, Ok(())), 6.0, &model(0));
-        assert_eq!(invoker.outcome("speed", 6.0), Some(&Outcome::Unanswered));
+        assert_eq!(invoker.outcome(&speed, 6.0), Some(&Outcome::Unanswered));
     }
 
     #[test]
     fn dragging_sends_at_most_every_interval_and_the_last_value() {
         let mut invoker = Invoker::default();
-        invoker.invoke_dragging("speed", args(1), 0.0);
-        invoker.invoke_dragging("speed", args(2), 0.03);
-        invoker.invoke_dragging("speed", args(3), 0.06);
+        let speed = unnamed("speed");
+        invoker.invoke_dragging(&speed, None, args(1), 0.0);
+        invoker.invoke_dragging(&speed, None, args(2), 0.03);
+        invoker.invoke_dragging(&speed, None, args(3), 0.06);
         invoker.update(0.08);
-        let values = |sent: Vec<(u32, String, Data)>| -> Vec<Data> {
-            sent.into_iter().map(|(_, _, args)| args).collect()
+        let values = |sent: Vec<(u32, String, String, Data)>| -> Vec<Data> {
+            sent.into_iter().map(|(_, _, _, args)| args).collect()
         };
         assert_eq!(values(sent(&mut invoker)), [Data::Record(args(1))]);
         assert!(invoker.is_waiting(0.08));
@@ -473,9 +550,9 @@ mod tests {
         assert!(sent(&mut invoker).is_empty());
 
         // releasing sends the final value right away, dropping held back ones
-        invoker.invoke_dragging("speed", args(4), 0.5);
-        invoker.invoke_dragging("speed", args(5), 0.52);
-        invoker.finish_dragging("speed", args(6), 0.55);
+        invoker.invoke_dragging(&speed, None, args(4), 0.5);
+        invoker.invoke_dragging(&speed, None, args(5), 0.52);
+        invoker.finish_dragging(&speed, None, args(6), 0.55);
         invoker.update(1.0);
         assert_eq!(
             values(sent(&mut invoker)),
@@ -483,10 +560,24 @@ mod tests {
         );
 
         // releasing at the value sent last, or without dragging, sends nothing
-        invoker.invoke_dragging("speed", args(7), 2.0);
-        invoker.finish_dragging("speed", args(7), 2.05);
-        invoker.finish_dragging("speed", args(8), 3.0);
+        invoker.invoke_dragging(&speed, None, args(7), 2.0);
+        invoker.finish_dragging(&speed, None, args(7), 2.05);
+        invoker.finish_dragging(&speed, None, args(8), 3.0);
         assert_eq!(values(sent(&mut invoker)), [Data::Record(args(7))]);
+    }
+
+    #[test]
+    fn held_back_values_keep_the_readback_of_their_action() {
+        let mut invoker = Invoker::default();
+        let enable = unnamed("enable");
+        invoker.invoke_dragging(&enable, Some("on"), args(1), 0.0);
+        invoker.invoke_dragging(&enable, Some("on"), args(2), 0.05);
+        invoker.update(0.1);
+        assert_eq!(sent(&mut invoker).len(), 2);
+        // the held back invocation is accepted when the readback had 3 samples
+        invoker.receive("", &answer(1, Ok(())), 0.2, &model(3));
+        assert!(!invoker.follows_readback(&enable, 3));
+        assert!(invoker.follows_readback(&enable, 4));
     }
 
     #[test]
@@ -495,10 +586,11 @@ mod tests {
         invoker
             .inputs
             .insert(("speed".to_owned(), "rpm".to_owned()), Data::Uint(5));
-        invoker.invoke("speed", args(1), 0.0);
+        let speed = unnamed("speed");
+        invoker.invoke(&speed, None, args(1), 0.0);
         invoker.reset();
         assert!(invoker.take_outbox().is_empty());
-        assert_eq!(invoker.outcome("speed", 0.0), None);
+        assert_eq!(invoker.outcome(&speed, 0.0), None);
         assert_eq!(invoker.inputs.len(), 1);
     }
 }

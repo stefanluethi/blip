@@ -268,20 +268,20 @@ impl App {
         Ok(())
     }
 
-    /// Sends the invocations of the views to the connections of their actions, with the
-    /// paths their targets know them by.
+    /// Sends the invocations of the views to the connections of the outposts chosen
+    /// for their actions, unless the outpost no longer announces the action.
     fn send_invocations(&mut self) {
-        for proto::Request::Invoke(mut invocation) in self.state.invoker.take_outbox() {
-            let Some(action) = self.state.model.actions.announced(&invocation.path) else {
+        for (source, request) in self.state.invoker.take_outbox() {
+            let proto::Request::Invoke(invocation) = &request;
+            let actions = &self.state.model.actions;
+            if actions.announced(&source, &invocation.path).is_none() {
                 log::warn!(
-                    "dropping an invocation of {}, which is gone",
+                    "dropping an invocation of {} on {source:?}, which no longer announces it",
                     invocation.path
                 );
                 continue;
-            };
-            invocation.path = action.target_path.clone();
-            self.connections
-                .send(&action.source, &proto::Request::Invoke(invocation));
+            }
+            self.connections.send(&source, &request);
         }
     }
 
@@ -305,12 +305,15 @@ impl App {
         }
     }
 
+    /// The tree of the traces and actions, to choose those of the selected view.
     fn traces_ui(&mut self, ui: &mut egui::Ui) {
-        ui.strong("Traces");
+        ui.strong("Traces & actions");
         let view = self.layout.selected_view_mut();
         let hint = match &view {
-            None => Some("Select a view to choose its traces"),
-            Some(view) if !view.shows_traces() => Some("The selected view shows no traces"),
+            None => Some("Select a view to choose its traces or actions"),
+            Some(view) if !view.has_selection() => {
+                Some("The selected view shows no traces or actions")
+            }
             Some(_) => None,
         };
         if let Some(hint) = hint {
@@ -502,7 +505,7 @@ mod tests {
         state.set_recording(true, true);
         assert!(state.recording);
         assert!(!state.model.has_samples());
-        assert_eq!(state.model.traces.unit("a/rpm"), Some("rpm"));
+        assert_eq!(state.model.traces.unit("rpm"), Some("rpm"));
         assert!(state.time.is_live() && state.time.is_playing());
     }
 

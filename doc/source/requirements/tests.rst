@@ -207,10 +207,14 @@ Test Cases
    :component: blip
    :verifies: REQ_CTRL_ACTION, REQ_CTRL_FEEDBACK, REQ_CTRL_VIEW, REQ_CTRL_SAFE
 
-   ``blip/src/app/model/actions.rs`` and ``blip/src/app/view/actions.rs``
-   tests -- send invocations with new ids, show only the outcome of the latest
-   invocation of an action, time out unanswered ones, send at most every
-   interval while dragging and the final value on release; send buttons and
-   checkboxes right away and actions with several parameters with their Send
-   button, ask before confirmed actions, disable actions while disconnected
-   or disabled, and start inputs from the readback or the default.
+   ``blip/src/app/model/actions.rs``, ``blip/src/app/view/actions.rs`` and
+   ``blip/src/app/view/trace_selection.rs`` tests -- send invocations with new
+   ids, show only the outcome of the latest invocation of an action of an
+   outpost, time out unanswered ones, send at most every interval while
+   dragging and the final value on release; send buttons and checkboxes right
+   away and actions with several parameters with their Send button, ask before
+   confirmed actions, disable actions while disconnected or disabled, and
+   start inputs from the readback or the default; send each action to the
+   outpost chosen for it, by default the first announcing it, show and follow
+   the chosen readback, choose both in the properties, list the actions in the
+   tree of the traces and check them there only for actions views.

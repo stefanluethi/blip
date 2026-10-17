@@ -60,8 +60,9 @@ impl Model {
 
     /// Records a frame received from `source`, the name of its connection, and applies
     /// the message in it. The paths of its traces and actions and the components of its
-    /// logs start with the source, unless it has no name. Returns the answer to an
-    /// invocation, for the invoker.
+    /// logs are kept as the outpost sends them, without the source: how they are
+    /// organized is up to the user, also when outposts send the same paths. Returns
+    /// the answer to an invocation, for the invoker.
     pub fn receive(&mut self, source: &str, frame: &[u8]) -> Option<proto::ActionResult> {
         self.apply(source, frame, true)
     }
@@ -96,20 +97,12 @@ impl Model {
             self.recording.push(source, frame);
         }
         match message {
-            Ok(proto::Message::Value(mut value)) => {
-                value.path = sourced(source, &value.path);
-                self.traces.append(&value);
-            }
+            Ok(proto::Message::Value(value)) => self.traces.append(&value),
             Ok(proto::Message::ValueMetadata(metadata)) => {
                 self.describe(source, Some(&metadata.path), frame);
-                let path = sourced(source, &metadata.path);
-                self.traces.set_unit(&path, &metadata.unit);
+                self.traces.set_unit(&metadata.path, &metadata.unit);
             }
-            Ok(proto::Message::Log(record)) => {
-                let mut entry = LogEntry::from_proto(&record);
-                entry.component = sourced(source, &entry.component);
-                self.logs.push(entry);
-            }
+            Ok(proto::Message::Log(record)) => self.logs.push(LogEntry::from_proto(&record)),
             Ok(proto::Message::Actions(actions)) => {
                 self.describe(source, None, frame);
                 self.actions.set(source, actions);
@@ -120,12 +113,9 @@ impl Model {
         None
     }
 
-    /// The number of samples of the readback trace of the action at `path`, 0 if it
-    /// has none.
-    pub fn readback_samples(&self, path: &str) -> usize {
-        self.actions
-            .get(path)
-            .and_then(|action| action.readback.as_deref())
+    /// The number of samples of the readback trace at `readback`, 0 if there is none.
+    pub fn readback_samples(&self, readback: Option<&str>) -> usize {
+        readback
             .and_then(|readback| self.traces.get(readback))
             .map_or(0, |trace| trace.timestamps.len())
     }
@@ -172,15 +162,6 @@ pub fn cbor_items(bytes: &[u8]) -> impl Iterator<Item = Result<&[u8], serde_cbor
     })
 }
 
-/// `name` below `source`, i.e. `"{source}/{name}"`, or `name` if the source has no name.
-fn sourced(source: &str, name: &str) -> String {
-    if source.is_empty() {
-        name.to_owned()
-    } else {
-        format!("{source}/{name}")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,7 +171,7 @@ mod tests {
     }
 
     #[test]
-    fn traces_and_logs_are_put_below_their_source() {
+    fn paths_are_kept_as_the_outposts_send_them() {
         let value = |path: &str| {
             frame(&proto::Message::Value(proto::Value {
                 timestamp: 1,
@@ -209,10 +190,10 @@ mod tests {
         model.receive("a", &value("cpu"));
         model.receive("b", &value("cpu"));
         model.receive("b", &log);
-        for path in ["cpu", "a/cpu", "b/cpu"] {
-            assert!(model.traces.get(path).is_some(), "{path} is missing");
-        }
-        assert_eq!(model.logs.entries[0].component, "b/motor");
+        // the same path from several outposts is one trace
+        assert_eq!(model.traces.iter().count(), 1);
+        assert_eq!(model.traces.get("cpu").unwrap().timestamps.len(), 3);
+        assert_eq!(model.logs.entries[0].component, "motor");
         assert_eq!(model.recording.messages(), 4);
     }
 
@@ -248,7 +229,7 @@ mod tests {
     }
 
     #[test]
-    fn actions_are_put_below_their_source_and_answers_returned() {
+    fn actions_are_kept_with_their_source_and_answers_returned() {
         let actions = frame(&proto::Message::Actions(vec![proto::ActionDescriptor {
             path: "motor/speed".to_owned(),
             description: String::new(),
@@ -263,9 +244,9 @@ mod tests {
         };
         let mut model = Model::default();
         assert_eq!(model.receive("b", &actions), None);
-        let speed = model.actions.announced("b/motor/speed").unwrap();
-        assert_eq!(speed.target_path, "motor/speed");
-        assert_eq!(speed.descriptor.readback.as_deref(), Some("b/motor/rpm"));
+        let speed = model.actions.announced("b", "motor/speed").unwrap();
+        assert_eq!(speed.readback.as_deref(), Some("motor/rpm"));
+        assert!(model.actions.announced("a", "motor/speed").is_none());
         let answer = frame(&proto::Message::ActionResult(result.clone()));
         assert_eq!(model.receive("b", &answer), Some(result));
     }
@@ -308,8 +289,8 @@ mod tests {
         assert_eq!(model.recording.messages(), 2);
 
         model.receive("b", &value);
-        assert_eq!(model.traces.get("b/rpm").unwrap().timestamps.len(), 1);
-        assert_eq!(model.traces.unit("b/rpm"), Some("rpm"));
+        assert_eq!(model.traces.get("rpm").unwrap().timestamps.len(), 1);
+        assert_eq!(model.traces.unit("rpm"), Some("rpm"));
     }
 
     #[test]
@@ -341,8 +322,8 @@ mod tests {
         model.clear();
 
         assert_eq!(model.time_span(), None);
-        assert_eq!(model.traces.unit("a/rpm"), Some("1/min"));
-        assert!(model.actions.get("b/motor/speed").is_some());
+        assert_eq!(model.traces.unit("rpm"), Some("1/min"));
+        assert!(model.actions.announced("b", "motor/speed").is_some());
         let mut recorded = vec![];
         recording::read_file(&model.recording.to_file(), |source, frame| {
             recorded.push((source.to_owned(), frame.to_vec()));

@@ -2,18 +2,25 @@ use crate::app::model::Model;
 use crate::app::model::traces::{Samples, Trace, element_path};
 use crate::app::view::{Selectable, ViewType};
 use egui::{RichText, Ui};
-use egui_phosphor::regular::{BRACKETS_CURLY, BRACKETS_SQUARE, HASH, MAGNIFYING_GLASS, TEXT_AA, X};
+use egui_phosphor::regular::{
+    BRACKETS_CURLY, BRACKETS_SQUARE, HASH, LIGHTNING, MAGNIFYING_GLASS, TEXT_AA, X,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Arrays with up to this many elements list each element for selection.
 pub const MAX_LISTED_ELEMENTS: usize = 16;
 
-/// Trace paths split into a tree at each "/", and at each "." between the fields of
-/// a record.
+/// The icon marking an action in the tree, in place of the type of a trace.
+pub const ACTION_ICON: &str = LIGHTNING;
+
+/// Trace and action paths split into a tree at each "/", and trace paths also at each
+/// "." between the fields of a record.
 #[derive(Default)]
 pub struct TraceTree<'a> {
     /// The trace if one ends at this node.
     pub trace: Option<&'a Trace>,
+    /// The path of the action if one ends at this node.
+    pub action: Option<&'a str>,
     /// Children by path segment, record fields with their leading ".", e.g. ".acc".
     pub children: BTreeMap<&'a str, TraceTree<'a>>,
 }
@@ -29,15 +36,25 @@ impl<'a> TraceTree<'a> {
             let field_segments = field_starts
                 .zip(field_ends)
                 .map(|(start, end)| &fields[start..end]);
-
-            let mut node = &mut root;
-            let segments = name.split('/').filter(|segment| !segment.is_empty());
-            for segment in segments.chain(field_segments) {
-                node = node.children.entry(segment).or_default();
-            }
-            node.trace = Some(trace);
+            root.node_mut(segments(name).chain(field_segments)).trace = Some(trace);
         }
         root
+    }
+
+    /// Adds the actions at `paths`, which branch at each "/" only.
+    pub fn add_actions(&mut self, paths: impl Iterator<Item = &'a str>) {
+        for path in paths {
+            self.node_mut(segments(path)).action = Some(path);
+        }
+    }
+
+    /// The node at `segments` below this one, added if missing.
+    fn node_mut(&mut self, segments: impl Iterator<Item = &'a str>) -> &mut Self {
+        let mut node = self;
+        for segment in segments {
+            node = node.children.entry(segment).or_default();
+        }
+        node
     }
 
     pub fn is_record(&self) -> bool {
@@ -45,11 +62,12 @@ impl<'a> TraceTree<'a> {
     }
 
     /// The paths of all traces at and below this node that a view of `view_type` can
-    /// show.
+    /// show, and of all actions if it shows actions.
     fn paths(&self, view_type: ViewType) -> Vec<String> {
         self.trace
             .into_iter()
             .flat_map(|trace| trace_paths(trace, view_type))
+            .chain(self.action.and_then(|path| action_path(path, view_type)))
             .chain(
                 self.children
                     .values()
@@ -57,6 +75,11 @@ impl<'a> TraceTree<'a> {
             )
             .collect()
     }
+}
+
+/// The segments of `path` between its "/".
+fn segments(path: &str) -> impl Iterator<Item = &str> {
+    path.split('/').filter(|segment| !segment.is_empty())
 }
 
 /// The icon of the type of `samples`.
@@ -168,6 +191,36 @@ fn show_trace(ui: &mut Ui, label: &str, trace: &Trace, selection: &mut Selection
     });
 }
 
+/// The path of the action at `path` if a view of `view_type` can show it.
+fn action_path(path: &str, view_type: ViewType) -> Option<String> {
+    view_type.shows_actions().then(|| path.to_owned())
+}
+
+/// Shows the action at `path` labelled `label` with the action icon: a checkbox,
+/// disabled unless the view shows actions.
+fn show_action(ui: &mut Ui, label: &str, path: &str, selection: &mut Selection<'_>) {
+    let paths = Vec::from_iter(action_path(path, selection.view_type));
+    let mut hover = format!("{path}\nAction");
+    if paths.is_empty() {
+        hover.push_str("\nOnly actions views show actions");
+    }
+    leaf_row(ui, |ui| {
+        show_checkbox(ui, label, Some(ACTION_ICON), &paths, selection)
+            .on_hover_text(&hover)
+            .on_disabled_hover_text(hover);
+    });
+}
+
+/// Shows the trace and the action ending at `node`, if any, labelled `label`.
+fn show_leaves(ui: &mut Ui, label: &str, node: &TraceTree<'_>, selection: &mut Selection<'_>) {
+    if let Some(trace) = node.trace {
+        show_trace(ui, label, trace, selection);
+    }
+    if let Some(path) = node.action {
+        show_action(ui, label, path, selection);
+    }
+}
+
 /// Shows the row added by `add` indented by the width of the collapse button of a
 /// branch, so its checkbox lines up with those of the branches next to it.
 fn leaf_row(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
@@ -177,15 +230,13 @@ fn leaf_row(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
     });
 }
 
-/// Shows the children of `node` as collapsible branches and traces.
+/// Shows the children of `node` as collapsible branches, traces and actions.
 fn show_trace_tree(ui: &mut Ui, node: &TraceTree<'_>, prefix: &str, selection: &mut Selection<'_>) {
     for (segment, child) in &node.children {
         let child_prefix = format!("{prefix}/{segment}");
         let label = segment.strip_prefix('.').unwrap_or(segment);
         if child.children.is_empty() {
-            if let Some(trace) = child.trace {
-                show_trace(ui, label, trace, selection);
-            }
+            show_leaves(ui, label, child, selection);
         } else {
             let icon = child.is_record().then_some(BRACKETS_CURLY);
             // while searching, branches keep a separate open state, open by default
@@ -204,10 +255,8 @@ fn show_trace_tree(ui: &mut Ui, node: &TraceTree<'_>, prefix: &str, selection: &
                     }
                 })
                 .body(|ui| {
-                    // a trace can also be the prefix of other traces
-                    if let Some(trace) = child.trace {
-                        show_trace(ui, label, trace, selection);
-                    }
+                    // a trace or an action can also be the prefix of other paths
+                    show_leaves(ui, label, child, selection);
                     show_trace_tree(ui, child, &child_prefix, selection);
                 });
         }
@@ -223,7 +272,8 @@ fn matches(path: &str, search: &str) -> bool {
         .all(|word| path.contains(word))
 }
 
-/// Shows a field to search the traces by `search`, with a button to clear it.
+/// Shows a field to search the traces and actions by `search`, with a button to clear
+/// it.
 pub fn search_ui(ui: &mut Ui, search: &mut String) {
     ui.horizontal(|ui| {
         // the clear button is a square as high as the field: the text, its margins and
@@ -239,10 +289,10 @@ pub fn search_ui(ui: &mut Ui, search: &mut String) {
             .add(
                 egui::TextEdit::singleline(search)
                     .id_salt("trace_search")
-                    .hint_text(format!("{MAGNIFYING_GLASS} Search traces"))
+                    .hint_text(format!("{MAGNIFYING_GLASS} Search paths"))
                     .desired_width(ui.available_width() - clear_width),
             )
-            .on_hover_text("Show only the traces whose path contains each word");
+            .on_hover_text("Show only the traces and actions whose path contains each word");
         ui.spacing_mut().button_padding.x = 0.0;
         if !search.is_empty()
             && ui
@@ -255,26 +305,28 @@ pub fn search_ui(ui: &mut Ui, search: &mut String) {
     });
 }
 
-/// Shows the traces of `model` whose path matches `search` as a tree with checkboxes
-/// for the traces selected for a view of the given type, disabled if there is no
-/// selection to edit.
+/// Shows the traces and the announced actions of `model` whose path matches `search`
+/// as a tree with checkboxes for the traces or actions selected for a view of the given
+/// type, disabled if there is no selection to edit.
 pub fn show(
     ui: &mut Ui,
     model: &Model,
     search: &str,
     selection: Option<(&mut BTreeSet<String>, ViewType)>,
 ) {
-    let tree = TraceTree::build(
+    let mut tree = TraceTree::build(
         model
             .traces
             .iter()
             .filter(|trace| matches(&trace.path, search)),
     );
+    tree.add_actions(model.actions.paths().filter(|path| matches(path, search)));
     if tree.children.is_empty() {
-        match model.traces.iter().next() {
-            None => ui.weak("No traces received"),
-            Some(_) => ui.weak("No traces match the search"),
-        };
+        if model.traces.iter().next().is_none() && model.actions.is_empty() {
+            ui.weak("No traces or actions received");
+        } else {
+            ui.weak("No traces or actions match the search");
+        }
         return;
     }
     let mut unselectable = BTreeSet::new();
@@ -422,6 +474,120 @@ mod tests {
         harness.run();
         assert!(harness.state().0.is_empty());
         assert!(harness.query_by_label_contains("temp").is_some());
+    }
+
+    #[test]
+    fn actions_join_the_traces_in_the_tree() {
+        let traces = [Trace::new("motor/speed".to_owned(), None)];
+        let mut tree = TraceTree::build(traces.iter());
+        tree.add_actions(["motor/speed", "motor/stop", "reboot"].into_iter());
+        let motor = &tree.children["motor"];
+        let speed = &motor.children["speed"];
+        assert_eq!(
+            speed.trace.map(|trace| trace.path.as_str()),
+            Some("motor/speed")
+        );
+        assert_eq!(speed.action, Some("motor/speed"));
+        assert_eq!(motor.children["stop"].action, Some("motor/stop"));
+        assert_eq!(tree.children["reboot"].action, Some("reboot"));
+        // only actions views show actions, and no traces
+        assert_eq!(
+            motor.paths(ViewType::Actions),
+            ["motor/speed", "motor/stop"]
+        );
+        assert_eq!(motor.paths(ViewType::Table), ["motor/speed"]);
+    }
+
+    /// A harness showing the tree of the trace "motor/rpm" and the action
+    /// "motor/speed" for a view of `view_type`, with the paths selected for it.
+    fn tree_harness(
+        view_type: ViewType,
+    ) -> egui_kittest::Harness<'static, (String, BTreeSet<String>)> {
+        let mut model = Model::default();
+        model.traces.append(&proto::Value {
+            timestamp: 0,
+            path: "motor/rpm".to_owned(),
+            value: proto::Data::Uint(1),
+        });
+        model.actions.set(
+            "a",
+            vec![proto::ActionDescriptor {
+                path: "motor/speed".to_owned(),
+                description: String::new(),
+                params: vec![],
+                readback: None,
+                confirm: false,
+                enabled: true,
+            }],
+        );
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(300.0, 400.0))
+            .build_ui_state(
+                move |ui, (search, paths): &mut (String, BTreeSet<String>)| {
+                    search_ui(ui, search);
+                    show(ui, &model, search, Some((paths, view_type)));
+                },
+                (String::new(), BTreeSet::new()),
+            );
+        harness.run();
+        harness
+    }
+
+    #[test]
+    fn actions_views_check_the_actions_in_the_tree() {
+        use egui_kittest::kittest::{NodeT, Queryable};
+
+        let mut harness = tree_harness(ViewType::Actions);
+        assert!(
+            harness
+                .get_by_label_contains("rpm")
+                .accesskit_node()
+                .is_disabled()
+        );
+        let speed = harness.get_by_label_contains("speed");
+        assert!(
+            speed
+                .accesskit_node()
+                .label()
+                .unwrap()
+                .contains(ACTION_ICON)
+        );
+        speed.click();
+        harness.run();
+        assert_eq!(
+            harness.state().1,
+            BTreeSet::from(["motor/speed".to_owned()])
+        );
+        // a branch checks the actions below it
+        harness.get_by_label_contains("speed").click();
+        harness.run();
+        harness.get_by_label_contains("motor").click();
+        harness.run();
+        assert_eq!(
+            harness.state().1,
+            BTreeSet::from(["motor/speed".to_owned()])
+        );
+
+        // the search applies to actions too
+        harness.state_mut().0 = "rpm".to_owned();
+        harness.run();
+        assert!(harness.query_by_label_contains("speed").is_none());
+    }
+
+    #[test]
+    fn actions_are_disabled_for_other_views() {
+        use egui_kittest::kittest::{NodeT, Queryable};
+
+        let mut harness = tree_harness(ViewType::Plot);
+        assert!(
+            harness
+                .get_by_label_contains("speed")
+                .accesskit_node()
+                .is_disabled()
+        );
+        harness.get_by_label_contains("motor").click();
+        harness.run();
+        assert_eq!(harness.state().1, BTreeSet::from(["motor/rpm".to_owned()]));
     }
 
     #[test]

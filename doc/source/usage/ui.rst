@@ -21,15 +21,14 @@ by their name and WebSocket address, starting with
 * Right-click a connection to connect or disconnect it, to rename it, to edit
   its address or to delete it. Rename it while it is disconnected.
 
-The traces of a connection are listed below its name, e.g. ``cpu/load`` of
-the connection ``robby`` as ``robby/cpu/load``, and the components of its logs
-start with the name, e.g. ``robby/motor``, as do its actions and their
-readbacks, e.g. ``robby/motor/speed``. Each action is sent to its own
-connection, with the path its target knows. Views keep the paths with the name,
-so a layout shows the same traces after reconnecting. A connection whose name
-is empty adds nothing to the paths, as do the messages of a recording saved by
-the outpost or by an older blip. The names of two connections differ, unless
-they are empty.
+The paths of the traces, the components of the logs and the paths of the
+actions are shown as the outposts send them, e.g. ``cpu/load``, without the
+name of the connection: organizing them is up to the user, e.g. by the paths
+each outpost sends. Traces of the same path from several connections are one
+trace. Several outposts may announce an action at the same path, an actions
+view sends it to the outpost chosen in its properties, see `Actions`_. A saved
+recording keeps the name of the connection of each message. The names of two
+connections differ, unless they are empty.
 
 Each target sends its own timestamps. Targets sending the time since boot
 rather than the time of day are shown next to each other only as far as they
@@ -46,14 +45,17 @@ Top panel
    The menu, see `Menu`_.
 
 Left panel
-   The **Traces** of the selected plot, as a tree that branches at each
-   ``/`` of the path, with the type of each trace, and the **Layout** of the
-   views below. Drag the border between them to resize them. The fields of a
+   The **Traces & actions** of the selected view, as a tree that branches at
+   each ``/`` of the path, with the type of each trace and a lightning for each
+   announced action, and the **Layout** of the views below. Drag the border
+   between them to resize them. The checkboxes choose the traces a view shows,
+   or the actions of an actions view; traces cannot be checked for an actions
+   view, nor actions for other views. The fields of a
    record are separate traces joined to its path with ``.``, e.g.
    ``imu.acc``, listed below the record as ``.acc``. Arrays list their
    elements, e.g. ``imu.acc[0]``, if they have at most 16; larger arrays
-   cannot be plotted yet. The search field above the traces shows only those
-   whose path contains each of its words, ignoring case.
+   cannot be plotted yet. The search field above the tree shows only the
+   traces and actions whose path contains each of its words, ignoring case.
 
 Right panel
    The **Properties** of the selected view or group, see `Properties`_, and
@@ -114,15 +116,16 @@ Logs
    message. Records outside the shown time range are greyed out.
 
 Actions
-   A form of the actions the target announced, to carry them out on the
-   target, e.g. set a motor setpoint or a log level. See `Actions`_.
+   A form of the actions checked in the left panel, to carry them out on
+   their outposts, e.g. set a motor setpoint or a log level. See `Actions`_.
 
 Actions
 -------
 
-An actions view lists an action per row: its name (hover it for the
-description and path), its input, the current value of its readback trace if
-it has one, and what became of its latest invocation.
+An actions view lists the actions checked in the left panel while it is
+selected, an action per row: its name (hover it for the description, the path
+and the outpost it is sent to), its input, the current value of its readback
+trace if it has one, and what became of its latest invocation.
 
 * An action without parameters is a **Run** button.
 * An action with one parameter is sent as soon as its input changes: a
@@ -148,15 +151,27 @@ The last column shows a spinner while the target has not answered, a check
 mark for a moment once it carried the action out, a warning if it rejected
 the action (hover it for the reason) and a clock if it did not answer within
 five seconds. Each invocation also shows as a log record of the component
-``actions`` below the name of the connection in the log views, rejected ones
-as warnings.
+``actions`` in the log views, rejected ones as warnings.
 
-An action is disabled while its connection is not connected, e.g. while a
-recording is open, and while its target cannot carry it out. In the properties, an
-actions view shows **All** actions, also those announced later, or the
-**Chosen** ones; chosen actions the target does not announce are listed
-greyed out. **Number inputs** switches numbers with a minimum and a maximum
-between a slider and a field.
+An action is disabled while the connection of its outpost is not connected,
+e.g. while a recording is open, and while its target cannot carry it out.
+Checked actions that no outpost announces, or that the chosen outpost does not
+announce, are listed greyed out. The properties of an actions view set for
+each of its actions:
+
+* **Outposts**: the outpost the action is sent to, among those announcing
+  it. Until one is chosen, it is the first outpost that announced the action.
+  A chosen outpost that no longer announces it is listed greyed out. Its
+  answers, and whether it is connected, are those of that outpost.
+* **Readbacks**: the trace showing the state the action sets, which the
+  readback column shows and checkboxes and choices follow. It is the readback
+  the outpost announces until another trace or **None** is chosen; choosing
+  the announced one again follows the announcement.
+* **Number inputs** switches numbers with a minimum and a maximum between a
+  slider and a field.
+
+An actions view saved by an older blip to show all actions shows none until
+they are checked.
 
 Properties
 ----------

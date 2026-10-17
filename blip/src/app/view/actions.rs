@@ -1,34 +1,89 @@
-//! A form of the actions the target announced, to invoke them.
+//! A form of the actions the outposts announced, to invoke them.
 //!
 //! An action without parameters is a button. An action with one parameter is sent as
 //! soon as its input changes: a toggle, a choice, a slider while it is dragged (at most
 //! every [`DRAG_INTERVAL`](crate::app::model::actions::DRAG_INTERVAL)), a number or text field on Enter. An action with several
 //! parameters, or one that asks for confirmation, is sent with its Send button.
+//!
+//! An action is known by its path, which several outposts may announce. Each action
+//! is sent to the outpost chosen for it in the properties, and its readback is the
+//! trace chosen there, else the one that outpost announces.
 
 use super::{ViewContext, Viewable, properties_section, short_names};
 use crate::app::model::Model;
-use crate::app::model::actions::{Args, Invoker, Outcome};
+use crate::app::model::actions::{ActionId, Args, Invoker, Outcome};
 use crate::app::model::numbers::{DisplayFormat, Number};
 use crate::app::model::traces::Samples;
+use egui::RichText;
 use egui_phosphor::regular::{CHECK_CIRCLE, CLOCK_COUNTDOWN, PLAY, WARNING_CIRCLE};
 use proto::{ActionDescriptor, Data, Param, ParamKind};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Choices of at most this many options are buttons side by side, longer ones a
 /// dropdown.
 const MAX_BUTTON_OPTIONS: usize = 4;
 /// The width of the inputs in points.
 const INPUT_WIDTH: f32 = 180.0;
+/// The width of the dropdowns in the properties in points.
+const PROPERTY_WIDTH: f32 = 140.0;
 
-/// The actions shown and how their inputs look.
+/// The actions shown, where they are sent, their readbacks and how their inputs look.
 #[derive(serde::Deserialize, serde::Serialize, Clone, Default)]
 #[serde(default)]
 pub struct Actions {
-    /// The paths of the shown actions, all announced actions if `None`.
-    pub shown: Option<BTreeSet<String>>,
+    /// The paths of the shown actions, checked in the tree of the left panel.
+    #[serde(deserialize_with = "deserialize_shown")]
+    pub shown: BTreeSet<String>,
     /// The numeric parameters with bounds entered in a field instead of a slider, by
     /// the path of the action and the parameter name joined with ":".
     pub fields: BTreeSet<String>,
+    /// The name of the connection of the outpost each action is sent to, by the path
+    /// of the action. An action without one is sent to the first outpost announcing
+    /// it, see [`Actions::outpost`].
+    pub outposts: BTreeMap<String, String>,
+    /// The path of the readback trace of each action by its path, `None` for no
+    /// readback. An action without one has the readback its outpost announces, see
+    /// [`Actions::readback`].
+    pub readbacks: BTreeMap<String, Option<String>>,
+}
+
+/// The shown actions as saved. Older versions of blip saved `null` to show all
+/// announced actions; such a view shows none until they are checked in the tree.
+fn deserialize_shown<'de, D>(deserializer: D) -> Result<BTreeSet<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    Ok(Option::<BTreeSet<String>>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+/// A shown action, as the view lists it.
+struct Row<'a> {
+    path: &'a str,
+    /// The outpost the action is sent to, `None` if no outpost announces it.
+    outpost: Option<&'a str>,
+    /// The action as that outpost announces it, `None` if it does not.
+    action: Option<&'a ActionDescriptor>,
+}
+
+/// A shown action an outpost announces, as its row shows it.
+struct Shown<'a> {
+    /// The action, sent to the outpost chosen for it.
+    id: ActionId,
+    action: &'a ActionDescriptor,
+    /// The path of its readback trace.
+    readback: Option<&'a str>,
+    /// The name it is shown with.
+    name: &'a str,
+}
+
+/// The name of the connection `source` to show, also when it has none.
+fn outpost_name(source: &str) -> &str {
+    if source.is_empty() {
+        "(unnamed)"
+    } else {
+        source
+    }
 }
 
 /// How a change of an input sends its action.
@@ -43,16 +98,17 @@ enum Change {
     Done,
 }
 
-/// Why the action of `model` cannot be invoked now, if it cannot.
+/// Why `action`, announced as `descriptor` by the outpost it is sent to, cannot be
+/// invoked now, if it cannot.
 fn disabled_reason(
     invoker: &Invoker,
-    model: &Model,
-    action: &ActionDescriptor,
+    action: &ActionId,
+    descriptor: &ActionDescriptor,
 ) -> Option<&'static str> {
-    if !invoker.is_connected(model, &action.path) {
-        Some("Not connected to its target")
-    } else if !action.enabled {
-        Some("The target cannot carry out the action now")
+    if !invoker.is_connected(action) {
+        Some("Not connected to its outpost")
+    } else if !descriptor.enabled {
+        Some("The outpost cannot carry out the action now")
     } else {
         None
     }
@@ -363,9 +419,9 @@ fn decimals(step: f64) -> usize {
     decimals
 }
 
-/// Shows the outcome of the latest invocation of `path`.
-fn outcome_ui(ui: &mut egui::Ui, invoker: &Invoker, path: &str, now: f64) {
-    match invoker.outcome(path, now) {
+/// Shows the outcome of the latest invocation of `action`.
+fn outcome_ui(ui: &mut egui::Ui, invoker: &Invoker, action: &ActionId, now: f64) {
+    match invoker.outcome(action, now) {
         None => {
             ui.label("");
         }
@@ -391,7 +447,9 @@ fn outcome_ui(ui: &mut egui::Ui, invoker: &Invoker, path: &str, now: f64) {
 /// An action asked to be confirmed before it is sent.
 #[derive(Clone)]
 struct Confirmation {
-    path: String,
+    id: ActionId,
+    /// The path of its readback trace.
+    readback: Option<String>,
     args: Args,
 }
 
@@ -400,59 +458,94 @@ impl Actions {
         Self::default()
     }
 
-    /// The actions shown, in the order the target announced them, followed by the
-    /// paths of shown actions it does not announce.
-    fn rows<'a>(&'a self, model: &'a Model) -> (Vec<&'a ActionDescriptor>, Vec<&'a str>) {
-        let announced: Vec<&ActionDescriptor> = model
+    /// The name of the connection of the outpost the action at `path` is sent to: the
+    /// one chosen in the properties, also while it does not announce the action, else
+    /// the first outpost announcing it, `None` if none does.
+    fn outpost<'a>(&'a self, model: &'a Model, path: &str) -> Option<&'a str> {
+        match self.outposts.get(path) {
+            Some(source) => Some(source),
+            None => model
+                .actions
+                .announcers(path)
+                .next()
+                .map(|action| action.source.as_str()),
+        }
+    }
+
+    /// The action at `path` as the outpost it is sent to announces it, if it does.
+    fn announced<'a>(&self, model: &'a Model, path: &str) -> Option<&'a ActionDescriptor> {
+        let outpost = self.outpost(model, path)?;
+        model.actions.announced(outpost, path)
+    }
+
+    /// The path of the readback trace of the action at `path`: the one chosen in the
+    /// properties, which may be none, else `announced`, the one its outpost announces.
+    fn readback<'a>(&'a self, path: &str, announced: Option<&'a str>) -> Option<&'a str> {
+        match self.readbacks.get(path) {
+            Some(chosen) => chosen.as_deref(),
+            None => announced,
+        }
+    }
+
+    /// The shown actions in the order they were announced first, followed by the
+    /// shown actions no outpost announces.
+    fn rows<'a>(&'a self, model: &'a Model) -> Vec<Row<'a>> {
+        let announced = model
             .actions
-            .iter()
-            .filter(|action| {
-                self.shown
-                    .as_ref()
-                    .is_none_or(|shown| shown.contains(&action.path))
-            })
-            .collect();
+            .paths()
+            .filter(|path| self.shown.contains(*path));
         let missing = self
             .shown
             .iter()
-            .flatten()
-            .filter(|path| model.actions.get(path).is_none());
-        (announced, missing.map(String::as_str).collect())
+            .map(String::as_str)
+            .filter(|path| model.actions.announcers(path).next().is_none());
+        announced
+            .chain(missing)
+            .map(|path| {
+                let outpost = self.outpost(model, path);
+                Row {
+                    path,
+                    outpost,
+                    action: outpost.and_then(|outpost| model.actions.announced(outpost, path)),
+                }
+            })
+            .collect()
     }
 
     fn uses_field(&self, path: &str, param: &str) -> bool {
         self.fields.contains(&format!("{path}:{param}"))
     }
 
-    /// Shows the row of `action`, with a row per parameter if it has a Send button.
+    /// Shows the row of `shown`, with a row per parameter if it has a Send button.
     fn action_ui(
         &self,
         ui: &mut egui::Ui,
         context: &mut ViewContext<'_>,
-        action: &ActionDescriptor,
-        name: &str,
+        shown: &Shown<'_>,
         now: f64,
         confirm: &mut Option<Confirmation>,
     ) {
+        let Shown {
+            id,
+            action,
+            readback: readback_path,
+            name,
+        } = shown;
         let invoker = &mut *context.invoker;
-        let disabled = disabled_reason(invoker, context.model, action);
-        let readback = action
-            .readback
-            .as_deref()
-            .and_then(|path| Some((path, latest_text(context.model, path)?)));
-        let mut hover = action.path.clone();
+        let disabled = disabled_reason(invoker, id, action);
+        let readback =
+            readback_path.and_then(|path| Some((path, latest_text(context.model, path)?)));
+        let mut hover = format!("{} on {}", action.path, outpost_name(&id.source));
         if !action.description.is_empty() {
             hover = format!("{}\n{hover}", action.description);
         }
 
         // the inputs, starting from the readback or the defaults
+        let readback_samples = context.model.readback_samples(*readback_path);
         let follows_readback = action.params.len() == 1
             && matches!(action.params[0].kind, ParamKind::Bool | ParamKind::Enum(_))
-            && invoker.follows_readback(&action.path, context.model.readback_samples(&action.path));
-        let readback_value = action
-            .readback
-            .as_deref()
-            .and_then(|path| latest_value(context.model, path));
+            && invoker.follows_readback(id, readback_samples);
+        let readback_value = readback_path.and_then(|path| latest_value(context.model, path));
         let mut values: Vec<Data> = action
             .params
             .iter()
@@ -475,7 +568,7 @@ impl Actions {
 
         let send_button = has_send_button(action);
         let mut change = Change::None;
-        ui.label(name).on_hover_text(&hover);
+        ui.label(*name).on_hover_text(&hover);
         ui.add_enabled_ui(disabled.is_none(), |ui| {
             let input = if action.params.is_empty() {
                 let button = ui.button(format!("{PLAY} Run"));
@@ -500,7 +593,7 @@ impl Actions {
             Some((path, text)) => ui.label(text).on_hover_text(format!("Readback of {path}")),
             None => ui.label(""),
         };
-        outcome_ui(ui, invoker, &action.path, now);
+        outcome_ui(ui, invoker, id, now);
         ui.end_row();
 
         if send_button {
@@ -544,34 +637,51 @@ impl Actions {
             .collect();
         if action.confirm {
             *confirm = Some(Confirmation {
-                path: action.path.clone(),
+                id: id.clone(),
+                readback: readback_path.map(str::to_owned),
                 args,
             });
         } else {
             match change {
-                Change::Dragging => invoker.invoke_dragging(&action.path, args, now),
-                Change::Released => invoker.finish_dragging(&action.path, args, now),
-                _ => invoker.invoke(&action.path, args, now),
+                Change::Dragging => invoker.invoke_dragging(id, *readback_path, args, now),
+                Change::Released => invoker.finish_dragging(id, *readback_path, args, now),
+                _ => invoker.invoke(id, *readback_path, args, now),
             }
         }
     }
 
+    /// Shows the row of a shown action that the outpost it is sent to does not
+    /// announce.
+    fn missing_ui(ui: &mut egui::Ui, row: &Row<'_>, name: &str) {
+        ui.weak(name).on_hover_text(row.path);
+        match row.outpost {
+            Some(outpost) => ui.weak(format!("not announced by {}", outpost_name(outpost))),
+            None => ui.weak("not announced by any outpost"),
+        };
+        ui.end_row();
+    }
+
     /// Asks to confirm the action held in `confirm`, invoking it if confirmed. Run is
     /// disabled while the action cannot be carried out, e.g. once the connection
-    /// ended or the target disabled the action while the dialog was open.
+    /// ended or the outpost disabled the action while the dialog was open.
     fn confirm_ui(ui: &mut egui::Ui, context: &mut ViewContext<'_>, id: egui::Id, now: f64) {
         let Some(confirmation) = ui.data(|data| data.get_temp::<Confirmation>(id)) else {
             return;
         };
         let invoker = &mut *context.invoker;
-        let disabled = match context.model.actions.get(&confirmation.path) {
-            Some(action) => disabled_reason(invoker, context.model, action),
-            None => Some("The target no longer announces the action"),
+        let action = &confirmation.id;
+        let disabled = match context
+            .model
+            .actions
+            .announced(&action.source, &action.path)
+        {
+            Some(descriptor) => disabled_reason(invoker, action, descriptor),
+            None => Some("The outpost no longer announces the action"),
         };
         let mut decided = false;
         egui::Modal::new(id.with("modal")).show(ui.ctx(), |ui| {
             ui.set_max_width(320.0);
-            ui.label(format!("Carry out {}?", confirmation.path));
+            ui.label(format!("Carry out {}?", action.path));
             if let Some(reason) = disabled {
                 ui.weak(reason);
             }
@@ -581,7 +691,8 @@ impl Actions {
                     .add_enabled(disabled.is_none(), egui::Button::new("Run"))
                     .clicked()
                 {
-                    invoker.invoke(&confirmation.path, confirmation.args.clone(), now);
+                    let args = confirmation.args.clone();
+                    invoker.invoke(action, confirmation.readback.as_deref(), args, now);
                     decided = true;
                 }
                 if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -593,112 +704,103 @@ impl Actions {
             ui.data_mut(|data| data.remove::<Confirmation>(id));
         }
     }
-}
 
-impl Viewable for Actions {
-    fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
-        let now = ui.input(|input| input.time);
-        let model = context.model;
-        let (announced, missing) = self.rows(model);
-        if announced.is_empty() && missing.is_empty() {
-            ui.centered_and_justified(|ui| {
-                ui.weak(
-                    if model.actions.is_empty() && context.invoker.connected.is_empty() {
-                        "Connect to a target to see its actions"
-                    } else if model.actions.is_empty() {
-                        "The target announced no actions"
-                    } else {
-                        "Choose the actions to show in the properties"
-                    },
-                );
-            });
-            return;
+    /// Shows a dropdown to choose the outpost the action at `path` is sent to among
+    /// those announcing it. One chosen before that no longer announces it is listed
+    /// greyed out.
+    fn outpost_ui(&mut self, ui: &mut egui::Ui, model: &Model, path: &str) {
+        let mut sources: Vec<&str> = model
+            .actions
+            .announcers(path)
+            .map(|action| action.source.as_str())
+            .collect();
+        let current = self.outpost(model, path).map(str::to_owned);
+        if let Some(current) = &current
+            && !sources.contains(&current.as_str())
+        {
+            sources.push(current);
         }
-        let paths = announced
-            .iter()
-            .map(|action| action.path.as_str())
-            .chain(missing.iter().copied());
-        let names = short_names(paths);
-        let confirm_id = ui.id().with("confirm");
-        let mut confirm = None;
-        egui::ScrollArea::both()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                egui::Frame::NONE.inner_margin(8.0).show(ui, |ui| {
-                    egui::Grid::new(ui.id().with("actions"))
-                        .num_columns(4)
-                        .spacing([12.0, 8.0])
-                        .show(ui, |ui| {
-                            for (action, name) in announced.iter().zip(&names) {
-                                self.action_ui(ui, context, action, name, now, &mut confirm);
-                            }
-                            for (path, name) in missing.iter().zip(&names[announced.len()..]) {
-                                ui.weak(*name).on_hover_text(*path);
-                                ui.weak("not announced by the target");
-                                ui.end_row();
-                            }
-                        });
-                });
-            });
-        if let Some(confirmation) = confirm {
-            ui.data_mut(|data| data.insert_temp(confirm_id, confirmation));
+        let text = |source: &str| {
+            let text = RichText::new(outpost_name(source));
+            let announces = model.actions.announced(source, path).is_some();
+            if announces { text } else { text.weak() }
+        };
+        let selected = match &current {
+            Some(current) => text(current),
+            None => RichText::new("none").weak(),
+        };
+        let mut chosen = None;
+        egui::ComboBox::from_id_salt(("action outpost", path))
+            .selected_text(selected)
+            .width(PROPERTY_WIDTH)
+            .truncate()
+            .show_ui(ui, |ui| {
+                for &source in &sources {
+                    let selected = current.as_deref() == Some(source);
+                    if ui.selectable_label(selected, text(source)).clicked() {
+                        chosen = Some(source.to_owned());
+                    }
+                }
+            })
+            .response
+            .on_hover_text("The outpost the action is sent to, by default the first announcing it");
+        if let Some(source) = chosen {
+            self.outposts.insert(path.to_owned(), source);
         }
-        Self::confirm_ui(ui, context, confirm_id, now);
     }
 
-    fn properties_ui(&mut self, ui: &mut egui::Ui, model: &Model) {
-        properties_section(ui, "Actions", |ui| {
-            let mut all = self.shown.is_none();
-            super::choice_row(ui, "Show", &mut all, &[(true, "All"), (false, "Chosen")]);
-            if all != self.shown.is_none() {
-                self.shown = (!all).then(|| model.actions.iter().map(|a| a.path.clone()).collect());
-            }
-        });
-        if let Some(shown) = &mut self.shown {
-            properties_section(ui, "Shown actions", |ui| {
-                let paths: Vec<String> = model
-                    .actions
-                    .iter()
-                    .map(|action| action.path.clone())
-                    .chain(
-                        shown
-                            .iter()
-                            .filter(|p| model.actions.get(p).is_none())
-                            .cloned(),
-                    )
-                    .collect();
-                if paths.is_empty() {
-                    ui.weak("The target announced no actions");
-                    ui.end_row();
-                }
-                for path in paths {
-                    let mut checked = shown.contains(&path);
-                    let announced = model.actions.get(&path).is_some();
-                    let text = if announced {
-                        egui::RichText::new(&path)
-                    } else {
-                        egui::RichText::new(&path).weak()
-                    };
-                    if ui.checkbox(&mut checked, text).changed() {
-                        if checked {
-                            shown.insert(path);
-                        } else {
-                            shown.remove(&path);
-                        }
-                    }
-                    ui.end_row();
-                }
-            });
+    /// Shows a dropdown to choose the readback trace of the action at `path` among the
+    /// traces, or none. One chosen before that was not received is listed greyed out.
+    /// Choosing the readback the outpost announces follows its announcement again.
+    fn readback_ui(&mut self, ui: &mut egui::Ui, model: &Model, path: &str) {
+        let announced = self
+            .announced(model, path)
+            .and_then(|action| action.readback.as_deref());
+        let current = self.readback(path, announced);
+        let mut options: Vec<Option<&str>> = std::iter::once(None)
+            .chain(model.traces.iter().map(|trace| Some(trace.path.as_str())))
+            .collect();
+        if !options.contains(&current) {
+            options.push(current);
         }
-
-        let bounded: Vec<(String, String)> = model
-            .actions
-            .iter()
-            .filter(|action| {
-                self.shown
-                    .as_ref()
-                    .is_none_or(|shown| shown.contains(&action.path))
+        let text = |option: Option<&str>| match option {
+            None => RichText::new("None"),
+            Some(trace) if model.traces.get(trace).is_some() => RichText::new(trace),
+            Some(trace) => RichText::new(trace).weak(),
+        };
+        let mut chosen = None;
+        egui::ComboBox::from_id_salt(("action readback", path))
+            .selected_text(text(current))
+            .width(PROPERTY_WIDTH)
+            .truncate()
+            .show_ui(ui, |ui| {
+                for &option in &options {
+                    if ui.selectable_label(option == current, text(option)).clicked() {
+                        chosen = Some(option.map(str::to_owned));
+                    }
+                }
             })
+            .response
+            .on_hover_text(
+                "The trace showing the state the action sets, by default the one its outpost announces",
+            );
+        match chosen {
+            Some(chosen) if chosen.as_deref() == announced => {
+                self.readbacks.remove(path);
+            }
+            Some(chosen) => {
+                self.readbacks.insert(path.to_owned(), chosen);
+            }
+            None => {}
+        }
+    }
+
+    /// Shows whether the numbers with a minimum and a maximum of the actions at
+    /// `paths` are entered with a slider or a field.
+    fn number_inputs_ui(&mut self, ui: &mut egui::Ui, model: &Model, paths: &[String]) {
+        let bounded: Vec<(&ActionDescriptor, &str)> = paths
+            .iter()
+            .filter_map(|path| self.announced(model, path))
             .flat_map(|action| {
                 action.params.iter().filter_map(move |param| {
                     let bounded = match param.kind {
@@ -706,28 +808,24 @@ impl Viewable for Actions {
                         ParamKind::Float { min, max, .. } => min.is_some() && max.is_some(),
                         _ => false,
                     };
-                    bounded.then(|| (action.path.clone(), param.name.clone()))
+                    bounded.then_some((action, param.name.as_str()))
                 })
             })
             .collect();
         if bounded.is_empty() {
             return;
         }
-        let names = short_names(bounded.iter().map(|(path, _)| path.as_str()));
+        let names = short_names(bounded.iter().map(|(action, _)| action.path.as_str()));
         properties_section(ui, "Number inputs", |ui| {
-            for ((path, param), name) in bounded.iter().zip(names) {
-                let key = format!("{path}:{param}");
+            for ((action, param), name) in bounded.iter().zip(names) {
+                let key = format!("{}:{param}", action.path);
                 let mut field = self.fields.contains(&key);
-                let single = model
-                    .actions
-                    .get(path)
-                    .is_some_and(|action| action.params.len() == 1);
-                let label = if single {
+                let label = if action.params.len() == 1 {
                     name.to_owned()
                 } else {
                     format!("{name} {param}")
                 };
-                ui.label(label).on_hover_text(path);
+                ui.label(label).on_hover_text(&action.path);
                 ui.horizontal(|ui| {
                     ui.selectable_value(&mut field, false, "Slider");
                     ui.selectable_value(&mut field, true, "Field");
@@ -743,10 +841,96 @@ impl Viewable for Actions {
     }
 }
 
+impl Viewable for Actions {
+    fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
+        let now = ui.input(|input| input.time);
+        let model = context.model;
+        let rows = self.rows(model);
+        if rows.is_empty() {
+            ui.centered_and_justified(|ui| {
+                ui.weak(
+                    if model.actions.is_empty() && context.invoker.connected.is_empty() {
+                        "Connect to an outpost to see its actions"
+                    } else if model.actions.is_empty() {
+                        "The outposts announced no actions"
+                    } else {
+                        "Check the actions to show in the tree on the left"
+                    },
+                );
+            });
+            return;
+        }
+        let names = short_names(rows.iter().map(|row| row.path));
+        let confirm_id = ui.id().with("confirm");
+        let mut confirm = None;
+        egui::ScrollArea::both()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                egui::Frame::NONE.inner_margin(8.0).show(ui, |ui| {
+                    egui::Grid::new(ui.id().with("actions"))
+                        .num_columns(4)
+                        .spacing([12.0, 8.0])
+                        .show(ui, |ui| {
+                            for (row, name) in rows.iter().zip(&names) {
+                                let (Some(outpost), Some(action)) = (row.outpost, row.action)
+                                else {
+                                    Self::missing_ui(ui, row, name);
+                                    continue;
+                                };
+                                let announced = action.readback.as_deref();
+                                let shown = Shown {
+                                    id: ActionId::new(outpost, row.path),
+                                    action,
+                                    readback: self.readback(row.path, announced),
+                                    name,
+                                };
+                                self.action_ui(ui, context, &shown, now, &mut confirm);
+                            }
+                        });
+                });
+            });
+        if let Some(confirmation) = confirm {
+            ui.data_mut(|data| data.insert_temp(confirm_id, confirmation));
+        }
+        Self::confirm_ui(ui, context, confirm_id, now);
+    }
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, model: &Model) {
+        let paths: Vec<String> = self
+            .rows(model)
+            .iter()
+            .map(|row| row.path.to_owned())
+            .collect();
+        if paths.is_empty() {
+            properties_section(ui, "Actions", |ui| {
+                ui.weak("Check the actions to show in the tree on the left");
+                ui.end_row();
+            });
+            return;
+        }
+        let names = short_names(paths.iter().map(String::as_str));
+        properties_section(ui, "Outposts", |ui| {
+            for (path, name) in paths.iter().zip(&names) {
+                ui.label(*name).on_hover_text(path);
+                self.outpost_ui(ui, model, path);
+                ui.end_row();
+            }
+        });
+        properties_section(ui, "Readbacks", |ui| {
+            for (path, name) in paths.iter().zip(&names) {
+                ui.label(*name).on_hover_text(path);
+                self.readback_ui(ui, model, path);
+                ui.end_row();
+            }
+        });
+        self.number_inputs_ui(ui, model, &paths);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use egui_kittest::kittest::Queryable;
+    use egui_kittest::kittest::{NodeT, Queryable};
 
     fn param(kind: ParamKind) -> Param {
         Param {
@@ -851,13 +1035,17 @@ mod tests {
         }
     }
 
+    /// A harness showing a view of `actions`, announced by the connection without a
+    /// name.
     fn harness(actions: Vec<ActionDescriptor>) -> egui_kittest::Harness<'static, State> {
+        let mut view = Actions::new();
+        view.shown = actions.iter().map(|action| action.path.clone()).collect();
         let mut model = Model::default();
         model.actions.set("", actions);
         let mut invoker = Invoker::default();
         invoker.connected.insert(String::new());
         let state = State {
-            view: Actions::new(),
+            view,
             model,
             invoker,
             time: crate::app::time::TimeRange::default(),
@@ -885,7 +1073,18 @@ mod tests {
             .invoker
             .take_outbox()
             .into_iter()
-            .map(|proto::Request::Invoke(invocation)| (invocation.path, invocation.args))
+            .map(|(_, proto::Request::Invoke(invocation))| (invocation.path, invocation.args))
+            .collect()
+    }
+
+    /// The connections and paths of the invocations sent since the last call.
+    fn sent_to(harness: &mut egui_kittest::Harness<'_, State>) -> Vec<(String, String)> {
+        harness
+            .state_mut()
+            .invoker
+            .take_outbox()
+            .into_iter()
+            .map(|(source, proto::Request::Invoke(invocation))| (source, invocation.path))
             .collect()
     }
 
@@ -968,7 +1167,7 @@ mod tests {
         harness.get_by_label("Run").click();
         harness.run_steps(2);
         assert!(sent(&mut harness).is_empty());
-        harness.get_by_label("The target cannot carry out the action now");
+        harness.get_by_label("The outpost cannot carry out the action now");
     }
 
     #[test]
@@ -1002,11 +1201,202 @@ mod tests {
     #[test]
     fn chosen_actions_show_also_when_not_announced() {
         let mut harness = harness(vec![action("a", vec![]), action("b", vec![])]);
-        harness.state_mut().view.shown = Some(["b".to_owned(), "gone".to_owned()].into());
+        harness.state_mut().view.shown = ["b".to_owned(), "gone".to_owned()].into();
         harness.run_steps(2);
         assert!(harness.query_by_label("a").is_none());
         harness.get_by_label("b");
-        harness.get_by_label("not announced by the target");
+        harness.get_by_label("not announced by any outpost");
+        // an action whose chosen outpost does not announce it
+        let view = &mut harness.state_mut().view;
+        view.outposts.insert("b".to_owned(), "robby".to_owned());
+        harness.run_steps(2);
+        harness.get_by_label("not announced by robby");
+    }
+
+    #[test]
+    fn only_the_actions_checked_in_the_tree_show() {
+        let mut harness = harness(vec![action("a", vec![])]);
+        harness.state_mut().view.shown.clear();
+        harness.run_steps(2);
+        harness.get_by_label("Check the actions to show in the tree on the left");
+    }
+
+    #[test]
+    fn actions_are_sent_to_the_chosen_outpost() {
+        let mut harness = harness(vec![]);
+        let state = harness.state_mut();
+        state.model.actions.set("a", vec![action("reset", vec![])]);
+        state.model.actions.set("b", vec![action("reset", vec![])]);
+        state.view.shown = ["reset".to_owned()].into();
+        state.invoker.connected = ["a".to_owned(), "b".to_owned()].into();
+        harness.run_steps(2);
+        let run = format!("{PLAY} Run");
+        // by default to the first outpost announcing it
+        harness.get_by_label(&run).click();
+        harness.run_steps(2);
+        assert_eq!(
+            sent_to(&mut harness),
+            [("a".to_owned(), "reset".to_owned())]
+        );
+
+        harness.state_mut().view.outposts = [("reset".to_owned(), "b".to_owned())].into();
+        harness.run_steps(2);
+        harness.get_by_label(&run).click();
+        harness.run_steps(2);
+        assert_eq!(
+            sent_to(&mut harness),
+            [("b".to_owned(), "reset".to_owned())]
+        );
+
+        // disabled while the chosen outpost is not connected, also if another is
+        harness.state_mut().invoker.connected.remove("b");
+        harness.run_steps(2);
+        assert!(harness.get_by_label(&run).accesskit_node().is_disabled());
+    }
+
+    #[test]
+    fn the_chosen_readback_shows_and_starts_the_inputs() {
+        let readback = |path: &str| ActionDescriptor {
+            readback: Some(path.to_owned()),
+            ..action("enable", vec![named("on", ParamKind::Bool)])
+        };
+        let mut harness = harness(vec![readback("announced")]);
+        let model = &mut harness.state_mut().model;
+        for (path, value) in [("announced", false), ("chosen", true)] {
+            model.traces.append(&proto::Value {
+                timestamp: 0,
+                path: path.to_owned(),
+                value: Data::Bool(value),
+            });
+        }
+        let checked = |harness: &egui_kittest::Harness<'_, State>| {
+            let checkbox = harness.get_by_role(egui::accesskit::Role::CheckBox);
+            checkbox.accesskit_node().toggled() == Some(egui::accesskit::Toggled::True)
+        };
+        harness.run_steps(2);
+        harness.get_by_label("false");
+        assert!(!checked(&harness));
+
+        let view = &mut harness.state_mut().view;
+        view.readbacks
+            .insert("enable".to_owned(), Some("chosen".to_owned()));
+        harness.run_steps(2);
+        harness.get_by_label("true");
+        assert!(checked(&harness));
+
+        // no readback
+        let view = &mut harness.state_mut().view;
+        view.readbacks.insert("enable".to_owned(), None);
+        harness.run_steps(2);
+        assert!(harness.query_by_label("true").is_none());
+        assert!(harness.query_by_label("false").is_none());
+    }
+
+    /// A harness showing the properties of an actions view showing "speed", which the
+    /// connections "a" and "b" announce, "a" with the readback "rpm", and the traces
+    /// "rpm" and "temp".
+    fn properties_harness() -> egui_kittest::Harness<'static, (Actions, Model)> {
+        let mut model = Model::default();
+        let speed = |readback: Option<&str>| ActionDescriptor {
+            readback: readback.map(str::to_owned),
+            ..action("speed", vec![])
+        };
+        model.actions.set("a", vec![speed(Some("rpm"))]);
+        model.actions.set("b", vec![speed(None)]);
+        for path in ["rpm", "temp"] {
+            model.traces.append(&proto::Value {
+                timestamp: 0,
+                path: path.to_owned(),
+                value: Data::Uint(1),
+            });
+        }
+        let mut view = Actions::new();
+        view.shown.insert("speed".to_owned());
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(300.0, 600.0))
+            .build_ui_state(
+                |ui, (view, model): &mut (Actions, Model)| view.properties_ui(ui, model),
+                (view, model),
+            );
+        harness.run();
+        harness
+    }
+
+    /// Opens the dropdown showing `selected` and clicks its option `option`.
+    fn choose(
+        harness: &mut egui_kittest::Harness<'_, (Actions, Model)>,
+        selected: &str,
+        option: &str,
+    ) {
+        harness
+            .get_by(|node| {
+                node.role() == egui::accesskit::Role::ComboBox
+                    && node.value().as_deref() == Some(selected)
+            })
+            .click();
+        harness.run();
+        harness
+            .get_all_by_label(option)
+            .last()
+            .expect("the option is listed")
+            .click();
+        harness.run();
+    }
+
+    #[test]
+    fn the_outpost_of_an_action_is_chosen_among_those_announcing_it() {
+        let mut harness = properties_harness();
+        choose(&mut harness, "a", "b");
+        let view = &harness.state().0;
+        assert_eq!(view.outposts.get("speed").map(String::as_str), Some("b"));
+        // the readback follows the outpost, which announces none
+        harness.get_by(|node| {
+            node.role() == egui::accesskit::Role::ComboBox
+                && node.value().as_deref() == Some("None")
+        });
+
+        // a chosen outpost that is gone is still listed
+        harness.state_mut().0.outposts = [("speed".to_owned(), "gone".to_owned())].into();
+        harness.run();
+        choose(&mut harness, "gone", "a");
+        let view = &harness.state().0;
+        assert_eq!(view.outposts.get("speed").map(String::as_str), Some("a"));
+    }
+
+    #[test]
+    fn the_readback_of_an_action_is_chosen_among_the_traces() {
+        let mut harness = properties_harness();
+        choose(&mut harness, "rpm", "temp");
+        let readbacks = |harness: &egui_kittest::Harness<'_, (Actions, Model)>| {
+            harness.state().0.readbacks.clone()
+        };
+        assert_eq!(
+            readbacks(&harness),
+            [("speed".to_owned(), Some("temp".to_owned()))].into()
+        );
+        choose(&mut harness, "temp", "None");
+        assert_eq!(readbacks(&harness), [("speed".to_owned(), None)].into());
+        // choosing the announced readback follows the announcement again
+        choose(&mut harness, "None", "rpm");
+        assert!(readbacks(&harness).is_empty());
+    }
+
+    #[test]
+    fn layouts_of_older_versions_load() {
+        let all: Actions = serde_json::from_str(r#"{"shown": null, "fields": []}"#).unwrap();
+        assert!(all.shown.is_empty() && all.outposts.is_empty());
+        let chosen: Actions = serde_json::from_str(r#"{"shown": ["a"]}"#).unwrap();
+        assert_eq!(chosen.shown, ["a".to_owned()].into());
+
+        let mut view = Actions::new();
+        view.outposts.insert("a".to_owned(), "robby".to_owned());
+        view.readbacks.insert("a".to_owned(), None);
+        view.readbacks
+            .insert("b".to_owned(), Some("rpm".to_owned()));
+        let json = serde_json::to_string(&view).unwrap();
+        let loaded: Actions = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.outposts, view.outposts);
+        assert_eq!(loaded.readbacks, view.readbacks);
     }
 
     #[test]
