@@ -3,8 +3,10 @@ mod files;
 mod layout;
 mod model;
 mod time;
+mod toasts;
 mod view;
 
+use connections::Received;
 use eframe::Frame;
 use egui::{Context, Key, KeyboardShortcut, Modifiers};
 use std::collections::BTreeMap;
@@ -45,10 +47,35 @@ impl State {
         }
     }
 
+    /// Applies what the connections received at the time `now`. Returns whether the
+    /// first connection opened, which starts afresh with no data, unless recording.
+    fn apply(&mut self, received: Received<'_>, now: f64) -> bool {
+        match received {
+            Received::FirstOpened if !self.recording => {
+                self.start_fresh(model::Model::default());
+                true
+            }
+            Received::FirstOpened => false,
+            Received::Message { source, message } => {
+                self.receive(source, message, now);
+                false
+            }
+        }
+    }
+
     /// Removes the received data, see [`model::Model::clear`].
     fn clear_data(&mut self) {
         self.model.clear();
         self.invoker.forget_readback_marks();
+    }
+
+    /// Starts afresh with `model`, e.g. of an opened recording: drops all data, also the
+    /// descriptions of the targets that [`Self::clear_data`] keeps, stops recording and
+    /// forgets the invocations.
+    fn start_fresh(&mut self, model: model::Model) {
+        self.recording = false;
+        self.invoker.reset();
+        self.model = model;
     }
 
     /// Starts or stops recording. A recording starts only while `connected`, clears the
@@ -112,11 +139,15 @@ pub struct App {
     /// The search of the traces panel.
     #[serde(skip)]
     trace_search: String,
+    /// Counts the fresh starts of the traces panel. The state of its widgets, e.g.
+    /// which branches of the tree are open, is kept apart per start, see
+    /// [`Self::reset_traces_panel`].
+    traces_generation: u64,
     #[serde(skip)]
     files: files::Files,
-    /// A message for the user, e.g. why a file could not be opened.
+    /// The notices for the user, e.g. why a file could not be opened.
     #[serde(skip)]
-    notice: Option<String>,
+    toasts: toasts::Toasts,
 }
 
 impl App {
@@ -223,18 +254,43 @@ impl App {
         }
     }
 
+    /// Starts the traces panel anew for other traces, e.g. of an opened recording: the
+    /// search is cleared and the tree is scrolled to the top with its branches open.
+    fn reset_traces_panel(&mut self) {
+        self.trace_search.clear();
+        self.traces_generation += 1;
+    }
+
+    /// The traces panel, with the state of its widgets apart from that of other
+    /// generations.
+    fn traces_panel_ui(&mut self, ui: &mut egui::Ui) {
+        ui.push_id(self.traces_generation, |ui| self.traces_ui(ui));
+    }
+
+    /// Receives from the connections at the time `now`. The first connection to open
+    /// starts afresh, see [`State::apply`].
+    fn receive(&mut self, now: f64) {
+        let state = &mut self.state;
+        let mut fresh = false;
+        self.connections
+            .receive(|received| fresh |= state.apply(received, now));
+        if fresh {
+            self.reset_traces_panel();
+        }
+    }
+
     fn save_recording(&mut self) {
         let name = format!("{}.blip", chrono::Local::now().format("%Y-%m-%d-%H%M%S"));
         let file = self.state.model.recording.to_file();
         if let Err(error) = files::save(files::Kind::Recording, &name, &file) {
-            self.notice = Some(error);
+            self.toasts.error(error);
         }
     }
 
     fn save_layout(&mut self) {
         let file = serde_json::to_vec_pretty(&self.layout.to_file()).expect("layouts are JSON");
         if let Err(error) = files::save(files::Kind::Layout, "layout.json", &file) {
-            self.notice = Some(error);
+            self.toasts.error(error);
         }
     }
 
@@ -247,12 +303,11 @@ impl App {
             })
             .map_err(|error| format!("{} cannot be opened: {error}", file.name))?;
             self.connections.disconnect_all();
-            self.state.recording = false;
-            self.state.invoker.reset();
-            self.state.model = model;
+            self.state.start_fresh(model);
+            self.reset_traces_panel();
             self.state.time.fit(&self.state.model);
             if let Some(problem) = loaded.problem {
-                self.notice = Some(format!(
+                self.toasts.warning(format!(
                     "{} was opened up to message {}, {problem}",
                     file.name, loaded.messages
                 ));
@@ -282,26 +337,6 @@ impl App {
                 continue;
             }
             self.connections.send(&source, &request);
-        }
-    }
-
-    /// Shows the notice, if any, until the user closes it.
-    fn notice_ui(&mut self, ctx: &Context) {
-        let Some(notice) = &self.notice else {
-            return;
-        };
-        let modal = egui::Modal::new(egui::Id::new("notice")).show(ctx, |ui| {
-            ui.set_max_width(400.0);
-            ui.label(notice);
-            ui.add_space(8.0);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                if ui.button("OK").clicked() {
-                    ui.close();
-                }
-            });
-        });
-        if modal.should_close() {
-            self.notice = None;
         }
     }
 
@@ -341,15 +376,17 @@ impl eframe::App for App {
 
     fn logic(&mut self, ctx: &Context, _frame: &mut Frame) {
         let now = ctx.input(|input| input.time);
+        self.receive(now);
         let state = &mut self.state;
-        self.connections
-            .receive(|source, frame| state.receive(source, frame, now));
         state.invoker.connected = self.connections.open_names();
         state.invoker.update(now);
+        for error in self.connections.take_errors() {
+            self.toasts.error(error);
+        }
         self.files.receive_dropped(ctx);
         while let Some(file) = self.files.try_recv() {
             if let Err(error) = file.and_then(|file| self.open(&file)) {
-                self.notice = Some(error);
+                self.toasts.error(error);
             }
         }
     }
@@ -374,7 +411,7 @@ impl eframe::App for App {
                     .resizable(true)
                     .default_size(250.0)
                     .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(0, 4)))
-                    .show(ui, |ui| self.traces_ui(ui));
+                    .show(ui, |ui| self.traces_panel_ui(ui));
                 ui.add_space(4.0);
                 self.layout.panel_ui(ui);
             });
@@ -388,12 +425,12 @@ impl eframe::App for App {
                     .resizable(true)
                     .default_size(160.0)
                     .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(0, 4)))
-                    .show(ui, |ui| self.connections.ui(ui));
+                    .show(ui, |ui| self.connections.ui(ui, self.state.recording));
                 ui.add_space(4.0);
                 self.layout.properties_ui(ui, &self.state.model);
             });
 
-        egui::CentralPanel::default()
+        let central = egui::CentralPanel::default()
             .frame(egui::Frame::central_panel(ui.style()).inner_margin(egui::Margin::ZERO))
             .show(ui, |ui| {
                 let mut context = ViewContext {
@@ -410,7 +447,7 @@ impl eframe::App for App {
                 .request_repaint_after_secs(model::actions::DRAG_INTERVAL as f32);
         }
 
-        self.notice_ui(ui.ctx());
+        self.toasts.ui(ui.ctx(), central.response.rect);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -466,17 +503,25 @@ mod tests {
     use super::*;
 
     fn value(timestamp: u64) -> Vec<u8> {
+        value_of("rpm", timestamp)
+    }
+
+    fn value_of(path: &str, timestamp: u64) -> Vec<u8> {
         serde_cbor_2::to_vec(&proto::Message::Value(proto::Value {
             timestamp,
-            path: "rpm".to_owned(),
+            path: path.to_owned(),
             value: proto::Data::Uint(1),
         }))
         .unwrap()
     }
 
     fn unit() -> Vec<u8> {
+        unit_of("rpm")
+    }
+
+    fn unit_of(path: &str) -> Vec<u8> {
         serde_cbor_2::to_vec(&proto::Message::ValueMetadata(proto::ValueMetadata {
-            path: "rpm".to_owned(),
+            path: path.to_owned(),
             unit: "rpm".to_owned(),
         }))
         .unwrap()
@@ -539,7 +584,7 @@ mod tests {
     }
 
     #[test]
-    fn opening_a_recording_stops_recording() {
+    fn opening_a_recording_stops_recording_and_starts_afresh() {
         let mut recorded = model::Model::default();
         recorded.receive("a", &value(1));
         let file = files::File {
@@ -547,9 +592,94 @@ mod tests {
             bytes: recorded.recording.to_file(),
         };
         let mut app = App::default();
+        app.state.receive("old", &unit_of("temp"), 0.0);
         app.state.recording = true;
+        app.trace_search = "temp".to_owned();
+        let generation = app.traces_generation;
         app.open(&file).unwrap();
         assert!(!app.state.recording);
         assert!(app.state.model.has_samples());
+        assert!(app.trace_search.is_empty());
+        assert_ne!(app.traces_generation, generation);
+        // the unit before is gone: clearing the data, which keeps the units and
+        // actions to record them again, has none of the recording file to keep
+        app.state.clear_data();
+        assert_eq!(app.state.model.recording.messages(), 0);
+    }
+
+    #[test]
+    fn the_first_connection_to_open_starts_afresh_unless_recording() {
+        let mut state = State::default();
+        state.set_recording(true, true);
+        state.receive("old", &unit(), 0.0);
+        state.receive("old", &value(1), 0.0);
+        // a connection opening while recording keeps the recording going
+        assert!(!state.apply(Received::FirstOpened, 0.0));
+        assert!(state.recording && state.model.has_samples());
+
+        state.set_recording(false, false);
+        assert!(state.apply(Received::FirstOpened, 0.0));
+        assert!(state.model.traces.iter().next().is_none());
+        assert_eq!(state.model.recording.messages(), 0);
+        let message = unit();
+        let received = Received::Message {
+            source: "new",
+            message: &message,
+        };
+        assert!(!state.apply(received, 0.0));
+        // a recording starts with the unit of the new connection only, not the old one
+        state.set_recording(true, true);
+        assert_eq!(state.model.recording.messages(), 1);
+    }
+
+    #[test]
+    fn starting_afresh_opens_the_branches_of_the_traces_again() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+
+        let mut app = App::default();
+        app.layout.select_view_showing_traces();
+        app.state.set_recording(true, true);
+        app.state.receive("a", &value_of("motor/rpm", 1), 0.0);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(300.0, 400.0))
+            .build_ui_state(|ui, app: &mut App| app.traces_panel_ui(ui), app);
+        harness.run();
+        assert!(harness.query_by_label_contains("rpm").is_some());
+
+        // collapse the branch with its button left of its checkbox
+        let motor = harness.get_by_label("motor").rect();
+        let spacing = egui::Spacing::default();
+        let x = motor.left() - spacing.item_spacing.x - spacing.indent / 2.0;
+        let toggle = egui::pos2(x, motor.center().y);
+        harness.hover_at(toggle);
+        harness.drag_at(toggle);
+        harness.drop_at(toggle);
+        harness.run_steps(20);
+        assert!(harness.query_by_label_contains("rpm").is_none());
+
+        harness.state_mut().reset_traces_panel();
+        harness.run();
+        assert!(harness.query_by_label_contains("rpm").is_some());
+    }
+
+    #[test]
+    fn a_recording_opened_in_part_is_toasted() {
+        let mut recorded = model::Model::default();
+        for timestamp in 0..1000 {
+            recorded.receive("a", &value(timestamp));
+        }
+        let mut bytes = recorded.recording.to_file();
+        bytes.truncate(bytes.len() / 2);
+        let file = files::File {
+            name: "a.blip".to_owned(),
+            bytes,
+        };
+        let mut app = App::default();
+        app.open(&file).unwrap();
+        let shown = app.toasts.shown();
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown[0].0, toasts::Level::Warning);
+        assert!(shown[0].1.starts_with("a.blip was opened up to message"));
     }
 }

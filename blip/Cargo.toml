@@ -63,3 +63,4 @@ workspace = true
 
 [dev-dependencies]
 egui_kittest = "0.36.2"
+tungstenite = "0.24.0" # a WebSocket server to connect to, as ewebsock uses natively

@@ -113,16 +113,32 @@ Test Cases
    above ``i64::MAX``, reject integers that do not fit with the others, and
    write them in every number format.
 
+.. test:: Connections are edited, opened and their errors notified
+   :id: TEST_BLIP_CONNECTIONS
+   :status: implemented
+   :component: blip
+   :verifies: REQ_CONN_WS, REQ_CONN_ERRORS
+
+   ``blip/src/app/connections.rs``, ``blip/src/app/toasts.rs`` and
+   ``blip/src/app.rs`` tests -- name connections after their address, add
+   them with the + button, open several at once, pass on when the first one
+   opens before its messages and start afresh then unless recording, keep
+   them from being changed while recording, report why an invalid
+   address fails to connect, show errors and warnings as toasts until they
+   expire or are closed, count a repeated one instead of stacking it, and
+   warn when a recording is opened in part.
+
 .. test:: Recordings are saved and opened
    :id: TEST_BLIP_RECORDING
    :status: implemented
    :component: blip
    :verifies: REQ_FILE_RECORDING
 
-   ``blip/src/app/model/recording.rs`` tests -- save frames and read them
-   back unchanged, read uncompressed files, files of several gzip members and
-   files written by the Python outpost, read a cut off file up to the cut and
-   reject other files.
+   ``blip/src/app/model/recording.rs`` and ``blip/src/app.rs`` tests -- save
+   frames and read them back unchanged, read uncompressed files, files of
+   several gzip members and files written by the Python outpost, read a cut
+   off file up to the cut and reject other files; open a recording in place
+   of the data and units before, and with the traces panel started anew.
 
 .. test:: Layouts are saved as JSON
    :id: TEST_BLIP_LAYOUT_FILE

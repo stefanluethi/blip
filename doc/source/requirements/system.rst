@@ -109,8 +109,21 @@ Connectivity
    blip shall connect to user-configurable WebSocket addresses, several at
    once, and receive messages as binary frames. It shall show the paths of
    traces, logs and actions as the targets send them, leaving their
-   organization to the user, and keep the connection each action was
-   announced by to send it there.
+   organization to the user, and send each action to the connection chosen
+   for it among those announcing it. While recording, blip shall keep the
+   user from connecting, disconnecting and editing the connections. A
+   connection opening while no other is open shall start afresh, without the
+   data, traces and actions received or opened before.
+
+.. req:: Notify errors
+   :id: REQ_CONN_ERRORS
+   :status: implemented
+   :component: blip
+   :satisfies: STK_LIVE_OBSERVE
+
+   blip shall tell the user when connecting fails, a connection breaks or is
+   closed by the other end, and when a file cannot be opened or saved, with a
+   notice that disappears on its own.
 
 .. req:: CBOR wire protocol
    :id: REQ_PROTO_CBOR
@@ -245,7 +258,7 @@ Files
 
    blip shall save the messages received since the data was last cleared to
    a recording file, and open recording files, showing their data as if it
-   had been received.
+   had been received, in place of all data, traces and actions before.
 
 .. req:: Save and open layouts
    :id: REQ_FILE_LAYOUT

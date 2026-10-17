@@ -7,6 +7,9 @@ use std::collections::{HashMap, HashSet};
 /// Where an outpost started with its defaults listens.
 const DEFAULT_ADDRESS: &str = "ws://127.0.0.1:3000/ws/outpost";
 
+/// Why the connections are disabled while recording.
+const RECORDING_HINT: &str = "Stop recording to change the connections";
+
 const CONNECTED_COLOR: egui::Color32 = egui::Color32::from_rgb(39, 174, 96);
 const FAILED_COLOR: egui::Color32 = egui::Color32::from_rgb(235, 87, 87);
 
@@ -21,6 +24,9 @@ pub struct Connections {
     /// Why connecting to an address failed, until it is connected again.
     #[serde(skip)]
     failed: HashMap<String, String>,
+    /// What went wrong since [`Self::take_errors`] was last called, to tell the user.
+    #[serde(skip)]
+    errors: Vec<String>,
     #[serde(skip)]
     editing: Option<Editing>,
 }
@@ -34,6 +40,7 @@ impl Default for Connections {
             }],
             sockets: vec![],
             failed: HashMap::new(),
+            errors: vec![],
             editing: None,
         }
     }
@@ -56,6 +63,16 @@ struct Socket {
     receiver: ewebsock::WsReceiver,
     /// Whether the connection is open, it is being opened until then.
     open: bool,
+}
+
+/// What [`Connections::receive`] passes on, in the order it arrived.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Received<'a> {
+    /// A connection opened while no other was open: the first one, before any of its
+    /// messages.
+    FirstOpened,
+    /// A message from the connection named `source`.
+    Message { source: &'a str, message: &'a [u8] },
 }
 
 /// The name or address being edited, or the address being added, and the text of its
@@ -130,6 +147,8 @@ impl Connections {
             }),
             Err(error) => {
                 log::warn!("ws cannot connect to {address}: {error}");
+                self.errors
+                    .push(format!("Cannot connect to {address}: {error}"));
                 self.failed.insert(address, error);
             }
         }
@@ -157,22 +176,32 @@ impl Connections {
         }
     }
 
-    /// Passes the name of the connection and each message received since the last call
-    /// to `receive`, ending connections when they are closed or fail. A frame holds one
-    /// message or several as a CBOR sequence, e.g. a batch of a target.
-    pub fn receive(&mut self, mut receive: impl FnMut(&str, &[u8])) {
+    /// Passes each message received since the last call to `receive` with the name of
+    /// its connection, and when the first connection opens, ending connections when they
+    /// are closed or fail. A frame holds one message or several as a CBOR sequence, e.g.
+    /// a batch of a target.
+    pub fn receive(&mut self, mut receive: impl FnMut(Received<'_>)) {
         let failed = &mut self.failed;
+        let errors = &mut self.errors;
+        let mut open = self.sockets.iter().filter(|socket| socket.open).count();
         self.sockets.retain_mut(|socket| {
             while let Some(event) = socket.receiver.try_recv() {
                 match event {
                     ewebsock::WsEvent::Opened => {
                         log::info!("ws connected to {}", socket.address);
+                        if open == 0 {
+                            receive(Received::FirstOpened);
+                        }
+                        open += 1;
                         socket.open = true;
                     }
                     ewebsock::WsEvent::Message(ewebsock::WsMessage::Binary(frame)) => {
                         for message in crate::app::model::cbor_items(&frame) {
                             match message {
-                                Ok(message) => receive(&socket.name, message),
+                                Ok(message) => receive(Received::Message {
+                                    source: &socket.name,
+                                    message,
+                                }),
                                 Err(error) => log::warn!(
                                     "error reading a message of {}: {error}",
                                     socket.address
@@ -187,17 +216,32 @@ impl Connections {
                     ewebsock::WsEvent::Error(error) => {
                         log::warn!("ws error of {}: {error}", socket.address);
                         socket.sender.close();
+                        errors.push(if socket.open {
+                            format!("The connection to {} broke: {error}", socket.address)
+                        } else {
+                            format!("Cannot connect to {}: {error}", socket.address)
+                        });
                         failed.insert(socket.address.clone(), error);
+                        open -= usize::from(socket.open);
                         return false;
                     }
                     ewebsock::WsEvent::Closed => {
                         log::info!("ws disconnected from {}", socket.address);
+                        // the user's disconnecting drops the socket before it is closed
+                        errors.push(format!("{} closed the connection", socket.address));
+                        open -= usize::from(socket.open);
                         return false;
                     }
                 }
             }
             true
         });
+    }
+
+    /// Takes what went wrong since the last call, e.g. why connecting failed, to tell the
+    /// user.
+    pub fn take_errors(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.errors)
     }
 
     /// Sends `request` to the open connection named `name`, or drops it if there is none.
@@ -241,14 +285,18 @@ impl Connections {
         }
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui) {
+    /// Shows the connections to connect, disconnect and edit them, unless `recording`:
+    /// a recording keeps the connections it started with, so they are disabled and an
+    /// edit is dropped.
+    pub fn ui(&mut self, ui: &mut egui::Ui, recording: bool) {
         let mut actions = vec![];
         ui.horizontal(|ui| {
             ui.strong("Connections");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .button(regular::PLUS)
+                    .add_enabled(!recording, egui::Button::new(regular::PLUS))
                     .on_hover_text("Add the WebSocket address of an outpost or target")
+                    .on_disabled_hover_text(RECORDING_HINT)
                     .clicked()
                 {
                     actions.push(Action::StartEdit(Edited::New, Field::Address));
@@ -256,6 +304,9 @@ impl Connections {
             });
         });
 
+        if recording {
+            self.editing = None;
+        }
         let mut editing = self.editing.take();
         egui::ScrollArea::vertical()
             .id_salt("connections")
@@ -268,7 +319,7 @@ impl Connections {
                             Some(editing) if editing.edited == Edited::Connection(index) => {
                                 edit_ui(ui, editing, &mut actions);
                             }
-                            _ => self.row_ui(ui, index, connection, &mut actions),
+                            _ => self.row_ui(ui, index, connection, recording, &mut actions),
                         }
                     });
                 }
@@ -292,12 +343,14 @@ impl Connections {
         }
     }
 
-    /// The row of the connection at `index`, clicking it connects or disconnects it.
+    /// The row of the connection at `index`, clicking it connects or disconnects it,
+    /// disabled while `recording`.
     fn row_ui(
         &self,
         ui: &mut egui::Ui,
         index: usize,
         connection: &Connection,
+        recording: bool,
         actions: &mut Vec<Action>,
     ) {
         let active = self.status(&connection.address).is_active();
@@ -321,13 +374,18 @@ impl Connections {
                 egui::FontSelection::Default,
                 egui::Align::Center,
             );
+        // not highlighted while connected, the status dot shows it
+        let button = egui::Button::new(text)
+            .frame_when_inactive(false)
+            .truncate();
         let response = ui
-            .add(egui::Button::selectable(active, text).truncate())
+            .add_enabled(!recording, button)
             .on_hover_text(if active {
                 "Click to disconnect, right-click to edit"
             } else {
                 "Click to connect, right-click to edit"
-            });
+            })
+            .on_disabled_hover_text(RECORDING_HINT);
         let toggle = || {
             if active {
                 Action::Disconnect(index)
@@ -632,7 +690,7 @@ mod tests {
         let mut harness = Harness::builder()
             .with_size(egui::vec2(300.0, 300.0))
             .build_ui_state(
-                |ui, connections: &mut Connections| connections.ui(ui),
+                |ui, connections: &mut Connections| connections.ui(ui, false),
                 connections(&[]),
             );
         harness.run();
@@ -654,18 +712,124 @@ mod tests {
     }
 
     #[test]
+    fn the_connections_cannot_be_changed_while_recording() {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(300.0, 300.0))
+            .build_ui_state(
+                |ui, (connections, recording): &mut (Connections, bool)| {
+                    connections.ui(ui, *recording);
+                },
+                (connections(&["ws://127.0.0.1:1/a"]), true),
+            );
+        harness.run();
+        harness.get_by_label(regular::PLUS).click();
+        harness.get_by_label_contains("ws://127.0.0.1:1/a").click();
+        harness.run();
+        assert!(harness.state().0.editing.is_none());
+        assert!(harness.state().0.sockets.is_empty());
+
+        harness.state_mut().1 = false;
+        harness.run();
+        harness.get_by_label(regular::PLUS).click();
+        harness.run();
+        assert!(harness.state().0.editing.is_some());
+        // starting to record drops the edit
+        harness.state_mut().1 = true;
+        harness.run();
+        assert!(harness.state().0.editing.is_none());
+        assert_eq!(addresses(&harness.state().0), ["ws://127.0.0.1:1/a"]);
+    }
+
+    #[test]
+    fn a_connected_row_is_not_highlighted() {
+        use egui::accesskit::Toggled;
+        use egui_kittest::kittest::NodeT;
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(300.0, 300.0))
+            .build_ui_state(
+                |ui, connections: &mut Connections| connections.ui(ui, false),
+                connections(&["ws://127.0.0.1:1/a"]),
+            );
+        harness.run();
+        let ctx = harness.ctx.clone();
+        harness.state_mut().apply(Action::Connect(0), &ctx);
+        // the spinner of the connecting row keeps repainting
+        harness.run_steps(2);
+        assert!(harness.state().status("ws://127.0.0.1:1/a").is_active());
+        let row = harness.get_by_label_contains("ws://127.0.0.1:1/a");
+        assert_ne!(row.accesskit_node().toggled(), Some(Toggled::True));
+    }
+
+    /// Serves WebSocket clients one after the other on a free local port, sending each
+    /// `frame` and then reading until the client leaves. Returns the address, ending
+    /// with `path`.
+    fn serve(path: &str, frame: Vec<u8>) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = format!("ws://{}/{path}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut socket) = tungstenite::accept(stream.unwrap()) else {
+                    continue;
+                };
+                socket
+                    .send(tungstenite::Message::Binary(frame.clone()))
+                    .unwrap();
+                while socket.read().is_ok() {}
+            }
+        });
+        address
+    }
+
+    /// What `connections` receive until `count` things arrived, or 5 s passed.
+    fn receive_some(connections: &mut Connections, count: usize) -> Vec<String> {
+        let mut received = vec![];
+        let start = std::time::Instant::now();
+        while received.len() < count && start.elapsed().as_secs() < 5 {
+            connections.receive(|r| {
+                received.push(match r {
+                    Received::FirstOpened => "first opened".to_owned(),
+                    Received::Message { source, message } => format!("{source} {message:?}"),
+                });
+            });
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        received
+    }
+
+    #[test]
+    fn the_first_connection_to_open_is_passed_on_before_its_messages() {
+        let mut connections = connections(&[&serve("a", vec![1]), &serve("b", vec![2])]);
+        let ctx = egui::Context::default();
+        connections.apply(Action::Connect(0), &ctx);
+        assert_eq!(receive_some(&mut connections, 2), ["first opened", "a [1]"]);
+        connections.apply(Action::Connect(1), &ctx);
+        assert_eq!(receive_some(&mut connections, 1), ["b [2]"]);
+
+        connections.apply(Action::Disconnect(0), &ctx);
+        connections.apply(Action::Disconnect(1), &ctx);
+        connections.apply(Action::Connect(1), &ctx);
+        assert_eq!(receive_some(&mut connections, 2), ["first opened", "b [2]"]);
+        assert!(connections.take_errors().is_empty());
+    }
+
+    #[test]
     fn an_invalid_address_fails_to_connect() {
         let mut connections = connections(&["no address"]);
         connections.apply(Action::Connect(0), &egui::Context::default());
         // natively, the error arrives from the thread connecting
         let start = std::time::Instant::now();
         while !connections.sockets.is_empty() && start.elapsed().as_secs() < 5 {
-            connections.receive(|_, _| {});
+            connections.receive(|_| {});
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert!(matches!(
             connections.status("no address"),
             Status::Failed(_)
         ));
+        let errors = connections.take_errors();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].starts_with("Cannot connect to no address: "));
+        assert!(connections.take_errors().is_empty());
     }
 }
