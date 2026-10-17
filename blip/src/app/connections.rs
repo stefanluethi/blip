@@ -7,6 +7,9 @@ use std::collections::{HashMap, HashSet};
 /// Where an outpost started with its defaults listens.
 const DEFAULT_ADDRESS: &str = "ws://127.0.0.1:3000/ws/outpost";
 
+/// Why the connections are disabled while recording.
+const RECORDING_HINT: &str = "Stop recording to change the connections";
+
 const CONNECTED_COLOR: egui::Color32 = egui::Color32::from_rgb(39, 174, 96);
 const FAILED_COLOR: egui::Color32 = egui::Color32::from_rgb(235, 87, 87);
 
@@ -261,14 +264,18 @@ impl Connections {
         }
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui) {
+    /// Shows the connections to connect, disconnect and edit them, unless `recording`:
+    /// a recording keeps the connections it started with, so they are disabled and an
+    /// edit is dropped.
+    pub fn ui(&mut self, ui: &mut egui::Ui, recording: bool) {
         let mut actions = vec![];
         ui.horizontal(|ui| {
             ui.strong("Connections");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .button(regular::PLUS)
+                    .add_enabled(!recording, egui::Button::new(regular::PLUS))
                     .on_hover_text("Add the WebSocket address of an outpost or target")
+                    .on_disabled_hover_text(RECORDING_HINT)
                     .clicked()
                 {
                     actions.push(Action::StartEdit(Edited::New, Field::Address));
@@ -276,6 +283,9 @@ impl Connections {
             });
         });
 
+        if recording {
+            self.editing = None;
+        }
         let mut editing = self.editing.take();
         egui::ScrollArea::vertical()
             .id_salt("connections")
@@ -288,7 +298,7 @@ impl Connections {
                             Some(editing) if editing.edited == Edited::Connection(index) => {
                                 edit_ui(ui, editing, &mut actions);
                             }
-                            _ => self.row_ui(ui, index, connection, &mut actions),
+                            _ => self.row_ui(ui, index, connection, recording, &mut actions),
                         }
                     });
                 }
@@ -312,12 +322,14 @@ impl Connections {
         }
     }
 
-    /// The row of the connection at `index`, clicking it connects or disconnects it.
+    /// The row of the connection at `index`, clicking it connects or disconnects it,
+    /// disabled while `recording`.
     fn row_ui(
         &self,
         ui: &mut egui::Ui,
         index: usize,
         connection: &Connection,
+        recording: bool,
         actions: &mut Vec<Action>,
     ) {
         let active = self.status(&connection.address).is_active();
@@ -341,13 +353,15 @@ impl Connections {
                 egui::FontSelection::Default,
                 egui::Align::Center,
             );
+        let button = egui::Button::selectable(active, text).truncate();
         let response = ui
-            .add(egui::Button::selectable(active, text).truncate())
+            .add_enabled(!recording, button)
             .on_hover_text(if active {
                 "Click to disconnect, right-click to edit"
             } else {
                 "Click to connect, right-click to edit"
-            });
+            })
+            .on_disabled_hover_text(RECORDING_HINT);
         let toggle = || {
             if active {
                 Action::Disconnect(index)
@@ -652,7 +666,7 @@ mod tests {
         let mut harness = Harness::builder()
             .with_size(egui::vec2(300.0, 300.0))
             .build_ui_state(
-                |ui, connections: &mut Connections| connections.ui(ui),
+                |ui, connections: &mut Connections| connections.ui(ui, false),
                 connections(&[]),
             );
         harness.run();
@@ -671,6 +685,35 @@ mod tests {
             }]
         );
         assert!(harness.state().editing.is_none());
+    }
+
+    #[test]
+    fn the_connections_cannot_be_changed_while_recording() {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(300.0, 300.0))
+            .build_ui_state(
+                |ui, (connections, recording): &mut (Connections, bool)| {
+                    connections.ui(ui, *recording);
+                },
+                (connections(&["ws://127.0.0.1:1/a"]), true),
+            );
+        harness.run();
+        harness.get_by_label(regular::PLUS).click();
+        harness.get_by_label_contains("ws://127.0.0.1:1/a").click();
+        harness.run();
+        assert!(harness.state().0.editing.is_none());
+        assert!(harness.state().0.sockets.is_empty());
+
+        harness.state_mut().1 = false;
+        harness.run();
+        harness.get_by_label(regular::PLUS).click();
+        harness.run();
+        assert!(harness.state().0.editing.is_some());
+        // starting to record drops the edit
+        harness.state_mut().1 = true;
+        harness.run();
+        assert!(harness.state().0.editing.is_none());
+        assert_eq!(addresses(&harness.state().0), ["ws://127.0.0.1:1/a"]);
     }
 
     #[test]

@@ -121,7 +121,8 @@ Test Cases
 
    ``blip/src/app/connections.rs``, ``blip/src/app/toasts.rs`` and
    ``blip/src/app.rs`` tests -- name connections after their address, add
-   them with the + button, open several at once, report why an invalid
+   them with the + button, open several at once, keep them from being changed
+   while recording, report why an invalid
    address fails to connect, show errors and warnings as toasts until they
    expire or are closed, count a repeated one instead of stacking it, and
    warn when a recording is opened in part.

@@ -369,7 +369,7 @@ impl eframe::App for App {
                     .resizable(true)
                     .default_size(160.0)
                     .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(0, 4)))
-                    .show(ui, |ui| self.connections.ui(ui));
+                    .show(ui, |ui| self.connections.ui(ui, self.state.recording));
                 ui.add_space(4.0);
                 self.layout.properties_ui(ui, &self.state.model);
             });

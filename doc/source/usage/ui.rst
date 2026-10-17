@@ -20,6 +20,9 @@ by their name and WebSocket address, starting with
   `Time range`_.
 * Right-click a connection to connect or disconnect it, to rename it, to edit
   its address or to delete it. Rename it while it is disconnected.
+* While recording, the connections cannot be changed: they cannot be
+  connected, disconnected, added, edited or deleted. Stop recording to change
+  them.
 
 The traces of a connection are listed below its name, e.g. ``cpu/load`` of
 the connection ``robby`` as ``robby/cpu/load``, and the components of its logs
@@ -214,7 +217,8 @@ All views show the same time range, set in the bottom panel:
   actions can still be invoked. A recording starts only while a connection is
   open. Starting it clears the data as **File > Clear data** does and follows
   the newest data live. Stopping it keeps the data, also when the connections
-  close. blip starts without recording, as does opening a recording file.
+  close. While recording, the connections cannot be changed. blip starts
+  without recording, as does opening a recording file.
 * **Pause** stops the range where it is, while recording goes on, to inspect
   the data. **Play** moves the range on from there at the pace of the
   timestamps, along with the time cursor, and returns to live mode once it

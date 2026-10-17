@@ -108,7 +108,8 @@ Connectivity
 
    blip shall connect to user-configurable WebSocket addresses, several at
    once, and receive messages as binary frames, keeping the data of each
-   connection apart by its name.
+   connection apart by its name. While recording, blip shall keep the user
+   from connecting, disconnecting and editing the connections.
 
 .. req:: Notify errors
    :id: REQ_CONN_ERRORS
