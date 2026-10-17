@@ -13,6 +13,7 @@ use crate::app::model::actions::Invoker;
 use crate::app::model::numbers::{DisplayFormat, NumberKind};
 use crate::app::model::traces::{Samples, Trace};
 use crate::app::time::TimeRange;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use trace_selection::MAX_LISTED_ELEMENTS;
 
@@ -100,8 +101,8 @@ pub enum Selectable {
     Trace,
     /// Each element of an array trace on its own.
     Elements,
-    /// Nothing, for the given reason.
-    No(String),
+    /// Nothing, for the given reason, mostly a static text as it is asked every frame.
+    No(Cow<'static, str>),
 }
 
 impl ViewType {
@@ -142,10 +143,10 @@ impl ViewType {
     /// What a view of this type can show of `trace`.
     pub fn selectable(self, trace: &Trace) -> Selectable {
         match (self, &trace.samples) {
-            (ViewType::Logs, _) => Selectable::No("Log views show no traces".to_owned()),
-            (ViewType::Actions, _) => Selectable::No("Action views show no traces".to_owned()),
+            (ViewType::Logs, _) => Selectable::No("Log views show no traces".into()),
+            (ViewType::Actions, _) => Selectable::No("Action views show no traces".into()),
             (ViewType::Plot | ViewType::Xy, Samples::Strings(_)) => {
-                Selectable::No("Plots show numbers".to_owned())
+                Selectable::No("Plots show numbers".into())
             }
             (ViewType::Plot | ViewType::Xy, Samples::Arrays { shape, .. }) => elements(shape),
             (ViewType::Plot | ViewType::Xy, _) => Selectable::Trace,
@@ -156,7 +157,7 @@ impl ViewType {
                     elements: numbers, ..
                 },
             ) if numbers.kind() == Some(NumberKind::Float) => {
-                Selectable::No("States show strings, bools and integers".to_owned())
+                Selectable::No("States show strings, bools and integers".into())
             }
             (ViewType::States, Samples::Arrays { shape, .. }) => elements(shape),
             (ViewType::States, _) => Selectable::Trace,
@@ -167,7 +168,7 @@ impl ViewType {
                 Selectable::Trace
             }
             (ViewType::Heatmap, _) => {
-                Selectable::No("Heatmaps show arrays of one or two dimensions".to_owned())
+                Selectable::No("Heatmaps show arrays of one or two dimensions".into())
             }
         }
     }
@@ -357,9 +358,12 @@ pub fn range_rows(ui: &mut egui::Ui, range: &mut Option<(f64, f64)>, fitted: (f6
 /// The elements of an array of `shape` if they are few enough to be listed.
 fn elements(shape: &[usize]) -> Selectable {
     if shape.iter().product::<usize>() > MAX_LISTED_ELEMENTS {
-        Selectable::No(format!(
-            "Arrays of more than {MAX_LISTED_ELEMENTS} elements cannot be shown per element"
-        ))
+        Selectable::No(
+            format!(
+                "Arrays of more than {MAX_LISTED_ELEMENTS} elements cannot be shown per element"
+            )
+            .into(),
+        )
     } else {
         Selectable::Elements
     }

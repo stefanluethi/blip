@@ -151,6 +151,9 @@ pub struct App {
     /// The search of the traces panel.
     #[serde(skip)]
     trace_search: String,
+    /// Whether the traces panel shows only the traces and actions the selected view can
+    /// show.
+    compatible_only: bool,
     /// Counts the fresh starts of the traces panel. The state of its widgets, e.g.
     /// which branches of the tree are open, is kept apart per start, see
     /// [`Self::reset_traces_panel`].
@@ -368,19 +371,21 @@ impl App {
         if let Some(hint) = hint {
             ui.weak(hint);
         }
-        view::trace_selection::search_ui(ui, &mut self.trace_search);
+        let filterable = view.as_ref().is_some_and(|view| view.has_selection());
+        view::trace_selection::search_ui(
+            ui,
+            &mut self.trace_search,
+            &mut self.compatible_only,
+            filterable,
+        );
         egui::ScrollArea::vertical()
             .id_salt("traces")
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 let model = &self.state.model;
                 let search = &self.trace_search;
-                match view {
-                    Some(view) => {
-                        view::trace_selection::show(ui, model, search, view.selection_mut());
-                    }
-                    None => view::trace_selection::show(ui, model, search, None),
-                }
+                let selection = view.and_then(|view| view.selection_mut());
+                view::trace_selection::show(ui, model, search, self.compatible_only, selection);
             });
     }
 }

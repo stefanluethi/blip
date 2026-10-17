@@ -68,6 +68,10 @@ Left panel
    elements, e.g. ``imu.acc[0]``, if they have at most 16; larger arrays
    cannot be plotted yet. The search field above the tree shows only the
    traces and actions whose path contains each of its words, ignoring case.
+   The filter button beside it shows only the traces and actions the selected
+   view can show, e.g. the numbers for a plot or the actions for an actions
+   view. It stays on until it is clicked again, and is disabled while no view
+   that shows traces or actions is selected, which shows all of them.
    When a recording file is opened and when a connection opens while no other
    is open, the traces panel starts anew: the search is cleared, the tree is
    scrolled to the top and its branches are open.

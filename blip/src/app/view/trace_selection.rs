@@ -3,7 +3,7 @@ use crate::app::model::traces::{Samples, Trace, element_path};
 use crate::app::view::{Selectable, ViewType};
 use egui::{RichText, Ui};
 use egui_phosphor::regular::{
-    BRACKETS_CURLY, BRACKETS_SQUARE, HASH, LIGHTNING, MAGNIFYING_GLASS, TEXT_AA, X,
+    BRACKETS_CURLY, BRACKETS_SQUARE, FUNNEL, HASH, LIGHTNING, MAGNIFYING_GLASS, TEXT_AA, X,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -67,6 +67,27 @@ impl<'a> TraceTree<'a> {
             node = node.children.entry(segment).or_default();
         }
         node
+    }
+
+    /// Removes the traces and actions of which a view of `view_type` can show nothing,
+    /// and the branches left without any.
+    pub fn retain_selectable(&mut self, view_type: ViewType) {
+        if self
+            .trace
+            .is_some_and(|trace| trace_paths(trace, view_type).is_empty())
+        {
+            self.trace = None;
+        }
+        if self
+            .action
+            .is_some_and(|path| action_path(path, view_type).is_none())
+        {
+            self.action = None;
+        }
+        self.children.retain(|_, child| {
+            child.retain_selectable(view_type);
+            child.trace.is_some() || child.action.is_some() || !child.children.is_empty()
+        });
     }
 
     pub fn is_record(&self) -> bool {
@@ -294,47 +315,66 @@ fn matches(path: &str, search: &str) -> bool {
 }
 
 /// Shows a field to search the traces and actions by `search`, with a button to clear
-/// it.
-pub fn search_ui(ui: &mut Ui, search: &mut String) {
+/// it, and a toggle to show only those the selected view can show, `compatible_only`,
+/// disabled and shown off unless the view is `filterable`, i.e. it shows any.
+pub fn search_ui(ui: &mut Ui, search: &mut String, compatible_only: &mut bool, filterable: bool) {
     ui.horizontal(|ui| {
-        // the clear button is a square as high as the field: the text, its margins and
-        // its stroke, and room is left for it
+        // the buttons are squares as high as the field: the text, its margins and its
+        // stroke, and room is left for them
         let side = ui.text_style_height(&egui::TextStyle::Body) + 6.0;
-        let clear_width = if search.is_empty() {
-            0.0
-        } else {
-            side + ui.spacing().item_spacing.x
-        };
+        let button_width = side + ui.spacing().item_spacing.x;
+        let buttons = if search.is_empty() { 1.0 } else { 2.0 };
         // the id stays the same as the clear button comes and goes, to keep the focus
         let field = ui
             .add(
                 egui::TextEdit::singleline(search)
                     .id_salt("trace_search")
                     .hint_text(format!("{MAGNIFYING_GLASS} Search paths"))
-                    .desired_width(ui.available_width() - clear_width),
+                    .desired_width(ui.available_width() - buttons * button_width),
             )
             .on_hover_text("Show only the traces and actions whose path contains each word");
         ui.spacing_mut().button_padding.x = 0.0;
+        let square = egui::Vec2::splat(field.rect.height());
         if !search.is_empty()
             && ui
-                .add(egui::Button::new(X).min_size(egui::Vec2::splat(field.rect.height())))
+                .add(egui::Button::new(X).min_size(square))
                 .on_hover_text("Clear the search")
                 .clicked()
         {
             search.clear();
+        }
+        let hint = if *compatible_only {
+            "Showing only the traces and actions the selected view can show, click to show all"
+        } else {
+            "Click to show only the traces and actions the selected view can show"
+        };
+        let filter = egui::Button::selectable(*compatible_only && filterable, FUNNEL);
+        if ui
+            .add_enabled(filterable, filter.min_size(square))
+            .on_hover_text(hint)
+            .on_disabled_hover_text("Select a view that shows traces or actions to filter by it")
+            .clicked()
+        {
+            *compatible_only = !*compatible_only;
         }
     });
 }
 
 /// Shows the traces and the announced actions of `model` whose path matches `search`
 /// as a tree with checkboxes for the traces or actions selected for a view of the given
-/// type, disabled if there is no selection to edit.
+/// type, disabled if there is no selection to edit. If `compatible_only`, only those the
+/// view can show are in the tree, or all without a view.
 pub fn show(
     ui: &mut Ui,
     model: &Model,
     search: &str,
+    compatible_only: bool,
     selection: Option<(&mut BTreeSet<String>, ViewType)>,
 ) {
+    let filter = selection
+        .as_ref()
+        .map(|(_, view_type)| *view_type)
+        .filter(|_| compatible_only);
     let mut tree = TraceTree::build(
         model
             .traces
@@ -353,18 +393,24 @@ pub fn show(
         _ => vec![],
     };
     tree.add_unannounced_actions(unannounced.iter().map(String::as_str));
+    if let Some(view_type) = filter {
+        tree.retain_selectable(view_type);
+    }
+    let searching = !search.trim().is_empty();
     if tree.children.is_empty() {
-        if model.traces.iter().next().is_none() && model.actions.is_empty() {
-            ui.weak("No traces or actions received");
-        } else {
-            ui.weak("No traces or actions match the search");
-        }
+        ui.weak(match (filter, searching) {
+            _ if model.traces.iter().next().is_none() && model.actions.is_empty() => {
+                "No traces or actions received"
+            }
+            (Some(_), true) => "No traces or actions the selected view can show match the search",
+            (Some(_), false) => "The selected view can show none of the traces and actions",
+            (None, _) => "No traces or actions match the search",
+        });
         return;
     }
     let mut unselectable = BTreeSet::new();
     let enabled = selection.is_some();
     let (paths, view_type) = selection.unwrap_or((&mut unselectable, ViewType::Plot));
-    let searching = !search.trim().is_empty();
     let mut selection = Selection {
         paths,
         view_type,
@@ -454,6 +500,62 @@ mod tests {
     }
 
     #[test]
+    fn pruning_keeps_only_what_the_view_can_show() {
+        let array = |path: &str, shape: Vec<usize>| {
+            let mut trace = Trace::new(path.to_owned(), None);
+            trace.samples = Samples::Arrays {
+                shape,
+                elements: Default::default(),
+            };
+            trace
+        };
+        let mut text = Trace::new("motor/mode".to_owned(), None);
+        text.samples = Samples::Strings(Default::default());
+        let traces = [
+            Trace::new("motor/rpm".to_owned(), None),
+            text,
+            array("imu/acc", vec![3]),
+            // arrays without elements have none to select
+            array("imu/none", vec![0]),
+            array("imu/big", vec![MAX_LISTED_ELEMENTS + 1]),
+        ];
+        let mut tree = TraceTree::build(traces.iter());
+        tree.add_actions(["reboot"].into_iter());
+        tree.retain_selectable(ViewType::Plot);
+        assert_eq!(
+            tree.children.keys().copied().collect::<Vec<_>>(),
+            ["imu", "motor"]
+        );
+        assert_eq!(
+            tree.children["imu"]
+                .children
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            ["acc"]
+        );
+        assert_eq!(
+            tree.children["motor"]
+                .children
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            ["rpm"]
+        );
+
+        let mut tree = TraceTree::build(traces.iter());
+        tree.add_actions(["motor/rpm", "reboot"].into_iter());
+        tree.retain_selectable(ViewType::Actions);
+        assert_eq!(
+            tree.children.keys().copied().collect::<Vec<_>>(),
+            ["motor", "reboot"]
+        );
+        let rpm = &tree.children["motor"].children["rpm"];
+        assert!(rpm.trace.is_none());
+        assert_eq!(rpm.action, Some("motor/rpm"));
+    }
+
+    #[test]
     fn searches_match_each_word_ignoring_case() {
         assert!(matches("motor/left.Speed", ""));
         assert!(matches("motor/left.Speed", "  LEFT speed "));
@@ -478,8 +580,8 @@ mod tests {
             .with_size(egui::vec2(300.0, 400.0))
             .build_ui_state(
                 move |ui, (search, paths): &mut (String, BTreeSet<String>)| {
-                    search_ui(ui, search);
-                    show(ui, &model, search, Some((paths, ViewType::Plot)));
+                    search_ui(ui, search, &mut false, true);
+                    show(ui, &model, search, false, Some((paths, ViewType::Plot)));
                 },
                 (String::new(), BTreeSet::new()),
             );
@@ -556,8 +658,8 @@ mod tests {
             .with_size(egui::vec2(300.0, 400.0))
             .build_ui_state(
                 move |ui, (search, paths): &mut (String, BTreeSet<String>)| {
-                    search_ui(ui, search);
-                    show(ui, &model, search, Some((paths, view_type)));
+                    search_ui(ui, search, &mut false, true);
+                    show(ui, &model, search, false, Some((paths, view_type)));
                 },
                 (String::new(), BTreeSet::new()),
             );
@@ -638,13 +740,102 @@ mod tests {
     }
 
     #[test]
-    fn the_clear_button_is_as_high_as_the_search_field_and_fits_beside_it() {
+    fn the_filter_shows_only_what_the_view_can_show() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::{NodeT, Queryable};
+
+        let mut model = Model::default();
+        model.traces.append(&proto::Value {
+            timestamp: 0,
+            path: "motor/rpm".to_owned(),
+            value: proto::Data::Uint(1),
+        });
+        model.traces.append(&proto::Value {
+            timestamp: 0,
+            path: "motor/mode".to_owned(),
+            value: proto::Data::String("idle".to_owned()),
+        });
+        model.actions.set(
+            "a",
+            vec![proto::ActionDescriptor {
+                path: "motor/speed".to_owned(),
+                description: String::new(),
+                params: vec![],
+                readback: None,
+                confirm: false,
+                enabled: true,
+            }],
+        );
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(300.0, 400.0))
+            .build_ui_state(
+                move |ui, (search, filter, view_type): &mut (String, bool, Option<ViewType>)| {
+                    search_ui(ui, search, filter, view_type.is_some());
+                    let mut paths = BTreeSet::new();
+                    let selection = view_type.map(|view_type| (&mut paths, view_type));
+                    show(ui, &model, search, *filter, selection);
+                },
+                (String::new(), false, Some(ViewType::Plot)),
+            );
+        harness.run();
+        let shown = |harness: &Harness<'_, _>| {
+            ["rpm", "mode", "speed"]
+                .into_iter()
+                .filter(|label| harness.query_by_label_contains(label).is_some())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(shown(&harness), ["rpm", "mode", "speed"]);
+
+        harness.get_by_label(FUNNEL).click();
+        harness.run();
+        assert!(harness.state().1);
+        // plots show numbers, and no actions
+        assert_eq!(shown(&harness), ["rpm"]);
+
+        harness.state_mut().2 = Some(ViewType::Actions);
+        harness.run();
+        assert_eq!(shown(&harness), ["speed"]);
+
+        // without a view, nothing is filtered out and the filter cannot be toggled
+        harness.state_mut().2 = None;
+        harness.run();
+        assert_eq!(shown(&harness), ["rpm", "mode", "speed"]);
+        assert!(harness.get_by_label(FUNNEL).accesskit_node().is_disabled());
+
+        // heatmaps show arrays only, and the message tells the search apart
+        harness.state_mut().2 = Some(ViewType::Heatmap);
+        harness.run();
+        assert!(
+            harness
+                .query_by_label("The selected view can show none of the traces and actions")
+                .is_some()
+        );
+        harness.state_mut().0 = "rpm".to_owned();
+        harness.run();
+        assert!(
+            harness
+                .query_by_label("No traces or actions the selected view can show match the search")
+                .is_some()
+        );
+        harness.state_mut().0.clear();
+
+        harness.get_by_label(FUNNEL).click();
+        harness.run();
+        assert!(!harness.state().1);
+        assert_eq!(shown(&harness), ["rpm", "mode", "speed"]);
+    }
+
+    #[test]
+    fn the_buttons_are_as_high_as_the_search_field_and_fit_beside_it() {
         use egui_kittest::Harness;
         use egui_kittest::kittest::Queryable;
 
         let width = 250.0;
-        // the size of egui and that of blip
-        for size in [12.5, 14.0] {
+        // the size of egui and that of blip, without and with the clear button
+        for (size, search) in [12.5, 14.0]
+            .into_iter()
+            .flat_map(|size| ["", "motor"].map(|search| (size, search)))
+        {
             let mut harness = Harness::builder()
                 .with_size(egui::vec2(width, 100.0))
                 .build_ui_state(
@@ -652,17 +843,25 @@ mod tests {
                         ui.style_mut()
                             .text_styles
                             .insert(egui::TextStyle::Body, egui::FontId::proportional(size));
-                        search_ui(ui, search);
+                        search_ui(ui, search, &mut false, true);
                     },
-                    "motor".to_owned(),
+                    search.to_owned(),
                 );
             harness.run();
             let field = harness.get_by_role(egui::accesskit::Role::TextInput).rect();
-            let clear = harness.get_by_label(X).rect();
-            assert_eq!(field.height(), clear.height());
-            assert_eq!(field.top(), clear.top());
-            assert_eq!(clear.width(), clear.height());
-            assert!(field.right() < clear.left() && clear.right() <= width);
+            let clear = harness.query_by_label(X).map(|clear| clear.rect());
+            let filter = harness.get_by_label(FUNNEL).rect();
+            assert_eq!(clear.is_some(), !search.is_empty());
+            for button in clear.iter().chain([&filter]) {
+                assert_eq!(field.height(), button.height());
+                assert_eq!(field.top(), button.top());
+                assert_eq!(button.width(), button.height());
+            }
+            let before_filter = clear.map_or(field.right(), |clear| {
+                assert!(field.right() < clear.left());
+                clear.right()
+            });
+            assert!(before_filter < filter.left() && filter.right() <= width);
         }
     }
 
