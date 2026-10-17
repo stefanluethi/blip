@@ -132,12 +132,13 @@
     </div>
 
     <!--Register Service Worker. this will cache the wasm / js scripts for offline use (for PWA functionality). -->
-    <!-- Force refresh (Ctrl + F5) to load the latest files instead of cached files  -->
+    <!-- It loads the latest files from the network and only falls back to the cached files when offline. -->
     <script>
         // We disable caching during development so that we always view the latest version.
         if ('serviceWorker' in navigator && window.location.hash !== "#dev") {
             window.addEventListener('load', function () {
-                navigator.serviceWorker.register('sw.js');
+                // Never take sw.js from the HTTP cache, so that a new service worker is found right away.
+                navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' });
             });
         }
     </script>
