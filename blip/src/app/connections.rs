@@ -65,6 +65,16 @@ struct Socket {
     open: bool,
 }
 
+/// What [`Connections::receive`] passes on, in the order it arrived.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Received<'a> {
+    /// A connection opened while no other was open: the first one, before any of its
+    /// messages.
+    FirstOpened,
+    /// A message from the connection named `source`.
+    Message { source: &'a str, message: &'a [u8] },
+}
+
 /// The name or address being edited, or the address being added, and the text of its
 /// field.
 struct Editing {
@@ -166,23 +176,32 @@ impl Connections {
         }
     }
 
-    /// Passes the name of the connection and each message received since the last call
-    /// to `receive`, ending connections when they are closed or fail. A frame holds one
-    /// message or several as a CBOR sequence, e.g. a batch of a target.
-    pub fn receive(&mut self, mut receive: impl FnMut(&str, &[u8])) {
+    /// Passes each message received since the last call to `receive` with the name of
+    /// its connection, and when the first connection opens, ending connections when they
+    /// are closed or fail. A frame holds one message or several as a CBOR sequence, e.g.
+    /// a batch of a target.
+    pub fn receive(&mut self, mut receive: impl FnMut(Received<'_>)) {
         let failed = &mut self.failed;
         let errors = &mut self.errors;
+        let mut open = self.sockets.iter().filter(|socket| socket.open).count();
         self.sockets.retain_mut(|socket| {
             while let Some(event) = socket.receiver.try_recv() {
                 match event {
                     ewebsock::WsEvent::Opened => {
                         log::info!("ws connected to {}", socket.address);
+                        if open == 0 {
+                            receive(Received::FirstOpened);
+                        }
+                        open += 1;
                         socket.open = true;
                     }
                     ewebsock::WsEvent::Message(ewebsock::WsMessage::Binary(frame)) => {
                         for message in crate::app::model::cbor_items(&frame) {
                             match message {
-                                Ok(message) => receive(&socket.name, message),
+                                Ok(message) => receive(Received::Message {
+                                    source: &socket.name,
+                                    message,
+                                }),
                                 Err(error) => log::warn!(
                                     "error reading a message of {}: {error}",
                                     socket.address
@@ -203,12 +222,14 @@ impl Connections {
                             format!("Cannot connect to {}: {error}", socket.address)
                         });
                         failed.insert(socket.address.clone(), error);
+                        open -= usize::from(socket.open);
                         return false;
                     }
                     ewebsock::WsEvent::Closed => {
                         log::info!("ws disconnected from {}", socket.address);
                         // the user's disconnecting drops the socket before it is closed
                         errors.push(format!("{} closed the connection", socket.address));
+                        open -= usize::from(socket.open);
                         return false;
                     }
                 }
@@ -740,6 +761,58 @@ mod tests {
         assert_ne!(row.accesskit_node().toggled(), Some(Toggled::True));
     }
 
+    /// Serves WebSocket clients one after the other on a free local port, sending each
+    /// `frame` and then reading until the client leaves. Returns the address, ending
+    /// with `path`.
+    fn serve(path: &str, frame: Vec<u8>) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = format!("ws://{}/{path}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut socket) = tungstenite::accept(stream.unwrap()) else {
+                    continue;
+                };
+                socket
+                    .send(tungstenite::Message::Binary(frame.clone()))
+                    .unwrap();
+                while socket.read().is_ok() {}
+            }
+        });
+        address
+    }
+
+    /// What `connections` receive until `count` things arrived, or 5 s passed.
+    fn receive_some(connections: &mut Connections, count: usize) -> Vec<String> {
+        let mut received = vec![];
+        let start = std::time::Instant::now();
+        while received.len() < count && start.elapsed().as_secs() < 5 {
+            connections.receive(|r| {
+                received.push(match r {
+                    Received::FirstOpened => "first opened".to_owned(),
+                    Received::Message { source, message } => format!("{source} {message:?}"),
+                });
+            });
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        received
+    }
+
+    #[test]
+    fn the_first_connection_to_open_is_passed_on_before_its_messages() {
+        let mut connections = connections(&[&serve("a", vec![1]), &serve("b", vec![2])]);
+        let ctx = egui::Context::default();
+        connections.apply(Action::Connect(0), &ctx);
+        assert_eq!(receive_some(&mut connections, 2), ["first opened", "a [1]"]);
+        connections.apply(Action::Connect(1), &ctx);
+        assert_eq!(receive_some(&mut connections, 1), ["b [2]"]);
+
+        connections.apply(Action::Disconnect(0), &ctx);
+        connections.apply(Action::Disconnect(1), &ctx);
+        connections.apply(Action::Connect(1), &ctx);
+        assert_eq!(receive_some(&mut connections, 2), ["first opened", "b [2]"]);
+        assert!(connections.take_errors().is_empty());
+    }
+
     #[test]
     fn an_invalid_address_fails_to_connect() {
         let mut connections = connections(&["no address"]);
@@ -747,7 +820,7 @@ mod tests {
         // natively, the error arrives from the thread connecting
         let start = std::time::Instant::now();
         while !connections.sockets.is_empty() && start.elapsed().as_secs() < 5 {
-            connections.receive(|_, _| {});
+            connections.receive(|_| {});
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert!(matches!(

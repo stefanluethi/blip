@@ -133,6 +133,17 @@ impl Layout {
         }
     }
 
+    /// Selects a view that shows traces, for tests of the traces panel.
+    #[cfg(test)]
+    pub fn select_view_showing_traces(&mut self) {
+        let view = self.tree.tiles.iter().find_map(|(&tile_id, tile)| {
+            matches!(tile, Tile::Pane(view) if view.shows_traces()).then_some(tile_id)
+        });
+        if let Some(view) = view {
+            self.select(view);
+        }
+    }
+
     /// Selects a view or group and shows the tabs it is in.
     fn select(&mut self, tile_id: TileId) {
         self.selected = Some(tile_id);

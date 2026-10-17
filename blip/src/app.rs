@@ -6,6 +6,7 @@ mod time;
 mod toasts;
 mod view;
 
+use connections::Received;
 use eframe::Frame;
 use egui::{Context, Key, KeyboardShortcut, Modifiers};
 use std::collections::BTreeMap;
@@ -46,10 +47,35 @@ impl State {
         }
     }
 
+    /// Applies what the connections received at the time `now`. Returns whether the
+    /// first connection opened, which starts afresh with no data, unless recording.
+    fn apply(&mut self, received: Received<'_>, now: f64) -> bool {
+        match received {
+            Received::FirstOpened if !self.recording => {
+                self.start_fresh(model::Model::default());
+                true
+            }
+            Received::FirstOpened => false,
+            Received::Message { source, message } => {
+                self.receive(source, message, now);
+                false
+            }
+        }
+    }
+
     /// Removes the received data, see [`model::Model::clear`].
     fn clear_data(&mut self) {
         self.model.clear();
         self.invoker.forget_readback_marks();
+    }
+
+    /// Starts afresh with `model`, e.g. of an opened recording: drops all data, also the
+    /// descriptions of the targets that [`Self::clear_data`] keeps, stops recording and
+    /// forgets the invocations.
+    fn start_fresh(&mut self, model: model::Model) {
+        self.recording = false;
+        self.invoker.reset();
+        self.model = model;
     }
 
     /// Starts or stops recording. A recording starts only while `connected`, clears the
@@ -113,6 +139,10 @@ pub struct App {
     /// The search of the traces panel.
     #[serde(skip)]
     trace_search: String,
+    /// Counts the fresh starts of the traces panel. The state of its widgets, e.g.
+    /// which branches of the tree are open, is kept apart per start, see
+    /// [`Self::reset_traces_panel`].
+    traces_generation: u64,
     #[serde(skip)]
     files: files::Files,
     /// The notices for the user, e.g. why a file could not be opened.
@@ -224,6 +254,31 @@ impl App {
         }
     }
 
+    /// Starts the traces panel anew for other traces, e.g. of an opened recording: the
+    /// search is cleared and the tree is scrolled to the top with its branches open.
+    fn reset_traces_panel(&mut self) {
+        self.trace_search.clear();
+        self.traces_generation += 1;
+    }
+
+    /// The traces panel, with the state of its widgets apart from that of other
+    /// generations.
+    fn traces_panel_ui(&mut self, ui: &mut egui::Ui) {
+        ui.push_id(self.traces_generation, |ui| self.traces_ui(ui));
+    }
+
+    /// Receives from the connections at the time `now`. The first connection to open
+    /// starts afresh, see [`State::apply`].
+    fn receive(&mut self, now: f64) {
+        let state = &mut self.state;
+        let mut fresh = false;
+        self.connections
+            .receive(|received| fresh |= state.apply(received, now));
+        if fresh {
+            self.reset_traces_panel();
+        }
+    }
+
     fn save_recording(&mut self) {
         let name = format!("{}.blip", chrono::Local::now().format("%Y-%m-%d-%H%M%S"));
         let file = self.state.model.recording.to_file();
@@ -248,9 +303,8 @@ impl App {
             })
             .map_err(|error| format!("{} cannot be opened: {error}", file.name))?;
             self.connections.disconnect_all();
-            self.state.recording = false;
-            self.state.invoker.reset();
-            self.state.model = model;
+            self.state.start_fresh(model);
+            self.reset_traces_panel();
             self.state.time.fit(&self.state.model);
             if let Some(problem) = loaded.problem {
                 self.toasts.warning(format!(
@@ -319,9 +373,8 @@ impl eframe::App for App {
 
     fn logic(&mut self, ctx: &Context, _frame: &mut Frame) {
         let now = ctx.input(|input| input.time);
+        self.receive(now);
         let state = &mut self.state;
-        self.connections
-            .receive(|source, frame| state.receive(source, frame, now));
         state.invoker.connected = self.connections.open_names();
         state.invoker.update(now);
         for error in self.connections.take_errors() {
@@ -355,7 +408,7 @@ impl eframe::App for App {
                     .resizable(true)
                     .default_size(250.0)
                     .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(0, 4)))
-                    .show(ui, |ui| self.traces_ui(ui));
+                    .show(ui, |ui| self.traces_panel_ui(ui));
                 ui.add_space(4.0);
                 self.layout.panel_ui(ui);
             });
@@ -447,17 +500,25 @@ mod tests {
     use super::*;
 
     fn value(timestamp: u64) -> Vec<u8> {
+        value_of("rpm", timestamp)
+    }
+
+    fn value_of(path: &str, timestamp: u64) -> Vec<u8> {
         serde_cbor_2::to_vec(&proto::Message::Value(proto::Value {
             timestamp,
-            path: "rpm".to_owned(),
+            path: path.to_owned(),
             value: proto::Data::Uint(1),
         }))
         .unwrap()
     }
 
     fn unit() -> Vec<u8> {
+        unit_of("rpm")
+    }
+
+    fn unit_of(path: &str) -> Vec<u8> {
         serde_cbor_2::to_vec(&proto::Message::ValueMetadata(proto::ValueMetadata {
-            path: "rpm".to_owned(),
+            path: path.to_owned(),
             unit: "rpm".to_owned(),
         }))
         .unwrap()
@@ -520,7 +581,7 @@ mod tests {
     }
 
     #[test]
-    fn opening_a_recording_stops_recording() {
+    fn opening_a_recording_stops_recording_and_starts_afresh() {
         let mut recorded = model::Model::default();
         recorded.receive("a", &value(1));
         let file = files::File {
@@ -528,10 +589,75 @@ mod tests {
             bytes: recorded.recording.to_file(),
         };
         let mut app = App::default();
+        app.state.receive("old", &unit_of("temp"), 0.0);
         app.state.recording = true;
+        app.trace_search = "temp".to_owned();
+        let generation = app.traces_generation;
         app.open(&file).unwrap();
         assert!(!app.state.recording);
         assert!(app.state.model.has_samples());
+        assert!(app.trace_search.is_empty());
+        assert_ne!(app.traces_generation, generation);
+        // the unit before is gone: clearing the data, which keeps the units and
+        // actions to record them again, has none of the recording file to keep
+        app.state.clear_data();
+        assert_eq!(app.state.model.recording.messages(), 0);
+    }
+
+    #[test]
+    fn the_first_connection_to_open_starts_afresh_unless_recording() {
+        let mut state = State::default();
+        state.set_recording(true, true);
+        state.receive("old", &unit(), 0.0);
+        state.receive("old", &value(1), 0.0);
+        // a connection opening while recording keeps the recording going
+        assert!(!state.apply(Received::FirstOpened, 0.0));
+        assert!(state.recording && state.model.has_samples());
+
+        state.set_recording(false, false);
+        assert!(state.apply(Received::FirstOpened, 0.0));
+        assert!(state.model.traces.iter().next().is_none());
+        assert_eq!(state.model.recording.messages(), 0);
+        let message = unit();
+        let received = Received::Message {
+            source: "new",
+            message: &message,
+        };
+        assert!(!state.apply(received, 0.0));
+        // a recording starts with the unit of the new connection only, not the old one
+        state.set_recording(true, true);
+        assert_eq!(state.model.recording.messages(), 1);
+    }
+
+    #[test]
+    fn starting_afresh_opens_the_branches_of_the_traces_again() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+
+        let mut app = App::default();
+        app.layout.select_view_showing_traces();
+        app.state.set_recording(true, true);
+        app.state.receive("a", &value_of("motor/rpm", 1), 0.0);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(300.0, 400.0))
+            .build_ui_state(|ui, app: &mut App| app.traces_panel_ui(ui), app);
+        harness.run();
+        assert!(harness.query_by_label_contains("rpm").is_some());
+
+        // collapse the branch with its button left of its checkbox
+        let motor = harness.get_by_label("motor").rect();
+        let spacing = egui::Spacing::default();
+        let x = motor.left() - spacing.item_spacing.x - spacing.indent / 2.0;
+        let toggle = egui::pos2(x, motor.center().y);
+        harness.hover_at(toggle);
+        harness.drag_at(toggle);
+        harness.drop_at(toggle);
+        harness.run_steps(20);
+        assert!(harness.query_by_label_contains("rpm").is_none());
+
+        harness.state_mut().reset_traces_panel();
+        harness.run();
+        assert!(harness.query_by_label_contains("rpm").is_some());
     }
 
     #[test]

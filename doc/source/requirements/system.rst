@@ -109,7 +109,9 @@ Connectivity
    blip shall connect to user-configurable WebSocket addresses, several at
    once, and receive messages as binary frames, keeping the data of each
    connection apart by its name. While recording, blip shall keep the user
-   from connecting, disconnecting and editing the connections.
+   from connecting, disconnecting and editing the connections. A connection
+   opening while no other is open shall start afresh, without the data,
+   traces and actions received or opened before.
 
 .. req:: Notify errors
    :id: REQ_CONN_ERRORS
@@ -251,7 +253,7 @@ Files
 
    blip shall save the messages received since the data was last cleared to
    a recording file, and open recording files, showing their data as if it
-   had been received.
+   had been received, in place of all data, traces and actions before.
 
 .. req:: Save and open layouts
    :id: REQ_FILE_LAYOUT
