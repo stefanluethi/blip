@@ -353,7 +353,10 @@ impl Connections {
                 egui::FontSelection::Default,
                 egui::Align::Center,
             );
-        let button = egui::Button::selectable(active, text).truncate();
+        // not highlighted while connected, the status dot shows it
+        let button = egui::Button::new(text)
+            .frame_when_inactive(false)
+            .truncate();
         let response = ui
             .add_enabled(!recording, button)
             .on_hover_text(if active {
@@ -714,6 +717,27 @@ mod tests {
         harness.run();
         assert!(harness.state().0.editing.is_none());
         assert_eq!(addresses(&harness.state().0), ["ws://127.0.0.1:1/a"]);
+    }
+
+    #[test]
+    fn a_connected_row_is_not_highlighted() {
+        use egui::accesskit::Toggled;
+        use egui_kittest::kittest::NodeT;
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(300.0, 300.0))
+            .build_ui_state(
+                |ui, connections: &mut Connections| connections.ui(ui, false),
+                connections(&["ws://127.0.0.1:1/a"]),
+            );
+        harness.run();
+        let ctx = harness.ctx.clone();
+        harness.state_mut().apply(Action::Connect(0), &ctx);
+        // the spinner of the connecting row keeps repainting
+        harness.run_steps(2);
+        assert!(harness.state().status("ws://127.0.0.1:1/a").is_active());
+        let row = harness.get_by_label_contains("ws://127.0.0.1:1/a");
+        assert_ne!(row.accesskit_node().toggled(), Some(Toggled::True));
     }
 
     #[test]
