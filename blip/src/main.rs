@@ -33,10 +33,8 @@ fn main() {
     let web_options = eframe::WebOptions::default();
 
     wasm_bindgen_futures::spawn_local(async {
-        let document = web_sys::window()
-            .expect("No window")
-            .document()
-            .expect("No document");
+        let window = web_sys::window().expect("No window");
+        let document = window.document().expect("No document");
 
         let canvas = document
             .get_element_by_id("the_canvas_id")
@@ -44,13 +42,19 @@ fn main() {
             .dyn_into::<web_sys::HtmlCanvasElement>()
             .expect("the_canvas_id was not a HtmlCanvasElement");
 
-        let start_result = eframe::WebRunner::new()
+        let runner = eframe::WebRunner::new();
+        let start_result = runner
             .start(
                 canvas,
                 web_options,
                 Box::new(|cc| Ok(Box::new(blip::App::new(cc)))),
             )
             .await;
+        if start_result.is_ok()
+            && let Err(e) = save_when_hidden(&runner, &window, &document)
+        {
+            log::warn!("Failed to save the app state when the page is left: {e:?}");
+        }
 
         // Remove the loading text and spinner:
         if let Some(loading_text) = document.get_element_by_id("loading_text") {
@@ -67,4 +71,26 @@ fn main() {
             }
         }
     });
+}
+
+/// Saves the app state whenever the page is hidden or left, e.g. on a reload or when the
+/// tab is closed. eframe saves it on its own only every 30 seconds: its save on closing
+/// listens to `onbeforeunload`, which is not the name of an event, so it never runs.
+#[cfg(target_arch = "wasm32")]
+fn save_when_hidden(
+    runner: &eframe::WebRunner,
+    window: &web_sys::Window,
+    document: &web_sys::Document,
+) -> Result<(), eframe::wasm_bindgen::JsValue> {
+    runner.add_event_listener(window, "pagehide", |_: web_sys::Event, app| app.save())?;
+    let hidden = document.clone();
+    runner.add_event_listener(
+        document,
+        "visibilitychange",
+        move |_: web_sys::Event, app| {
+            if hidden.hidden() {
+                app.save();
+            }
+        },
+    )
 }
