@@ -7,6 +7,7 @@ from typing import Annotated, Any, Dict, List, Literal, Optional
 import cbor2
 import pytest
 import websockets
+from websockets.asyncio.server import ServerConnection
 
 from outpost import ActionError, Actions, LogLevel, Protocol, Range, Unit, action
 from outpost.server import OutpostServer
@@ -289,21 +290,21 @@ async def test_answers_sent_by_the_protocol_are_dropped():
         await server.stop()
 
 
-async def test_a_change_while_a_client_connects_reaches_it():
+async def test_a_change_while_a_client_connects_reaches_it(monkeypatch):
     target = Target()
     server = await serve(target, 3984)
-    send = server._send
+    send = ServerConnection.send
     first = []
 
-    async def changing_send(client, message):
+    async def changing_send(connection, message):
         # the actions change while the cached list is sent to the new client
         if not first:
             first.append(message)
             target.actions.set_enabled(False, "reboot")
             await asyncio.sleep(0.05)
-        await send(client, message)
+        await send(connection, message)
 
-    server._send = changing_send
+    monkeypatch.setattr(ServerConnection, "send", changing_send)
     try:
         async with websockets.connect("ws://127.0.0.1:3984/ws/test") as ws:
             latest = None
