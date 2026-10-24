@@ -139,16 +139,17 @@ impl LogTable {
                 // the lines between the entries run across all columns
                 let row_span = ui.max_rect().x_range();
                 let row_line = ui.visuals().widgets.noninteractive.bg_stroke;
-                // the column borders show only while resizing a column
-                ui.visuals_mut().widgets.noninteractive.bg_stroke = egui::Stroke::NONE;
+                let badge_width = badge_size(ui).x;
 
+                // the time, level and component take only what they need, the message
+                // the rest
                 let mut builder = TableBuilder::new(ui)
+                    .id_salt("log entries")
                     .min_scrolled_height(0.0)
-                    .resizable(true)
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                    .column(Column::initial(80.0).at_least(80.0)) // Timestamp
-                    .column(Column::initial(56.0).at_least(30.0)) // Log Level
-                    .column(Column::initial(100.0).at_least(40.0)) // Log Component
+                    .column(Column::auto().resizable(false)) // Timestamp
+                    .column(Column::exact(badge_width).resizable(false)) // Log Level
+                    .column(Column::auto().resizable(false)) // Log Component
                     .column(Column::remainder().at_least(150.0)); // Message
 
                 let range = time.range();
@@ -183,13 +184,17 @@ impl LogTable {
                         let first = row.index() == 0;
                         let entry = filtered_entries[row.index()];
                         let shown = in_range(entry);
-                        let text = |text: &str, ui: &egui::Ui| {
-                            let text = egui::RichText::new(text).monospace();
-                            if shown {
-                                text
-                            } else {
-                                text.color(ui.visuals().weak_text_color())
-                            }
+                        // the message stands out, the time and the component less, and
+                        // all of an entry outside the time range stays faint
+                        let text = |text: &str, ui: &egui::Ui, role: Role| {
+                            let tokens = theme::tokens(ui.visuals());
+                            let color = match role {
+                                _ if !shown => tokens.text_faint,
+                                Role::Time => tokens.text_faint,
+                                Role::Component => ui.visuals().weak_text_color(),
+                                Role::Message => ui.visuals().text_color(),
+                            };
+                            egui::RichText::new(text).monospace().color(color)
                         };
                         row.col(|ui| {
                             if !first {
@@ -197,16 +202,16 @@ impl LogTable {
                                 let y = ui.max_rect().top() - gap;
                                 ui.painter().hline(row_span, y, row_line);
                             }
-                            ui.label(text(&entry.timestamp, ui));
+                            ui.label(text(&entry.timestamp, ui, Role::Time));
                         });
                         row.col(|ui| {
                             level_badge(ui, entry.level, shown);
                         });
                         row.col(|ui| {
-                            ui.label(text(&entry.component, ui));
+                            ui.label(text(&entry.component, ui, Role::Component));
                         });
                         row.col(|ui| {
-                            ui.label(text(&entry.message, ui));
+                            ui.label(text(&entry.message, ui, Role::Message));
                         });
                     });
                 });
@@ -431,14 +436,36 @@ fn level_badge(ui: &mut egui::Ui, level: LogLevel, shown: bool) {
         LogLevel::Trace => tokens.trace,
     };
     let fade = if shown { 1.0 } else { 0.4 };
-    egui::Frame::NONE
-        .fill(color.gamma_multiply(0.15 * fade))
-        .corner_radius(4.0)
-        .inner_margin(egui::Margin::symmetric(5, 0))
-        .show(ui, |ui| {
-            let text = egui::RichText::new(level.as_str()).monospace().size(11.0);
-            ui.colored_label(color.gamma_multiply(fade), text);
-        });
+    let color = color.gamma_multiply(fade);
+    let name = ui
+        .painter()
+        .layout_no_wrap(level.as_str().to_owned(), BADGE_FONT, color);
+    let (rect, response) = ui.allocate_exact_size(badge_size(ui), egui::Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, theme::CONTROL_RADIUS, color.gamma_multiply(0.15));
+    painter.galley(rect.center() - name.size() / 2.0, name, color);
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, level.as_str()));
+}
+
+/// The font of the names in the level badges.
+const BADGE_FONT: egui::FontId = egui::FontId::monospace(10.5);
+
+/// The size of the level badges: as wide as the longest name, and just higher than the
+/// text.
+fn badge_size(ui: &egui::Ui) -> egui::Vec2 {
+    let widest =
+        ui.painter()
+            .layout_no_wrap("DEBUG".to_owned(), BADGE_FONT, egui::Color32::PLACEHOLDER);
+    egui::vec2(widest.size().x + 10.0, BADGE_FONT.size + 4.0)
+}
+
+/// What a text of a log entry is, which sets its color.
+#[derive(Clone, Copy)]
+enum Role {
+    Time,
+    Component,
+    Message,
 }
 
 #[cfg(test)]

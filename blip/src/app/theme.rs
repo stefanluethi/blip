@@ -39,6 +39,8 @@ pub struct Tokens {
     text: Color32,
     /// Secondary text, like labels and hints.
     text_weak: Color32,
+    /// Text that stays in the background, like the times of log entries.
+    pub text_faint: Color32,
     /// The colour of selection, focus and the live button.
     pub accent: Color32,
     /// Text on the accent.
@@ -70,6 +72,7 @@ pub const LIGHT: Tokens = Tokens {
     border_strong: Color32::from_rgb(0xc7, 0xca, 0xcf),
     text: Color32::from_rgb(0x24, 0x29, 0x2e),
     text_weak: Color32::from_rgb(0x5b, 0x61, 0x68),
+    text_faint: Color32::from_rgb(0x87, 0x8d, 0x95),
     accent: Color32::from_rgb(0x38, 0x71, 0xdc),
     cursor: Color32::from_rgb(0x3a, 0x3f, 0x46),
     on_accent: Color32::WHITE,
@@ -101,6 +104,7 @@ pub const DARK: Tokens = Tokens {
     border_strong: Color32::from_rgb(0x3a, 0x3e, 0x46),
     text: Color32::from_rgb(0xcc, 0xcc, 0xdc),
     text_weak: Color32::from_rgb(0x9a, 0x9a, 0xab),
+    text_faint: Color32::from_rgb(0x6e, 0x6e, 0x80),
     accent: Color32::from_rgb(0x3d, 0x71, 0xd9),
     cursor: Color32::from_rgb(0xec, 0xec, 0xf4),
     on_accent: Color32::WHITE,

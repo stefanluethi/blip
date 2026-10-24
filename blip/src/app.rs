@@ -415,8 +415,10 @@ impl App {
         if let Some(hint) = hint {
             ui.weak(hint);
         }
-        // a view without traces or actions, like the logs, has nothing to choose
+        // a view without traces or actions, like the logs, has nothing to choose; the
+        // panel keeps its height, so that the layout panel below stays where it is
         if view.as_ref().is_some_and(|view| !view.has_selection()) {
+            ui.allocate_space(ui.available_size());
             return;
         }
         let filterable = view.as_ref().is_some_and(|view| view.has_selection());
