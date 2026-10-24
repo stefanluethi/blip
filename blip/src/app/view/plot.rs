@@ -1,6 +1,7 @@
 use super::time_axis::{self, closest_index, visible_range, within};
 use super::{Formats, PropertiesContext, ViewContext, Viewable, short_names, with_unit};
-use crate::app::model::{Model, numbers::NumberKind, traces::Series};
+use crate::app::model::numbers::{NumberKind, SHOWN_DIGITS};
+use crate::app::model::{Model, traces::Series};
 use crate::app::theme;
 use crate::app::time::{TimeBase, timestamp_to_seconds};
 use std::cmp::min;
@@ -231,7 +232,7 @@ impl Plot {
                 for (path, name, index) in self.selected_path_iter() {
                     let value = model.traces.series(path).and_then(|series| {
                         let value = series.number(closest_index(series.timestamps, t)?);
-                        let text = value.format(None, formats.of(path));
+                        let text = value.format(Some(SHOWN_DIGITS), formats.of(path));
                         let unit = model.traces.unit(path).filter(|_| !value.is_null());
                         Some(with_unit(text, unit))
                     });

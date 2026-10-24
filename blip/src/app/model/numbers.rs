@@ -22,6 +22,9 @@ impl NumberKind {
     }
 }
 
+/// Floats show at most this many significant digits in tables and tooltips.
+pub const SHOWN_DIGITS: usize = 4;
+
 /// How the numbers of a trace are written.
 #[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
 pub enum DisplayFormat {

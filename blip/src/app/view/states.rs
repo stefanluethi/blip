@@ -6,7 +6,7 @@ use super::{
     Formats, PropertiesContext, ViewContext, Viewable, short_names, text_color_on, with_unit,
 };
 use crate::app::model::Model;
-use crate::app::model::numbers::{DisplayFormat, NumberKind};
+use crate::app::model::numbers::{DisplayFormat, NumberKind, SHOWN_DIGITS};
 use crate::app::model::traces::{Samples, Series};
 use crate::app::theme;
 use crate::app::time::{TimeBase, timestamp_to_seconds};
@@ -102,7 +102,9 @@ impl<'a> StateSamples<'a> {
     /// The value of the sample at `index` as shown, in the display format.
     fn text(&self, index: usize) -> String {
         match self {
-            Self::Numbers(series, format) => series.number(index).format(None, *format),
+            Self::Numbers(series, format) => {
+                series.number(index).format(Some(SHOWN_DIGITS), *format)
+            }
             Self::Strings { values, .. } => {
                 values[index].clone().unwrap_or_else(|| "null".to_owned())
             }

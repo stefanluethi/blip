@@ -4,6 +4,7 @@
 use super::time_axis::{index_at, within};
 use super::{PropertiesContext, ViewContext, Viewable, short_names};
 use crate::app::model::Model;
+use crate::app::model::numbers::{SHOWN_DIGITS, format_significant};
 use crate::app::model::traces::Series;
 use crate::app::theme;
 use crate::app::time::TimeRange;
@@ -170,7 +171,11 @@ impl Xy {
                     } => (*plot_name, position),
                     egui_plot::HoverPosition::Elsewhere { position } => ("", position),
                 };
-                Some(format!("{name}\nx = {:.4}\ny = {:.4}", point.x, point.y))
+                Some(format!(
+                    "{name}\nx = {}\ny = {}",
+                    format_significant(point.x, SHOWN_DIGITS),
+                    format_significant(point.y, SHOWN_DIGITS)
+                ))
             });
         if self.equal_axes {
             plot = plot.data_aspect(1.0);

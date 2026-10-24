@@ -13,7 +13,7 @@
 use super::{PropertiesContext, ViewContext, Viewable, properties_section, short_names};
 use crate::app::model::Model;
 use crate::app::model::actions::{ActionId, Args, Invoker, Outcome};
-use crate::app::model::numbers::{DisplayFormat, Number};
+use crate::app::model::numbers::{DisplayFormat, Number, SHOWN_DIGITS};
 use crate::app::model::traces::Samples;
 use crate::app::theme;
 use egui::RichText;
@@ -141,7 +141,7 @@ fn latest_text(model: &Model, path: &str) -> Option<String> {
     let last = trace.timestamps.len().checked_sub(1)?;
     let value = trace
         .samples
-        .format(last, 4, Some(6), DisplayFormat::Default);
+        .format(last, 4, Some(SHOWN_DIGITS), DisplayFormat::Default);
     Some(super::with_unit(value, model.traces.unit(path)))
 }
 

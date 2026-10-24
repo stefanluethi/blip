@@ -4,6 +4,7 @@ use super::time_axis::index_at;
 use super::trace_selection::{TraceTree, type_icon};
 use super::{Formats, PropertiesContext, ViewContext, Viewable, short_names};
 use crate::app::model::Model;
+use crate::app::model::numbers::SHOWN_DIGITS;
 use crate::app::model::traces::{Samples, Trace};
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular::{BRACKETS_CURLY, CARET_DOWN, CARET_RIGHT};
@@ -12,9 +13,6 @@ use std::collections::BTreeSet;
 /// Arrays show at most this many elements per dimension in the table, and more in the
 /// tooltip.
 const MAX_SHOWN_ELEMENTS: usize = 8;
-/// Floats show at most this many significant digits in the table, and all in the
-/// tooltip.
-const SHOWN_DIGITS: usize = 6;
 const MAX_TOOLTIP_ELEMENTS: usize = 64;
 /// Indentation of a level of the tree in points.
 const INDENT: f32 = 14.0;
@@ -226,7 +224,8 @@ impl Table {
                     table_row.col(|ui| {
                         if let Some((trace, index, value)) = sample {
                             value_label(ui, trace, value).on_hover_ui(|ui| {
-                                let value = write(trace, *index, MAX_TOOLTIP_ELEMENTS, None);
+                                let value =
+                                    write(trace, *index, MAX_TOOLTIP_ELEMENTS, Some(SHOWN_DIGITS));
                                 value_label(ui, trace, &value);
                             });
                         }
