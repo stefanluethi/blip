@@ -2,6 +2,7 @@ mod connections;
 mod files;
 mod layout;
 mod model;
+mod theme;
 mod time;
 mod toasts;
 mod view;
@@ -14,7 +15,6 @@ use view::ViewContext;
 
 const OPEN_RECORDING: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
 const SAVE_RECORDING: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
-const RECORDING_COLOR: egui::Color32 = egui::Color32::from_rgb(235, 87, 87);
 
 #[derive(serde::Deserialize, serde::Serialize, Default)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
@@ -119,7 +119,7 @@ impl State {
 /// Returns whether it was clicked, to switch.
 fn record_button(ui: &mut egui::Ui, recording: bool, connected: bool) -> bool {
     let color = if recording {
-        RECORDING_COLOR
+        theme::tokens(ui.visuals()).error
     } else {
         ui.visuals().weak_text_color()
     };
@@ -168,9 +168,6 @@ pub struct App {
 impl App {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // This is also where you can customize the look and feel of egui using
-        // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
-
         let mut fonts = egui::FontDefinitions::default();
         fonts.font_data.insert(
             "phosphor".into(),
@@ -184,6 +181,7 @@ impl App {
         }
         cc.egui_ctx.set_fonts(fonts);
 
+        theme::install(&cc.egui_ctx);
         configure_text_styles(&cc.egui_ctx);
 
         // Load previous app state (if any).
@@ -459,7 +457,12 @@ impl eframe::App for App {
             });
 
         let central = egui::CentralPanel::default()
-            .frame(egui::Frame::central_panel(ui.style()).inner_margin(egui::Margin::ZERO))
+            .frame(
+                // the views are cards on the canvas, with a gap around them
+                egui::Frame::central_panel(ui.style())
+                    .fill(theme::tokens(ui.visuals()).canvas)
+                    .inner_margin(egui::Margin::same(theme::GAP as i8)),
+            )
             .show(ui, |ui| {
                 let mut context = ViewContext {
                     model: &self.state.model,
@@ -520,7 +523,7 @@ fn configure_text_styles(ctx: &egui::Context) {
         (TextStyle::Body, FontId::new(14.0, Proportional)),
         (TextStyle::Monospace, FontId::new(12.0, Monospace)),
         (TextStyle::Button, FontId::new(14.0, Proportional)),
-        (TextStyle::Small, FontId::new(10.0, Proportional)),
+        (TextStyle::Small, FontId::new(11.0, Proportional)),
     ]
     .into();
     ctx.all_styles_mut(move |style| style.text_styles = text_styles.clone());

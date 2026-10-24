@@ -7,6 +7,7 @@ use super::{PropertiesContext, ViewContext, Viewable, text_color_on, with_unit};
 use crate::app::model::Model;
 use crate::app::model::numbers::{DisplayFormat, Number, format_significant};
 use crate::app::model::traces::{Samples, Trace};
+use crate::app::theme;
 use crate::app::time::TimeRange;
 use egui::Color32;
 use std::collections::BTreeSet;
@@ -247,7 +248,7 @@ impl Heatmap {
         let texture = (!values.is_empty()).then(|| self.texture(ui.ctx(), [columns, len], &values));
 
         let id = ui.id().with("heatmap");
-        let plot = time_axis::plot(id, time)
+        let plot = time_axis::plot(id, time, ui.visuals())
             .width(size.x)
             .height(size.y)
             .show_grid(false)
@@ -302,6 +303,7 @@ impl Heatmap {
             (!values.is_empty()).then(|| self.texture(ui.ctx(), [columns, rows], &values));
 
         let plot = egui_plot::Plot::new(ui.id().with("grid"))
+            .grid_color(theme::grid_color(ui.visuals()))
             .width(size.x)
             .height(size.y)
             .data_aspect(1.0)
@@ -367,7 +369,7 @@ impl Heatmap {
         let values: Vec<f64> = numbers.iter().map(|number| number.as_f64()).collect();
         self.fitted_range = value_range(&values);
         let fixed_range = self.value_range;
-        let color = super::plot::curve_color(0);
+        let color = theme::trace_color(ui.visuals(), 0);
         let points: Vec<[f64; 2]> = values
             .iter()
             .enumerate()
@@ -375,6 +377,7 @@ impl Heatmap {
             .collect();
 
         let plot = egui_plot::Plot::new(ui.id().with("line"))
+            .grid_color(theme::grid_color(ui.visuals()))
             .custom_x_axes(vec![index_x_axis("index")])
             .x_grid_spacer(index_spacer)
             .allow_boxed_zoom(false)

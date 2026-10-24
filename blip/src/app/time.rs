@@ -1,6 +1,7 @@
 //! The time range shared by all views, and the controls to play and pause it.
 
 use crate::app::model::Model;
+use crate::app::theme;
 use egui_phosphor::regular;
 
 const NANOS_PER_SECOND: f64 = 1.0e9;
@@ -331,7 +332,7 @@ impl TimeRange {
 
         let Some((first, latest)) = self.span else {
             ui.painter()
-                .rect_filled(rect, 3.0, ui.visuals().extreme_bg_color);
+                .rect_filled(rect, 3.0, theme::tokens(ui.visuals()).canvas);
             return;
         };
         let duration = (latest - first).max(MIN_WINDOW);
@@ -363,7 +364,7 @@ impl TimeRange {
 
         let visuals = ui.visuals();
         ui.painter()
-            .rect_filled(rect, 3.0, visuals.extreme_bg_color);
+            .rect_filled(rect, 3.0, theme::tokens(visuals).canvas);
         if let Some(range) = self.range() {
             let thumb_visuals = ui.style().interact(&response);
             ui.painter().rect(

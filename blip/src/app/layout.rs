@@ -8,6 +8,7 @@ mod properties;
 
 pub use file::{GroupKind, LayoutFile};
 
+use crate::app::theme;
 use crate::app::view::{View, ViewContext, ViewType, Viewable};
 use egui_tiles::{Container, Tile, TileId, Tree};
 use std::collections::{HashMap, HashSet};
@@ -437,23 +438,31 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
         if ui.input(|i| i.pointer.primary_pressed()) && ui.rect_contains_pointer(ui.max_rect()) {
             *self.selected = Some(tile_id);
         }
-        if *self.selected == Some(tile_id) {
-            ui.painter()
-                .rect_filled(ui.max_rect(), 0.0, ui.visuals().faint_bg_color);
-        }
+        // each view is a card on the canvas
+        let tokens = theme::tokens(ui.visuals());
+        ui.painter().rect(
+            ui.max_rect(),
+            theme::CARD_RADIUS,
+            tokens.card,
+            egui::Stroke::new(1.0, tokens.border),
+            egui::StrokeKind::Inside,
+        );
 
-        if !self.panes_in_tabs.contains(&tile_id) {
-            let title_bar_color = if ui.visuals().dark_mode {
-                ui.visuals().extreme_bg_color
-            } else {
-                ui.visuals().widgets.inactive.bg_fill
-            };
+        let titled = !self.panes_in_tabs.contains(&tile_id);
+        if titled {
             egui::Frame::NONE
-                .fill(title_bar_color)
-                .inner_margin(egui::Margin::symmetric(8, 3))
+                .inner_margin(egui::Margin {
+                    left: 10,
+                    right: 10,
+                    top: 6,
+                    bottom: 0,
+                })
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.strong(view.view_type().icon());
+                        ui.label(
+                            egui::RichText::new(view.view_type().icon())
+                                .color(ui.visuals().weak_text_color()),
+                        );
                         let field_size = egui::vec2(ui.available_width(), 0.0);
                         if !self.rename_ui(ui, tile_id, field_size) {
                             let title = egui::Label::new(egui::RichText::new(&view.name).strong())
@@ -472,8 +481,14 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
                 });
         }
 
+        let top = if titled { 4 } else { 10 };
         egui::Frame::NONE
-            .inner_margin(egui::Margin::same(10))
+            .inner_margin(egui::Margin {
+                left: 10,
+                right: 10,
+                top,
+                bottom: 10,
+            })
             .show(ui, |ui| {
                 ui.push_id(tile_id, |ui| view.view(ui, self.context));
             });
@@ -506,6 +521,13 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
         tile_id: TileId,
         response: egui::Response,
     ) -> egui::Response {
+        if self.open_tabs.contains(&tile_id) {
+            paint_tab_underline(
+                &response.ctx.layer_painter(response.layer_id),
+                response.rect,
+            );
+        }
+
         // a click on an inactive tab opens it, a click on the open tab renames it
         if response.clicked() && self.open_tabs.contains(&tile_id) {
             let name = self.tab_title_for_tile(tiles, tile_id).text().to_owned();
@@ -534,8 +556,68 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
         rect: egui::Rect,
     ) {
         if *self.selected == Some(tile_id) {
-            let stroke = egui::Stroke::new(1.0, style.visuals.widgets.active.bg_fill);
-            painter.rect_stroke(rect, 0.0, stroke, egui::StrokeKind::Inside);
+            let stroke = egui::Stroke::new(1.0, theme::tokens(&style.visuals).accent);
+            painter.rect_stroke(rect, theme::CARD_RADIUS, stroke, egui::StrokeKind::Inside);
+        }
+    }
+
+    fn gap_width(&self, _style: &egui::Style) -> f32 {
+        theme::GAP
+    }
+
+    fn resize_stroke(
+        &self,
+        style: &egui::Style,
+        resize_state: egui_tiles::ResizeState,
+    ) -> egui::Stroke {
+        match resize_state {
+            // the gap between the cards shows the canvas
+            egui_tiles::ResizeState::Idle => egui::Stroke::NONE,
+            egui_tiles::ResizeState::Hovering => style.visuals.widgets.hovered.fg_stroke,
+            egui_tiles::ResizeState::Dragging => style.visuals.widgets.active.fg_stroke,
+        }
+    }
+
+    fn tab_bar_height(&self, _style: &egui::Style) -> f32 {
+        30.0
+    }
+
+    fn tab_bar_color(&self, visuals: &egui::Visuals) -> egui::Color32 {
+        theme::tokens(visuals).canvas
+    }
+
+    fn tab_bg_color(
+        &self,
+        _visuals: &egui::Visuals,
+        _tiles: &egui_tiles::Tiles<View>,
+        _tile_id: TileId,
+        _state: &egui_tiles::TabState,
+    ) -> egui::Color32 {
+        // the open tab is marked by its underline, see `on_tab_button`
+        egui::Color32::TRANSPARENT
+    }
+
+    fn tab_outline_stroke(
+        &self,
+        _visuals: &egui::Visuals,
+        _tiles: &egui_tiles::Tiles<View>,
+        _tile_id: TileId,
+        _state: &egui_tiles::TabState,
+    ) -> egui::Stroke {
+        egui::Stroke::NONE
+    }
+
+    fn tab_text_color(
+        &self,
+        visuals: &egui::Visuals,
+        _tiles: &egui_tiles::Tiles<View>,
+        _tile_id: TileId,
+        state: &egui_tiles::TabState,
+    ) -> egui::Color32 {
+        if state.active {
+            visuals.strong_text_color()
+        } else {
+            visuals.weak_text_color()
         }
     }
 
@@ -548,6 +630,21 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
         // the layout keeps the groups as the user made them
         egui_tiles::SimplificationOptions::OFF
     }
+}
+
+/// The underline of the open tab at the bottom of `rect`, running from the accent to its
+/// warm end.
+fn paint_tab_underline(painter: &egui::Painter, rect: egui::Rect) {
+    let tokens = theme::tokens(&painter.ctx().global_style().visuals);
+    let line = egui::Rect::from_x_y_ranges(rect.x_range(), rect.bottom() - 2.0..=rect.bottom());
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(line.left_top(), tokens.accent);
+    mesh.colored_vertex(line.right_top(), tokens.accent_warm);
+    mesh.colored_vertex(line.left_bottom(), tokens.accent);
+    mesh.colored_vertex(line.right_bottom(), tokens.accent_warm);
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(2, 1, 3);
+    painter.add(mesh);
 }
 
 #[cfg(test)]

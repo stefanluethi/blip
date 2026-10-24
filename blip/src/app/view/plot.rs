@@ -1,6 +1,7 @@
 use super::time_axis::{self, closest_index, visible_range, within};
 use super::{Formats, PropertiesContext, ViewContext, Viewable, short_names, with_unit};
 use crate::app::model::{Model, numbers::NumberKind, traces::Series};
+use crate::app::theme;
 use crate::app::time::{TimeBase, timestamp_to_seconds};
 use std::cmp::min;
 use std::collections::BTreeSet;
@@ -192,25 +193,26 @@ impl Plot {
         })
     }
 
-    /// The shown paths with their names in the legend and their curve colors.
-    fn selected_path_iter(&self) -> impl Iterator<Item = (&str, &str, egui::Color32)> {
+    /// The shown paths with their names in the legend and their indices, which pick
+    /// their colors.
+    fn selected_path_iter(&self) -> impl Iterator<Item = (&str, &str, usize)> {
         let names = short_names(self.traces.iter().map(String::as_str));
         // colors follow the order of the selection, so they do not change as traces arrive
         self.traces
             .iter()
             .zip(names)
             .enumerate()
-            .map(|(index, (path, name))| (path.as_str(), name, curve_color(index)))
+            .map(|(index, (path, name))| (path.as_str(), name, index))
     }
 
     /// The shown numeric series that were received, with their names in the legend and
-    /// their curve colors.
+    /// their indices, which pick their colors.
     fn selected_series_iter<'a>(
         &'a self,
         model: &'a Model,
-    ) -> impl Iterator<Item = (&'a str, Series<'a>, egui::Color32)> {
+    ) -> impl Iterator<Item = (&'a str, Series<'a>, usize)> {
         self.selected_path_iter()
-            .filter_map(|(path, name, color)| Some((name, model.traces.series(path)?, color)))
+            .filter_map(|(path, name, index)| Some((name, model.traces.series(path)?, index)))
     }
 
     /// Shows the values of the shown traces at `t` seconds.
@@ -226,7 +228,7 @@ impl Plot {
         egui::Grid::new("plot_tooltip")
             .num_columns(2)
             .show(ui, |ui| {
-                for (path, name, color) in self.selected_path_iter() {
+                for (path, name, index) in self.selected_path_iter() {
                     let value = model.traces.series(path).and_then(|series| {
                         let value = series.number(closest_index(series.timestamps, t)?);
                         let text = value.format(None, formats.of(path));
@@ -234,7 +236,7 @@ impl Plot {
                         Some(with_unit(text, unit))
                     });
                     if let Some(value) = value {
-                        ui.colored_label(color, name);
+                        ui.colored_label(theme::trace_color(ui.visuals(), index), name);
                         ui.label(value);
                         ui.end_row();
                     }
@@ -257,17 +259,19 @@ impl Plot {
         if let Some(label) = label {
             y_axis = y_axis.label(label);
         }
-        let mut plot = time_axis::plot(id, time).custom_y_axes(vec![y_axis]);
+        let mut plot = time_axis::plot(id, time, ui.visuals()).custom_y_axes(vec![y_axis]);
         if let Some(corner) = self.legend.corner() {
             plot = plot.legend(egui_plot::Legend::default().position(corner));
         }
 
+        let visuals = ui.visuals().clone();
         let response = time_axis::show(id, plot, ui, time, |plot_ui, axis| {
             let fitted = axis.range.and_then(|range| self.range_y(model, range));
             if let Some((min_y, max_y)) = y_bounds(self.y_min, self.y_max, fitted) {
                 plot_ui.set_plot_bounds_y(min_y..=max_y);
             }
-            for (name, series, color) in self.selected_series_iter(model) {
+            for (name, series, index) in self.selected_series_iter(model) {
+                let color = theme::trace_color(&visuals, index);
                 self.plot_series(name, series, color, axis.range, axis.origin, plot_ui);
             }
         });
@@ -289,12 +293,6 @@ fn y_bounds(min: Option<f64>, max: Option<f64>, fitted: Option<(f64, f64)>) -> O
     let min = min.or(fitted.map(|(low, _)| low))?;
     let max = max.or(fitted.map(|(_, high)| high))?;
     (min < max).then_some((min, max))
-}
-
-/// Color of the `index`th curve, picked like egui_plot picks its colors.
-pub fn curve_color(index: usize) -> egui::Color32 {
-    let golden_ratio = (5.0_f32.sqrt() - 1.0) / 2.0;
-    egui::ecolor::Hsva::new(index as f32 * golden_ratio, 0.85, 0.5, 1.0).into()
 }
 
 /// Reduces `series` to at most `max_points` points by keeping the minimum and maximum

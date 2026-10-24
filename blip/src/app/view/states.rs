@@ -8,6 +8,7 @@ use super::{
 use crate::app::model::Model;
 use crate::app::model::numbers::{DisplayFormat, NumberKind};
 use crate::app::model::traces::{Samples, Series};
+use crate::app::theme;
 use crate::app::time::{TimeBase, timestamp_to_seconds};
 use egui::Color32;
 use std::collections::BTreeSet;
@@ -178,23 +179,17 @@ fn merge_narrow(runs: Vec<Run>, min_width: f64) -> Vec<Run> {
     merged
 }
 
-/// The fill color of a band with the value `label`.
-fn state_color(label: &str, is_bool: bool, dark_mode: bool) -> Color32 {
-    let lightness = if dark_mode { 0.55 } else { 0.85 };
-    let hue = match label.parse::<i64>() {
-        _ if is_bool && label == "false" => {
-            return Color32::from_gray(if dark_mode { 80 } else { 200 });
-        }
-        _ if is_bool => 0.33,
-        // consecutive integers, like the states of a state machine, get distinct hues
-        Ok(number) => (number as f64 * golden_ratio()).rem_euclid(1.0) as f32,
-        Err(_) => (fnv1a(label) as f64 / u64::MAX as f64) as f32,
+/// The fill color of a band with the value `label`: a tint of a color of the trace
+/// palette.
+fn state_color(label: &str, is_bool: bool, visuals: &egui::Visuals) -> Color32 {
+    let color = match label.parse::<i64>() {
+        _ if is_bool && label == "false" => theme::palette_grey(visuals),
+        _ if is_bool => theme::palette_color(visuals, 0),
+        // consecutive integers, like the states of a state machine, get distinct colors
+        Ok(number) => theme::palette_color(visuals, number.rem_euclid(1 << 16) as usize),
+        Err(_) => theme::palette_color(visuals, (fnv1a(label) % (1 << 16)) as usize),
     };
-    egui::ecolor::Hsva::new(hue, 0.5, lightness, 1.0).into()
-}
-
-fn golden_ratio() -> f64 {
-    (5.0_f64.sqrt() - 1.0) / 2.0
+    theme::tint(visuals, color)
 }
 
 /// A hash of `text` that stays the same across runs, so values keep their colors.
@@ -221,14 +216,13 @@ impl States {
     ) {
         let visuals = plot_ui.ctx().global_style().visuals.clone();
         let seconds_per_point = plot_ui.transform().dvalue_dpos()[0].abs();
-        let dark_mode = visuals.dark_mode;
         let (top, bottom) = (y + self.band_height / 2.0, y - self.band_height / 2.0);
         for run in runs(samples, range, latest, MIN_RUN_WIDTH * seconds_per_point) {
             let start = run.start.max(range.0) - origin;
             let end = run.end.min(range.1) - origin;
             let label = run.index.map(|index| samples.label(index));
             let fill = match &label {
-                Some(label) => state_color(label, samples.is_bool(), dark_mode),
+                Some(label) => state_color(label, samples.is_bool(), &visuals),
                 None => visuals.weak_text_color(),
             };
             let corners = vec![[start, bottom], [end, bottom], [end, top], [start, top]];
@@ -291,7 +285,7 @@ impl States {
         // the first trace is the top row
         let row_y = move |row: usize| (rows - 1 - row) as f64;
         let id = ui.id().with("states");
-        let plot = time_axis::plot(id, time)
+        let plot = time_axis::plot(id, time, ui.visuals())
             .show_grid([true, false])
             .y_grid_spacer(move |_input| {
                 (0..rows)
@@ -454,12 +448,12 @@ mod tests {
     #[test]
     fn integer_states_get_distinct_colors() {
         let colors: BTreeSet<[u8; 4]> = (0..4)
-            .map(|state| state_color(&state.to_string(), false, false).to_array())
+            .map(|state| state_color(&state.to_string(), false, &egui::Visuals::light()).to_array())
             .collect();
         assert_eq!(colors.len(), 4);
         assert_eq!(
-            state_color("idle", false, true),
-            state_color("idle", false, true)
+            state_color("idle", false, &egui::Visuals::dark()),
+            state_color("idle", false, &egui::Visuals::dark())
         );
     }
 }

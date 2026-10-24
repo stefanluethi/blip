@@ -1,6 +1,7 @@
 //! The connections panel: the WebSocket addresses of outposts and targets, to connect to
 //! any number of them at once.
 
+use super::theme;
 use egui_phosphor::regular;
 use std::collections::{HashMap, HashSet};
 
@@ -12,9 +13,6 @@ const RECORDING_HINT: &str = "Stop recording to change the connections";
 /// Why connecting asks first while a recording is not saved.
 const UNSAVED_WARNING: &str = "Connecting starts afresh and drops the recording, which \
     was not saved. Save it first with File > Save recording.";
-
-const CONNECTED_COLOR: egui::Color32 = egui::Color32::from_rgb(39, 174, 96);
-const FAILED_COLOR: egui::Color32 = egui::Color32::from_rgb(235, 87, 87);
 
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
@@ -651,10 +649,10 @@ fn status_ui(ui: &mut egui::Ui, status: &Status) {
         let center = rect.center();
         match status {
             Status::Connected => {
-                painter.circle_filled(center, radius, CONNECTED_COLOR);
+                painter.circle_filled(center, radius, theme::tokens(ui.visuals()).ok);
             }
             Status::Failed(_) => {
-                painter.circle_filled(center, radius, FAILED_COLOR);
+                painter.circle_filled(center, radius, theme::tokens(ui.visuals()).error);
             }
             Status::Disconnected | Status::Connecting => {
                 let stroke = egui::Stroke::new(1.0, ui.visuals().weak_text_color());

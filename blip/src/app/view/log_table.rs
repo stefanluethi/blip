@@ -1,4 +1,5 @@
 use crate::app::model::logs::{LogEntry, LogLevel, Logs};
+use crate::app::theme;
 use crate::app::time::{TimeRange, timestamp_to_seconds};
 use crate::app::view::{ViewContext, Viewable};
 use egui_extras::{Column, TableBuilder};
@@ -192,19 +193,7 @@ impl LogTable {
                             ui.label(text(&entry.component, ui));
                         });
                         row.col(|ui| {
-                            let (color, level_str) = match entry.level {
-                                LogLevel::Error => (egui::Color32::from_rgb(235, 87, 87), "ERROR"),
-                                LogLevel::Warn => (egui::Color32::from_rgb(242, 153, 74), "WARN"),
-                                LogLevel::Info => (egui::Color32::from_rgb(39, 174, 96), "INFO"),
-                                LogLevel::Debug => (egui::Color32::from_rgb(45, 156, 219), "DEBUG"),
-                                LogLevel::Trace => (egui::Color32::from_rgb(155, 81, 224), "TRACE"),
-                            };
-                            let color = if shown {
-                                color
-                            } else {
-                                color.gamma_multiply(0.4)
-                            };
-                            ui.colored_label(color, egui::RichText::new(level_str).monospace());
+                            level_badge(ui, entry.level, shown);
                         });
                         row.col(|ui| {
                             ui.label(text(&entry.message, ui));
@@ -417,6 +406,28 @@ impl Viewable for LogTable {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         self.ui(ui, &context.model.logs, context.time);
     }
+}
+
+/// The level of a log record as a badge: its name in the color of the level on a tint
+/// of that color, faded when the record is outside the time range.
+fn level_badge(ui: &mut egui::Ui, level: LogLevel, shown: bool) {
+    let tokens = theme::tokens(ui.visuals());
+    let color = match level {
+        LogLevel::Error => tokens.error,
+        LogLevel::Warn => tokens.warn,
+        LogLevel::Info => tokens.ok,
+        LogLevel::Debug => tokens.debug,
+        LogLevel::Trace => tokens.trace,
+    };
+    let fade = if shown { 1.0 } else { 0.4 };
+    egui::Frame::NONE
+        .fill(color.gamma_multiply(0.15 * fade))
+        .corner_radius(4.0)
+        .inner_margin(egui::Margin::symmetric(5, 0))
+        .show(ui, |ui| {
+            let text = egui::RichText::new(level.as_str()).monospace().size(11.0);
+            ui.colored_label(color.gamma_multiply(fade), text);
+        });
 }
 
 #[cfg(test)]

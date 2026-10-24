@@ -1,5 +1,6 @@
 //! Plots with the shared time range on the x axis, and finding samples by time.
 
+use crate::app::theme;
 use crate::app::time::{self, TimeBase, TimeRange, timestamp_to_seconds};
 use std::cmp::min;
 use std::ops::Range;
@@ -34,11 +35,12 @@ pub struct TimePlotResponse {
 }
 
 /// A plot with the time on the x axis that can only be panned and zoomed along it, to
-/// show with [`show`] under the same `id`.
-pub fn plot<'a>(id: egui::Id, time: &TimeRange) -> egui_plot::Plot<'a> {
+/// show with [`show`] under the same `id`, its grid in the colors of `visuals`.
+pub fn plot<'a>(id: egui::Id, time: &TimeRange, visuals: &egui::Visuals) -> egui_plot::Plot<'a> {
     let origin = time.origin();
     let base = time.base();
     egui_plot::Plot::new(id)
+        .grid_color(theme::grid_color(visuals))
         // the values at the pointer are shown in a tooltip
         .show_x(false)
         .show_y(false)
@@ -187,7 +189,7 @@ mod tests {
                 move |ui, time: &mut TimeRange| {
                     time.update(&model, ui.input(|input| input.time));
                     let id = ui.id().with("plot");
-                    show(id, plot(id, time), ui, time, |_, _| {});
+                    show(id, plot(id, time, ui.visuals()), ui, time, |_, _| {});
                 },
                 TimeRange::default(),
             )

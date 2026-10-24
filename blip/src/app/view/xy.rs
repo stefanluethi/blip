@@ -5,6 +5,7 @@ use super::time_axis::{index_at, within};
 use super::{PropertiesContext, ViewContext, Viewable, short_names};
 use crate::app::model::Model;
 use crate::app::model::traces::Series;
+use crate::app::theme;
 use crate::app::time::TimeRange;
 use std::collections::BTreeSet;
 use std::ops::Range;
@@ -152,6 +153,7 @@ impl Xy {
             _ => label("", y_unit),
         };
         let mut plot = egui_plot::Plot::new(ui.id().with("xy"))
+            .grid_color(theme::grid_color(ui.visuals()))
             .legend(
                 // the newest point is drawn first in full color, the trail fades out
                 egui_plot::Legend::default()
@@ -178,6 +180,7 @@ impl Xy {
         let range = time.range();
         let cursor = time.cursor();
         let ring_color = ui.visuals().strong_text_color();
+        let visuals = ui.visuals().clone();
         let response = plot.show(ui, |plot_ui| {
             let (Some(x), Some(range)) = (x, range) else {
                 return;
@@ -186,7 +189,7 @@ impl Xy {
                 let Some(y) = model.traces.series(path) else {
                     continue;
                 };
-                let color = super::plot::curve_color(index);
+                let color = theme::trace_color(&visuals, index);
                 let points = thin_out(pair(x, y, within(y.timestamps, range)), MAX_POINTS);
                 Self::plot_trail(name, &points, color, plot_ui);
 
