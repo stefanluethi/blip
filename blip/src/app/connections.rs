@@ -322,18 +322,15 @@ impl Connections {
         }
         let ask = unsaved && !recording && !self.is_connected();
         let mut actions = vec![];
-        ui.horizontal(|ui| {
-            ui.strong("Connections");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .add_enabled(!recording, egui::Button::new(regular::PLUS))
-                    .on_hover_text("Add the WebSocket address of an outpost or target")
-                    .on_disabled_hover_text(RECORDING_HINT)
-                    .clicked()
-                {
-                    actions.push(Action::StartEdit(Edited::New, Field::Address));
-                }
-            });
+        theme::section_header(ui, "Connections", |ui| {
+            if ui
+                .add_enabled(!recording, theme::icon_button(regular::PLUS))
+                .on_hover_text("Add the WebSocket address of an outpost or target")
+                .on_disabled_hover_text(RECORDING_HINT)
+                .clicked()
+            {
+                actions.push(Action::StartEdit(Edited::New, Field::Address));
+            }
         });
 
         if recording {
@@ -617,6 +614,7 @@ fn edit_ui(ui: &mut egui::Ui, editing: &mut Editing, actions: &mut Vec<Action>) 
     };
     let field = egui::TextEdit::singleline(&mut editing.text)
         .hint_text(hint)
+        .margin(theme::FIELD_MARGIN)
         .desired_width(f32::INFINITY);
     let response = ui.add(field);
     if response.lost_focus() {

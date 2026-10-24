@@ -1,5 +1,6 @@
 use crate::app::model::Model;
 use crate::app::model::traces::{Samples, Trace, element_path};
+use crate::app::theme;
 use crate::app::view::{Selectable, ViewType};
 use egui::{RichText, Ui};
 use egui_phosphor::regular::{
@@ -321,7 +322,8 @@ pub fn search_ui(ui: &mut Ui, search: &mut String, compatible_only: &mut bool, f
     ui.horizontal(|ui| {
         // the buttons are squares as high as the field: the text, its margins and its
         // stroke, and room is left for them
-        let side = ui.text_style_height(&egui::TextStyle::Body) + 6.0;
+        let margins = theme::FIELD_MARGIN.sum().y;
+        let side = ui.text_style_height(&egui::TextStyle::Body) + margins + 2.0;
         let button_width = side + ui.spacing().item_spacing.x;
         let buttons = if search.is_empty() { 1.0 } else { 2.0 };
         // the id stays the same as the clear button comes and goes, to keep the focus
@@ -329,6 +331,7 @@ pub fn search_ui(ui: &mut Ui, search: &mut String, compatible_only: &mut bool, f
             .add(
                 egui::TextEdit::singleline(search)
                     .id_salt("trace_search")
+                    .margin(theme::FIELD_MARGIN)
                     .hint_text(format!("{MAGNIFYING_GLASS} Search paths"))
                     .desired_width(ui.available_width() - buttons * button_width),
             )

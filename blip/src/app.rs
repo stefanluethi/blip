@@ -10,6 +10,7 @@ mod view;
 use connections::Received;
 use eframe::Frame;
 use egui::{Context, Key, KeyboardShortcut, Modifiers};
+use std::collections::HashSet;
 use view::ViewContext;
 
 const OPEN_RECORDING: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
@@ -104,6 +105,9 @@ impl State {
 
     /// The bottom panel: the record button and the time range.
     fn bottom_ui(&mut self, ui: &mut egui::Ui, connected: bool) {
+        // larger controls than elsewhere, as the bar is used all the time
+        ui.spacing_mut().interact_size.y = 28.0;
+        ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
         ui.horizontal(|ui| {
             if record_button(ui, self.recording, connected) {
                 self.set_recording(!self.recording, connected);
@@ -117,13 +121,20 @@ impl State {
 /// A button showing whether `recording`, which can be started only while `connected`.
 /// Returns whether it was clicked, to switch.
 fn record_button(ui: &mut egui::Ui, recording: bool, connected: bool) -> bool {
-    let color = if recording {
-        theme::tokens(ui.visuals()).error
+    // red like a record key, filled with a tint of it while recording
+    let tokens = theme::tokens(ui.visuals());
+    let red = tokens.error;
+    let icon = egui::RichText::new(egui_phosphor::regular::RECORD).color(red);
+    let text = egui::RichText::new("Record").color(red);
+    let (fill, stroke) = if recording {
+        (tokens.control.lerp_to_gamma(red, 0.2), red)
     } else {
-        ui.visuals().weak_text_color()
+        (tokens.control, tokens.border)
     };
-    let icon = egui::RichText::new(egui_phosphor::regular::RECORD).color(color);
-    let button = egui::Button::new((icon, "Record")).selected(recording);
+    let button = egui::Button::new((icon, text))
+        .selected(recording)
+        .fill(fill)
+        .stroke(egui::Stroke::new(1.0, stroke));
     let hint = if recording {
         "Recording the received samples, click to stop"
     } else {
@@ -162,6 +173,34 @@ pub struct App {
     /// The notices for the user, e.g. why a file could not be opened.
     #[serde(skip)]
     toasts: toasts::Toasts,
+    /// How many messages the connections receive, shown in the title bar.
+    #[serde(skip)]
+    rate: MessageRate,
+}
+
+/// The number of messages received per second, measured second by second.
+#[derive(Default)]
+struct MessageRate {
+    /// When the second being measured started, and the messages received since.
+    start: Option<f64>,
+    count: usize,
+    /// The rate of the last measured second.
+    per_second: Option<f64>,
+}
+
+impl MessageRate {
+    /// Counts `received` messages at the time `now` in seconds, and ends the second
+    /// being measured when it is over.
+    fn update(&mut self, now: f64, received: usize) {
+        let start = *self.start.get_or_insert(now);
+        self.count += received;
+        let elapsed = now - start;
+        if elapsed >= 1.0 {
+            self.per_second = Some(self.count as f64 / elapsed);
+            self.start = Some(now);
+            self.count = 0;
+        }
+    }
 }
 
 impl App {
@@ -185,6 +224,9 @@ impl App {
 
     fn menu_ui(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
+            logo_ui(ui);
+            ui.label(egui::RichText::new("blip").size(15.0).strong());
+            ui.add_space(6.0);
             ui.menu_button("File", |ui| {
                 let ctx = ui.ctx().clone();
                 let shortcut = |text, shortcut| {
@@ -235,6 +277,8 @@ impl App {
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 theme_button(ui);
+                let open = self.connections.open_names();
+                status_chip(ui, &open, self.rate.per_second);
                 egui::warn_if_debug_build(ui);
             });
         });
@@ -270,8 +314,12 @@ impl App {
     fn receive(&mut self, now: f64) {
         let state = &mut self.state;
         let mut fresh = false;
-        self.connections
-            .receive(|received| fresh |= state.apply(received, now));
+        let mut messages = 0;
+        self.connections.receive(|received| {
+            messages += usize::from(matches!(received, Received::Message { .. }));
+            fresh |= state.apply(received, now);
+        });
+        self.rate.update(now, messages);
         if fresh {
             self.reset_traces_panel();
         }
@@ -342,7 +390,7 @@ impl App {
 
     /// The tree of the traces and actions, to choose those of the selected view.
     fn traces_ui(&mut self, ui: &mut egui::Ui) {
-        ui.strong("Traces & actions");
+        theme::section_header(ui, "Traces & actions", |_| {});
         let view = self.layout.selected_view_mut();
         let hint = match &view {
             None => Some("Select a view to choose its traces or actions"),
@@ -396,15 +444,23 @@ impl eframe::App for App {
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.shortcuts(ui.ctx());
-        egui::Panel::top("top panel").show(ui, |ui| self.menu_ui(ui));
+        let top_frame =
+            egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin::symmetric(10, 8));
+        egui::Panel::top("top panel")
+            .frame(top_frame)
+            .show(ui, |ui| self.menu_ui(ui));
 
         let now = ui.input(|input| input.time);
         self.state.time.update(&self.state.model, now);
 
-        egui::Panel::bottom("bottom panel").show(ui, |ui| {
-            let connected = self.connections.is_connected();
-            self.state.bottom_ui(ui, connected);
-        });
+        let bottom_frame =
+            egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin::symmetric(10, 8));
+        egui::Panel::bottom("bottom panel")
+            .frame(bottom_frame)
+            .show(ui, |ui| {
+                let connected = self.connections.is_connected();
+                self.state.bottom_ui(ui, connected);
+            });
 
         egui::Panel::left("left panel")
             .resizable(true)
@@ -422,7 +478,7 @@ impl eframe::App for App {
 
         egui::Panel::right("properties panel")
             .resizable(true)
-            .default_size(240.0)
+            .default_size(264.0)
             .show(ui, |ui| {
                 // the connections below, resizable by dragging the border to the properties
                 egui::Panel::bottom("connections panel")
@@ -472,6 +528,83 @@ impl eframe::App for App {
     }
 }
 
+/// The mark of blip: a blip on a line, on the accent.
+fn logo_ui(ui: &mut egui::Ui) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
+    let tokens = theme::tokens(ui.visuals());
+    let painter = ui.painter();
+    painter.rect_filled(rect, 5.0, tokens.accent);
+    let at = |x: f32, y: f32| rect.min + egui::vec2(x, y);
+    let line = [
+        (3.5, 11.0),
+        (6.5, 11.0),
+        (8.1, 6.5),
+        (10.7, 14.0),
+        (12.3, 11.0),
+        (16.5, 11.0),
+    ];
+    let points = line.iter().map(|&(x, y)| at(x, y)).collect();
+    painter.add(egui::Shape::line(
+        points,
+        egui::Stroke::new(1.7, tokens.on_accent),
+    ));
+}
+
+/// A chip with the status of the connections: a green dot and the name of the open
+/// connection or their number, and the messages received per second, `rate`.
+fn status_chip(ui: &mut egui::Ui, open: &HashSet<String>, rate: Option<f64>) {
+    let tokens = theme::tokens(ui.visuals());
+    let text = match open.len() {
+        0 => "Not connected".to_owned(),
+        1 => open.iter().next().cloned().unwrap_or_default(),
+        count => format!("{count} connections"),
+    };
+    let frame = egui::Frame::NONE
+        .fill(tokens.control)
+        .stroke(egui::Stroke::new(1.0, tokens.border))
+        .corner_radius(theme::CONTROL_RADIUS)
+        .inner_margin(egui::Margin::symmetric(8, 3));
+    let response = frame
+        .show(ui, |ui| {
+            // from the right, as it sits at the right end of the menu bar
+            let layout = egui::Layout::right_to_left(egui::Align::Center);
+            ui.with_layout(layout, |ui| {
+                if let Some(rate) = rate.filter(|_| !open.is_empty()) {
+                    let rate = format!("{} msg/s", group_thousands(rate.round() as u64));
+                    ui.label(egui::RichText::new(rate).monospace().weak());
+                }
+                ui.weak(text);
+                let (dot, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                if open.is_empty() {
+                    let stroke = egui::Stroke::new(1.0, ui.visuals().weak_text_color());
+                    ui.painter().circle_stroke(dot.center(), 3.5, stroke);
+                } else {
+                    ui.painter().circle_filled(dot.center(), 3.5, tokens.ok);
+                }
+            });
+        })
+        .response;
+    if open.len() > 1 {
+        let mut names: Vec<&String> = open.iter().collect();
+        names.sort();
+        let names: Vec<&str> = names.into_iter().map(String::as_str).collect();
+        response.on_hover_text(names.join("\n"));
+    }
+}
+
+/// `number` with its digits in groups of three, split by narrow spaces.
+fn group_thousands(number: u64) -> String {
+    let digits = number.to_string();
+    let mut grouped = String::new();
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index) % 3 == 0 {
+            grouped.push('\u{202f}');
+        }
+        grouped.push(digit);
+    }
+    grouped
+}
+
 /// A button showing the theme preference, clicking it switches to the next one.
 fn theme_button(ui: &mut egui::Ui) {
     use egui::ThemePreference;
@@ -493,7 +626,19 @@ fn theme_button(ui: &mut egui::Ui) {
             ThemePreference::Light,
         ),
     };
-    if ui.button(icon).on_hover_text(hint).clicked() {
+    let square = egui::Vec2::splat(ui.spacing().interact_size.y);
+    let tokens = theme::tokens(ui.visuals());
+    if ui
+        .add(
+            // framed like the other controls, which the menu bar leaves unframed
+            egui::Button::new(icon)
+                .fill(tokens.control)
+                .stroke(egui::Stroke::new(1.0, tokens.border))
+                .min_size(square),
+        )
+        .on_hover_text(hint)
+        .clicked()
+    {
         ui.ctx().set_theme(next);
     }
 }
@@ -501,6 +646,25 @@ fn theme_button(ui: &mut egui::Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_message_rate_is_measured_per_second() {
+        let mut rate = MessageRate::default();
+        rate.update(10.0, 0);
+        rate.update(10.5, 300);
+        assert_eq!(rate.per_second, None);
+        rate.update(11.0, 200);
+        assert_eq!(rate.per_second, Some(500.0));
+        rate.update(11.2, 50);
+        assert_eq!(rate.per_second, Some(500.0));
+    }
+
+    #[test]
+    fn thousands_are_grouped() {
+        assert_eq!(group_thousands(7), "7");
+        assert_eq!(group_thousands(1284), "1\u{202f}284");
+        assert_eq!(group_thousands(1_234_567), "1\u{202f}234\u{202f}567");
+    }
 
     fn value(timestamp: u64) -> Vec<u8> {
         value_of("rpm", timestamp)

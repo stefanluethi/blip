@@ -228,20 +228,19 @@ impl Viewable for Xy {
         let names = short_names(paths.iter().map(String::as_str));
         super::properties_section(ui, "Axes", |ui| {
             for (path, name) in paths.iter().zip(names) {
-                ui.label(name).on_hover_text(path);
-                let is_x = x_path.as_ref() == Some(path);
-                ui.horizontal(|ui| {
-                    if ui.selectable_label(is_x, "X").clicked() {
-                        self.x = Some(path.clone());
-                    }
-                    if ui.selectable_label(!is_x, "Y").clicked() && is_x {
+                super::property_label(ui, name).on_hover_text(path);
+                let mut is_x = x_path.as_ref() == Some(path);
+                if theme::segmented(ui, &mut is_x, &[(true, "X"), (false, "Y")]) {
+                    self.x = if is_x {
+                        Some(path.clone())
+                    } else {
                         // another trace becomes the x trace
-                        self.x = paths.iter().find(|other| *other != path).cloned();
-                    }
-                });
+                        paths.iter().find(|other| *other != path).cloned()
+                    };
+                }
                 ui.end_row();
             }
-            ui.label("Equal axes");
+            super::property_label(ui, "Equal axes");
             ui.checkbox(&mut self.equal_axes, "")
                 .on_hover_text("Give a unit the same length on both axes");
             ui.end_row();

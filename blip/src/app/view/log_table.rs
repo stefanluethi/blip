@@ -136,10 +136,14 @@ impl LogTable {
             |ui| {
                 ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
                 let text_height = egui::TextStyle::Monospace.resolve(ui.style()).size;
+                // the lines between the entries run across all columns
+                let row_span = ui.max_rect().x_range();
+                let row_line = ui.visuals().widgets.noninteractive.bg_stroke;
+                // the column borders show only while resizing a column
+                ui.visuals_mut().widgets.noninteractive.bg_stroke = egui::Stroke::NONE;
 
                 let mut builder = TableBuilder::new(ui)
                     .min_scrolled_height(0.0)
-                    .striped(true)
                     .resizable(true)
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                     .column(Column::initial(80.0).at_least(80.0)) // Timestamp
@@ -176,6 +180,7 @@ impl LogTable {
 
                 builder.body(|body| {
                     body.rows(text_height + 6.0, filtered_entries.len(), |mut row| {
+                        let first = row.index() == 0;
                         let entry = filtered_entries[row.index()];
                         let shown = in_range(entry);
                         let text = |text: &str, ui: &egui::Ui| {
@@ -187,6 +192,11 @@ impl LogTable {
                             }
                         };
                         row.col(|ui| {
+                            if !first {
+                                let gap = ui.spacing().item_spacing.y / 2.0;
+                                let y = ui.max_rect().top() - gap;
+                                ui.painter().hline(row_span, y, row_line);
+                            }
                             ui.label(text(&entry.timestamp, ui));
                         });
                         row.col(|ui| {
@@ -246,6 +256,7 @@ impl LogTable {
 
                         ui.add(
                             egui::TextEdit::singleline(&mut self.filter.message_regex)
+                                .margin(theme::FIELD_MARGIN)
                                 .hint_text(format!(
                                     "{} Search logs (regex)...",
                                     egui_phosphor::regular::MAGNIFYING_GLASS

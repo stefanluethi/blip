@@ -1,6 +1,6 @@
 //! The look of blip: the light and dark "Control Room" themes, with the views as cards
-//! on a darker canvas, the IBM colour-blind-safe palette for the traces, and Inter and
-//! Roboto Mono for the text.
+//! on a darker canvas, the IBM colour-blind-safe palette for the traces, and Fira Sans
+//! and Fira Code for the text, as in the documentation.
 
 use egui::{Color32, CornerRadius, FontData, FontDefinitions, FontFamily, Shadow, Stroke};
 use egui::{FontId, TextStyle, Theme, Visuals};
@@ -9,9 +9,14 @@ use std::collections::BTreeMap;
 /// The corner radius of the cards of the views.
 pub const CARD_RADIUS: u8 = 4;
 /// The corner radius of buttons, fields and other controls.
-const CONTROL_RADIUS: u8 = 3;
+pub const CONTROL_RADIUS: u8 = 3;
 /// The corner radius of menus, popups and tooltips.
 const POPUP_RADIUS: u8 = 4;
+/// The height of buttons, fields, checkboxes and the rows of trees, so that they line up.
+const CONTROL_HEIGHT: f32 = 24.0;
+/// The margin of text fields, which makes them as high as the other controls with the
+/// body text: the text, these margins and the stroke.
+pub const FIELD_MARGIN: egui::Margin = egui::Margin::symmetric(6, 3);
 /// The gap between the cards of the views and around them.
 pub const GAP: f32 = 8.0;
 
@@ -24,20 +29,22 @@ pub struct Tokens {
     /// The cards of the views, also behind the plots.
     pub card: Color32,
     /// Buttons, checkboxes and other controls.
-    control: Color32,
+    pub control: Color32,
     /// A control under the pointer.
     hover: Color32,
     /// Menus, popups and tooltips.
     popup: Color32,
     pub border: Color32,
-    border_strong: Color32,
+    pub border_strong: Color32,
     text: Color32,
     /// Secondary text, like labels and hints.
     text_weak: Color32,
     /// The colour of selection, focus and the live button.
     pub accent: Color32,
-    /// Where the underline of the open tab ends, the accent at its start.
-    pub accent_warm: Color32,
+    /// Text on the accent.
+    pub on_accent: Color32,
+    /// The time cursor, apart from the trace colours, most of which are saturated.
+    cursor: Color32,
     /// The accent as text and lines on the canvas, panels and cards.
     accent_text: Color32,
     pub ok: Color32,
@@ -64,7 +71,8 @@ pub const LIGHT: Tokens = Tokens {
     text: Color32::from_rgb(0x24, 0x29, 0x2e),
     text_weak: Color32::from_rgb(0x5b, 0x61, 0x68),
     accent: Color32::from_rgb(0x38, 0x71, 0xdc),
-    accent_warm: Color32::from_rgb(0xe8, 0x59, 0x0c),
+    cursor: Color32::from_rgb(0x3a, 0x3f, 0x46),
+    on_accent: Color32::WHITE,
     accent_text: Color32::from_rgb(0x1f, 0x62, 0xe0),
     ok: Color32::from_rgb(0x1f, 0x9d, 0x55),
     warn: Color32::from_rgb(0xc2, 0x7c, 0x0e),
@@ -94,7 +102,8 @@ pub const DARK: Tokens = Tokens {
     text: Color32::from_rgb(0xcc, 0xcc, 0xdc),
     text_weak: Color32::from_rgb(0x9a, 0x9a, 0xab),
     accent: Color32::from_rgb(0x3d, 0x71, 0xd9),
-    accent_warm: Color32::from_rgb(0xff, 0x88, 0x33),
+    cursor: Color32::from_rgb(0xec, 0xec, 0xf4),
+    on_accent: Color32::WHITE,
     accent_text: Color32::from_rgb(0x6e, 0x9f, 0xff),
     ok: Color32::from_rgb(0x3f, 0xbf, 0x72),
     warn: Color32::from_rgb(0xe3, 0xa9, 0x3a),
@@ -130,10 +139,18 @@ pub fn install(ctx: &egui::Context) {
         (TextStyle::Small, FontId::proportional(11.0)),
     ]
     .into();
-    ctx.all_styles_mut(move |style| style.text_styles = text_styles.clone());
+    ctx.all_styles_mut(move |style| {
+        style.text_styles = text_styles.clone();
+        let spacing = &mut style.spacing;
+        spacing.interact_size.y = CONTROL_HEIGHT;
+        spacing.button_padding = egui::vec2(8.0, 2.0);
+        spacing.item_spacing = egui::vec2(8.0, 3.0);
+        spacing.indent = 16.0;
+        spacing.menu_margin = egui::Margin::same(6);
+    });
 }
 
-/// Inter for text and Roboto Mono for values, both subset (see `assets/fonts`), then
+/// Fira Sans for text and Fira Code for values, both subset (see `assets/fonts`), then
 /// the Phosphor icons and egui's default fonts for the glyphs they lack.
 fn fonts() -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
@@ -142,19 +159,19 @@ fn fonts() -> FontDefinitions {
         fonts.font_data.insert(name.to_owned(), data.into());
     };
     add(
-        "Inter",
-        include_bytes!("../../assets/fonts/Inter-Regular.ttf"),
+        "Fira Sans",
+        include_bytes!("../../assets/fonts/FiraSans-Regular.ttf"),
     );
     add(
-        "Roboto Mono",
-        include_bytes!("../../assets/fonts/RobotoMono-Regular.ttf"),
+        "Fira Code",
+        include_bytes!("../../assets/fonts/FiraCode-Regular.ttf"),
     );
     add("phosphor", egui_phosphor::Variant::Regular.font_bytes());
     let proportional = fonts.families.entry(FontFamily::Proportional).or_default();
-    proportional.insert(0, "Inter".to_owned());
+    proportional.insert(0, "Fira Sans".to_owned());
     proportional.insert(1, "phosphor".to_owned());
     let monospace = fonts.families.entry(FontFamily::Monospace).or_default();
-    monospace.insert(0, "Roboto Mono".to_owned());
+    monospace.insert(0, "Fira Code".to_owned());
     monospace.push("phosphor".to_owned());
     fonts
 }
@@ -243,6 +260,90 @@ pub fn palette_color(visuals: &Visuals, index: usize) -> Color32 {
 /// The grey of the palette, for values that should not stand out.
 pub fn palette_grey(visuals: &Visuals) -> Color32 {
     tokens(visuals).traces[5]
+}
+
+/// The color of the time cursor: light on the dark theme, dark on the light one.
+pub fn cursor_color(visuals: &Visuals) -> Color32 {
+    tokens(visuals).cursor
+}
+
+/// The title of a panel or of a section of properties: small capitals in the weak text
+/// color.
+pub fn title(visuals: &Visuals, text: &str) -> egui::RichText {
+    egui::RichText::new(text.to_uppercase())
+        .size(11.0)
+        .strong()
+        .color(tokens(visuals).text_weak)
+}
+
+/// Chooses one of `options` by their names, side by side in a sunken track with the
+/// chosen one raised. Like Rerun's selectable toggle, the buttons are made as high as
+/// the track leaves room for, so that their text is centered. Returns whether the choice
+/// changed.
+pub fn segmented<T: PartialEq + Copy>(
+    ui: &mut egui::Ui,
+    value: &mut T,
+    options: &[(T, &str)],
+) -> bool {
+    let t = tokens(ui.visuals());
+    let margin = 2;
+    let mut changed = false;
+    egui::Frame::NONE
+        .fill(t.canvas)
+        .stroke(Stroke::new(1.0, t.border))
+        .corner_radius(CONTROL_RADIUS)
+        .inner_margin(margin)
+        .show(ui, |ui| {
+            // the track keeps the height of the other controls
+            let height = ui.spacing().interact_size.y - 2.0 * (f32::from(margin) + 1.0);
+            ui.spacing_mut().interact_size.y = height;
+            ui.spacing_mut().button_padding = egui::vec2(4.0, 0.0);
+            ui.spacing_mut().item_spacing.x = 2.0;
+            let count = options.len().max(1) as f32;
+            let width = ((ui.available_width() - 2.0 * (count - 1.0)) / count).max(0.0);
+            ui.horizontal(|ui| {
+                for &(option, name) in options {
+                    let chosen = *value == option;
+                    let color = if chosen { t.text } else { t.text_weak };
+                    let text = egui::RichText::new(name).size(12.0).color(color);
+                    let mut button =
+                        egui::Button::selectable(chosen, text).corner_radius(CONTROL_RADIUS - 1);
+                    if chosen {
+                        button = button
+                            .fill(t.control)
+                            .stroke(Stroke::new(1.0, t.border_strong));
+                    }
+                    let response = ui
+                        .allocate_ui_with_layout(
+                            egui::vec2(width, height),
+                            egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+                            |ui| ui.add(button),
+                        )
+                        .inner;
+                    if response.clicked() && !chosen {
+                        *value = option;
+                        changed = true;
+                    }
+                }
+            });
+        });
+    changed
+}
+
+/// A row with the title of a section of a panel, and the buttons added by `add` on the
+/// right, as high as the controls.
+pub fn section_header(ui: &mut egui::Ui, text: &str, add: impl FnOnce(&mut egui::Ui)) {
+    ui.horizontal(|ui| {
+        ui.set_min_height(CONTROL_HEIGHT);
+        ui.label(title(ui.visuals(), text));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), add);
+    });
+}
+
+/// A button with only `icon`, framed only while hovered, like the add buttons of the
+/// panels.
+pub fn icon_button(icon: &str) -> egui::Button<'_> {
+    egui::Button::new(icon).frame_when_inactive(false)
 }
 
 /// The color of the grid lines of plots, which egui_plot fades for denser lines.

@@ -257,7 +257,7 @@ impl Viewable for Table {
                     (TableRows::Names, "Names"),
                 ],
             );
-            ui.label("Empty");
+            super::property_label(ui, "Empty");
             ui.checkbox(&mut self.show_empty, "")
                 .on_hover_text("Show traces without a value at the cursor time");
             ui.end_row();

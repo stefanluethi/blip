@@ -374,10 +374,11 @@ impl Viewable for Plot {
         super::properties_section(ui, "Y axis", |ui| {
             super::optional_number_row(ui, "Min", &mut self.y_min);
             super::optional_number_row(ui, "Max", &mut self.y_max);
-            ui.label("Label");
+            super::property_label(ui, "Label");
             ui.add(
                 egui::TextEdit::singleline(&mut self.y_label)
                     .hint_text(unit)
+                    .margin(theme::FIELD_MARGIN)
                     .desired_width(f32::INFINITY),
             )
             .on_hover_text("The unit of the traces if they share one and this is empty");
@@ -393,7 +394,7 @@ impl Viewable for Plot {
                     (Interpolation::Step, "Step"),
                 ],
             );
-            ui.label("Width");
+            super::property_label(ui, "Width");
             ui.add(
                 egui::DragValue::new(&mut self.line_width)
                     .range(0.5..=6.0)
@@ -418,7 +419,7 @@ impl Viewable for Plot {
             );
         });
         super::properties_section(ui, "Legend", |ui| {
-            ui.label("Placement");
+            super::property_label(ui, "Placement");
             egui::ComboBox::from_id_salt("plot_legend")
                 .selected_text(self.legend.name())
                 .show_ui(ui, |ui| {

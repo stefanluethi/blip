@@ -285,8 +285,17 @@ impl TimeRange {
             if ui.button(icon).on_hover_text(hint).clicked() {
                 self.toggle_play();
             }
-            let live_button =
-                egui::Button::new(format!("{} Live", regular::BROADCAST)).selected(self.is_live());
+            // filled with the accent while following the newest data
+            let live = format!("{} Live", regular::BROADCAST);
+            let live_button = if self.is_live() {
+                let tokens = theme::tokens(ui.visuals());
+                egui::Button::new(egui::RichText::new(live).color(tokens.on_accent))
+                    .fill(tokens.accent)
+                    .stroke(egui::Stroke::NONE)
+            } else {
+                egui::Button::new(live)
+            }
+            .selected(self.is_live());
             if ui
                 .add(live_button)
                 .on_hover_text("Follow the newest data")
@@ -295,7 +304,7 @@ impl TimeRange {
                 self.go_live();
             }
 
-            ui.label("Window:");
+            ui.weak("Window");
             let speed = self.window * 0.01;
             ui.add(
                 egui::DragValue::new(&mut self.window)
@@ -444,7 +453,7 @@ pub fn show_cursor(ui: &egui::Ui, id: egui::Id, rect: egui::Rect, x: Option<f32>
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
     }
 
-    let color = ui.visuals().selection.stroke.color;
+    let color = theme::cursor_color(ui.visuals());
     let width = if grabbed || hovered { 2.0 } else { 1.5 };
     let painter = ui.painter_at(rect);
     painter.vline(x, rect.y_range(), egui::Stroke::new(width, color));

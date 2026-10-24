@@ -2,6 +2,7 @@
 //! rename, move and remove them.
 
 use super::{Drop, GroupKind, Layout};
+use crate::app::theme;
 use crate::app::view::ViewType;
 use egui_tiles::{Tile, TileId};
 
@@ -36,10 +37,10 @@ impl Layout {
     pub fn panel_ui(&mut self, ui: &mut egui::Ui) {
         let mut actions = vec![];
 
-        ui.horizontal(|ui| {
-            ui.strong("Layout");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.menu_button(egui_phosphor::regular::PLUS, |ui| {
+        theme::section_header(ui, "Layout", |ui| {
+            let add = theme::icon_button(egui_phosphor::regular::PLUS);
+            egui::containers::menu::MenuButton::from_button(add)
+                .ui(ui, |ui| {
                     for view_type in ViewType::ALL {
                         if ui
                             .button(format!("{} {}", view_type.icon(), view_type.name()))
@@ -64,9 +65,8 @@ impl Layout {
                         }
                     }
                 })
-                .response
+                .0
                 .on_hover_text("Add a view, a tab or a group");
-            });
         });
 
         let mut rows = RowsState {
@@ -161,7 +161,10 @@ impl Layout {
         let actions = &mut rows.actions;
         if let Some((_, name)) = rows.renaming.as_mut().filter(|(id, _)| *id == tile_id) {
             ui.label(icon);
-            let response = ui.add(egui::TextEdit::singleline(name).desired_width(f32::INFINITY));
+            let field = egui::TextEdit::singleline(name)
+                .margin(theme::FIELD_MARGIN)
+                .desired_width(f32::INFINITY);
+            let response = ui.add(field);
             if response.lost_focus() {
                 if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                     actions.push(Action::CancelRename);

@@ -341,11 +341,11 @@ impl Viewable for States {
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, _context: &PropertiesContext<'_>) {
         super::properties_section(ui, "Bands", |ui| {
-            ui.label("Height");
+            super::property_label(ui, "Height");
             ui.add(egui::Slider::new(&mut self.band_height, 0.2..=1.0))
                 .on_hover_text("Height of a band as a fraction of its row");
             ui.end_row();
-            ui.label("Values");
+            super::property_label(ui, "Values");
             ui.checkbox(&mut self.show_values, "")
                 .on_hover_text("Label the bands wide enough with their value");
             ui.end_row();

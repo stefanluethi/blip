@@ -632,19 +632,16 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
     }
 }
 
-/// The underline of the open tab at the bottom of `rect`, running from the accent to its
-/// warm end.
+/// The underline of the open tab at the bottom of `rect`, in the accent and inset like
+/// its title.
 fn paint_tab_underline(painter: &egui::Painter, rect: egui::Rect) {
-    let tokens = theme::tokens(&painter.ctx().global_style().visuals);
-    let line = egui::Rect::from_x_y_ranges(rect.x_range(), rect.bottom() - 2.0..=rect.bottom());
-    let mut mesh = egui::Mesh::default();
-    mesh.colored_vertex(line.left_top(), tokens.accent);
-    mesh.colored_vertex(line.right_top(), tokens.accent_warm);
-    mesh.colored_vertex(line.left_bottom(), tokens.accent);
-    mesh.colored_vertex(line.right_bottom(), tokens.accent_warm);
-    mesh.add_triangle(0, 1, 2);
-    mesh.add_triangle(2, 1, 3);
-    painter.add(mesh);
+    let accent = theme::tokens(&painter.ctx().global_style().visuals).accent;
+    let inset = 4.0;
+    let line = egui::Rect::from_x_y_ranges(
+        rect.left() + inset..=rect.right() - inset,
+        rect.bottom() - 2.0..=rect.bottom(),
+    );
+    painter.rect_filled(line, 1.0, accent);
 }
 
 #[cfg(test)]

@@ -15,6 +15,7 @@ use crate::app::model::Model;
 use crate::app::model::actions::{ActionId, Args, Invoker, Outcome};
 use crate::app::model::numbers::{DisplayFormat, Number};
 use crate::app::model::traces::Samples;
+use crate::app::theme;
 use egui::RichText;
 use egui_phosphor::regular::{CHECK_CIRCLE, CLOCK_COUNTDOWN, PLAY, WARNING_CIRCLE};
 use proto::{ActionDescriptor, Data, Param, ParamKind};
@@ -303,7 +304,10 @@ fn input_ui(ui: &mut egui::Ui, path: &str, param: &Param, value: &mut Data, fiel
                 Data::String(text) => text.clone(),
                 _ => String::new(),
             };
-            let response = ui.add(egui::TextEdit::singleline(&mut text).desired_width(INPUT_WIDTH));
+            let field = egui::TextEdit::singleline(&mut text)
+                .margin(theme::FIELD_MARGIN)
+                .desired_width(INPUT_WIDTH);
+            let response = ui.add(field);
             *value = Data::String(text);
             if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
                 Change::Done
@@ -386,6 +390,7 @@ fn integer_field(
     let response = ui.add(
         egui::TextEdit::singleline(&mut text)
             .id(id)
+            .margin(theme::FIELD_MARGIN)
             .desired_width(INPUT_WIDTH - 60.0),
     );
     if !unit.is_empty() {
@@ -818,11 +823,8 @@ impl Actions {
                 } else {
                     format!("{name} {param}")
                 };
-                ui.label(label).on_hover_text(&action.path);
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut field, false, "Slider");
-                    ui.selectable_value(&mut field, true, "Field");
-                });
+                super::property_label(ui, &label).on_hover_text(&action.path);
+                theme::segmented(ui, &mut field, &[(false, "Slider"), (true, "Field")]);
                 ui.end_row();
                 if field {
                     self.fields.insert(key);
@@ -894,7 +896,7 @@ impl Viewable for Actions {
             .map(|row| row.path.to_owned())
             .collect();
         properties_section(ui, "Actions", |ui| {
-            ui.label("Outpost");
+            super::property_label(ui, "Outpost");
             self.outpost_ui(ui, context.model);
             ui.end_row();
             if paths.is_empty() {
@@ -909,7 +911,7 @@ impl Viewable for Actions {
         let names = short_names(paths.iter().map(String::as_str));
         properties_section(ui, "Readbacks", |ui| {
             for (path, name) in paths.iter().zip(&names) {
-                ui.label(*name).on_hover_text(path);
+                super::property_label(ui, name).on_hover_text(path);
                 self.readback_ui(ui, context, path);
                 ui.end_row();
             }

@@ -1,12 +1,13 @@
 //! The properties panel: the properties of the selected view or group.
 
 use super::{GroupKind, Layout};
-use crate::app::view::{PropertiesContext, Viewable, properties_section};
+use crate::app::theme;
+use crate::app::view::{PropertiesContext, Viewable, properties_section, property_label};
 use egui_tiles::{Tile, TileId};
 
 impl Layout {
     pub fn properties_ui(&mut self, ui: &mut egui::Ui, context: &PropertiesContext<'_>) {
-        ui.strong("Properties");
+        theme::section_header(ui, "Properties", |_| {});
         let Some(tile_id) = self
             .selected
             .filter(|&id| self.tree.tiles.get(id).is_some())
@@ -24,11 +25,12 @@ impl Layout {
     }
 
     fn group_ui(&mut self, ui: &mut egui::Ui, tile_id: TileId, current: GroupKind) {
+        title_row(ui, current.icon(), self.name(tile_id), "Group");
         properties_section(ui, "Group", |ui| {
-            ui.label("Name");
+            property_label(ui, "Name");
             self.name_ui(ui, tile_id);
             ui.end_row();
-            ui.label("Arrange");
+            property_label(ui, "Arrange");
             let label = |kind: GroupKind| format!("{} {}", kind.icon(), kind.name());
             egui::ComboBox::from_id_salt("group_kind")
                 .selected_text(label(current))
@@ -44,16 +46,14 @@ impl Layout {
     }
 
     fn view_ui(&mut self, ui: &mut egui::Ui, tile_id: TileId, context: &PropertiesContext<'_>) {
+        if let Some(view) = self.view(tile_id) {
+            let view_type = view.view_type();
+            title_row(ui, view_type.icon(), &view.name, view_type.name());
+        }
         properties_section(ui, "View", |ui| {
-            ui.label("Name");
+            property_label(ui, "Name");
             self.name_ui(ui, tile_id);
             ui.end_row();
-            if let Some(view) = self.view(tile_id) {
-                let view_type = view.view_type();
-                ui.label("Type");
-                ui.label(format!("{} {}", view_type.icon(), view_type.name()));
-                ui.end_row();
-            }
         });
         if let Some(Tile::Pane(view)) = self.tree.tiles.get_mut(tile_id) {
             view.properties_ui(ui, context);
@@ -67,12 +67,37 @@ impl Layout {
             Some((id, name)) if *id == tile_id => name.clone(),
             _ => self.name(tile_id).to_owned(),
         };
-        let response = ui.add(egui::TextEdit::singleline(&mut name).desired_width(f32::INFINITY));
+        let field = egui::TextEdit::singleline(&mut name)
+            .margin(theme::FIELD_MARGIN)
+            .desired_width(f32::INFINITY);
+        let response = ui.add(field);
         if response.changed() && !name.trim().is_empty() {
             self.set_name(tile_id, name.trim().to_owned());
         }
         self.properties_name = response.has_focus().then_some((tile_id, name));
     }
+}
+
+/// The name of the selected view or group with its `icon`, and its `kind` in a chip on
+/// the right.
+fn title_row(ui: &mut egui::Ui, icon: &str, name: &str, kind: &str) {
+    ui.horizontal(|ui| {
+        let accent = theme::tokens(ui.visuals()).accent;
+        ui.label(egui::RichText::new(icon).size(15.0).color(accent));
+        ui.label(egui::RichText::new(name).size(14.0).strong());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let visuals = ui.visuals();
+            egui::Frame::NONE
+                .fill(visuals.faint_bg_color)
+                .stroke(visuals.widgets.noninteractive.bg_stroke)
+                .corner_radius(theme::CONTROL_RADIUS)
+                .inner_margin(egui::Margin::symmetric(6, 1))
+                .show(ui, |ui| {
+                    let color = ui.visuals().weak_text_color();
+                    ui.label(egui::RichText::new(kind).size(11.0).color(color));
+                });
+        });
+    });
 }
 
 #[cfg(test)]

@@ -12,6 +12,7 @@ use crate::app::model::Model;
 use crate::app::model::actions::Invoker;
 use crate::app::model::numbers::{DisplayFormat, NumberKind};
 use crate::app::model::traces::{Samples, Trace};
+use crate::app::theme;
 use crate::app::time::TimeRange;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -275,18 +276,34 @@ pub fn short_names<'a>(paths: impl IntoIterator<Item = &'a str>) -> Vec<&'a str>
     }
 }
 
-/// Shows a section of properties titled `title` that can be collapsed, with the label
-/// and the value of each property added by `add` in a row of a grid.
+/// The width of the labels of properties, so that their values line up.
+const PROPERTY_LABEL_WIDTH: f32 = 84.0;
+
+/// Shows a section of properties titled `title` that can be collapsed, below a line,
+/// with the label and the value of each property added by `add` in a row of a grid.
 pub fn properties_section(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) {
-    egui::CollapsingHeader::new(egui::RichText::new(title).strong())
+    ui.add_space(6.0);
+    let line = ui.visuals().widgets.noninteractive.bg_stroke;
+    ui.painter()
+        .hline(ui.max_rect().x_range(), ui.cursor().top(), line);
+    ui.add_space(4.0);
+    egui::CollapsingHeader::new(theme::title(ui.visuals(), title))
         .id_salt(("properties", title))
         .default_open(true)
-        .show(ui, |ui| {
+        .show_unindented(ui, |ui| {
             egui::Grid::new(("properties grid", title))
                 .num_columns(2)
-                .spacing([12.0, 6.0])
+                .min_col_width(PROPERTY_LABEL_WIDTH)
+                .min_row_height(ui.spacing().interact_size.y)
+                .spacing([8.0, 6.0])
                 .show(ui, add);
         });
+}
+
+/// The label of a property in the first column of the grid of a properties section.
+pub fn property_label(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    let color = ui.visuals().weak_text_color();
+    ui.label(egui::RichText::new(text).color(color))
 }
 
 /// Adds a row labelled `label` to the grid of a properties section to choose one of
@@ -297,12 +314,8 @@ pub fn choice_row<T: PartialEq + Copy>(
     value: &mut T,
     options: &[(T, &str)],
 ) {
-    ui.label(label);
-    ui.horizontal_wrapped(|ui| {
-        for &(option, name) in options {
-            ui.selectable_value(value, option, name);
-        }
-    });
+    property_label(ui, label);
+    theme::segmented(ui, value, options);
     ui.end_row();
 }
 
@@ -310,13 +323,14 @@ pub fn choice_row<T: PartialEq + Copy>(
 /// `value`, which is `None` while the field is empty. While the field is edited, text
 /// that is no number is kept in it and leaves `value` as it was.
 pub fn optional_number_row(ui: &mut egui::Ui, label: &str, value: &mut Option<f64>) {
-    ui.label(label);
+    property_label(ui, label);
     let id = ui.id().with(("optional number", label));
     let edited: Option<String> = ui.data(|data| data.get_temp(id));
     let mut text = edited.unwrap_or_else(|| value.map_or_else(String::new, |v| v.to_string()));
     let response = ui.add(
         egui::TextEdit::singleline(&mut text)
             .hint_text("auto")
+            .margin(theme::FIELD_MARGIN)
             .desired_width(f32::INFINITY),
     );
     if response.changed() {
@@ -346,10 +360,10 @@ pub fn range_rows(ui: &mut egui::Ui, range: &mut Option<(f64, f64)>, fitted: (f6
     }
     if let Some((min, max)) = range {
         let speed = ((*max - *min).abs() * 0.01).max(1.0e-6);
-        ui.label("Min");
+        property_label(ui, "Min");
         ui.add(egui::DragValue::new(min).speed(speed));
         ui.end_row();
-        ui.label("Max");
+        property_label(ui, "Max");
         ui.add(egui::DragValue::new(max).speed(speed));
         ui.end_row();
     }
@@ -468,7 +482,7 @@ impl View {
         let names = short_names(paths.iter().map(String::as_str));
         properties_section(ui, "Number format", |ui| {
             for (path, name) in paths.iter().zip(names) {
-                ui.label(name).on_hover_text(path);
+                property_label(ui, name).on_hover_text(path);
                 ui.horizontal(|ui| {
                     let current = self.formats.of(path);
                     ui.add_enabled_ui(has_numbers(model, path), |ui| {
