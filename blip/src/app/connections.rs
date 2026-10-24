@@ -422,30 +422,41 @@ impl Connections {
                 .recorded
                 .as_ref()
                 .is_some_and(|recorded| recorded.contains(&connection.address));
+        // the name above the address, which is cut to the width of the panel
+        let width = ui.available_width();
         let mut text = egui::text::LayoutJob::default();
         let style = ui.style();
-        if !connection.name.is_empty() {
-            egui::RichText::new(format!("{}  ", connection.name))
-                .strong()
+        let named = !connection.name.is_empty();
+        let title = if named {
+            &connection.name
+        } else {
+            &connection.address
+        };
+        egui::RichText::new(title).strong().append_to(
+            &mut text,
+            style,
+            egui::FontSelection::Default,
+            egui::Align::Min,
+        );
+        if named {
+            let font = egui::FontId::monospace(11.0);
+            let room = width - 2.0 * ui.spacing().button_padding.x;
+            let address = elide(ui, &connection.address, &font, room);
+            egui::RichText::new(format!("\n{address}"))
+                .font(font)
+                .color(style.visuals.weak_text_color())
                 .append_to(
                     &mut text,
                     style,
                     egui::FontSelection::Default,
-                    egui::Align::Center,
+                    egui::Align::Min,
                 );
         }
-        egui::RichText::new(&connection.address)
-            .color(style.visuals.weak_text_color())
-            .append_to(
-                &mut text,
-                style,
-                egui::FontSelection::Default,
-                egui::Align::Center,
-            );
         // not highlighted while connected, the status dot shows it
         let button = egui::Button::new(text)
             .frame_when_inactive(false)
-            .truncate();
+            .wrap_mode(egui::TextWrapMode::Extend)
+            .min_size(egui::vec2(width, 0.0));
         let response = ui
             .add_enabled(!recording || reconnect, button)
             .on_hover_text(if reconnect {
@@ -660,6 +671,30 @@ fn status_ui(ui: &mut egui::Ui, status: &Status) {
         response
     };
     response.on_hover_text(hint);
+}
+
+/// `text` in `font`, cut with an ellipsis to fit `width`.
+fn elide(ui: &egui::Ui, text: &str, font: &egui::FontId, width: f32) -> String {
+    let fits = |text: &str| {
+        let galley = ui.ctx().fonts_mut(|fonts| {
+            fonts.layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::PLACEHOLDER)
+        });
+        galley.size().x <= width
+    };
+    if fits(text) {
+        return text.to_owned();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    (0..chars.len())
+        .rev()
+        .map(|count| {
+            chars[..count]
+                .iter()
+                .chain(['…'].iter())
+                .collect::<String>()
+        })
+        .find(|elided| fits(elided))
+        .unwrap_or_else(|| "…".to_owned())
 }
 
 #[cfg(test)]

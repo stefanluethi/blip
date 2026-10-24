@@ -81,23 +81,31 @@ impl Layout {
 /// The name of the selected view or group with its `icon`, and its `kind` in a chip on
 /// the right.
 fn title_row(ui: &mut egui::Ui, icon: &str, name: &str, kind: &str) {
-    ui.horizontal(|ui| {
-        let accent = theme::tokens(ui.visuals()).accent;
-        ui.label(egui::RichText::new(icon).size(15.0).color(accent));
-        ui.label(egui::RichText::new(name).size(14.0).strong());
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let visuals = ui.visuals();
-            egui::Frame::NONE
-                .fill(visuals.faint_bg_color)
-                .stroke(visuals.widgets.noninteractive.bg_stroke)
-                .corner_radius(theme::CONTROL_RADIUS)
-                .inner_margin(egui::Margin::symmetric(6, 1))
-                .show(ui, |ui| {
-                    let color = ui.visuals().weak_text_color();
-                    ui.label(egui::RichText::new(kind).size(11.0).color(color));
-                });
+    // both ends are centered in one row as high as the controls
+    let size = egui::vec2(ui.available_width(), theme::CONTROL_HEIGHT);
+    let (row, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let mut end = |align: egui::Align| {
+        let layout = match align {
+            egui::Align::Max => egui::Layout::right_to_left(egui::Align::Center),
+            _ => egui::Layout::left_to_right(egui::Align::Center),
+        };
+        ui.new_child(egui::UiBuilder::new().max_rect(row).layout(layout))
+    };
+    let mut left = end(egui::Align::Min);
+    let accent = theme::tokens(left.visuals()).accent;
+    left.label(egui::RichText::new(icon).size(15.0).color(accent));
+    left.label(egui::RichText::new(name).size(14.0).strong());
+    let mut right = end(egui::Align::Max);
+    let visuals = right.visuals();
+    egui::Frame::NONE
+        .fill(visuals.faint_bg_color)
+        .stroke(visuals.widgets.noninteractive.bg_stroke)
+        .corner_radius(theme::CONTROL_RADIUS)
+        .inner_margin(egui::Margin::symmetric(6, 1))
+        .show(&mut right, |ui| {
+            let color = ui.visuals().weak_text_color();
+            ui.label(egui::RichText::new(kind).size(11.0).color(color));
         });
-    });
 }
 
 #[cfg(test)]

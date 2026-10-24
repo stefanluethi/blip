@@ -147,8 +147,8 @@ impl LogTable {
                     .resizable(true)
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                     .column(Column::initial(80.0).at_least(80.0)) // Timestamp
+                    .column(Column::initial(56.0).at_least(30.0)) // Log Level
                     .column(Column::initial(100.0).at_least(40.0)) // Log Component
-                    .column(Column::initial(50.0).at_least(30.0)) // Log Level
                     .column(Column::remainder().at_least(150.0)); // Message
 
                 let range = time.range();
@@ -179,7 +179,7 @@ impl LogTable {
                 self.last_range = range;
 
                 builder.body(|body| {
-                    body.rows(text_height + 6.0, filtered_entries.len(), |mut row| {
+                    body.rows(text_height + 10.0, filtered_entries.len(), |mut row| {
                         let first = row.index() == 0;
                         let entry = filtered_entries[row.index()];
                         let shown = in_range(entry);
@@ -200,10 +200,10 @@ impl LogTable {
                             ui.label(text(&entry.timestamp, ui));
                         });
                         row.col(|ui| {
-                            ui.label(text(&entry.component, ui));
+                            level_badge(ui, entry.level, shown);
                         });
                         row.col(|ui| {
-                            level_badge(ui, entry.level, shown);
+                            ui.label(text(&entry.component, ui));
                         });
                         row.col(|ui| {
                             ui.label(text(&entry.message, ui));

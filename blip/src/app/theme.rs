@@ -13,7 +13,7 @@ pub const CONTROL_RADIUS: u8 = 3;
 /// The corner radius of menus, popups and tooltips.
 const POPUP_RADIUS: u8 = 4;
 /// The height of buttons, fields, checkboxes and the rows of trees, so that they line up.
-const CONTROL_HEIGHT: f32 = 24.0;
+pub const CONTROL_HEIGHT: f32 = 24.0;
 /// The margin of text fields, which makes them as high as the other controls with the
 /// body text: the text, these margins and the stroke.
 pub const FIELD_MARGIN: egui::Margin = egui::Margin::symmetric(6, 3);
@@ -212,6 +212,8 @@ fn visuals(t: &Tokens, base: Visuals) -> Visuals {
     v.warn_fg_color = t.warn;
     v.error_fg_color = t.error;
     v.weak_text_color = Some(t.text_weak);
+    // the indentation alone shows the levels of trees
+    v.indent_has_left_vline = false;
 
     let radius = CornerRadius::same(CONTROL_RADIUS);
     let w = &mut v.widgets;

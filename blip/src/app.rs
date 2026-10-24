@@ -124,14 +124,14 @@ fn record_button(ui: &mut egui::Ui, recording: bool, connected: bool) -> bool {
     // red like a record key, filled with a tint of it while recording
     let tokens = theme::tokens(ui.visuals());
     let red = tokens.error;
-    let icon = egui::RichText::new(egui_phosphor::regular::RECORD).color(red);
+    let dot = egui::Id::new("record dot");
     let text = egui::RichText::new("Record").color(red);
     let (fill, stroke) = if recording {
         (tokens.control.lerp_to_gamma(red, 0.2), red)
     } else {
         (tokens.control, tokens.border)
     };
-    let button = egui::Button::new((icon, text))
+    let button = egui::Button::new((egui::Atom::custom(dot, egui::vec2(9.0, 9.0)), text))
         .selected(recording)
         .fill(fill)
         .stroke(egui::Stroke::new(1.0, stroke));
@@ -140,7 +140,20 @@ fn record_button(ui: &mut egui::Ui, recording: bool, connected: bool) -> bool {
     } else {
         "Click to clear the data and record the received samples"
     };
-    ui.add_enabled(recording || connected, button)
+    let enabled = recording || connected;
+    let shown = ui.add_enabled_ui(enabled, |ui| button.atom_ui(ui)).inner;
+    if let Some(rect) = shown.rect(dot) {
+        // a red dot, like the key of a recorder
+        let alpha = if enabled {
+            1.0
+        } else {
+            ui.visuals().disabled_alpha
+        };
+        ui.painter()
+            .circle_filled(rect.center(), 4.5, red.gamma_multiply(alpha));
+    }
+    shown
+        .response
         .on_hover_text(hint)
         .on_disabled_hover_text("Connect to record")
         .clicked()
@@ -401,6 +414,10 @@ impl App {
         };
         if let Some(hint) = hint {
             ui.weak(hint);
+        }
+        // a view without traces or actions, like the logs, has nothing to choose
+        if view.as_ref().is_some_and(|view| !view.has_selection()) {
+            return;
         }
         let filterable = view.as_ref().is_some_and(|view| view.has_selection());
         view::trace_selection::search_ui(

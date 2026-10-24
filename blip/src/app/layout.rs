@@ -366,6 +366,8 @@ impl Layout {
             open_tabs,
             renaming: &mut self.renaming_title,
             rename_ended: None,
+            tab_bar_bottoms: Vec::new(),
+            below_tab_bar: HashSet::new(),
         };
         self.tree.ui(&mut behavior, ui);
         match behavior.rename_ended {
@@ -399,6 +401,20 @@ struct Behavior<'a, 'b> {
     renaming: &'a mut Option<(TileId, String)>,
     /// Set when editing the title ends.
     rename_ended: Option<RenameEnd>,
+    /// The bottoms of the tab bars shown so far, which egui_tiles shows before the
+    /// tiles below them.
+    tab_bar_bottoms: Vec<f32>,
+    /// The views right below a tab bar, whose cards leave a gap to it.
+    below_tab_bar: HashSet<TileId>,
+}
+
+/// The card of a view in `rect`, leaving a gap to a tab bar right above it.
+fn card_rect(rect: egui::Rect, below_tab_bar: bool) -> egui::Rect {
+    if below_tab_bar {
+        rect.with_min_y(rect.top() + theme::GAP)
+    } else {
+        rect
+    }
 }
 
 impl Behavior<'_, '_> {
@@ -438,10 +454,19 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
         if ui.input(|i| i.pointer.primary_pressed()) && ui.rect_contains_pointer(ui.max_rect()) {
             *self.selected = Some(tile_id);
         }
+        let top = ui.max_rect().top();
+        let below_tab_bar = self
+            .tab_bar_bottoms
+            .iter()
+            .any(|bottom| (top - bottom).abs() < 1.0);
+        if below_tab_bar {
+            self.below_tab_bar.insert(tile_id);
+            ui.add_space(theme::GAP);
+        }
         // each view is a card on the canvas
         let tokens = theme::tokens(ui.visuals());
         ui.painter().rect(
-            ui.max_rect(),
+            card_rect(ui.max_rect(), below_tab_bar),
             theme::CARD_RADIUS,
             tokens.card,
             egui::Stroke::new(1.0, tokens.border),
@@ -521,6 +546,7 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
         tile_id: TileId,
         response: egui::Response,
     ) -> egui::Response {
+        self.tab_bar_bottoms.push(response.rect.bottom());
         if self.open_tabs.contains(&tile_id) {
             paint_tab_underline(
                 &response.ctx.layer_painter(response.layer_id),
@@ -557,6 +583,7 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
     ) {
         if *self.selected == Some(tile_id) {
             let stroke = egui::Stroke::new(1.0, theme::tokens(&style.visuals).accent);
+            let rect = card_rect(rect, self.below_tab_bar.contains(&tile_id));
             painter.rect_stroke(rect, theme::CARD_RADIUS, stroke, egui::StrokeKind::Inside);
         }
     }
