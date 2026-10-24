@@ -2,7 +2,7 @@ use crate::app::model::logs::{LogEntry, LogLevel, Logs};
 use crate::app::theme;
 use crate::app::time::{TimeRange, timestamp_to_seconds};
 use crate::app::view::{ViewContext, Viewable};
-use egui_extras::{Column, TableBuilder};
+use egui_extras::Column;
 use std::collections::BTreeSet;
 
 #[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
@@ -135,18 +135,15 @@ impl LogTable {
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
                 ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
-                let text_height = egui::TextStyle::Monospace.resolve(ui.style()).size;
-                // the lines between the entries run across all columns
-                let row_span = ui.max_rect().x_range();
-                let row_line = ui.visuals().widgets.noninteractive.bg_stroke;
+                let row_height = theme::table_row_height(ui, &egui::TextStyle::Monospace, 1);
+                let lines = theme::TableLines::new(ui, false);
                 let badge_width = badge_size(ui).x;
 
                 // the time, level and component take only what they need, the message
                 // the rest
-                let mut builder = TableBuilder::new(ui)
+                let mut builder = theme::table(ui)
                     .id_salt("log entries")
                     .min_scrolled_height(0.0)
-                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                     .column(Column::auto().resizable(false)) // Timestamp
                     .column(Column::exact(badge_width).resizable(false)) // Log Level
                     .column(Column::auto().resizable(false)) // Log Component
@@ -179,9 +176,10 @@ impl LogTable {
                 }
                 self.last_range = range;
 
-                builder.body(|body| {
-                    body.rows(text_height + 10.0, filtered_entries.len(), |mut row| {
-                        let first = row.index() == 0;
+                builder.body(|mut body| {
+                    let lines = lines.in_body(body.ui_mut());
+                    body.rows(row_height, filtered_entries.len(), |mut row| {
+                        let index = row.index();
                         let entry = filtered_entries[row.index()];
                         let shown = in_range(entry);
                         // the message stands out, the time and the component less, and
@@ -197,11 +195,7 @@ impl LogTable {
                             egui::RichText::new(text).monospace().color(color)
                         };
                         row.col(|ui| {
-                            if !first {
-                                let gap = ui.spacing().item_spacing.y / 2.0;
-                                let y = ui.max_rect().top() - gap;
-                                ui.painter().hline(row_span, y, row_line);
-                            }
+                            lines.above(ui, index);
                             ui.label(text(&entry.timestamp, ui, Role::Time));
                         });
                         row.col(|ui| {

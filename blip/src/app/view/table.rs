@@ -6,7 +6,8 @@ use super::{Formats, PropertiesContext, ViewContext, Viewable, short_names};
 use crate::app::model::Model;
 use crate::app::model::numbers::SHOWN_DIGITS;
 use crate::app::model::traces::{Samples, Trace};
-use egui_extras::{Column, TableBuilder};
+use crate::app::theme;
+use egui_extras::Column;
 use egui_phosphor::regular::{BRACKETS_CURLY, CARET_DOWN, CARET_RIGHT};
 use std::collections::BTreeSet;
 
@@ -193,20 +194,22 @@ impl Table {
                 Some((trace, index, value))
             })
             .collect();
-        let row_height = ui.spacing().interact_size.y;
-        let line_height = ui.text_style_height(&egui::TextStyle::Monospace);
+        let row_height = theme::table_row_height(ui, &egui::TextStyle::Body, 1);
         // arrays take a line per row
-        let heights = samples.iter().map(|sample| {
-            let lines = sample
-                .as_ref()
-                .map_or(1, |(_, _, value)| value.lines().count());
-            row_height.max(lines as f32 * line_height)
-        });
+        let heights: Vec<f32> = samples
+            .iter()
+            .map(|sample| match sample {
+                Some((_, _, value)) if value.contains('\n') => {
+                    let lines = value.lines().count();
+                    theme::table_row_height(ui, &egui::TextStyle::Monospace, lines)
+                }
+                _ => row_height,
+            })
+            .collect();
 
-        TableBuilder::new(ui)
-            .striped(true)
+        let lines = theme::TableLines::new(ui, true);
+        theme::table(ui)
             .resizable(true)
-            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
             .column(Column::initial(200.0).at_least(80.0).clip(true))
             .column(Column::remainder().at_least(60.0).clip(true))
             .header(row_height, |mut header| {
@@ -216,11 +219,16 @@ impl Table {
                     });
                 }
             })
-            .body(|body| {
-                body.heterogeneous_rows(heights, |mut table_row| {
-                    let row = &table_rows[table_row.index()];
-                    let sample = &samples[table_row.index()];
-                    table_row.col(|ui| self.name_ui(ui, row));
+            .body(|mut body| {
+                let lines = lines.in_body(body.ui_mut());
+                body.heterogeneous_rows(heights.into_iter(), |mut table_row| {
+                    let index = table_row.index();
+                    let row = &table_rows[index];
+                    let sample = &samples[index];
+                    table_row.col(|ui| {
+                        lines.above(ui, index);
+                        self.name_ui(ui, row);
+                    });
                     table_row.col(|ui| {
                         if let Some((trace, index, value)) = sample {
                             value_label(ui, trace, value).on_hover_ui(|ui| {
@@ -241,7 +249,8 @@ impl Viewable for Table {
             ui.weak("Select the traces to show in the traces panel");
             return;
         }
-        self.show_table(ui, context.model, context.formats, context.time.cursor());
+        // the table changes the look of the ui
+        ui.scope(|ui| self.show_table(ui, context.model, context.formats, context.time.cursor()));
     }
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, _context: &PropertiesContext<'_>) {

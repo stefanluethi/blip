@@ -352,6 +352,70 @@ pub fn icon_button(icon: &str) -> egui::Button<'_> {
     egui::Button::new(icon).frame_when_inactive(false)
 }
 
+/// The room above and below the text of a table row.
+const TABLE_ROW_PADDING: f32 = 10.0;
+
+/// A table in `ui` with the look of all tables: no stripes, and the cells centered
+/// vertically. [`TableLines`] draws the lines between its rows.
+pub fn table(ui: &mut egui::Ui) -> egui_extras::TableBuilder<'_> {
+    egui_extras::TableBuilder::new(ui)
+        .striped(false)
+        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+}
+
+/// The height of a table row with `lines` lines of `style`.
+pub fn table_row_height(ui: &egui::Ui, style: &TextStyle, lines: usize) -> f32 {
+    let extra_lines = lines.saturating_sub(1) as f32 * ui.text_style_height(style);
+    style.resolve(ui.style()).size + extra_lines + TABLE_ROW_PADDING
+}
+
+/// The lines between the rows of a table, which run across all its columns, and below
+/// its header if it has one.
+#[derive(Clone, Copy)]
+pub struct TableLines {
+    span: egui::Rangef,
+    stroke: Stroke,
+    header: bool,
+    clip: egui::Rect,
+}
+
+impl TableLines {
+    /// The lines of a table about to be built in `ui`. The borders of resizable columns
+    /// of the table show only while hovered or dragged.
+    pub fn new(ui: &mut egui::Ui, header: bool) -> Self {
+        let lines = Self {
+            span: ui.max_rect().x_range(),
+            stroke: ui.visuals().widgets.noninteractive.bg_stroke,
+            header,
+            clip: egui::Rect::EVERYTHING,
+        };
+        ui.visuals_mut().widgets.noninteractive.bg_stroke = Stroke::NONE;
+        lines
+    }
+
+    /// The lines clipped to the scrolled `body` of the table, also of its clipped cells,
+    /// and to the gap below the header.
+    pub fn in_body(mut self, body: &egui::Ui) -> Self {
+        self.clip = body.clip_rect();
+        if self.header {
+            self.clip.min.y -= body.spacing().item_spacing.y;
+        }
+        self
+    }
+
+    /// Draws the line above the `row`th row of the body with `cell`, a cell of the row.
+    /// The first row of a table without a header has none.
+    pub fn above(&self, cell: &egui::Ui, row: usize) {
+        if row == 0 && !self.header {
+            return;
+        }
+        let y = cell.max_rect().top() - cell.spacing().item_spacing.y / 2.0;
+        let mut painter = cell.painter().clone();
+        painter.set_clip_rect(self.clip);
+        painter.hline(self.span, y, self.stroke);
+    }
+}
+
 /// The color of the grid lines of plots, which egui_plot fades for denser lines.
 pub fn grid_color(visuals: &Visuals) -> Color32 {
     tokens(visuals).border_strong
