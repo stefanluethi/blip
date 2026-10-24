@@ -10,7 +10,6 @@ mod view;
 use connections::Received;
 use eframe::Frame;
 use egui::{Context, Key, KeyboardShortcut, Modifiers};
-use std::collections::BTreeMap;
 use view::ViewContext;
 
 const OPEN_RECORDING: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
@@ -168,21 +167,7 @@ pub struct App {
 impl App {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let mut fonts = egui::FontDefinitions::default();
-        fonts.font_data.insert(
-            "phosphor".into(),
-            egui::FontData::from_static(egui_phosphor::Variant::Regular.font_bytes()).into(),
-        );
-        if let Some(font_keys) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-            font_keys.insert(1, "phosphor".into());
-        }
-        if let Some(font_keys) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
-            font_keys.push("phosphor".into());
-        }
-        cc.egui_ctx.set_fonts(fonts);
-
         theme::install(&cc.egui_ctx);
-        configure_text_styles(&cc.egui_ctx);
 
         // Load previous app state (if any).
         // Note that you must enable the `persistence` feature for this to work.
@@ -511,22 +496,6 @@ fn theme_button(ui: &mut egui::Ui) {
     if ui.button(icon).on_hover_text(hint).clicked() {
         ui.ctx().set_theme(next);
     }
-}
-
-fn configure_text_styles(ctx: &egui::Context) {
-    use egui::FontFamily::{Monospace, Proportional};
-    use egui::FontId;
-    use egui::style::TextStyle;
-
-    let text_styles: BTreeMap<TextStyle, FontId> = [
-        (TextStyle::Heading, FontId::new(24.0, Proportional)),
-        (TextStyle::Body, FontId::new(14.0, Proportional)),
-        (TextStyle::Monospace, FontId::new(12.0, Monospace)),
-        (TextStyle::Button, FontId::new(14.0, Proportional)),
-        (TextStyle::Small, FontId::new(11.0, Proportional)),
-    ]
-    .into();
-    ctx.all_styles_mut(move |style| style.text_styles = text_styles.clone());
 }
 
 #[cfg(test)]

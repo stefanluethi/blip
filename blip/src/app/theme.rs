@@ -1,7 +1,10 @@
 //! The look of blip: the light and dark "Control Room" themes, with the views as cards
-//! on a darker canvas, and the IBM colour-blind-safe palette for the traces.
+//! on a darker canvas, the IBM colour-blind-safe palette for the traces, and Inter and
+//! Roboto Mono for the text.
 
-use egui::{Color32, CornerRadius, Shadow, Stroke, Theme, Visuals};
+use egui::{Color32, CornerRadius, FontData, FontDefinitions, FontFamily, Shadow, Stroke};
+use egui::{FontId, TextStyle, Theme, Visuals};
+use std::collections::BTreeMap;
 
 /// The corner radius of the cards of the views.
 pub const CARD_RADIUS: u8 = 4;
@@ -114,10 +117,46 @@ pub fn tokens(visuals: &Visuals) -> &'static Tokens {
     if visuals.dark_mode { &DARK } else { &LIGHT }
 }
 
-/// Installs the light and the dark theme.
+/// Installs the fonts, their sizes and the light and the dark theme.
 pub fn install(ctx: &egui::Context) {
+    ctx.set_fonts(fonts());
     ctx.set_visuals_of(Theme::Light, visuals(&LIGHT, Visuals::light()));
     ctx.set_visuals_of(Theme::Dark, visuals(&DARK, Visuals::dark()));
+    let text_styles: BTreeMap<TextStyle, FontId> = [
+        (TextStyle::Heading, FontId::proportional(20.0)),
+        (TextStyle::Body, FontId::proportional(13.0)),
+        (TextStyle::Monospace, FontId::monospace(12.0)),
+        (TextStyle::Button, FontId::proportional(13.0)),
+        (TextStyle::Small, FontId::proportional(11.0)),
+    ]
+    .into();
+    ctx.all_styles_mut(move |style| style.text_styles = text_styles.clone());
+}
+
+/// Inter for text and Roboto Mono for values, both subset (see `assets/fonts`), then
+/// the Phosphor icons and egui's default fonts for the glyphs they lack.
+fn fonts() -> FontDefinitions {
+    let mut fonts = FontDefinitions::default();
+    let mut add = |name: &str, bytes: &'static [u8]| {
+        let data = FontData::from_static(bytes);
+        fonts.font_data.insert(name.to_owned(), data.into());
+    };
+    add(
+        "Inter",
+        include_bytes!("../../assets/fonts/Inter-Regular.ttf"),
+    );
+    add(
+        "Roboto Mono",
+        include_bytes!("../../assets/fonts/RobotoMono-Regular.ttf"),
+    );
+    add("phosphor", egui_phosphor::Variant::Regular.font_bytes());
+    let proportional = fonts.families.entry(FontFamily::Proportional).or_default();
+    proportional.insert(0, "Inter".to_owned());
+    proportional.insert(1, "phosphor".to_owned());
+    let monospace = fonts.families.entry(FontFamily::Monospace).or_default();
+    monospace.insert(0, "Roboto Mono".to_owned());
+    monospace.push("phosphor".to_owned());
+    fonts
 }
 
 /// `base` in the colours of `t`.
