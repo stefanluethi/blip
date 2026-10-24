@@ -3,13 +3,16 @@ use crate::app::theme;
 use crate::app::time::{TimeRange, timestamp_to_seconds};
 use crate::app::view::{ViewContext, Viewable};
 use egui_extras::Column;
+use egui_phosphor::regular;
 use std::collections::BTreeSet;
 
 #[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
 #[serde(default)]
 pub struct LogFilter {
-    pub min_level: LogLevel,
-    pub component: String,
+    /// The levels whose entries are hidden.
+    pub hidden_levels: BTreeSet<LogLevel>,
+    /// The components whose entries are hidden, so that new components show.
+    pub hidden_components: BTreeSet<String>,
     pub message_regex: String,
     pub case_sensitive: bool,
     pub auto_scroll: bool,
@@ -18,12 +21,29 @@ pub struct LogFilter {
 impl Default for LogFilter {
     fn default() -> Self {
         Self {
-            min_level: LogLevel::Trace,
-            component: String::new(),
+            hidden_levels: BTreeSet::new(),
+            hidden_components: BTreeSet::new(),
             message_regex: String::new(),
             case_sensitive: false,
             auto_scroll: true,
         }
+    }
+}
+
+impl LogFilter {
+    /// Whether any entries are hidden by the filters.
+    fn is_active(&self) -> bool {
+        !self.hidden_levels.is_empty()
+            || !self.hidden_components.is_empty()
+            || !self.message_regex.is_empty()
+    }
+
+    /// Shows all entries again, but keeps whether to scroll.
+    fn clear(&mut self) {
+        *self = Self {
+            auto_scroll: self.auto_scroll,
+            ..Self::default()
+        };
     }
 }
 
@@ -38,8 +58,6 @@ pub struct LogTable {
     last_regex_str: String,
     #[serde(skip)]
     last_case_sensitive: bool,
-    #[serde(skip)]
-    filter_menu_open: bool,
     /// The time range shown in the last frame, to scroll to it when it moves.
     #[serde(skip)]
     last_range: Option<(f64, f64)>,
@@ -70,49 +88,27 @@ impl LogTable {
     }
 
     pub fn matches(&self, entry: &LogEntry) -> bool {
-        // 1. Severity filter (minimum log level)
-        if entry.level < self.filter.min_level {
+        if self.filter.hidden_levels.contains(&entry.level)
+            || self.filter.hidden_components.contains(&entry.component)
+        {
             return false;
         }
-
-        // 2. Component filter (exact match from dropdown, empty = all components)
-        if !self.filter.component.is_empty() && entry.component != self.filter.component {
-            return false;
-        }
-
-        // 3. Message Regex filter
-        if !self.filter.message_regex.is_empty() {
-            if let Some(ref res) = self.compiled_regex {
-                match res {
-                    Ok(re) => {
-                        if !re.is_match(&entry.message) {
-                            return false;
-                        }
-                    }
-                    Err(_) => {
-                        // Fallback case-insensitive or case-sensitive substring matching if regex pattern syntax is invalid/incomplete
-                        let query = if self.filter.case_sensitive {
-                            self.filter.message_regex.clone()
-                        } else {
-                            self.filter.message_regex.to_lowercase()
-                        };
-                        let target = if self.filter.case_sensitive {
-                            entry.message.clone()
-                        } else {
-                            entry.message.to_lowercase()
-                        };
-                        if !target.contains(&query) {
-                            return false;
-                        }
-                    }
-                }
+        match &self.compiled_regex {
+            None => true,
+            Some(Ok(re)) => re.is_match(&entry.message),
+            // an invalid or incomplete pattern matches as plain text
+            Some(Err(_)) if self.filter.case_sensitive => {
+                entry.message.contains(&self.filter.message_regex)
             }
+            Some(Err(_)) => entry
+                .message
+                .to_lowercase()
+                .contains(&self.filter.message_regex.to_lowercase()),
         }
-
-        true
     }
 
-    /// Shows the entries, the ones outside the shown time range greyed out.
+    /// Shows the entries, the ones outside the shown time range greyed out, with the
+    /// filters in the header of the table.
     pub fn ui(&mut self, ui: &mut egui::Ui, logs: &Logs, time: &TimeRange) {
         self.update_regex_cache();
 
@@ -122,11 +118,7 @@ impl LogTable {
             .filter(|entry| self.matches(entry))
             .collect();
 
-        self.show_controls(ui, logs);
-
-        ui.add_space(4.0);
-
-        let footer_height = 24.0;
+        let footer_height = 20.0;
         // the table shrinks to nothing before the footer is pushed out of a small view
         let table_height = (ui.available_height() - footer_height).max(0.0);
 
@@ -134,18 +126,20 @@ impl LogTable {
             egui::vec2(ui.available_width(), table_height),
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
+                let header_height = theme::table_row_height(ui, &egui::TextStyle::Body, 1);
                 ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
                 let row_height = theme::table_row_height(ui, &egui::TextStyle::Monospace, 1);
-                let lines = theme::TableLines::new(ui, false);
-                let badge_width = badge_size(ui).x;
+                let lines = theme::TableLines::new(ui, true);
 
                 // the time, level and component take only what they need, the message
                 // the rest
                 let mut builder = theme::table(ui)
                     .id_salt("log entries")
                     .min_scrolled_height(0.0)
+                    // the footer stays at the bottom, also with few entries
+                    .auto_shrink([false, false])
                     .column(Column::auto().resizable(false)) // Timestamp
-                    .column(Column::exact(badge_width).resizable(false)) // Log Level
+                    .column(Column::auto().resizable(false)) // Log Level
                     .column(Column::auto().resizable(false)) // Log Component
                     .column(Column::remainder().at_least(150.0)); // Message
 
@@ -155,260 +149,225 @@ impl LogTable {
                         (start..=end).contains(&timestamp_to_seconds(entry.time))
                     })
                 };
+                // the newest entry, also of the range while playing, is followed
+                // without an animation: one that starts again with each new entry
+                // never catches up with it
+                let following = self.filter.auto_scroll && time.is_playing();
                 if time.is_live() {
-                    if self.filter.auto_scroll && !filtered_entries.is_empty() {
+                    if following && !filtered_entries.is_empty() {
                         builder = builder
+                            .animate_scrolling(false)
                             .scroll_to_row(filtered_entries.len() - 1, Some(egui::Align::Max));
                     }
                 } else if let Some((_, end)) = range
                     // while playing, the range moves each frame
-                    && if time.is_playing() {
-                        self.filter.auto_scroll
-                    } else {
-                        range != self.last_range
-                    }
+                    && (following || !time.is_playing() && range != self.last_range)
                 {
                     // scroll to the newest entry in the moved range
                     let last_in_range = filtered_entries
                         .partition_point(|entry| timestamp_to_seconds(entry.time) <= end)
                         .saturating_sub(1);
-                    builder = builder.scroll_to_row(last_in_range, Some(egui::Align::Max));
+                    builder = builder
+                        .animate_scrolling(!following)
+                        .scroll_to_row(last_in_range, Some(egui::Align::Max));
                 }
                 self.last_range = range;
 
-                builder.body(|mut body| {
-                    let lines = lines.in_body(body.ui_mut());
-                    body.rows(row_height, filtered_entries.len(), |mut row| {
-                        let index = row.index();
-                        let entry = filtered_entries[row.index()];
-                        let shown = in_range(entry);
-                        // the message stands out, the time and the component less, and
-                        // all of an entry outside the time range stays faint
-                        let text = |text: &str, ui: &egui::Ui, role: Role| {
-                            let tokens = theme::tokens(ui.visuals());
-                            let color = match role {
-                                _ if !shown => tokens.text_faint,
-                                Role::Time => tokens.text_faint,
-                                Role::Component => ui.visuals().weak_text_color(),
-                                Role::Message => ui.visuals().text_color(),
+                builder
+                    .header(header_height, |mut header| {
+                        header.col(|ui| {
+                            header_title(ui, "Time");
+                        });
+                        header.col(|ui| {
+                            self.level_filter_ui(ui);
+                        });
+                        header.col(|ui| {
+                            self.component_filter_ui(ui, logs);
+                        });
+                        header.col(|ui| {
+                            self.message_filter_ui(ui);
+                        });
+                    })
+                    .body(|mut body| {
+                        let lines = lines.in_body(body.ui_mut());
+                        body.rows(row_height, filtered_entries.len(), |mut row| {
+                            let index = row.index();
+                            let entry = filtered_entries[row.index()];
+                            let shown = in_range(entry);
+                            // the message stands out, the time and the component less,
+                            // and all of an entry outside the time range stays faint
+                            let text = |text: &str, ui: &egui::Ui, role: Role| {
+                                let tokens = theme::tokens(ui.visuals());
+                                let color = match role {
+                                    _ if !shown => tokens.text_faint,
+                                    Role::Time => tokens.text_faint,
+                                    Role::Component => ui.visuals().weak_text_color(),
+                                    Role::Message => ui.visuals().text_color(),
+                                };
+                                egui::RichText::new(text).monospace().color(color)
                             };
-                            egui::RichText::new(text).monospace().color(color)
-                        };
-                        row.col(|ui| {
-                            lines.above(ui, index);
-                            ui.label(text(&entry.timestamp, ui, Role::Time));
-                        });
-                        row.col(|ui| {
-                            level_badge(ui, entry.level, shown);
-                        });
-                        row.col(|ui| {
-                            ui.label(text(&entry.component, ui, Role::Component));
-                        });
-                        row.col(|ui| {
-                            ui.label(text(&entry.message, ui, Role::Message));
+                            row.col(|ui| {
+                                lines.above(ui, index);
+                                ui.label(text(&entry.timestamp, ui, Role::Time));
+                            });
+                            row.col(|ui| {
+                                level_badge(ui, entry.level, shown);
+                            });
+                            row.col(|ui| {
+                                ui.label(text(&entry.component, ui, Role::Component));
+                            });
+                            row.col(|ui| {
+                                ui.label(text(&entry.message, ui, Role::Message));
+                            });
                         });
                     });
-                });
             },
         );
 
-        ui.add_space(2.0);
+        self.footer_ui(ui, filtered_entries.len(), logs.entries.len());
+    }
 
-        // Footer showing entries count below table
-        egui::Frame::default().show(ui, |ui| {
-            ui.horizontal(|ui| {
-                let auto_scroll_btn = egui::Button::new(egui_phosphor::regular::ARROW_LINE_DOWN)
-                    .selected(self.filter.auto_scroll);
+    /// The autoscroll button, how many entries are shown and a button to clear the
+    /// filters while they hide any.
+    fn footer_ui(&mut self, ui: &mut egui::Ui, shown: usize, total: usize) {
+        ui.horizontal(|ui| {
+            // smaller than the other buttons, to leave the room to the entries
+            let icon = egui::RichText::new(regular::ARROW_LINE_DOWN).size(12.0);
+            let auto_scroll = egui::Button::new(icon)
+                .small()
+                .frame_when_inactive(false)
+                .min_size(egui::vec2(18.0, 18.0))
+                .selected(self.filter.auto_scroll);
+            if ui
+                .add(auto_scroll)
+                .on_hover_text("Follow the newest entries")
+                .clicked()
+            {
+                self.filter.auto_scroll = !self.filter.auto_scroll;
+            }
 
-                if ui
-                    .add(auto_scroll_btn)
-                    .on_hover_text("Toggle autoscroll")
+            let count = if shown == total {
+                format!("{total} entries")
+            } else {
+                format!("{shown} of {total} entries")
+            };
+            ui.label(egui::RichText::new(count).small().weak());
+
+            if self.filter.is_active()
+                && ui
+                    .add(egui::Button::new(egui::RichText::new("Clear filters").small()).small())
                     .clicked()
-                {
-                    self.filter.auto_scroll = !self.filter.auto_scroll;
-                }
+            {
+                self.filter.clear();
+            }
+        });
+    }
 
-                ui.label(
-                    egui::RichText::new(format!(
-                        "Showing {} / {} entries",
-                        filtered_entries.len(),
-                        logs.entries.len()
-                    ))
-                    .small()
-                    .color(ui.visuals().weak_text_color()),
-                );
+    /// The header of the level column, with checkboxes for the shown levels.
+    fn level_filter_ui(&mut self, ui: &mut egui::Ui) {
+        let hidden = &mut self.filter.hidden_levels;
+        filter_header(ui, "Level", !hidden.is_empty(), |ui| {
+            for level in LogLevel::ALL.into_iter().rev() {
+                let mut shown = !hidden.contains(&level);
+                let name = egui::RichText::new(level.as_str())
+                    .monospace()
+                    .color(level_color(ui, level));
+                if ui.checkbox(&mut shown, name).changed() {
+                    toggle(hidden, level, shown);
+                }
+            }
+            all_none_buttons(ui, |show| {
+                if show {
+                    hidden.clear();
+                } else {
+                    hidden.extend(LogLevel::ALL);
+                }
             });
         });
     }
 
-    fn show_controls(&mut self, ui: &mut egui::Ui, logs: &Logs) {
-        egui::Frame::default()
-            .fill(ui.visuals().faint_bg_color)
-            .corner_radius(4.0)
-            .inner_margin(egui::Margin::same(6))
-            .show(ui, |ui| {
-                ui.vertical(|ui| {
-                    // Top Bar: Search, Filter Toggle Button, Stats
-                    ui.horizontal(|ui| {
-                        // 1. Message Regex Search Bar
-                        let is_regex_err = matches!(self.compiled_regex, Some(Err(_)));
-
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.filter.message_regex)
-                                .margin(theme::FIELD_MARGIN)
-                                .hint_text(format!(
-                                    "{} Search logs (regex)...",
-                                    egui_phosphor::regular::MAGNIFYING_GLASS
-                                ))
-                                .font(egui::TextStyle::Monospace)
-                                .desired_width(200.0),
-                        );
-
-                        // Case sensitivity toggle button
-                        let cs_text = egui::RichText::new("Aa").monospace();
-                        let cs_btn =
-                            egui::Button::new(cs_text).selected(self.filter.case_sensitive);
-                        if ui
-                            .add(cs_btn)
-                            .on_hover_text("Toggle Case Sensitivity")
-                            .clicked()
-                        {
-                            self.filter.case_sensitive = !self.filter.case_sensitive;
+    /// The header of the component column, with checkboxes for the shown components.
+    fn component_filter_ui(&mut self, ui: &mut egui::Ui, logs: &Logs) {
+        let hidden = &mut self.filter.hidden_components;
+        filter_header(ui, "Component", !hidden.is_empty(), |ui| {
+            let components: BTreeSet<&str> = logs
+                .entries
+                .iter()
+                .map(|entry| entry.component.as_str())
+                .collect();
+            if components.is_empty() {
+                ui.weak("No components yet");
+                return;
+            }
+            egui::ScrollArea::vertical()
+                .max_height(300.0)
+                .show(ui, |ui| {
+                    for &component in &components {
+                        let mut shown = !hidden.contains(component);
+                        if ui.checkbox(&mut shown, component).changed() {
+                            toggle(hidden, component.to_owned(), shown);
                         }
-
-                        if is_regex_err {
-                            if let Some(Err(ref err_msg)) = self.compiled_regex {
-                                ui.label(
-                                    egui::RichText::new(egui_phosphor::regular::WARNING)
-                                        .color(egui::Color32::RED),
-                                )
-                                .on_hover_text(format!("Invalid Regex Syntax:\n{}", err_msg));
-                            }
-                        }
-
-                        if !self.filter.message_regex.is_empty()
-                            && ui.small_button(egui_phosphor::regular::X).clicked()
-                        {
-                            self.filter.message_regex.clear();
-                        }
-
-                        ui.separator();
-
-                        // 2. Filter Dropdown Toggle Button
-                        let active_dropdown_filters = (self.filter.min_level != LogLevel::Trace)
-                            as usize
-                            + (!self.filter.component.is_empty()) as usize;
-
-                        let filter_icon = egui_phosphor::regular::FUNNEL;
-                        let caret_icon = if self.filter_menu_open {
-                            egui_phosphor::regular::CARET_UP
-                        } else {
-                            egui_phosphor::regular::CARET_DOWN
-                        };
-
-                        let filter_title = if active_dropdown_filters > 0 {
-                            format!(
-                                "{} Filter ({}) {}",
-                                filter_icon, active_dropdown_filters, caret_icon
-                            )
-                        } else {
-                            format!("{} Filter {}", filter_icon, caret_icon)
-                        };
-
-                        let filter_btn =
-                            egui::Button::new(&filter_title).selected(self.filter_menu_open);
-                        if ui.add(filter_btn).clicked() {
-                            self.filter_menu_open = !self.filter_menu_open;
-                        }
-
-                        // 3. Right-aligned Controls
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let is_filtered = self.filter.min_level != LogLevel::Trace
-                                || !self.filter.component.is_empty()
-                                || !self.filter.message_regex.is_empty()
-                                || self.filter.case_sensitive;
-
-                            if is_filtered && ui.button("Reset").clicked() {
-                                self.filter = LogFilter::default();
-                            }
-                        });
-                    });
-
-                    // Expandable Filter Panel when filter_menu_open is true
-                    if self.filter_menu_open {
-                        ui.add_space(6.0);
-
-                        egui::Frame::default()
-                            .fill(ui.visuals().widgets.noninteractive.bg_fill)
-                            .corner_radius(4.0)
-                            .inner_margin(egui::Margin::same(8))
-                            .show(ui, |ui| {
-                                ui.vertical(|ui| {
-                                    // Severity Row
-                                    ui.horizontal(|ui| {
-                                        ui.label(egui::RichText::new("Severity:").strong());
-                                        ui.selectable_value(
-                                            &mut self.filter.min_level,
-                                            LogLevel::Trace,
-                                            "TRACE (All)",
-                                        );
-                                        ui.selectable_value(
-                                            &mut self.filter.min_level,
-                                            LogLevel::Debug,
-                                            "DEBUG+",
-                                        );
-                                        ui.selectable_value(
-                                            &mut self.filter.min_level,
-                                            LogLevel::Info,
-                                            "INFO+",
-                                        );
-                                        ui.selectable_value(
-                                            &mut self.filter.min_level,
-                                            LogLevel::Warn,
-                                            "WARN+",
-                                        );
-                                        ui.selectable_value(
-                                            &mut self.filter.min_level,
-                                            LogLevel::Error,
-                                            "ERROR",
-                                        );
-                                    });
-
-                                    ui.add_space(6.0);
-
-                                    // Component Row
-                                    ui.horizontal(|ui| {
-                                        ui.label(egui::RichText::new("Component:").strong());
-                                        let unique_components: BTreeSet<&str> = logs
-                                            .entries
-                                            .iter()
-                                            .map(|e| e.component.as_str())
-                                            .collect();
-
-                                        ui.horizontal_wrapped(|ui| {
-                                            if ui
-                                                .selectable_label(
-                                                    self.filter.component.is_empty(),
-                                                    "All",
-                                                )
-                                                .clicked()
-                                            {
-                                                self.filter.component.clear();
-                                            }
-                                            for comp in unique_components {
-                                                let is_selected = self.filter.component == comp;
-                                                if ui.selectable_label(is_selected, comp).clicked()
-                                                {
-                                                    self.filter.component = comp.to_string();
-                                                }
-                                            }
-                                        });
-                                    });
-                                });
-                            });
                     }
                 });
+            all_none_buttons(ui, |show| {
+                if show {
+                    hidden.clear();
+                } else {
+                    hidden.extend(components.iter().map(|&c| c.to_owned()));
+                }
             });
+        });
+    }
+
+    /// The header of the message column, with the search of the messages.
+    fn message_filter_ui(&mut self, ui: &mut egui::Ui) {
+        let filter = &mut self.filter;
+        let error = match &self.compiled_regex {
+            Some(Err(error)) => Some(error.as_str()),
+            _ => None,
+        };
+        filter_header(ui, "Message", !filter.message_regex.is_empty(), |ui| {
+            ui.horizontal(|ui| {
+                let search = ui.add(
+                    egui::TextEdit::singleline(&mut filter.message_regex)
+                        .margin(theme::FIELD_MARGIN)
+                        .hint_text(format!("{} Search (regex)", regular::MAGNIFYING_GLASS))
+                        .font(egui::TextStyle::Monospace)
+                        .desired_width(220.0),
+                );
+                // type right away once the popup opens
+                if !search.has_focus() && ui.memory(|memory| memory.focused().is_none()) {
+                    search.request_focus();
+                }
+
+                let case = egui::Button::new(egui::RichText::new("Aa").monospace())
+                    .selected(filter.case_sensitive);
+                if ui.add(case).on_hover_text("Match case").clicked() {
+                    filter.case_sensitive = !filter.case_sensitive;
+                }
+
+                if !filter.message_regex.is_empty()
+                    && ui
+                        .add(theme::icon_button(regular::X))
+                        .on_hover_text("Clear the search")
+                        .clicked()
+                {
+                    filter.message_regex.clear();
+                }
+            });
+            if let Some(error) = error {
+                let color = theme::tokens(ui.visuals()).error;
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} Not a valid regex, searching the text",
+                        regular::WARNING
+                    ))
+                    .small()
+                    .color(color),
+                )
+                .on_hover_text(error);
+            }
+        });
     }
 }
 
@@ -418,19 +377,69 @@ impl Viewable for LogTable {
     }
 }
 
+/// The title of a column without a filter, in the font of the other titles.
+fn header_title(ui: &mut egui::Ui, title: &str) {
+    ui.style_mut().override_text_style = None;
+    ui.strong(title);
+}
+
+/// The title of a column with a filter: a button that opens `content`, the filter, in a
+/// popup. The title shows in the accent color while the filter is `active`.
+fn filter_header(
+    ui: &mut egui::Ui,
+    title: &str,
+    active: bool,
+    content: impl FnOnce(&mut egui::Ui),
+) {
+    ui.style_mut().override_text_style = None;
+    let color = if active {
+        theme::tokens(ui.visuals()).accent_text
+    } else {
+        ui.visuals().strong_text_color()
+    };
+    let icon = if active {
+        regular::FUNNEL
+    } else {
+        regular::CARET_DOWN
+    };
+    let text = egui::RichText::new(format!("{title} {icon}"))
+        .strong()
+        .color(color);
+    let button = egui::Button::new(text).small().frame_when_inactive(false);
+    let response = ui.add(button);
+    egui::Popup::menu(&response)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(content);
+}
+
+/// Buttons to show all or none of the choices of a filter, which call `show` with
+/// whether to show all.
+fn all_none_buttons(ui: &mut egui::Ui, mut show: impl FnMut(bool)) {
+    ui.separator();
+    ui.horizontal(|ui| {
+        if ui.small_button("All").clicked() {
+            show(true);
+        }
+        if ui.small_button("None").clicked() {
+            show(false);
+        }
+    });
+}
+
+/// Removes `item` from the `hidden` ones if `shown`, else adds it.
+fn toggle<T: Ord>(hidden: &mut BTreeSet<T>, item: T, shown: bool) {
+    if shown {
+        hidden.remove(&item);
+    } else {
+        hidden.insert(item);
+    }
+}
+
 /// The level of a log record as a badge: its name in the color of the level on a tint
 /// of that color, faded when the record is outside the time range.
 fn level_badge(ui: &mut egui::Ui, level: LogLevel, shown: bool) {
-    let tokens = theme::tokens(ui.visuals());
-    let color = match level {
-        LogLevel::Error => tokens.error,
-        LogLevel::Warn => tokens.warn,
-        LogLevel::Info => tokens.ok,
-        LogLevel::Debug => tokens.debug,
-        LogLevel::Trace => tokens.trace,
-    };
     let fade = if shown { 1.0 } else { 0.4 };
-    let color = color.gamma_multiply(fade);
+    let color = level_color(ui, level).gamma_multiply(fade);
     let name = ui
         .painter()
         .layout_no_wrap(level.as_str().to_owned(), BADGE_FONT, color);
@@ -462,9 +471,23 @@ enum Role {
     Message,
 }
 
+/// The color of the badges and names of `level`.
+fn level_color(ui: &egui::Ui, level: LogLevel) -> egui::Color32 {
+    let tokens = theme::tokens(ui.visuals());
+    match level {
+        LogLevel::Error => tokens.error,
+        LogLevel::Warn => tokens.warn,
+        LogLevel::Info => tokens.ok,
+        LogLevel::Debug => tokens.debug,
+        LogLevel::Trace => tokens.trace,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
 
     fn create_entry(level: LogLevel, component: &str, message: &str) -> LogEntry {
         LogEntry {
@@ -478,9 +501,6 @@ mod tests {
 
     #[test]
     fn autoscroll_button_stays_visible_in_a_small_view() {
-        use egui_kittest::Harness;
-        use egui_kittest::kittest::Queryable;
-
         let mut logs = Logs::default();
         for _ in 0..100 {
             logs.push(create_entry(LogLevel::Info, "core", "message"));
@@ -491,47 +511,102 @@ mod tests {
         let harness = Harness::builder()
             .with_size(size)
             .build_ui(move |ui| table.ui(ui, &logs, &time));
-        let button = harness.get_by_label(egui_phosphor::regular::ARROW_LINE_DOWN);
+        let button = harness.get_by_label(regular::ARROW_LINE_DOWN);
         assert!(button.rect().bottom() <= size.y);
     }
 
     #[test]
-    fn test_severity_filter() {
-        let mut table = LogTable::default();
-        let trace_entry = create_entry(LogLevel::Trace, "core", "trace message");
-        let debug_entry = create_entry(LogLevel::Debug, "core", "debug message");
-        let warn_entry = create_entry(LogLevel::Warn, "core", "warn message");
-        let error_entry = create_entry(LogLevel::Error, "core", "error message");
-
-        // Default: min_level = Trace (All)
-        assert!(table.matches(&trace_entry));
-        assert!(table.matches(&debug_entry));
-        assert!(table.matches(&warn_entry));
-        assert!(table.matches(&error_entry));
-
-        // Set min_level = Warn
-        table.filter.min_level = LogLevel::Warn;
-        assert!(!table.matches(&trace_entry));
-        assert!(!table.matches(&debug_entry));
-        assert!(table.matches(&warn_entry));
-        assert!(table.matches(&error_entry));
+    fn autoscroll_keeps_up_with_new_entries() {
+        let mut logs = Logs::default();
+        let mut table = LogTable::new();
+        let time = TimeRange::default();
+        let newest = std::rc::Rc::new(std::cell::Cell::new(0));
+        let shared = newest.clone();
+        let mut frame = 0;
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(600.0, 200.0))
+            .build_ui(move |ui| {
+                // the harness turns the animations off, which hid the lag
+                ui.ctx().all_styles_mut(|style| {
+                    style.scroll_animation = egui::style::ScrollAnimation::default();
+                });
+                frame += 1;
+                if frame % 7 == 0 {
+                    let message = format!("message {}", frame / 7);
+                    logs.push(create_entry(LogLevel::Info, "core", &message));
+                    shared.set(frame / 7);
+                }
+                table.ui(ui, &logs, &time);
+            });
+        for step in 0..300 {
+            harness.input_mut().time = Some(f64::from(step) / 60.0);
+            harness.step();
+        }
+        let footer = harness.get_by_label(regular::ARROW_LINE_DOWN).rect();
+        let newest = format!("message {}", newest.get());
+        let entry = harness.get_by_label(&newest).rect();
+        assert!(entry.bottom() <= footer.top());
     }
 
     #[test]
-    fn test_component_filter() {
+    fn the_header_holds_the_filters() {
+        let logs = Logs::default();
+        let mut table = LogTable::new();
+        let time = TimeRange::default();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(600.0, 300.0))
+            .build_ui(move |ui| table.ui(ui, &logs, &time));
+        harness
+            .get_by_label(&format!("Level {}", regular::CARET_DOWN))
+            .click();
+        harness.run();
+        harness.get_by_label("ERROR");
+        harness.get_by_label("TRACE");
+    }
+
+    #[test]
+    fn hidden_levels_are_filtered() {
+        let mut table = LogTable::default();
+        let debug_entry = create_entry(LogLevel::Debug, "core", "debug message");
+        let warn_entry = create_entry(LogLevel::Warn, "core", "warn message");
+
+        assert!(table.matches(&debug_entry));
+        assert!(table.matches(&warn_entry));
+
+        table.filter.hidden_levels.insert(LogLevel::Debug);
+        assert!(!table.matches(&debug_entry));
+        assert!(table.matches(&warn_entry));
+    }
+
+    #[test]
+    fn hidden_components_are_filtered() {
         let mut table = LogTable::default();
         let entry1 = create_entry(LogLevel::Info, "motor_ctrl", "speed 100");
         let entry2 = create_entry(LogLevel::Info, "sensor_nav", "heading 90");
 
-        // Selected component
-        table.filter.component = "motor_ctrl".to_string();
+        table
+            .filter
+            .hidden_components
+            .insert("sensor_nav".to_string());
         assert!(table.matches(&entry1));
         assert!(!table.matches(&entry2));
 
-        // All components (empty string)
-        table.filter.component.clear();
+        table.filter.clear();
         assert!(table.matches(&entry1));
         assert!(table.matches(&entry2));
+    }
+
+    #[test]
+    fn clearing_the_filters_keeps_autoscroll() {
+        let mut filter = LogFilter {
+            auto_scroll: false,
+            message_regex: "x".to_string(),
+            ..LogFilter::default()
+        };
+        assert!(filter.is_active());
+        filter.clear();
+        assert!(!filter.is_active());
+        assert!(!filter.auto_scroll);
     }
 
     #[test]
@@ -558,5 +633,13 @@ mod tests {
         table.filter.case_sensitive = false;
         table.update_regex_cache();
         assert!(table.matches(&entry1));
+
+        // an invalid pattern is searched as text
+        let entry3 = create_entry(LogLevel::Info, "ws", "retrying (3 left)");
+        table.filter.message_regex = r"(3".to_string();
+        table.update_regex_cache();
+        assert!(matches!(table.compiled_regex, Some(Err(_))));
+        assert!(table.matches(&entry3));
+        assert!(!table.matches(&entry1));
     }
 }

@@ -48,7 +48,7 @@ pub struct Tokens {
     /// The time cursor, apart from the trace colours, most of which are saturated.
     cursor: Color32,
     /// The accent as text and lines on the canvas, panels and cards.
-    accent_text: Color32,
+    pub accent_text: Color32,
     pub ok: Color32,
     pub warn: Color32,
     pub error: Color32,
