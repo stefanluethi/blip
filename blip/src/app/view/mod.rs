@@ -485,12 +485,13 @@ impl View {
                 property_label(ui, name).on_hover_text(path);
                 ui.horizontal(|ui| {
                     let current = self.formats.of(path);
-                    ui.add_enabled_ui(has_numbers(model, path), |ui| {
+                    let formats = number_kind(model, path).map_or(&[][..], DisplayFormat::of_kind);
+                    ui.add_enabled_ui(!formats.is_empty(), |ui| {
                         egui::ComboBox::from_id_salt(("number format", path))
                             .selected_text(current.name())
                             .width(90.0)
                             .show_ui(ui, |ui| {
-                                for format in DisplayFormat::ALL {
+                                for &format in formats {
                                     if ui
                                         .selectable_label(current == format, format.name())
                                         .clicked()
@@ -513,17 +514,16 @@ impl View {
     }
 }
 
-/// Whether the trace at `path` has numbers other than bools, which display formats
-/// apply to.
-fn has_numbers(model: &Model, path: &str) -> bool {
-    let kind = match model.traces.series(path) {
+/// The kind of the numbers of the trace at `path`, or of its elements if it is an
+/// array trace, or `None` if it has no numbers.
+fn number_kind(model: &Model, path: &str) -> Option<NumberKind> {
+    match model.traces.series(path) {
         Some(series) => Some(series.kind),
         None => match model.traces.get(path).map(|trace| &trace.samples) {
             Some(Samples::Arrays { elements, .. }) => elements.kind(),
             _ => None,
         },
-    };
-    kind.is_some_and(|kind| kind != NumberKind::Bool)
+    }
 }
 
 /// The unit of the traces at `paths` if they all have the same.

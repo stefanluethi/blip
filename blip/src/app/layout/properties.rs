@@ -233,6 +233,33 @@ mod tests {
     }
 
     #[test]
+    fn floats_are_not_offered_hex_or_binary() {
+        let mut model = Model::default();
+        model.traces.append(&proto::Value {
+            timestamp: 0,
+            path: "motor/speed".to_owned(),
+            value: proto::Data::Float(1.5),
+        });
+        let mut harness = harness_with(model, |_, views| views[0]);
+        let view = harness.state_mut().selected_view_mut().unwrap();
+        view.selection_mut()
+            .unwrap()
+            .0
+            .insert("motor/speed".to_owned());
+        harness.run();
+        harness
+            .get_by(|node| {
+                node.role() == egui::accesskit::Role::ComboBox
+                    && node.value().as_deref() == Some("Default")
+            })
+            .click();
+        harness.run();
+        harness.get_by_label("Scientific");
+        assert!(harness.query_by_label("Hex").is_none());
+        assert!(harness.query_by_label("Binary").is_none());
+    }
+
+    #[test]
     fn groups_are_renamed_while_typing_but_not_to_blank_names() {
         let mut harness = harness(|tab, _| tab);
         harness.run();

@@ -47,6 +47,16 @@ impl DisplayFormat {
         DisplayFormat::Scientific,
     ];
 
+    /// The formats that apply to numbers of `kind`: hex and binary only to integers,
+    /// none to bools.
+    pub fn of_kind(kind: NumberKind) -> &'static [DisplayFormat] {
+        match kind {
+            NumberKind::Integer => &Self::ALL,
+            NumberKind::Float => &[DisplayFormat::Default, DisplayFormat::Scientific],
+            NumberKind::Bool => &[],
+        }
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             DisplayFormat::Default => "Default",
