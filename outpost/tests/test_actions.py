@@ -12,6 +12,8 @@ from websockets.asyncio.server import ServerConnection
 from outpost import ActionError, Actions, LogLevel, Protocol, Range, Unit, action
 from outpost.server import OutpostServer
 
+from blip_client import receive as receive_message
+
 
 class Color(enum.Enum):
     RED = 1
@@ -185,7 +187,7 @@ def invoke(id: int, path: str, args: Any) -> bytes:
 async def receive(ws, variant: str) -> Any:
     """The content of the next message of `variant`, skipping others."""
     while True:
-        message = cbor2.loads(await asyncio.wait_for(ws.recv(), timeout=2.0))
+        message = cbor2.loads(await receive_message(ws, 2.0))
         if variant in message:
             return message[variant]
 
@@ -284,7 +286,7 @@ async def test_answers_sent_by_the_protocol_are_dropped():
             # e.g. a target answering a forwarded invocation with its own id
             await target.send(Message.create_action_result(0, "not yours"))
             await target.send_value("after", 1)
-            message = cbor2.loads(await asyncio.wait_for(ws.recv(), timeout=2.0))
+            message = cbor2.loads(await receive_message(ws, 2.0))
             assert "Value" in message
     finally:
         await server.stop()
@@ -348,9 +350,9 @@ async def test_results_go_to_the_invoking_client_only():
             await first.send(invoke(1, "motor/enable", {}))
             assert (await receive(first, "ActionResult"))["id"] == 1
             # the other client sees the log record, but no result
-            message = cbor2.loads(await asyncio.wait_for(second.recv(), timeout=2.0))
+            message = cbor2.loads(await receive_message(second, 2.0))
             while "Log" not in message:
                 assert "ActionResult" not in message
-                message = cbor2.loads(await asyncio.wait_for(second.recv(), timeout=2.0))
+                message = cbor2.loads(await receive_message(second, 2.0))
     finally:
         await server.stop()

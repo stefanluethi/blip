@@ -7,6 +7,8 @@ from outpost.server import OutpostServer
 from outpost.protocols.simulator import SimulatorProtocol
 from outpost.proto import decode_cbor_message
 
+from blip_client import receive
+
 
 async def test_simulator_outpost():
     # 1. Start server with SimulatorProtocol
@@ -21,7 +23,7 @@ async def test_simulator_outpost():
         async with websockets.connect("ws://127.0.0.1:3999/ws/test") as ws:
             # 3. Receive telemetry message (skipping the units and log records)
             for _ in range(100):
-                msg_bytes = await asyncio.wait_for(ws.recv(), timeout=2.0)
+                msg_bytes = await receive(ws, 2.0)
                 assert isinstance(msg_bytes, bytes)
 
                 data = decode_cbor_message(msg_bytes)
@@ -51,7 +53,7 @@ async def test_simulator_outpost_logs():
             # Collect log records until a few have arrived
             logs = []
             for _ in range(500):
-                data = decode_cbor_message(await asyncio.wait_for(ws.recv(), timeout=2.0))
+                data = decode_cbor_message(await receive(ws, 2.0))
                 assert data is not None
                 if "Log" in data:
                     logs.append(data["Log"])
@@ -90,7 +92,7 @@ async def test_simulator_outpost_typed_values():
             )
             values = {}
             for _ in range(500):
-                msg_bytes = await asyncio.wait_for(ws.recv(), timeout=2.0)
+                msg_bytes = await receive(ws, 2.0)
                 # blip accepts frames of up to 2048 bytes
                 assert len(msg_bytes) <= 2048
                 data = decode_cbor_message(msg_bytes)
@@ -130,7 +132,7 @@ async def test_simulator_outpost_units():
             # the units are repeated, so a client connecting later gets them too
             units = {}
             for _ in range(2000):
-                data = decode_cbor_message(await asyncio.wait_for(ws.recv(), timeout=2.0))
+                data = decode_cbor_message(await receive(ws, 2.0))
                 if "ValueMetadata" in data:
                     metadata = data["ValueMetadata"]
                     units[metadata["path"]] = metadata["unit"]
@@ -155,7 +157,7 @@ async def test_simulator_outpost_rates():
             loop = asyncio.get_running_loop()
             end = loop.time() + 1.5
             while loop.time() < end:
-                data = decode_cbor_message(await asyncio.wait_for(ws.recv(), timeout=2.0))
+                data = decode_cbor_message(await receive(ws, 2.0))
                 if "Value" in data:
                     path = data["Value"]["path"]
                     counts[path] = counts.get(path, 0) + 1

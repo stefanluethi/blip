@@ -12,6 +12,8 @@ from outpost.protocols.replay import ReplayProtocol, timestamp
 from outpost.recording import FORMAT, VERSION, RecordingWriter, read_frames
 from outpost.server import OutpostServer
 
+from blip_client import receive
+
 
 def frames() -> list[bytes]:
     return [
@@ -81,7 +83,7 @@ async def test_replay_sends_and_records_the_frames_unchanged(tmp_path):
     await server.start()
     try:
         async with websockets.connect("ws://127.0.0.1:3997/ws/test") as ws:
-            received = [await asyncio.wait_for(ws.recv(), timeout=2.0) for _ in frames()]
+            received = [await receive(ws, 2.0) for _ in frames()]
     finally:
         await server.stop()
 

@@ -17,6 +17,11 @@ logger = logging.getLogger("outpost.server")
 # The component of the log records about invocations
 ACTIONS_COMPONENT = "actions"
 
+# The messages queued for a client are sent together in one WebSocket frame, as a CBOR
+# sequence, up to this many bytes, so that a busy target does not cost a frame per
+# message, neither here nor in blip.
+MAX_BATCH_BYTES = 64 * 1024
+
 
 def describe(path: str, args: Any) -> str:
     """An invocation as shown in log records, e.g. ``motor/speed(rpm=1500)``."""
@@ -30,7 +35,8 @@ def describe(path: str, args: Any) -> str:
 class _Client:
     """A connected blip client with its own queue of messages to send, so a slow
     client neither holds up the protocol nor the other clients. All messages to the
-    client go through the queue, so they are sent in the order they were queued."""
+    client go through the queue, so they are sent in the order they were queued, those
+    queued together in one frame."""
 
     def __init__(self, websocket: ServerConnection, max_queued: int) -> None:
         self.websocket = websocket
@@ -48,13 +54,22 @@ class _Client:
             self.dropped += 1
 
     async def send_queued(self) -> None:
-        """Sends the queued messages until the connection is closed."""
+        """Sends the queued messages until the connection is closed, as many in a frame
+        as are queued, up to `MAX_BATCH_BYTES`, a larger message in a frame of its own."""
+        held: Optional[bytes] = None
         while True:
-            message = await self.queue.get()
+            frame = held if held is not None else await self.queue.get()
+            held = None
+            while not self.queue.empty():
+                message = self.queue.get_nowait()
+                if len(frame) + len(message) > MAX_BATCH_BYTES:
+                    held = message
+                    break
+                frame += message
             if self.dropped:
                 logger.warning(f"Dropped {self.dropped} messages for client {self.websocket.remote_address}")
                 self.dropped = 0
-            await self.websocket.send(message)
+            await self.websocket.send(frame)
 
 
 class OutpostServer:
