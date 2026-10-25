@@ -165,6 +165,58 @@ impl Model {
                 (first_a.min(first_b), last_a.max(last_b))
             })
     }
+
+    /// What arrived in each of `bins` bins of `step` nanoseconds from `start`
+    /// nanoseconds on: the values, with the fields of a record counted once as they
+    /// arrive together, and the log records by level.
+    pub fn activity(&self, start: u64, step: u64, bins: usize) -> Vec<Activity> {
+        let mut activity = vec![Activity::default(); bins];
+        let step = step.max(1);
+        let edge = |bin: usize| start.saturating_add(step.saturating_mul(bin as u64));
+        let mut record = None;
+        for trace in self.traces.iter() {
+            let path = trace.fields_start.map(|at| &trace.path[..at]);
+            if path.is_some() && path == record {
+                continue;
+            }
+            record = path;
+            let timestamps = &trace.timestamps;
+            let mut from = timestamps.partition_point(|&t| t < start);
+            for (bin, activity) in activity.iter_mut().enumerate() {
+                let edge = edge(bin + 1);
+                let to = from + timestamps[from..].partition_point(|&t| t < edge);
+                activity.values += (to - from) as u32;
+                from = to;
+            }
+        }
+        for entry in &self.logs.entries {
+            let Some(after) = entry.time.checked_sub(start) else {
+                continue;
+            };
+            if let Some(activity) = usize::try_from(after / step)
+                .ok()
+                .and_then(|bin| activity.get_mut(bin))
+            {
+                activity.logs[entry.level.as_index()] += 1;
+            }
+        }
+        activity
+    }
+}
+
+/// What arrived in a stretch of time, see [`Model::activity`].
+#[derive(Clone, Copy, Default, PartialEq, Debug)]
+pub struct Activity {
+    /// The number of values, a record counted once.
+    pub values: u32,
+    /// The number of log records by [`LogLevel::as_index`].
+    pub logs: [u32; 5],
+}
+
+impl Activity {
+    pub fn log_count(&self) -> u32 {
+        self.logs.iter().sum()
+    }
 }
 
 /// The items of the CBOR sequence (RFC 8742) `bytes`, each as its bytes, e.g. the
@@ -226,6 +278,49 @@ mod tests {
         assert_eq!(model.traces.get("cpu").unwrap().timestamps.len(), 3);
         assert_eq!(model.logs.entries[0].component, "motor");
         assert_eq!(model.recording.messages(), 4);
+    }
+
+    #[test]
+    fn activity_is_counted_per_bin_with_records_once() {
+        let value = |timestamp: u64, path: &str, value: proto::Data| {
+            frame(&proto::Message::Value(proto::Value {
+                timestamp,
+                path: path.to_owned(),
+                value,
+            }))
+        };
+        let imu = proto::Data::Record(
+            [("x", 1.0), ("y", 2.0)]
+                .into_iter()
+                .map(|(name, x)| (name.to_owned(), proto::Data::Float(x)))
+                .collect(),
+        );
+        let mut model = Model::default();
+        for t in [0, 10, 19, 20, 39, 40] {
+            model.receive("", &value(t, "cpu", proto::Data::Uint(1)));
+        }
+        model.receive("", &value(25, "imu", imu.clone()));
+        model.receive("", &value(35, "imu", imu));
+        model.receive(
+            "",
+            &frame(&proto::Message::Log(proto::LogRecord {
+                timestamp: 5,
+                level: 2,
+                component: String::new(),
+                message: "hi".to_owned(),
+            })),
+        );
+        let values = |activity: Vec<Activity>| -> Vec<u32> {
+            activity.iter().map(|bin| bin.values).collect()
+        };
+        // [0, 20), [20, 40)
+        let halves = model.activity(0, 20, 2);
+        assert_eq!(values(halves.clone()), [3, 4]);
+        assert_eq!(halves[0].logs, [0, 0, 1, 0, 0]);
+        assert_eq!(halves[1].log_count(), 0);
+        assert_eq!(values(model.activity(0, 10, 4)), [1, 2, 2, 2]);
+        assert_eq!(values(model.activity(10, 10, 1)), [2]);
+        assert!(model.activity(0, 10, 0).is_empty());
     }
 
     #[test]

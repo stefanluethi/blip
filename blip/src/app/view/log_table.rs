@@ -272,7 +272,7 @@ impl LogTable {
                 let mut shown = !hidden.contains(&level);
                 let name = egui::RichText::new(level.as_str())
                     .monospace()
-                    .color(level_color(ui, level));
+                    .color(theme::level_color(ui.visuals(), level));
                 if ui.checkbox(&mut shown, name).changed() {
                     toggle(hidden, level, shown);
                 }
@@ -440,7 +440,7 @@ fn toggle<T: Ord>(hidden: &mut BTreeSet<T>, item: T, shown: bool) {
 /// of that color, faded when the record is outside the time range.
 fn level_badge(ui: &mut egui::Ui, level: LogLevel, shown: bool) {
     let fade = if shown { 1.0 } else { 0.4 };
-    let color = level_color(ui, level).gamma_multiply(fade);
+    let color = theme::level_color(ui.visuals(), level).gamma_multiply(fade);
     let name = ui
         .painter()
         .layout_no_wrap(level.as_str().to_owned(), BADGE_FONT, color);
@@ -473,17 +473,6 @@ enum Role {
 }
 
 /// The color of the badges and names of `level`.
-fn level_color(ui: &egui::Ui, level: LogLevel) -> egui::Color32 {
-    let tokens = theme::tokens(ui.visuals());
-    match level {
-        LogLevel::Error => tokens.error,
-        LogLevel::Warn => tokens.warn,
-        LogLevel::Info => tokens.ok,
-        LogLevel::Debug => tokens.debug,
-        LogLevel::Trace => tokens.trace,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -96,13 +96,13 @@ impl State {
         // larger controls than elsewhere, as the bar is used all the time
         ui.spacing_mut().interact_size.y = 28.0;
         ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
-        ui.horizontal(|ui| {
-            if record_button(ui, self.recording, connected) {
-                self.set_recording(!self.recording, connected);
-            }
-            ui.separator();
-            self.time.ui(ui);
+        let recording = self.recording;
+        let clicked = self.time.ui(ui, &self.model, recording, |ui| {
+            record_button(ui, recording, connected)
         });
+        if clicked {
+            self.set_recording(!self.recording, connected);
+        }
     }
 }
 
@@ -824,7 +824,7 @@ mod tests {
         use egui_kittest::kittest::Queryable;
 
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(600.0, 40.0))
+            .with_size(egui::vec2(600.0, 60.0))
             .build_ui_state(
                 |ui, (state, connected): &mut (State, bool)| state.bottom_ui(ui, *connected),
                 (State::default(), false),

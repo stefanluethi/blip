@@ -2,6 +2,7 @@
 //! on a darker canvas, the IBM colour-blind-safe palette for the traces, and Fira Sans
 //! and Fira Code for the text, as in the documentation.
 
+use crate::app::model::logs::LogLevel;
 use egui::{Color32, CornerRadius, FontData, FontDefinitions, FontFamily, Shadow, Stroke};
 use egui::{FontId, TextStyle, Theme, Visuals};
 use std::collections::BTreeMap;
@@ -266,6 +267,18 @@ pub fn palette_color(visuals: &Visuals, index: usize) -> Color32 {
 /// The grey of the palette, for values that should not stand out.
 pub fn palette_grey(visuals: &Visuals) -> Color32 {
     tokens(visuals).traces[5]
+}
+
+/// The colour of log records of `level`.
+pub fn level_color(visuals: &Visuals, level: LogLevel) -> Color32 {
+    let tokens = tokens(visuals);
+    match level {
+        LogLevel::Error => tokens.error,
+        LogLevel::Warn => tokens.warn,
+        LogLevel::Info => tokens.ok,
+        LogLevel::Debug => tokens.debug,
+        LogLevel::Trace => tokens.trace,
+    }
 }
 
 /// The color of the time cursor: light on the dark theme, dark on the light one.

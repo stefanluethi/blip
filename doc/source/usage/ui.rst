@@ -272,18 +272,35 @@ All views show the same time range, set in the bottom panel:
   the data. **Play** moves the range on from there at the pace of the
   timestamps, along with the time cursor, and returns to live mode once it
   reaches the newest data.
-* **Live** follows the newest data, playing.
-* **Window** sets the length of the range.
-* The timeline spans all collected data, its thumb shows the range. Drag the
-  thumb to move the range, click the timeline to center the range there, or
-  scroll over it to change the window. Moving the range pauses, moving it to
-  the end of the data returns to live mode.
+* **Live** follows the newest data, playing. It is only available while
+  recording, as no new data arrives otherwise.
+* The field next to it sets the length of the range (the window), e.g.
+  ``500 ms``, ``20 s`` or ``5 min``.
+* The timeline shows all collected data, its thumb shows the range. Drag the
+  thumb to move the range, drag its left or right edge to change where the
+  range starts or ends, or click the timeline to center the range there.
+  Moving the range or its end pauses, moving it to the end of the data returns
+  to live mode.
+* Scrolling the mouse wheel over the timeline zooms it, to set the range more
+  precisely, and scrolling sideways (or with Shift) moves it. Zoomed in at the
+  end of the data, it moves on with the newest data. The button at the end of
+  its ruler shows all data again. Showing all data, the timeline rescales in
+  steps as data arrives, and not at all while pressed.
+* The ruler above the timeline shows the times. Hovering it shows the time at
+  the pointer, pressing or dragging on it sets the time cursor.
+* The bars on the timeline show what arrived in round steps of time: the log
+  records at the bottom in the colours of their levels, the most severe
+  lowest, and the values in grey above them, the fields of a record counted
+  once. Hovering the log records of a bar lists them, clicking them puts the
+  cursor at the most severe one. Hatched stretches are gaps: nothing arrived
+  for at least ten times the mean time between samples, e.g. while
+  disconnected.
 
 The time cursor is a vertical line with a handle on top, shown in all plots
 over time and on the timeline. The table, the heatmap at the cursor and the
 marker of the XY view show the values at its time. It stays at the end of the
-range until it is set: click a plot to put it there, or drag it in a plot or
-on the timeline. Setting it pauses, and it stays set until **Live** is
+range until it is set: click a plot to put it there, drag it in a plot, or
+press or drag on the ruler of the timeline. Setting it pauses, and it stays set until **Live** is
 pressed, which returns the cursor to the end of the range.
 
 The time axes show the timestamps as local time of day, or as time since boot

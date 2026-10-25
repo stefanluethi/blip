@@ -4,12 +4,15 @@ use crate::app::model::Model;
 use crate::app::theme;
 use egui_phosphor::regular;
 
+mod timeline;
+
 const NANOS_PER_SECOND: f64 = 1.0e9;
 const MIN_WINDOW: f64 = 1.0e-3;
 const MAX_WINDOW: f64 = 1.0e6;
-const MIN_THUMB_WIDTH: f32 = 6.0;
-/// Relative change of the window length per scrolled point.
-const WINDOW_SCROLL_SPEED: f32 = 0.005;
+/// Relative change of the duration the timeline shows per scrolled point.
+const ZOOM_SPEED: f32 = 0.005;
+/// Width of the field of the window length in points, wide enough for all its values.
+const WINDOW_FIELD_WIDTH: f32 = 72.0;
 /// Distance in points from the cursor line within which it can be grabbed.
 const CURSOR_GRAB_DISTANCE: f32 = 5.0;
 /// Width and height of the handle on top of the cursor line in points.
@@ -101,6 +104,9 @@ pub struct TimeRange {
     /// Time of the cursor in seconds, or `None` to keep it at the end of the window.
     #[serde(skip)]
     cursor: Option<f64>,
+    /// What the timeline shows when zoomed in, `None` to show all data.
+    #[serde(skip)]
+    overview: Option<timeline::Overview>,
 }
 
 impl Default for TimeRange {
@@ -112,6 +118,7 @@ impl Default for TimeRange {
             played_at: None,
             span: None,
             cursor: None,
+            overview: None,
         }
     }
 }
@@ -130,6 +137,7 @@ impl TimeRange {
             .map(|(first, latest)| (timestamp_to_seconds(first), timestamp_to_seconds(latest)));
         if self.span.is_none() {
             self.go_live();
+            self.overview = None;
         }
     }
 
@@ -167,12 +175,24 @@ impl TimeRange {
         self.cursor = Some(t.clamp(first, latest));
     }
 
+    /// Puts the cursor at `t` seconds, and the window around it unless it shows `t`.
+    pub fn go_to(&mut self, t: f64) {
+        if self
+            .range()
+            .is_some_and(|(start, end)| !(start..=end).contains(&t))
+        {
+            self.move_end(t + self.window / 2.0);
+        }
+        self.set_cursor(t);
+    }
+
     /// Shows all data of `model`, e.g. of a loaded recording.
     pub fn fit(&mut self, model: &Model) {
         self.update_span(model);
         if let Some((first, latest)) = self.span {
             self.window = (latest - first).clamp(MIN_WINDOW, MAX_WINDOW);
         }
+        self.overview = None;
         self.go_live();
     }
 
@@ -273,120 +293,120 @@ impl TimeRange {
         }
     }
 
-    /// The controls of the time range: playing and pausing, the window and the
-    /// timeline.
-    pub fn ui(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            let (icon, hint) = if self.playing {
-                (regular::PAUSE, "Pause")
-            } else {
-                (regular::PLAY, "Play at the pace of the timestamps")
-            };
-            if ui.button(icon).on_hover_text(hint).clicked() {
-                self.toggle_play();
-            }
-            // filled with the accent while following the newest data
-            let live = format!("{} Live", regular::BROADCAST);
-            let live_button = if self.is_live() {
-                let tokens = theme::tokens(ui.visuals());
-                egui::Button::new(egui::RichText::new(live).color(tokens.on_accent))
-                    .fill(tokens.accent)
-                    .stroke(egui::Stroke::NONE)
-            } else {
-                egui::Button::new(live)
-            }
-            .selected(self.is_live());
-            if ui
-                .add(live_button)
-                .on_hover_text("Follow the newest data")
-                .clicked()
-            {
-                self.go_live();
-            }
-
-            ui.weak("Window");
-            let speed = self.window * 0.01;
-            ui.add(
-                egui::DragValue::new(&mut self.window)
-                    .range(MIN_WINDOW..=MAX_WINDOW)
-                    .suffix(" s")
-                    .speed(speed),
-            );
-
-            self.timeline_ui(ui);
-        });
+    /// The controls of the time range over the data of `model`: what `leading` adds,
+    /// playing and pausing, going live while `recording`, the window and the timeline.
+    /// The controls line up with the track of the timeline, under its ruler. Returns
+    /// what `leading` returns.
+    pub fn ui<R>(
+        &mut self,
+        ui: &mut egui::Ui,
+        model: &Model,
+        recording: bool,
+        leading: impl FnOnce(&mut egui::Ui) -> R,
+    ) -> R {
+        let inner = ui
+            .horizontal(|ui| {
+                let inner = ui
+                    .vertical(|ui| {
+                        ui.add_space(timeline::ruler_height(ui));
+                        ui.horizontal(|ui| {
+                            let inner = leading(ui);
+                            self.controls_ui(ui, recording);
+                            inner
+                        })
+                        .inner
+                    })
+                    .inner;
+                timeline::show(self, ui, model);
+                inner
+            })
+            .inner;
         if self.playing && !self.is_live() {
             ui.ctx().request_repaint();
         }
+        inner
     }
 
-    /// A track over the collected data with a thumb for the shown window and the
-    /// cursor. Dragging the thumb moves the window, dragging the cursor moves the cursor,
-    /// clicking the track centers the window there, and scrolling over it changes the
-    /// window length.
-    fn timeline_ui(&mut self, ui: &mut egui::Ui) {
-        let size = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
-        let id = ui.id().with("timeline");
-        let cursor_grabbed = cursor_grabbed(ui, id);
-        let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
-
-        if response.hovered() {
-            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
-            if scroll != 0.0 {
-                // scrolling up shows a shorter window
-                self.window = (self.window * f64::from(-scroll * WINDOW_SCROLL_SPEED).exp())
-                    .clamp(MIN_WINDOW, MAX_WINDOW);
-            }
-        }
-
-        let Some((first, latest)) = self.span else {
-            ui.painter()
-                .rect_filled(rect, 3.0, theme::tokens(ui.visuals()).canvas);
-            return;
+    /// The buttons to play, pause and go live, which only follows new data while
+    /// `recording`, and the length of the window.
+    fn controls_ui(&mut self, ui: &mut egui::Ui, recording: bool) {
+        let (icon, hint) = if self.playing {
+            (regular::PAUSE, "Pause")
+        } else {
+            (regular::PLAY, "Play at the pace of the timestamps")
         };
-        let duration = (latest - first).max(MIN_WINDOW);
-        let x_at = |t: f64| rect.left() + ((t - first) / duration) as f32 * rect.width();
-        let thumb_at = |(start, end): (f64, f64)| {
-            let thumb =
-                egui::Rect::from_x_y_ranges(x_at(start.max(first))..=x_at(end), rect.y_range());
-            thumb.expand2(egui::vec2(
-                ((MIN_THUMB_WIDTH - thumb.width()) / 2.0).max(0.0),
-                0.0,
-            ))
-        };
-
-        let t_at = |x: f32| first + ((x - rect.left()) / rect.width()) as f64 * duration;
-        if cursor_grabbed {
-            if let Some(pos) = ui.ctx().pointer_interact_pos() {
-                self.set_cursor(t_at(pos.x));
-            }
-        } else if let (Some(pos), Some(range)) = (response.interact_pointer_pos(), self.range()) {
-            let (_, end) = range;
-            let jump =
-                (response.clicked() || response.drag_started()) && !thumb_at(range).contains(pos);
-            if jump {
-                self.move_end(t_at(pos.x) + self.window / 2.0);
-            } else if response.dragged() {
-                self.move_end(end + (response.drag_delta().x / rect.width()) as f64 * duration);
-            }
+        if ui.button(icon).on_hover_text(hint).clicked() {
+            self.toggle_play();
+        }
+        // filled with the accent while following the newest data
+        let live = format!("{} Live", regular::BROADCAST);
+        let following = recording && self.is_live();
+        let live_button = if following {
+            let tokens = theme::tokens(ui.visuals());
+            egui::Button::new(egui::RichText::new(live).color(tokens.on_accent))
+                .fill(tokens.accent)
+                .stroke(egui::Stroke::NONE)
+        } else {
+            egui::Button::new(live)
+        }
+        .selected(following);
+        if ui
+            .add_enabled(recording, live_button)
+            .on_hover_text("Follow the newest data")
+            .on_disabled_hover_text("Follows the newest data while recording")
+            .clicked()
+        {
+            self.go_live();
         }
 
-        let visuals = ui.visuals();
-        ui.painter()
-            .rect_filled(rect, 3.0, theme::tokens(visuals).canvas);
-        if let Some(range) = self.range() {
-            let thumb_visuals = ui.style().interact(&response);
-            ui.painter().rect(
-                thumb_at(range),
-                3.0,
-                visuals.selection.bg_fill,
-                thumb_visuals.fg_stroke,
-                egui::StrokeKind::Inside,
-            );
-        }
-        let cursor_x = self.cursor().map(x_at);
-        show_cursor(ui, id, rect, cursor_x, cursor_grabbed);
+        let speed = self.window * 0.01;
+        let window = egui::DragValue::new(&mut self.window)
+            .range(MIN_WINDOW..=MAX_WINDOW)
+            .speed(speed)
+            .custom_formatter(|seconds, _| format_duration(seconds))
+            .custom_parser(parse_duration);
+        // a fixed width, so that the timeline beside it stays put
+        let size = egui::vec2(WINDOW_FIELD_WIDTH, ui.spacing().interact_size.y);
+        ui.add_sized(size, window)
+            .on_hover_text("Window: the length of the shown range, e.g. 500 ms, 20 s or 5 min");
     }
+}
+
+/// Formats `seconds` with three significant digits in ms, s, min or h.
+fn format_duration(seconds: f64) -> String {
+    let (value, unit) = if seconds < 1.0 {
+        (seconds * 1.0e3, "ms")
+    } else if seconds < 60.0 {
+        (seconds, "s")
+    } else if seconds < 3600.0 {
+        (seconds / 60.0, "min")
+    } else {
+        (seconds / 3600.0, "h")
+    };
+    let decimals = if value < 10.0 {
+        2
+    } else if value < 100.0 {
+        1
+    } else {
+        0
+    };
+    format!("{value:.decimals$} {unit}")
+}
+
+/// Reads a duration in seconds as [`format_duration`] writes it, also without a unit
+/// for seconds.
+fn parse_duration(text: &str) -> Option<f64> {
+    let text = text.trim();
+    let split = text.find(|c: char| c.is_alphabetic()).unwrap_or(text.len());
+    let value: f64 = text[..split].trim().parse().ok()?;
+    let scale = match text[split..].trim() {
+        "ms" => 1.0e-3,
+        "" | "s" => 1.0,
+        "m" | "min" => 60.0,
+        "h" => 3600.0,
+        _ => return None,
+    };
+    Some(value * scale)
 }
 
 /// Where the cursor line of a time plot or the timeline was shown, to grab it.
@@ -453,16 +473,26 @@ pub fn show_cursor(ui: &egui::Ui, id: egui::Id, rect: egui::Rect, x: Option<f32>
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
     }
 
-    let color = theme::cursor_color(ui.visuals());
     let width = if grabbed || hovered { 2.0 } else { 1.5 };
-    let painter = ui.painter_at(rect);
-    painter.vline(x, rect.y_range(), egui::Stroke::new(width, color));
+    paint_cursor(&ui.painter_at(rect), x, rect.y_range(), width, ui.visuals());
+}
+
+/// Paints the cursor line at `x` over `y` with `width` and a handle on top.
+fn paint_cursor(
+    painter: &egui::Painter,
+    x: f32,
+    y: egui::Rangef,
+    width: f32,
+    visuals: &egui::Visuals,
+) {
+    let color = theme::cursor_color(visuals);
+    painter.vline(x, y, egui::Stroke::new(width, color));
     let (half_width, height) = (CURSOR_HANDLE_SIZE.x / 2.0, CURSOR_HANDLE_SIZE.y);
     painter.add(egui::Shape::convex_polygon(
         vec![
-            egui::pos2(x - half_width, rect.top()),
-            egui::pos2(x + half_width, rect.top()),
-            egui::pos2(x, rect.top() + height),
+            egui::pos2(x - half_width, y.min),
+            egui::pos2(x + half_width, y.min),
+            egui::pos2(x, y.min + height),
         ],
         color,
         egui::Stroke::NONE,
@@ -574,6 +604,35 @@ mod tests {
     }
 
     #[test]
+    fn going_to_a_time_moves_the_window_only_if_it_is_not_shown() {
+        let mut time = time_range(100.0, 150.0, 20.0);
+        time.go_to(140.0);
+        assert_eq!(time.range(), Some((130.0, 150.0)));
+        assert_eq!(time.cursor(), Some(140.0));
+        time.go_to(110.0);
+        assert_eq!(time.range(), Some((100.0, 120.0)));
+        assert_eq!(time.cursor(), Some(110.0));
+    }
+
+    #[test]
+    fn durations_are_formatted_short_and_read_back() {
+        assert_eq!(format_duration(0.0123), "12.3 ms");
+        assert_eq!(format_duration(20.0), "20.0 s");
+        assert_eq!(format_duration(1.5), "1.50 s");
+        assert_eq!(format_duration(150.0), "2.50 min");
+        assert_eq!(format_duration(7200.0), "2.00 h");
+        assert_eq!(parse_duration("500 ms"), Some(0.5));
+        assert_eq!(parse_duration("20"), Some(20.0));
+        assert_eq!(parse_duration("2.5min"), Some(150.0));
+        assert_eq!(parse_duration(" 1 h "), Some(3600.0));
+        assert_eq!(parse_duration("2 weeks"), None);
+        for seconds in [0.0123, 1.5, 20.0, 150.0, 7200.0] {
+            let read = parse_duration(&format_duration(seconds)).unwrap();
+            assert!((read - seconds).abs() < seconds * 1.0e-9, "{seconds}");
+        }
+    }
+
+    #[test]
     fn window_end_stays_within_data() {
         let mut time = time_range(100.0, 150.0, 20.0);
         time.pan_zoom(50.0, 70.0);
@@ -649,30 +708,44 @@ mod tests {
 
     #[test]
     fn the_buttons_pause_and_go_live() {
+        fn time<'a>(harness: &'a egui_kittest::Harness<'_, (TimeRange, bool)>) -> &'a TimeRange {
+            &harness.state().0
+        }
+
         use egui_kittest::Harness;
         use egui_kittest::kittest::Queryable;
 
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(600.0, 40.0))
+            .with_size(egui::vec2(600.0, 60.0))
             .build_ui_state(
-                |ui, time: &mut TimeRange| time.ui(ui),
-                time_range(100.0, 150.0, 20.0),
+                |ui, (time, recording): &mut (TimeRange, bool)| {
+                    time.ui(ui, &Model::default(), *recording, |_| ());
+                },
+                (time_range(100.0, 150.0, 20.0), true),
             );
         harness.run();
         harness.get_by_label(regular::PAUSE).click();
         harness.run();
-        assert!(!harness.state().playing);
-        assert_eq!(harness.state().range(), Some((130.0, 150.0)));
+        assert!(!time(&harness).playing);
+        assert_eq!(time(&harness).range(), Some((130.0, 150.0)));
         // playing repaints each frame
         harness.get_by_label(regular::PLAY).click();
         harness.run_steps(2);
-        assert!(harness.state().playing);
+        assert!(time(&harness).playing);
 
         harness.get_by_label(regular::PAUSE).click();
         harness.step();
         harness.run();
         harness.get_by_label_contains("Live").click();
         harness.run();
-        assert!(harness.state().is_live() && harness.state().playing);
+        assert!(time(&harness).is_live() && time(&harness).playing);
+
+        // without recording, there is nothing new to follow
+        harness.state_mut().1 = false;
+        harness.get_by_label(regular::PAUSE).click();
+        harness.run();
+        harness.get_by_label_contains("Live").click();
+        harness.run();
+        assert!(!time(&harness).is_live());
     }
 }
