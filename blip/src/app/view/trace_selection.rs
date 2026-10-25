@@ -115,10 +115,9 @@ impl<'a> TraceTree<'a> {
     /// Removes the traces, records and actions of which a view picking `picks` can show
     /// nothing, and the branches left without any.
     pub fn retain_selectable(&mut self, picks: Picks) {
-        if self
-            .trace
-            .is_some_and(|trace| trace_picks(trace, picks).is_empty())
-        {
+        if self.trace.is_some_and(|trace| {
+            trace_picks(trace, picks).is_empty() && whole_array_pick(trace, picks).is_none()
+        }) {
             self.trace = None;
         }
         if !picks.records {
@@ -215,6 +214,9 @@ pub fn type_icon(samples: &Samples) -> &'static str {
 /// What is picked for a view while the tree is shown, see [`ViewSelection`].
 struct Selection<'a> {
     paths: &'a mut BTreeSet<String>,
+    /// The paths of the traces the view shows apart from the others, see
+    /// [`ViewType::shows_apart`].
+    apart: BTreeSet<&'a str>,
     wildcards: &'a mut BTreeSet<String>,
     picks: Picks,
     /// Whether only the traces matching a search are shown.
@@ -263,6 +265,16 @@ fn show_checkbox(
             if selection.picks.view_type.shows_one_trace() {
                 selection.paths.clear();
             }
+            // what is shown apart and what is not are not shown together
+            let apart = &selection.apart;
+            let adds_apart = paths.iter().any(|path| apart.contains(path.as_str()));
+            selection
+                .paths
+                .retain(|path| apart.contains(path.as_str()) == adds_apart);
+            if adds_apart {
+                // they would add what is not shown apart
+                selection.wildcards.clear();
+            }
             selection.paths.extend(paths.iter().cloned());
             if wildcard {
                 // what was a wildcard below it is part of this one
@@ -287,16 +299,25 @@ fn element_indices(shape: &[usize], mut flat_index: usize) -> Vec<usize> {
     indices
 }
 
-/// The paths of `trace` that a view of `view_type` can show: its own, those of its
-/// elements, or none.
+/// The paths of `trace` that a view of `view_type` can show along with other traces,
+/// and so are picked with a branch: its own, those of its elements, or none.
 pub fn trace_paths(trace: &Trace, view_type: ViewType) -> Vec<String> {
     match (view_type.selectable(trace), &trace.samples) {
-        (Selectable::Elements, Samples::Arrays { shape, .. }) => (0..shape.iter().product())
+        (
+            Selectable::Elements | Selectable::Array { elements: true },
+            Samples::Arrays { shape, .. },
+        ) => (0..shape.iter().product())
             .map(|flat_index| element_path(&trace.path, &element_indices(shape, flat_index)))
             .collect(),
-        (Selectable::No(_), _) => vec![],
+        (Selectable::No(_) | Selectable::Array { .. }, _) => vec![],
         _ => vec![trace.path.clone()],
     }
+}
+
+/// The path of `trace` if a view picking `picks` can show it as a whole array, see
+/// [`Selectable::Array`].
+fn whole_array_pick(trace: &Trace, picks: Picks) -> Option<String> {
+    (!picks.records && picks.view_type.shows_apart(trace)).then(|| trace.path.clone())
 }
 
 /// The paths of `trace` that a view picking `picks` can show, none if it picks records.
@@ -309,42 +330,66 @@ fn trace_picks(trace: &Trace, picks: Picks) -> Vec<String> {
 }
 
 /// Shows `trace` labelled `label` with the icon of its type: a checkbox, or a
-/// collapsible list of checkboxes for its elements.
+/// collapsible list of checkboxes for its elements below a checkbox for all of them,
+/// after one for the whole array if the view shows it so.
 fn show_trace(ui: &mut Ui, label: &str, key: &str, trace: &Trace, selection: &mut Selection<'_>) {
     let icon = Some(type_icon(&trace.samples));
     let picks = selection.picks;
     let paths = trace_picks(trace, picks);
     let mut hover = format!("{}\n{}", trace.path, trace.samples.type_label());
-    match picks.view_type.selectable(trace) {
-        _ if picks.records => hover.push_str("\nTables of records show records"),
-        Selectable::Trace => {}
-        Selectable::No(reason) => hover.push_str(&format!("\n{reason}")),
-        Selectable::Elements => {
-            let id = ui.make_persistent_id(("trace_array", &trace.path));
-            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false)
-                .show_header(ui, |ui| {
-                    show_checkbox(ui, label, icon, &paths, key, false, selection)
-                        .on_hover_text(hover);
-                })
-                .body(|ui| {
-                    for path in &paths {
-                        let label = &path[trace.path.len()..];
-                        leaf_row(ui, |ui| {
-                            let paths = std::slice::from_ref(path);
-                            show_checkbox(ui, label, None, paths, key, false, selection)
-                                .on_hover_text(path);
-                        });
-                    }
-                });
-            return;
+    // what the checkbox of the trace picks, the elements listed below it, and whether
+    // the whole array is listed before them
+    let (paths, element_paths, whole) = match picks.view_type.selectable(trace) {
+        _ if picks.records => {
+            hover.push_str("\nTables of records show records");
+            (paths, None, false)
         }
-    }
-    leaf_row(ui, |ui| {
-        show_checkbox(ui, label, icon, &paths, key, false, selection)
-            .on_hover_text(&hover)
-            .on_disabled_hover_text(hover);
-    });
+        Selectable::Trace => (paths, None, false),
+        Selectable::No(reason) => {
+            hover.push_str(&format!("\n{reason}"));
+            (paths, None, false)
+        }
+        Selectable::Elements => (paths.clone(), Some(paths), false),
+        Selectable::Array { elements: true } => (paths.clone(), Some(paths), true),
+        Selectable::Array { elements: false } => {
+            hover.push_str(&format!("\n{WHOLE_ARRAY_HINT}"));
+            (vec![trace.path.clone()], None, false)
+        }
+    };
+    let Some(element_paths) = element_paths else {
+        leaf_row(ui, |ui| {
+            show_checkbox(ui, label, icon, &paths, key, false, selection)
+                .on_hover_text(&hover)
+                .on_disabled_hover_text(hover);
+        });
+        return;
+    };
+    let id = ui.make_persistent_id(("trace_array", &trace.path));
+    egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false)
+        .show_header(ui, |ui| {
+            show_checkbox(ui, label, icon, &paths, key, false, selection).on_hover_text(hover);
+        })
+        .body(|ui| {
+            if whole {
+                leaf_row(ui, |ui| {
+                    let paths = std::slice::from_ref(&trace.path);
+                    show_checkbox(ui, "whole array", None, paths, key, false, selection)
+                        .on_hover_text(format!("{}\n{WHOLE_ARRAY_HINT}", trace.path));
+                });
+            }
+            for path in &element_paths {
+                let label = &path[trace.path.len()..];
+                leaf_row(ui, |ui| {
+                    let paths = std::slice::from_ref(path);
+                    show_checkbox(ui, label, None, paths, key, false, selection)
+                        .on_hover_text(path);
+                });
+            }
+        });
 }
+
+/// What a view showing an array as a whole does with it, see [`Selectable::Array`].
+const WHOLE_ARRAY_HINT: &str = "Plotted as a whole over the indices of its elements";
 
 /// Shows the record at `path` labelled `label`: a checkbox to pick it as a whole.
 fn show_record(ui: &mut Ui, label: &str, key: &str, path: &str, selection: &mut Selection<'_>) {
@@ -572,7 +617,12 @@ pub fn show(
         wildcards: &mut no_wildcards,
         picks: ViewType::Plot.into(),
     });
+    let apart = (model.traces.iter())
+        .filter(|trace| view.picks.view_type.shows_apart(trace))
+        .map(|trace| trace.path.as_str())
+        .collect();
     let mut selection = Selection {
+        apart,
         paths: view.paths,
         wildcards: view.wildcards,
         picks: view.picks,
@@ -1140,6 +1190,73 @@ mod tests {
         harness.run();
         click(&mut harness, "motor");
         assert_eq!(harness.state().1, set(&["motor/b"]));
+        assert!(harness.state().2.is_empty());
+    }
+
+    /// Adds an array of `len` floats at `path` to `model`.
+    fn add_array(model: &mut Model, path: &str, len: usize) {
+        model.traces.append(&proto::Value {
+            timestamp: 0,
+            path: path.to_owned(),
+            value: proto::Data::Array(vec![proto::Data::Float(1.0); len]),
+        });
+    }
+
+    #[test]
+    fn xy_views_check_arrays_as_a_whole_apart_from_other_traces() {
+        use egui_kittest::kittest::Queryable;
+
+        let mut model = Model::default();
+        add_trace(&mut model, "sensors/rpm");
+        add_array(&mut model, "sensors/adc", MAX_LISTED_ELEMENTS + 1);
+        add_array(&mut model, "sensors/wave", MAX_LISTED_ELEMENTS + 1);
+        add_array(&mut model, "sensors/pos", 2);
+        add_array(&mut model, "sensors/grid", 4);
+        let mut tree = TraceTree::build(model.traces.iter());
+        // a branch picks the elements of small arrays, never whole arrays
+        assert_eq!(
+            tree.children["sensors"].paths(ViewType::Xy.into()),
+            [
+                "sensors/grid[0]",
+                "sensors/grid[1]",
+                "sensors/grid[2]",
+                "sensors/grid[3]",
+                "sensors/pos[0]",
+                "sensors/pos[1]",
+                "sensors/rpm"
+            ]
+        );
+        // a big array can only be shown as a whole
+        tree.retain_selectable(ViewType::Xy.into());
+        assert!(tree.children["sensors"].children.contains_key("adc"));
+
+        let mut harness = pick_harness(model, ViewType::Xy.into());
+        let click = |harness: &mut egui_kittest::Harness<'_, PickState>, label: &str| {
+            harness.get_by_label(label).click();
+            harness.run();
+        };
+        let array = |name: &str| format!("{name} {BRACKETS_SQUARE}");
+        click(&mut harness, &format!("rpm {HASH}"));
+        assert_eq!(harness.state().1, set(&["sensors/rpm"]));
+        click(&mut harness, &array("adc"));
+        assert_eq!(harness.state().1, set(&["sensors/adc"]));
+        click(&mut harness, &array("wave"));
+        assert_eq!(harness.state().1, set(&["sensors/adc", "sensors/wave"]));
+
+        // checking other traces unchecks the arrays, and the other way round; a small
+        // array checks its elements, as in other views
+        click(&mut harness, &array("pos"));
+        assert_eq!(
+            harness.state().1,
+            set(&["sensors/pos[0]", "sensors/pos[1]"])
+        );
+        click(&mut harness, &array("adc"));
+        click(&mut harness, "sensors");
+        assert!(harness.state().1.contains("sensors/pos[1]"));
+        assert!(!harness.state().1.contains("sensors/adc"));
+        assert_eq!(harness.state().2, set(&["/sensors"]));
+        click(&mut harness, &array("adc"));
+        assert_eq!(harness.state().1, set(&["sensors/adc"]));
         assert!(harness.state().2.is_empty());
     }
 

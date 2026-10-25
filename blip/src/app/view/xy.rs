@@ -1,11 +1,13 @@
 //! An XY plot: traces plotted against another trace instead of against time, e.g. a
 //! position as a path.
 
+use super::heatmap::{index_spacer, index_x_axis, sample_at_cursor};
+use super::plot::{LineStyle, LineStyles, ShowPoints, is_point, to_screen};
 use super::time_axis::{index_at, within};
-use super::{PropertiesContext, ViewContext, Viewable, short_names};
+use super::{PropertiesContext, ViewContext, ViewType, Viewable, short_names};
 use crate::app::model::Model;
 use crate::app::model::numbers::{SHOWN_DIGITS, format_significant};
-use crate::app::model::traces::Series;
+use crate::app::model::traces::{Samples, Series};
 use crate::app::theme;
 use crate::app::time::TimeRange;
 use std::collections::BTreeSet;
@@ -15,21 +17,45 @@ use std::ops::Range;
 const MAX_POINTS: usize = 20_000;
 /// Number of steps in which the trail fades out towards older points.
 const FADE_STEPS: usize = 8;
-/// Opacity of the oldest part of the trail.
-const MIN_OPACITY: f32 = 0.15;
+/// How far the trail fades out unless set otherwise.
+const DEFAULT_FADE: f32 = 0.85;
+/// Radius of the marks of the points.
+const POINT_RADIUS: f32 = 2.0;
 
 /// The shown traces plotted against one of them, the x trace, within the shown
-/// window.
-#[derive(serde::Deserialize, serde::Serialize, Clone, Default)]
+/// window. Or the shown arrays at the cursor time, plotted over the indices of their
+/// elements, e.g. snapshots of an ADC.
+#[derive(serde::Deserialize, serde::Serialize, Clone)]
 #[serde(default)]
 pub struct Xy {
     /// Path of the trace on the x axis, see [`Xy::x_path`].
     pub x: Option<String>,
-    /// Paths of the shown traces, the x trace and the traces on the y axis.
+    /// Paths of the shown traces, the x trace and the traces on the y axis, or the
+    /// shown arrays, see [`Xy::array_paths`].
     #[serde(alias = "streams")] // the name before layout version 3
     pub traces: BTreeSet<String>,
     /// Whether a unit has the same length on both axes, e.g. for positions.
     pub equal_axes: bool,
+    /// When the points are marked.
+    pub points: ShowPoints,
+    /// How far the oldest part of the trail fades out, from 0 for not at all to 1 for
+    /// nearly invisible.
+    pub fade: f32,
+    #[serde(skip_serializing_if = "LineStyles::is_empty")]
+    pub line_styles: LineStyles,
+}
+
+impl Default for Xy {
+    fn default() -> Self {
+        Self {
+            x: None,
+            traces: BTreeSet::new(),
+            equal_axes: false,
+            points: ShowPoints::default(),
+            fade: DEFAULT_FADE,
+            line_styles: LineStyles::default(),
+        }
+    }
 }
 
 /// The points of `y` against `x` for the samples of `y` in `indices`, each paired with
@@ -69,8 +95,154 @@ fn thin_out(points: Vec<[f64; 2]>, max_points: usize) -> Vec<[f64; 2]> {
         .collect()
 }
 
-fn is_point(point: &[f64; 2]) -> bool {
-    !point[0].is_nan() && !point[1].is_nan()
+/// The opacity of the `step`th of `steps` steps of a trail, oldest first, that fades
+/// out by `fade`: the newest step is opaque.
+fn trail_opacity(fade: f32, step: usize, steps: usize) -> f32 {
+    1.0 - fade.clamp(0.0, 1.0) * (1.0 - (step + 1) as f32 / steps.max(1) as f32)
+}
+
+/// The lines of a trail through `points` in `steps` steps of about the same number of
+/// points, oldest first, each starting where the one before ends. With a pattern that
+/// repeats every `period` points on the screen of a plot with `transform`, each step
+/// ends where the pattern repeats, so the pattern runs on across the steps.
+fn trail_lines(
+    points: &[[f64; 2]],
+    steps: usize,
+    period: Option<f32>,
+    transform: &egui_plot::PlotTransform,
+) -> Vec<Vec<[f64; 2]>> {
+    let step_len = points.len().div_ceil(steps.max(1)).max(1);
+    let Some(period) = period.filter(|&period| period > 0.0) else {
+        // the lines overlap by one point so the steps join
+        return (0..points.len())
+            .step_by(step_len)
+            .map(|start| points[start..(start + step_len + 1).min(points.len())].to_vec())
+            .collect();
+    };
+    let mut lines: Vec<Vec<[f64; 2]>> = vec![vec![]];
+    // the length on screen since the last gap, where the pattern starts again, and
+    // the length at which the current step is to end
+    let mut walked = 0.0_f32;
+    let mut end_at: Option<f32> = None;
+    for (index, &point) in points.iter().enumerate() {
+        if index > 0 && index % step_len == 0 {
+            let line = lines.last_mut().expect("there is always a line");
+            if line.last().is_some_and(is_point) {
+                end_at = Some((walked / period).ceil() * period);
+            } else if !line.is_empty() {
+                // after a gap, where the pattern starts again anyway
+                lines.push(vec![]);
+            }
+        }
+        let line = lines.last_mut().expect("there is always a line");
+        match line.last().copied() {
+            Some(previous) if is_point(&previous) && is_point(&point) => {
+                let length = to_screen(previous, transform).distance(to_screen(point, transform));
+                if let Some(end) = end_at.filter(|&end| walked + length >= end) {
+                    // the step ends between the points, where the pattern repeats
+                    let t = if length > 0.0 {
+                        f64::from((end - walked) / length)
+                    } else {
+                        0.0
+                    };
+                    let cut = [
+                        previous[0] + (point[0] - previous[0]) * t,
+                        previous[1] + (point[1] - previous[1]) * t,
+                    ];
+                    line.push(cut);
+                    lines.push(vec![cut]);
+                    end_at = None;
+                }
+                walked += length;
+            }
+            _ if !is_point(&point) => {
+                // the pattern starts again after a gap, where a pending step ends
+                walked = 0.0;
+                if end_at.take().is_some() {
+                    lines.push(vec![]);
+                }
+            }
+            _ => {}
+        }
+        lines
+            .last_mut()
+            .expect("there is always a line")
+            .push(point);
+    }
+    lines
+}
+
+/// Draws the lines through `points` in `style`, if any, broken where a point is
+/// missing.
+fn plot_lines(
+    name: &str,
+    points: &[[f64; 2]],
+    color: egui::Color32,
+    style: Option<egui_plot::LineStyle>,
+    plot_ui: &mut egui_plot::PlotUi<'_>,
+) {
+    let Some(line_style) = style else {
+        return;
+    };
+    for segment in points.split(|point| !is_point(point)) {
+        if segment.len() > 1 {
+            plot_ui.line(
+                egui_plot::Line::new(name, segment.to_vec())
+                    .color(color)
+                    .style(line_style),
+            );
+        }
+    }
+}
+
+/// Marks the `points` that are not missing.
+fn plot_points(
+    name: &str,
+    points: &[[f64; 2]],
+    color: egui::Color32,
+    plot_ui: &mut egui_plot::PlotUi<'_>,
+) {
+    let points: Vec<[f64; 2]> = points.iter().copied().filter(is_point).collect();
+    if !points.is_empty() {
+        plot_ui.points(
+            egui_plot::Points::new(name, points)
+                .color(color)
+                .radius(POINT_RADIUS)
+                .filled(true),
+        );
+    }
+}
+
+/// Draws the elements `values` of an array over their indices, the lines in `style`
+/// and the points marked as `points` says.
+pub(super) fn plot_array(
+    name: &str,
+    values: &[f64],
+    color: egui::Color32,
+    style: LineStyle,
+    points: ShowPoints,
+    plot_ui: &mut egui_plot::PlotUi<'_>,
+) {
+    let values: Vec<[f64; 2]> = values
+        .iter()
+        .enumerate()
+        .map(|(index, &value)| [index as f64, value])
+        .collect();
+    let line_style = style.plot_style(&values, plot_ui.transform());
+    plot_lines(name, &values, color, line_style, plot_ui);
+    let width = plot_ui.transform().frame().width();
+    if style.marks_points(points, values.len(), width) {
+        plot_points(name, &values, color, plot_ui);
+    }
+}
+
+/// The label of an axis: the name of its trace and the unit of its traces.
+fn axis_label(name: &str, unit: Option<&str>) -> String {
+    match unit {
+        Some(unit) if name.is_empty() => format!("[{unit}]"),
+        Some(unit) => format!("{name} [{unit}]"),
+        None => name.to_owned(),
+    }
 }
 
 impl Xy {
@@ -83,6 +255,18 @@ impl Xy {
         if let Some(x) = &self.x {
             self.traces.insert(x.clone());
         }
+    }
+
+    /// Paths of the shown traces that are whole arrays, plotted over the indices of
+    /// their elements instead of against the x trace.
+    fn array_paths<'a>(&'a self, model: &Model) -> Vec<&'a str> {
+        self.traces
+            .iter()
+            .map(String::as_str)
+            .filter(|path| {
+                (model.traces.get(path)).is_some_and(|trace| ViewType::Xy.shows_apart(trace))
+            })
+            .collect()
     }
 
     /// Path of the trace on the x axis: the chosen one if it is shown, else the first
@@ -103,12 +287,54 @@ impl Xy {
             .filter(move |&path| Some(path) != x)
     }
 
+    /// A plot with `x_axis` and the y axis labelled `y_label`, whose tooltips name the
+    /// x coordinate `x_name`.
+    fn plot(
+        &self,
+        ui: &egui::Ui,
+        x_name: &'static str,
+        x_axis: egui_plot::AxisHints<'static>,
+        y_label: String,
+    ) -> egui_plot::Plot<'static> {
+        let plot = egui_plot::Plot::new(ui.id().with("xy"))
+            .grid_color(theme::grid_color(ui.visuals()))
+            .legend(
+                // the newest point is drawn first in full color, the trail fades out
+                egui_plot::Legend::default()
+                    .color_conflict_handling(egui_plot::ColorConflictHandling::PickFirst),
+            )
+            .custom_x_axes(vec![x_axis])
+            .y_axis_label(y_label)
+            .label_formatter(move |hover| {
+                let (name, point) = match hover {
+                    egui_plot::HoverPosition::NearDataPoint {
+                        plot_name,
+                        position,
+                        ..
+                    } => (*plot_name, position),
+                    egui_plot::HoverPosition::Elsewhere { position } => ("", position),
+                };
+                Some(format!(
+                    "{name}\n{x_name} = {}\ny = {}",
+                    format_significant(point.x, SHOWN_DIGITS),
+                    format_significant(point.y, SHOWN_DIGITS)
+                ))
+            });
+        if self.equal_axes {
+            plot.data_aspect(1.0)
+        } else {
+            plot
+        }
+    }
+
     /// Draws `points` as a line fading out towards the first points, and the last point
     /// as a dot.
     fn plot_trail(
+        &self,
         name: &str,
         points: &[[f64; 2]],
         color: egui::Color32,
+        style: LineStyle,
         plot_ui: &mut egui_plot::PlotUi<'_>,
     ) {
         if let Some(&last) = points.last().filter(|point| is_point(point)) {
@@ -119,67 +345,43 @@ impl Xy {
                     .filled(true),
             );
         }
-        let step_len = points.len().div_ceil(FADE_STEPS).max(1);
-        for (step, start) in (0..points.len()).step_by(step_len).enumerate() {
-            // overlap by one point so the steps join
-            let end = (start + step_len + 1).min(points.len());
-            let opacity = MIN_OPACITY
-                + (1.0 - MIN_OPACITY) * (step + 1) as f32 / points.len().div_ceil(step_len) as f32;
-            for segment in points[start..end].split(|point| !is_point(point)) {
-                if segment.len() > 1 {
-                    plot_ui.line(
-                        egui_plot::Line::new(name, segment.to_vec())
-                            .color(color.gamma_multiply(opacity)),
-                    );
-                }
+        let transform = *plot_ui.transform();
+        let steps = if self.fade > 0.0 { FADE_STEPS } else { 1 };
+        let line_style = style.plot_style(points, &transform);
+        let period = line_style
+            .filter(|&line_style| line_style != egui_plot::LineStyle::Solid)
+            .and(style.pattern_period());
+        let lines = trail_lines(points, steps, period, &transform);
+        for (step, line) in lines.iter().enumerate() {
+            let color = color.gamma_multiply(trail_opacity(self.fade, step, lines.len()));
+            plot_lines(name, line, color, line_style, plot_ui);
+        }
+
+        let count = points.iter().filter(|point| is_point(point)).count();
+        if style.marks_points(self.points, count, transform.frame().width()) {
+            let step_len = points.len().div_ceil(steps).max(1);
+            let steps = points.len().div_ceil(step_len);
+            for (step, chunk) in points.chunks(step_len).enumerate() {
+                let color = color.gamma_multiply(trail_opacity(self.fade, step, steps));
+                plot_points(name, chunk, color, plot_ui);
             }
         }
     }
 
+    /// Shows the shown traces against the x trace within the shown window.
     fn show_plot(&self, ui: &mut egui::Ui, model: &Model, time: &TimeRange) {
         let x_path = self.x_path();
         let y_paths: Vec<&str> = self.y_paths().collect();
         let names = short_names(y_paths.iter().copied());
-        // an axis is labelled with the name of its trace and the unit of its traces
-        let label = |name: &str, unit: Option<&str>| match unit {
-            Some(unit) if name.is_empty() => format!("[{unit}]"),
-            Some(unit) => format!("{name} [{unit}]"),
-            None => name.to_owned(),
-        };
         let x_unit = x_path.and_then(|x| model.traces.unit(x));
-        let x_label = label(&short_names(x_path).concat(), x_unit);
+        let x_label = axis_label(&short_names(x_path).concat(), x_unit);
         let y_unit = super::common_unit(model, y_paths.iter().copied());
         let y_label = match names[..] {
-            [name] => label(name, y_unit),
-            _ => label("", y_unit),
+            [name] => axis_label(name, y_unit),
+            _ => axis_label("", y_unit),
         };
-        let mut plot = egui_plot::Plot::new(ui.id().with("xy"))
-            .grid_color(theme::grid_color(ui.visuals()))
-            .legend(
-                // the newest point is drawn first in full color, the trail fades out
-                egui_plot::Legend::default()
-                    .color_conflict_handling(egui_plot::ColorConflictHandling::PickFirst),
-            )
-            .x_axis_label(x_label)
-            .y_axis_label(y_label)
-            .label_formatter(|hover| {
-                let (name, point) = match hover {
-                    egui_plot::HoverPosition::NearDataPoint {
-                        plot_name,
-                        position,
-                        ..
-                    } => (*plot_name, position),
-                    egui_plot::HoverPosition::Elsewhere { position } => ("", position),
-                };
-                Some(format!(
-                    "{name}\nx = {}\ny = {}",
-                    format_significant(point.x, SHOWN_DIGITS),
-                    format_significant(point.y, SHOWN_DIGITS)
-                ))
-            });
-        if self.equal_axes {
-            plot = plot.data_aspect(1.0);
-        }
+        let x_axis = egui_plot::AxisHints::new_x().label(x_label);
+        let mut plot = self.plot(ui, "x", x_axis, y_label);
 
         // the plot fits all values, also outside the shown window, until panned or
         // zoomed, and again after a double click
@@ -207,7 +409,8 @@ impl Xy {
                 };
                 let color = theme::trace_color(&visuals, index);
                 let points = thin_out(pair(x, y, within(y.timestamps, range)), MAX_POINTS);
-                Self::plot_trail(name, &points, color, plot_ui);
+                let style = self.line_styles.of(path);
+                self.plot_trail(name, &points, color, style, plot_ui);
 
                 // where the trace was at the cursor
                 let at_cursor = cursor
@@ -227,33 +430,86 @@ impl Xy {
         });
         super::zoom_on_wheel(&response.response);
     }
+
+    /// Shows the elements of the arrays at `paths` at the cursor time over their
+    /// indices.
+    fn show_arrays(&self, ui: &mut egui::Ui, model: &Model, time: &TimeRange, paths: &[&str]) {
+        let names = short_names(paths.iter().copied());
+        let unit = super::common_unit(model, paths.iter().copied());
+        let y_label = match names[..] {
+            [name] => axis_label(name, unit),
+            _ => axis_label("", unit),
+        };
+        let mut plot = self
+            .plot(ui, "index", index_x_axis("index"), y_label)
+            .x_grid_spacer(index_spacer);
+        // the plot fits all elements and all their values until panned or zoomed
+        for trace in paths.iter().filter_map(|path| model.traces.get(path)) {
+            if let Samples::Arrays { shape, .. } = &trace.samples {
+                let len = shape.iter().product::<usize>();
+                plot = plot.include_x(0.0).include_x(len.saturating_sub(1) as f64);
+            }
+            if let Some((low, high)) = trace.value_range() {
+                plot = plot.include_y(low).include_y(high);
+            }
+        }
+        let visuals = ui.visuals().clone();
+        let response = plot.show(ui, |plot_ui| {
+            for (index, (path, name)) in paths.iter().zip(&names).enumerate() {
+                let Some(trace) = model.traces.get(path) else {
+                    continue;
+                };
+                let values: Vec<f64> = (sample_at_cursor(trace, time).iter())
+                    .map(|number| number.as_f64())
+                    .collect();
+                let color = theme::trace_color(&visuals, index);
+                let style = self.line_styles.of(path);
+                plot_array(name, &values, color, style, self.points, plot_ui);
+            }
+        });
+        super::zoom_on_wheel(&response.response);
+    }
 }
 
 impl Viewable for Xy {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
-        if self.traces.len() < 2 {
-            ui.weak("Select an x and a y trace in the traces panel");
-            return;
+        self.line_styles.retain_shown(&self.traces);
+        let arrays = self.array_paths(context.model);
+        if !arrays.is_empty() {
+            self.show_arrays(ui, context.model, context.time, &arrays);
+        } else if self.traces.len() < 2 {
+            ui.weak("Select an x and a y trace, or an array, in the traces panel");
+        } else {
+            self.show_plot(ui, context.model, context.time);
         }
-        self.show_plot(ui, context.model, context.time);
     }
 
-    fn properties_ui(&mut self, ui: &mut egui::Ui, _context: &PropertiesContext<'_>) {
+    fn properties_ui(&mut self, ui: &mut egui::Ui, context: &PropertiesContext<'_>) {
+        let arrays: Vec<String> = (self.array_paths(context.model).into_iter())
+            .map(str::to_owned)
+            .collect();
         let x_path = self.x_path().map(str::to_owned);
         let paths: Vec<String> = self.traces.iter().cloned().collect();
         let names = short_names(paths.iter().map(String::as_str));
         super::properties_section(ui, "Axes", |ui| {
-            for (path, name) in paths.iter().zip(names) {
-                super::property_label(ui, name).on_hover_text(path);
-                let mut is_x = x_path.as_ref() == Some(path);
-                if theme::segmented(ui, &mut is_x, &[(true, "X"), (false, "Y")]) {
-                    self.x = if is_x {
-                        Some(path.clone())
-                    } else {
-                        // another trace becomes the x trace
-                        paths.iter().find(|other| *other != path).cloned()
-                    };
+            if arrays.is_empty() {
+                for (path, name) in paths.iter().zip(names) {
+                    super::property_label(ui, name).on_hover_text(path);
+                    let mut is_x = x_path.as_ref() == Some(path);
+                    if theme::segmented(ui, &mut is_x, &[(true, "X"), (false, "Y")]) {
+                        self.x = if is_x {
+                            Some(path.clone())
+                        } else {
+                            // another trace becomes the x trace
+                            paths.iter().find(|other| *other != path).cloned()
+                        };
+                    }
+                    ui.end_row();
                 }
+            } else {
+                super::property_label(ui, "X");
+                ui.weak("Index of the elements")
+                    .on_hover_text("Arrays are plotted over the indices of their elements");
                 ui.end_row();
             }
             super::property_label(ui, "Equal axes");
@@ -261,6 +517,34 @@ impl Viewable for Xy {
                 .on_hover_text("Give a unit the same length on both axes");
             ui.end_row();
         });
+        super::properties_section(ui, "Lines", |ui| {
+            self.points.choice_row(ui);
+            super::property_label(ui, "Fade");
+            let mut percent = self.fade * 100.0;
+            let response = ui
+                .add_enabled(
+                    arrays.is_empty(),
+                    egui::DragValue::new(&mut percent)
+                        .range(0.0..=100.0)
+                        .max_decimals(0)
+                        .suffix(" %"),
+                )
+                .on_hover_text("How far the oldest part of the trail fades out")
+                .on_disabled_hover_text(
+                    "Arrays are shown at the cursor time only, without a trail",
+                );
+            if response.changed() {
+                self.fade = percent / 100.0;
+            }
+            ui.end_row();
+        });
+        let styled: Vec<String> = if arrays.is_empty() {
+            self.y_paths().map(str::to_owned).collect()
+        } else {
+            arrays
+        };
+        let styled: Vec<&str> = styled.iter().map(String::as_str).collect();
+        self.line_styles.properties_ui(ui, &styled);
     }
 }
 
@@ -316,6 +600,159 @@ mod tests {
         assert_eq!(xy.y_paths().collect::<Vec<_>>(), ["a", "c"]);
         xy.traces.remove("b");
         assert_eq!(xy.x_path(), Some("a"));
+    }
+
+    #[test]
+    fn the_trail_fades_towards_the_oldest_step() {
+        assert_eq!(trail_opacity(0.0, 0, 8), 1.0);
+        assert_eq!(trail_opacity(0.85, 7, 8), 1.0);
+        assert!((trail_opacity(1.0, 0, 4) - 0.25).abs() < 1.0e-6);
+        assert!((trail_opacity(0.5, 1, 4) - 0.75).abs() < 1.0e-6);
+        // out of range in a layout file
+        assert!(trail_opacity(2.0, 0, 4) > 0.0);
+    }
+
+    /// A transform showing plot coordinates as screen points, 1 per unit.
+    fn unit_transform() -> egui_plot::PlotTransform {
+        egui_plot::PlotTransform::new(
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0)),
+            egui_plot::PlotBounds::from_min_max([0.0, 0.0], [100.0, 100.0]),
+            egui::Vec2b::FALSE,
+        )
+    }
+
+    #[test]
+    fn trail_steps_join_and_end_where_the_pattern_repeats() {
+        let transform = unit_transform();
+        let points: Vec<[f64; 2]> = (0..8).map(|i| [f64::from(i) * 3.0, 0.0]).collect();
+
+        // without a pattern, the steps split the points evenly and share one point
+        let lines = trail_lines(&points, 4, None, &transform);
+        assert_eq!(lines.len(), 4);
+        assert_eq!(lines[0], [[0.0, 0.0], [3.0, 0.0], [6.0, 0.0]]);
+        assert_eq!(lines[3], [[18.0, 0.0], [21.0, 0.0]]);
+
+        // with a pattern of 5, the steps end at whole multiples of it
+        let lines = trail_lines(&points, 4, Some(5.0), &transform);
+        assert_eq!(lines.len(), 4);
+        for pair in lines.windows(2) {
+            let end = *pair[0].last().unwrap();
+            assert_eq!(pair[1][0], end);
+            let periods = end[0] / 5.0;
+            assert!((periods - periods.round()).abs() < 1.0e-6, "{end:?}");
+        }
+        // the first step was to end after 2 points, at 3, so it ends at 5
+        assert!((lines[0].last().unwrap()[0] - 5.0).abs() < 1.0e-6);
+        assert_eq!(lines[3].last(), Some(&[21.0, 0.0]));
+        // all points are drawn
+        let drawn: usize = lines.iter().map(Vec::len).sum();
+        assert_eq!(drawn, points.len() + 2 * (lines.len() - 1));
+    }
+
+    #[test]
+    fn a_gap_starts_the_pattern_and_a_pending_step_again() {
+        let transform = unit_transform();
+        let points = [
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [f64::NAN, 0.0],
+            [7.0, 0.0],
+            [9.0, 0.0],
+        ];
+        let lines = trail_lines(&points, 2, Some(5.0), &transform);
+        assert_eq!(lines.len(), 2);
+        // the step ends at the gap, before the length it was to end at
+        assert_eq!(lines[0].len(), 3);
+        assert_eq!(lines[0][..2], [[0.0, 0.0], [1.0, 0.0]]);
+        assert!(!is_point(&lines[0][2]));
+        assert_eq!(lines[1], [[7.0, 0.0], [9.0, 0.0]]);
+    }
+
+    #[test]
+    fn layouts_without_the_new_properties_fade_as_before() {
+        let xy: Xy = serde_json::from_str(r#"{"traces": ["a", "b"]}"#).unwrap();
+        assert_eq!(xy.fade, DEFAULT_FADE);
+        assert_eq!(xy.points, ShowPoints::Auto);
+        let json = serde_json::to_string(&xy).unwrap();
+        assert!(!json.contains("line_styles"), "{json}");
+    }
+
+    struct State {
+        xy: Xy,
+        model: Model,
+        time: TimeRange,
+        invoker: crate::app::model::actions::Invoker,
+    }
+
+    /// A harness showing `xy` of an array trace `adc` of 32 elements and a float trace
+    /// `rpm`, both with two samples.
+    fn xy_harness(xy: Xy) -> egui_kittest::Harness<'static, State> {
+        let mut model = Model::default();
+        for (second, value) in [(0, 1.0), (1, 2.0)] {
+            let timestamp = second * 1_000_000_000;
+            let elements = (0..32).map(|i| Data::Float(value * f64::from(i))).collect();
+            for (path, data) in [("adc", Data::Array(elements)), ("rpm", Data::Float(value))] {
+                model.traces.append(&proto::Value {
+                    timestamp,
+                    path: path.to_owned(),
+                    value: data,
+                });
+            }
+        }
+        let state = State {
+            xy,
+            model,
+            time: Default::default(),
+            invoker: Default::default(),
+        };
+        egui_kittest::Harness::builder()
+            .with_size(egui::vec2(400.0, 300.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    state
+                        .time
+                        .update(&state.model, ui.input(|input| input.time));
+                    let mut context = ViewContext {
+                        model: &state.model,
+                        time: &mut state.time,
+                        invoker: &mut state.invoker,
+                        formats: &super::super::NO_FORMATS,
+                    };
+                    state.xy.view(ui, &mut context);
+                },
+                state,
+            )
+    }
+
+    #[test]
+    fn a_single_array_is_plotted_over_its_indices() {
+        use egui_kittest::kittest::Queryable;
+
+        let xy = Xy {
+            traces: ["adc".to_owned()].into(),
+            ..Xy::default()
+        };
+        let mut harness = xy_harness(xy);
+        harness.run();
+        let state = harness.state();
+        assert_eq!(state.xy.array_paths(&state.model), ["adc"]);
+        assert!(harness.query_by_label_contains("Select").is_none());
+
+        // a single trace that is no array is not enough
+        let xy = Xy {
+            traces: ["rpm".to_owned()].into(),
+            ..Xy::default()
+        };
+        let mut harness = xy_harness(xy);
+        harness.run();
+        assert!(
+            harness
+                .state()
+                .xy
+                .array_paths(&harness.state().model)
+                .is_empty()
+        );
+        assert!(harness.query_by_label_contains("Select").is_some());
     }
 
     #[test]

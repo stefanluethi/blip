@@ -110,6 +110,9 @@ pub enum Selectable {
     Trace,
     /// Each element of an array trace on its own.
     Elements,
+    /// An array trace as a whole, plotted over the indices of its elements apart from
+    /// other traces, and each element on its own if `elements`.
+    Array { elements: bool },
     /// Nothing, for the given reason, mostly a static text as it is asked every frame.
     No(Cow<'static, str>),
 }
@@ -157,6 +160,11 @@ impl ViewType {
             (ViewType::Plot | ViewType::Xy, Samples::Strings(_)) => {
                 Selectable::No("Plots show numbers".into())
             }
+            (ViewType::Xy, Samples::Arrays { shape, .. }) if self.shows_apart(trace) => {
+                Selectable::Array {
+                    elements: shape.iter().product::<usize>() <= MAX_LISTED_ELEMENTS,
+                }
+            }
             (ViewType::Plot | ViewType::Xy, Samples::Arrays { shape, .. }) => elements(shape),
             (ViewType::Plot | ViewType::Xy, _) => Selectable::Trace,
             (
@@ -186,6 +194,14 @@ impl ViewType {
     /// display formats apply.
     pub fn writes_values(self) -> bool {
         !matches!(self, ViewType::Xy | ViewType::Logs | ViewType::Actions)
+    }
+
+    /// Whether a view of this type shows `trace` apart from the traces it shows
+    /// otherwise, i.e. only along with other traces it shows apart: XY views plot a 1D
+    /// array as a whole over the indices of its elements, see [`Selectable::Array`].
+    pub fn shows_apart(self, trace: &Trace) -> bool {
+        self == ViewType::Xy
+            && matches!(&trace.samples, Samples::Arrays { shape, .. } if shape.len() == 1)
     }
 
     /// Whether a view of this type shows one trace only.

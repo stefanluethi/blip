@@ -363,6 +363,16 @@ impl Trace {
         }
     }
 
+    /// The lowest and highest finite value of all samples, of all elements of an array
+    /// trace, `None` if there is none.
+    pub fn value_range(&self) -> Option<(f64, f64)> {
+        self.ranges
+            .iter()
+            .flatten()
+            .copied()
+            .reduce(|(low_a, high_a), (low_b, high_b)| (low_a.min(low_b), high_a.max(high_b)))
+    }
+
     /// The numbers of a numeric trace.
     fn series(&self) -> Option<Series<'_>> {
         let Samples::Numbers(numbers) = &self.samples else {
@@ -661,6 +671,8 @@ mod tests {
         assert_eq!(traces.series("v[0]").unwrap().range, Some((-3.0, 1.0)));
         assert_eq!(traces.series("v[1]").unwrap().range, Some((10.0, 20.0)));
         assert!(traces.series("n").is_none_or(|n| n.range.is_none()));
+        assert_eq!(traces.get("v").unwrap().value_range(), Some((-3.0, 20.0)));
+        assert_eq!(traces.get("n").unwrap().value_range(), None);
     }
 
     #[test]

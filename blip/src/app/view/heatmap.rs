@@ -2,6 +2,7 @@
 //! or a 2D array as a grid of coloured cells at the cursor time. A 1D array can also
 //! be shown at the cursor time as a line over its indices.
 
+use super::plot::{LineStyle, ShowPoints};
 use super::time_axis::{self, index_at};
 use super::{PropertiesContext, ViewContext, Viewable, text_color_on, with_unit};
 use crate::app::model::Model;
@@ -115,7 +116,7 @@ impl ValueText<'_> {
 }
 
 /// The elements of the sample of an array trace at the cursor time.
-fn sample_at_cursor(trace: &Trace, time: &TimeRange) -> Vec<Number> {
+pub(super) fn sample_at_cursor(trace: &Trace, time: &TimeRange) -> Vec<Number> {
     time.cursor()
         .and_then(|t| index_at(&trace.timestamps, t))
         .and_then(|index| trace.samples.array_sample(index))
@@ -168,7 +169,7 @@ fn index_formatter(
 }
 
 /// An x axis of indices labelled `label`, used with [`index_spacer`].
-fn index_x_axis(label: &str) -> egui_plot::AxisHints<'static> {
+pub(super) fn index_x_axis(label: &str) -> egui_plot::AxisHints<'static> {
     egui_plot::AxisHints::new_x()
         .label(label)
         .formatter(index_formatter(false))
@@ -178,7 +179,7 @@ fn index_x_axis(label: &str) -> egui_plot::AxisHints<'static> {
 
 /// Marks an index axis at whole multiples of 1, 2, 5, 10, 20, … far enough apart to
 /// label each of them.
-fn index_spacer(input: egui_plot::GridInput) -> Vec<egui_plot::GridMark> {
+pub(super) fn index_spacer(input: egui_plot::GridInput) -> Vec<egui_plot::GridMark> {
     // the base step is the value of the minimum line spacing, labels need more space
     let min_step = input.base_step_size * 6.0;
     let step = (0..)
@@ -370,11 +371,6 @@ impl Heatmap {
         self.fitted_range = value_range(&values);
         let fixed_range = self.value_range;
         let color = theme::trace_color(ui.visuals(), 0);
-        let points: Vec<[f64; 2]> = values
-            .iter()
-            .enumerate()
-            .map(|(index, &value)| [index as f64, value])
-            .collect();
 
         let plot = egui_plot::Plot::new(ui.id().with("line"))
             .grid_color(theme::grid_color(ui.visuals()))
@@ -392,19 +388,8 @@ impl Heatmap {
             if let Some((min, max)) = fixed_range {
                 plot_ui.set_plot_bounds_y(min..=max);
             }
-            for segment in points.split(|point| point[1].is_nan()) {
-                plot_ui.line(egui_plot::Line::new(&trace.path, segment.to_vec()).color(color));
-            }
-            let markers: Vec<[f64; 2]> = points
-                .iter()
-                .copied()
-                .filter(|point| !point[1].is_nan())
-                .collect();
-            plot_ui.points(
-                egui_plot::Points::new(&trace.path, markers)
-                    .color(color)
-                    .radius(2.5),
-            );
+            let (style, points) = (LineStyle::Solid, ShowPoints::Always);
+            super::xy::plot_array(&trace.path, &values, color, style, points, plot_ui);
         });
         super::zoom_on_wheel(&response.response);
     }

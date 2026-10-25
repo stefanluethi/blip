@@ -5,7 +5,7 @@ use crate::app::model::{Model, traces::Series};
 use crate::app::theme;
 use crate::app::time::{TimeBase, timestamp_to_seconds};
 use std::cmp::min;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 const Y_MARGIN_FRACTION: f64 = 0.05;
 /// Upper bound of points drawn per curve within the visible x range.
@@ -13,6 +13,17 @@ const MAX_POINTS_PER_CURVE: usize = 100_000;
 
 /// Points of a curve shown as markers are at least this many points apart on average.
 const MIN_MARKER_SPACING: f32 = 8.0;
+
+/// Length of the dashes of a dashed line in points.
+const DASH_LENGTH: f32 = 8.0;
+/// The golden ratio, by which egui_plot spaces dashes, see [`LineStyle::pattern_period`].
+#[allow(clippy::excessive_precision)]
+const GOLDEN_RATIO: f32 = 1.618_033_988_749_895;
+/// Distance between the dots of a dotted line in points.
+const DOT_SPACING: f32 = 5.0;
+/// Lines longer than this many points on screen are drawn solid instead of with their
+/// pattern, which takes a shape per dash or dot.
+const MAX_PATTERN_LENGTH: f32 = 30_000.0;
 
 /// How a curve goes from one sample to the next.
 #[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
@@ -32,6 +43,181 @@ pub enum ShowPoints {
     Auto,
     Always,
     Never,
+}
+
+impl ShowPoints {
+    /// Whether `count` points are marked on a plot `width` points wide.
+    pub fn shown(self, count: usize, width: f32) -> bool {
+        match self {
+            ShowPoints::Auto => count as f32 * MIN_MARKER_SPACING <= width,
+            ShowPoints::Always => true,
+            ShowPoints::Never => false,
+        }
+    }
+
+    /// Adds a row to the grid of a properties section to choose when points are marked.
+    pub fn choice_row(&mut self, ui: &mut egui::Ui) {
+        super::choice_row(
+            ui,
+            "Points",
+            self,
+            &[
+                (ShowPoints::Auto, "Auto"),
+                (ShowPoints::Always, "Always"),
+                (ShowPoints::Never, "Never"),
+            ],
+        );
+    }
+}
+
+/// How the line of a trace is drawn.
+#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub enum LineStyle {
+    #[default]
+    Solid,
+    Dashed,
+    Dotted,
+    /// No line, only the points, which are then always marked.
+    None,
+}
+
+impl LineStyle {
+    const ALL: [LineStyle; 4] = [
+        LineStyle::Solid,
+        LineStyle::Dashed,
+        LineStyle::Dotted,
+        LineStyle::None,
+    ];
+
+    fn name(self) -> &'static str {
+        match self {
+            LineStyle::Solid => "Solid",
+            LineStyle::Dashed => "Dashed",
+            LineStyle::Dotted => "Dotted",
+            LineStyle::None => "None",
+        }
+    }
+
+    /// How egui_plot draws a line through `points` on a plot with `transform`, `None`
+    /// if there is no line. A line too long on screen for its pattern to be drawn
+    /// quickly is solid instead, as its dashes or dots would be too dense to see anyway.
+    pub fn plot_style(
+        self,
+        points: &[[f64; 2]],
+        transform: &egui_plot::PlotTransform,
+    ) -> Option<egui_plot::LineStyle> {
+        let style = match self {
+            LineStyle::Solid => egui_plot::LineStyle::Solid,
+            LineStyle::Dashed => egui_plot::LineStyle::Dashed {
+                length: DASH_LENGTH,
+            },
+            LineStyle::Dotted => egui_plot::LineStyle::Dotted {
+                spacing: DOT_SPACING,
+            },
+            LineStyle::None => return None,
+        };
+        if self.pattern_period().is_some() && screen_length(points, transform) > MAX_PATTERN_LENGTH
+        {
+            Some(egui_plot::LineStyle::Solid)
+        } else {
+            Some(style)
+        }
+    }
+
+    /// The length on screen after which the pattern of a line in this style repeats,
+    /// `None` without a pattern. egui draws a dash, then a gap of the dash length
+    /// times the golden ratio minus one.
+    pub fn pattern_period(self) -> Option<f32> {
+        match self {
+            LineStyle::Dashed => Some(DASH_LENGTH * GOLDEN_RATIO),
+            LineStyle::Dotted => Some(DOT_SPACING),
+            LineStyle::Solid | LineStyle::None => None,
+        }
+    }
+
+    /// Whether the points of a line of this style are marked when `points` says so for
+    /// `count` points on a plot `width` points wide, always if there is no line.
+    pub fn marks_points(self, points: ShowPoints, count: usize, width: f32) -> bool {
+        self == LineStyle::None || points.shown(count, width)
+    }
+}
+
+/// Whether neither coordinate of `point` is NaN, which marks a gap.
+pub fn is_point(point: &[f64; 2]) -> bool {
+    !point[0].is_nan() && !point[1].is_nan()
+}
+
+/// The position of `point` on the screen of a plot with `transform`.
+pub fn to_screen(point: [f64; 2], transform: &egui_plot::PlotTransform) -> egui::Pos2 {
+    transform.position_from_point(&egui_plot::PlotPoint::new(point[0], point[1]))
+}
+
+/// The length on the screen of a plot with `transform` of the lines through `points`,
+/// broken where a point is missing.
+fn screen_length(points: &[[f64; 2]], transform: &egui_plot::PlotTransform) -> f32 {
+    points
+        .windows(2)
+        .filter(|pair| pair.iter().all(is_point))
+        .map(|pair| to_screen(pair[0], transform).distance(to_screen(pair[1], transform)))
+        .sum()
+}
+
+/// The line styles of the traces of a view by their paths, solid for traces without
+/// one.
+#[derive(serde::Deserialize, serde::Serialize, Clone, Default)]
+pub struct LineStyles(BTreeMap<String, LineStyle>);
+
+impl LineStyles {
+    pub fn of(&self, path: &str) -> LineStyle {
+        self.0.get(path).copied().unwrap_or_default()
+    }
+
+    pub fn set(&mut self, path: &str, style: LineStyle) {
+        if style == LineStyle::Solid {
+            self.0.remove(path);
+        } else {
+            self.0.insert(path.to_owned(), style);
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Forgets the styles of the traces that are not among `shown`, so layouts do not
+    /// keep them and traces shown again start solid.
+    pub fn retain_shown(&mut self, shown: &BTreeSet<String>) {
+        self.0.retain(|path, _| shown.contains(path));
+    }
+
+    /// Shows a section of the properties to choose the line style of each trace at
+    /// `paths`, if there are any.
+    pub fn properties_ui(&mut self, ui: &mut egui::Ui, paths: &[&str]) {
+        if paths.is_empty() {
+            return;
+        }
+        let names = short_names(paths.iter().copied());
+        super::properties_section(ui, "Line styles", |ui| {
+            for (&path, name) in paths.iter().zip(names) {
+                super::property_label(ui, name).on_hover_text(path);
+                let current = self.of(path);
+                egui::ComboBox::from_id_salt(("line style", path))
+                    .selected_text(current.name())
+                    .width(90.0)
+                    .show_ui(ui, |ui| {
+                        for style in LineStyle::ALL {
+                            if ui
+                                .selectable_label(current == style, style.name())
+                                .clicked()
+                            {
+                                self.set(path, style);
+                            }
+                        }
+                    });
+                ui.end_row();
+            }
+        });
+    }
 }
 
 /// Where the legend is shown.
@@ -99,6 +285,8 @@ pub struct Plot {
     /// Whether curves go on over nulls instead of leaving gaps.
     pub connect_nulls: bool,
     pub legend: LegendPlacement,
+    #[serde(skip_serializing_if = "LineStyles::is_empty")]
+    pub line_styles: LineStyles,
 }
 
 impl Default for Plot {
@@ -114,6 +302,7 @@ impl Default for Plot {
             points: ShowPoints::default(),
             connect_nulls: false,
             legend: LegendPlacement::default(),
+            line_styles: LineStyles::default(),
         }
     }
 }
@@ -124,11 +313,13 @@ impl Plot {
     }
 
     /// Draws the values of `series` within `range_x` seconds, shifted by `origin`
-    /// seconds, as set in the properties of the plot.
+    /// seconds, as set in the properties of the plot, with its line in `style`.
+    #[allow(clippy::too_many_arguments)]
     fn plot_series(
         &self,
         name: &str,
         series: Series<'_>,
+        style: LineStyle,
         color: egui::Color32,
         range_x: Option<(f64, f64)>,
         origin: f64,
@@ -139,13 +330,9 @@ impl Plot {
         if self.connect_nulls {
             points.retain(|point| !point[1].is_nan());
         }
-        let show_points = match self.points {
-            ShowPoints::Auto => {
-                points.len() as f32 * MIN_MARKER_SPACING <= plot_ui.transform().frame().width()
-            }
-            ShowPoints::Always => true,
-            ShowPoints::Never => false,
-        };
+        let width = plot_ui.transform().frame().width();
+        let show_points = style.marks_points(self.points, points.len(), width);
+        let line_style = style.plot_style(&points, plot_ui.transform());
         let step = self.interpolation == Interpolation::Step || series.kind == NumberKind::Bool;
         // lines and markers of the same name share one legend entry
         for segment in points
@@ -159,6 +346,9 @@ impl Plot {
                         .radius(self.line_width + 1.0),
                 );
             }
+            let Some(line_style) = line_style else {
+                continue;
+            };
             let segment = if step {
                 steps(segment)
             } else {
@@ -167,7 +357,8 @@ impl Plot {
             plot_ui.line(
                 egui_plot::Line::new(name, egui_plot::PlotPoints::from(segment))
                     .color(color)
-                    .width(self.line_width),
+                    .width(self.line_width)
+                    .style(line_style),
             );
         }
     }
@@ -269,9 +460,13 @@ impl Plot {
             if let Some((min_y, max_y)) = shown_y {
                 plot_ui.set_plot_bounds_y(min_y..=max_y);
             }
-            for (name, series, index) in this.selected_series_iter(model) {
+            for (path, name, index) in this.selected_path_iter() {
+                let Some(series) = model.traces.series(path) else {
+                    continue;
+                };
                 let color = theme::trace_color(&visuals, index);
-                this.plot_series(name, series, color, axis.range, axis.origin, plot_ui);
+                let style = this.line_styles.of(path);
+                this.plot_series(name, series, style, color, axis.range, axis.origin, plot_ui);
             }
         });
 
@@ -383,6 +578,7 @@ fn steps(points: &[[f64; 2]]) -> Vec<[f64; 2]> {
 
 impl Viewable for Plot {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
+        self.line_styles.retain_shown(&self.traces);
         self.show_plot(context, ui);
     }
 
@@ -426,16 +622,7 @@ impl Viewable for Plot {
                     .speed(0.1),
             );
             ui.end_row();
-            super::choice_row(
-                ui,
-                "Points",
-                &mut self.points,
-                &[
-                    (ShowPoints::Auto, "Auto"),
-                    (ShowPoints::Always, "Always"),
-                    (ShowPoints::Never, "Never"),
-                ],
-            );
+            self.points.choice_row(ui);
             super::choice_row(
                 ui,
                 "Nulls",
@@ -454,6 +641,8 @@ impl Viewable for Plot {
                 });
             ui.end_row();
         });
+        let paths: Vec<&str> = self.traces.iter().map(String::as_str).collect();
+        self.line_styles.properties_ui(ui, &paths);
     }
 }
 
@@ -673,6 +862,39 @@ mod tests {
             zoomed_high - zoomed_low < (high - low) * 0.9,
             "{zoomed_low} {zoomed_high}"
         );
+    }
+
+    #[test]
+    fn line_styles_of_traces_no_longer_shown_are_forgotten() {
+        let mut styles = LineStyles::default();
+        styles.set("a", LineStyle::Dashed);
+        styles.set("b", LineStyle::Dotted);
+        styles.set("c", LineStyle::Solid);
+        assert_eq!(styles.0.len(), 2);
+        styles.retain_shown(&["a".to_owned()].into());
+        assert_eq!(styles.of("a"), LineStyle::Dashed);
+        assert_eq!(styles.of("b"), LineStyle::Solid);
+        assert_eq!(styles.0.len(), 1);
+    }
+
+    #[test]
+    fn patterns_of_long_lines_on_screen_become_solid() {
+        let transform = egui_plot::PlotTransform::new(
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0)),
+            egui_plot::PlotBounds::from_min_max([0.0, 0.0], [1.0, 1.0]),
+            egui::Vec2b::FALSE,
+        );
+        let short = [[0.0, 0.0], [1.0, 1.0]];
+        assert_eq!(screen_length(&short, &transform), 2f32.sqrt() * 100.0);
+        let dashed = LineStyle::Dashed.plot_style(&short, &transform);
+        assert!(matches!(dashed, Some(egui_plot::LineStyle::Dashed { .. })));
+        // zigzagging from bottom to top, a gap does not count
+        let mut long: Vec<[f64; 2]> = (0..1_000).map(|i| [0.0, f64::from(i % 2)]).collect();
+        long.push([f64::NAN, 0.0]);
+        assert!(screen_length(&long, &transform) > MAX_PATTERN_LENGTH);
+        let dotted = LineStyle::Dotted.plot_style(&long, &transform);
+        assert_eq!(dotted, Some(egui_plot::LineStyle::Solid));
+        assert_eq!(LineStyle::None.plot_style(&short, &transform), None);
     }
 
     #[test]
