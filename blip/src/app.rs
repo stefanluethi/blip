@@ -169,6 +169,10 @@ pub struct App {
     /// which branches of the tree are open, is kept apart per start, see
     /// [`Self::reset_traces_panel`].
     traces_generation: u64,
+    /// Whether the left panel, with the traces and the layout, is collapsed.
+    left_collapsed: bool,
+    /// Whether the right panel, with the properties and the connections, is collapsed.
+    right_collapsed: bool,
     #[serde(skip)]
     files: files::Files,
     /// The notices for the user, e.g. why a file could not be opened.
@@ -278,6 +282,9 @@ impl App {
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 theme_button(ui);
+                panel_button(ui, PanelSide::Right, &mut self.right_collapsed);
+                panel_button(ui, PanelSide::Left, &mut self.left_collapsed);
+                ui.add_space(4.0);
                 let open = self.connections.open_names();
                 status_chip(ui, &open, self.rate.per_second);
                 egui::warn_if_debug_build(ui);
@@ -473,11 +480,12 @@ impl eframe::App for App {
             egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin::symmetric(0, 2));
         let section_frame = egui::Frame::NONE.inner_margin(egui::Margin::symmetric(8, 4));
         let rest_frame = egui::Frame::NONE.inner_margin(egui::Margin::symmetric(8, 0));
+        let mut left_open = !self.left_collapsed;
         egui::Panel::left("left panel")
             .resizable(true)
             .default_size(220.0)
             .frame(side_frame)
-            .show(ui, |ui| {
+            .show_collapsible(ui, &mut left_open, |ui| {
                 // the traces on top, resizable by dragging the border to the layout
                 egui::Panel::top("traces panel")
                     .resizable(true)
@@ -487,12 +495,15 @@ impl eframe::App for App {
                 ui.add_space(4.0);
                 rest_frame.show(ui, |ui| self.layout.panel_ui(ui));
             });
+        // dragging its edge past the smallest size collapses a panel too
+        self.left_collapsed = !left_open;
 
+        let mut right_open = !self.right_collapsed;
         egui::Panel::right("properties panel")
             .resizable(true)
             .default_size(264.0)
             .frame(side_frame)
-            .show(ui, |ui| {
+            .show_collapsible(ui, &mut right_open, |ui| {
                 // the connections below, resizable by dragging the border to the properties
                 egui::Panel::bottom("connections panel")
                     .resizable(true)
@@ -508,6 +519,7 @@ impl eframe::App for App {
                 };
                 rest_frame.show(ui, |ui| self.layout.properties_ui(ui, &context));
             });
+        self.right_collapsed = !right_open;
 
         let central = egui::CentralPanel::default()
             .frame(
@@ -660,6 +672,74 @@ fn theme_button(ui: &mut egui::Ui) {
         .clicked()
     {
         ui.ctx().set_theme(next);
+    }
+}
+
+/// A side of the window with a panel.
+#[derive(Clone, Copy)]
+enum PanelSide {
+    Left,
+    Right,
+}
+
+/// A button collapsing the panel at `side`, or expanding it again. Its icon is a window
+/// with the panel filled in while the panel is shown.
+fn panel_button(ui: &mut egui::Ui, side: PanelSide, collapsed: &mut bool) {
+    use egui::emath::GuiRounding as _;
+    let hint = match (side, *collapsed) {
+        (PanelSide::Left, false) => "Hide the traces and the layout",
+        (PanelSide::Left, true) => "Show the traces and the layout",
+        (PanelSide::Right, false) => "Hide the properties and the connections",
+        (PanelSide::Right, true) => "Show the properties and the connections",
+    };
+    let square = egui::Vec2::splat(ui.spacing().interact_size.y);
+    let tokens = theme::tokens(ui.visuals());
+    let response = ui
+        .add(
+            egui::Button::new("")
+                .fill(tokens.control)
+                .stroke(egui::Stroke::new(1.0, tokens.border))
+                .min_size(square),
+        )
+        .on_hover_text(hint);
+    if response.clicked() {
+        *collapsed = !*collapsed;
+    }
+
+    let color = ui.style().interact(&response).text_color();
+    let window = egui::Rect::from_center_size(response.rect.center(), egui::vec2(14.0, 12.0))
+        .round_to_pixels(ui.pixels_per_point());
+    let painter = ui.painter();
+    let stroke = egui::Stroke::new(1.0, color);
+    painter.rect_stroke(window, 2, stroke, egui::StrokeKind::Inside);
+    let width = 5.0;
+    let (panel, corners) = match side {
+        PanelSide::Left => (
+            window.with_max_x(window.min.x + width),
+            egui::CornerRadius {
+                nw: 2,
+                sw: 2,
+                ..Default::default()
+            },
+        ),
+        PanelSide::Right => (
+            window.with_min_x(window.max.x - width),
+            egui::CornerRadius {
+                ne: 2,
+                se: 2,
+                ..Default::default()
+            },
+        ),
+    };
+    if *collapsed {
+        // only the line at the edge of the panel
+        let x = match side {
+            PanelSide::Left => panel.max.x - 0.5,
+            PanelSide::Right => panel.min.x + 0.5,
+        };
+        painter.vline(x, window.y_range(), stroke);
+    } else {
+        painter.rect_filled(panel, corners, color);
     }
 }
 
