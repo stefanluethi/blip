@@ -1,13 +1,14 @@
 //! A states view: the values of traces over time as a row of coloured bands per
 //! trace, one band for each run of equal values.
 
+use super::Selectable;
 use super::time_axis::{self, index_at, visible_range};
 use super::{
     Formats, PropertiesContext, ViewContext, Viewable, short_names, text_color_on, with_unit,
 };
 use crate::app::model::Model;
 use crate::app::model::numbers::{DisplayFormat, NumberKind, SHOWN_DIGITS};
-use crate::app::model::traces::{Samples, Series, Strings};
+use crate::app::model::traces::{Samples, Series, Strings, Trace};
 use crate::app::theme;
 use crate::app::time::{seconds_since, timestamp_at};
 use egui::Color32;
@@ -208,10 +209,6 @@ fn fnv1a(text: &str) -> u64 {
 }
 
 impl States {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Draws the bands of `samples` in the row centered at `y`.
     fn plot_row(
         &self,
@@ -344,7 +341,30 @@ impl States {
     }
 }
 
+impl super::ViewInfo for States {
+    const NAME: &'static str = "States";
+    const ICON: &'static str = egui_phosphor::regular::CHART_BAR_HORIZONTAL;
+
+    fn selectable(trace: Trace<'_>) -> Selectable {
+        match trace.samples {
+            Samples::Numbers(numbers)
+            | Samples::Arrays {
+                elements: numbers, ..
+            } if numbers.kind() == Some(NumberKind::Float) => {
+                Selectable::No("States show strings, bools and integers".into())
+            }
+            Samples::Arrays { shape, .. } => super::elements(shape.as_slice()),
+            _ => Selectable::Trace,
+        }
+    }
+}
+
 impl Viewable for States {
+    fn selection(&mut self) -> Option<(&mut BTreeSet<String>, bool)> {
+        let records = false;
+        Some((&mut self.traces, records))
+    }
+
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         self.show_states(context, ui);
     }

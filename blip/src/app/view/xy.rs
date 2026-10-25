@@ -1,13 +1,15 @@
 //! An XY plot: traces plotted against another trace instead of against time, e.g. a
 //! position as a path.
 
+use super::Selectable;
 use super::heatmap::{index_spacer, index_x_axis, sample_at_cursor};
 use super::plot::{LineStyle, LineStyles, ShowPoints, is_point, to_screen};
 use super::time_axis::{index_at, within};
+use super::trace_selection::MAX_LISTED_ELEMENTS;
 use super::{PropertiesContext, ViewContext, ViewType, Viewable, short_names};
 use crate::app::model::Model;
 use crate::app::model::numbers::{SHOWN_DIGITS, format_significant};
-use crate::app::model::traces::{Samples, Series};
+use crate::app::model::traces::{Samples, Series, Trace};
 use crate::app::theme;
 use crate::app::time::TimeRange;
 use std::collections::BTreeSet;
@@ -246,10 +248,6 @@ fn axis_label(name: &str, unit: Option<&str>) -> String {
 }
 
 impl Xy {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Before layout version 2, the x trace was not one of the shown traces.
     pub fn migrate_v1(&mut self) {
         if let Some(x) = &self.x {
@@ -473,7 +471,34 @@ impl Xy {
     }
 }
 
+impl super::ViewInfo for Xy {
+    const NAME: &'static str = "XY";
+    const ICON: &'static str = egui_phosphor::regular::CHART_SCATTER;
+    const WRITES_VALUES: bool = false;
+
+    fn selectable(trace: Trace<'_>) -> Selectable {
+        match trace.samples {
+            Samples::Strings(_) => Selectable::No("Plots show numbers".into()),
+            Samples::Arrays { shape, .. } if Self::shows_apart(trace) => Selectable::Array {
+                elements: shape.iter().product::<usize>() <= MAX_LISTED_ELEMENTS,
+            },
+            Samples::Arrays { shape, .. } => super::elements(shape.as_slice()),
+            _ => Selectable::Trace,
+        }
+    }
+
+    /// A 1D array is plotted as a whole over the indices of its elements.
+    fn shows_apart(trace: Trace<'_>) -> bool {
+        matches!(trace.samples, Samples::Arrays { shape, .. } if shape.len() == 1)
+    }
+}
+
 impl Viewable for Xy {
+    fn selection(&mut self) -> Option<(&mut BTreeSet<String>, bool)> {
+        let records = false;
+        Some((&mut self.traces, records))
+    }
+
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         self.line_styles.retain_shown(&self.traces);
         let arrays = self.array_paths(context.model);

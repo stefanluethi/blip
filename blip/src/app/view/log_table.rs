@@ -64,10 +64,6 @@ pub struct LogTable {
 }
 
 impl LogTable {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     fn update_regex_cache(&mut self) {
         if self.last_regex_str != self.filter.message_regex
             || self.last_case_sensitive != self.filter.case_sensitive
@@ -372,6 +368,17 @@ impl LogTable {
     }
 }
 
+impl super::ViewInfo for LogTable {
+    const NAME: &'static str = "Logs";
+    const ICON: &'static str = egui_phosphor::regular::LIST_BULLETS;
+    const HAS_SELECTION: bool = false;
+    const WRITES_VALUES: bool = false;
+
+    fn selectable(_trace: crate::app::model::traces::Trace<'_>) -> super::Selectable {
+        super::Selectable::No("Log views show no traces".into())
+    }
+}
+
 impl Viewable for LogTable {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         self.ui(ui, &context.model.logs, context.time);
@@ -494,7 +501,7 @@ mod tests {
         for _ in 0..100 {
             logs.push(create_entry(LogLevel::Info, "core", "message"));
         }
-        let mut table = LogTable::new();
+        let mut table = LogTable::default();
         let time = TimeRange::default();
         let size = egui::vec2(400.0, 120.0);
         let harness = Harness::builder()
@@ -507,7 +514,7 @@ mod tests {
     #[test]
     fn autoscroll_keeps_up_with_new_entries() {
         let mut logs = Logs::default();
-        let mut table = LogTable::new();
+        let mut table = LogTable::default();
         let time = TimeRange::default();
         let newest = std::rc::Rc::new(std::cell::Cell::new(0));
         let shared = newest.clone();
@@ -540,7 +547,7 @@ mod tests {
     #[test]
     fn the_header_holds_the_filters() {
         let logs = Logs::default();
-        let mut table = LogTable::new();
+        let mut table = LogTable::default();
         let time = TimeRange::default();
         let mut harness = Harness::builder()
             .with_size(egui::vec2(600.0, 300.0))

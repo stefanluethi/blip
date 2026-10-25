@@ -1,6 +1,7 @@
 //! A table of the values of traces at the time of the cursor, or of records with a
 //! column per field.
 
+use super::Selectable;
 use super::time_axis::index_at;
 use super::trace_selection::{TraceTree, record_path, type_icon};
 use super::{Formats, PropertiesContext, ViewContext, Viewable, short_names};
@@ -164,10 +165,6 @@ fn value_label(ui: &mut egui::Ui, trace: Trace<'_>, value: &str) -> egui::Respon
 }
 
 impl Table {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Shows the name of `row`, with a button to collapse or expand it for a branch.
     fn name_ui(&mut self, ui: &mut egui::Ui, row: &Row<'_>) {
         ui.add_space(row.depth as f32 * INDENT);
@@ -527,7 +524,21 @@ impl Table {
     }
 }
 
+impl super::ViewInfo for Table {
+    const NAME: &'static str = "Table";
+    const ICON: &'static str = egui_phosphor::regular::TABLE;
+
+    fn selectable(_trace: Trace<'_>) -> Selectable {
+        Selectable::Trace
+    }
+}
+
 impl Viewable for Table {
+    fn selection(&mut self) -> Option<(&mut BTreeSet<String>, bool)> {
+        let records = self.layout == TableLayout::Records;
+        Some((&mut self.traces, records))
+    }
+
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         if self.traces.is_empty() {
             ui.weak(match self.layout {

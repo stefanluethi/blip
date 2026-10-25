@@ -62,6 +62,13 @@ pub trait Viewable {
 
     /// Shows the properties of the view in the properties panel, in sections.
     fn properties_ui(&mut self, _ui: &mut egui::Ui, _context: &PropertiesContext<'_>) {}
+
+    /// The paths of the traces, records or actions the view shows, chosen in the tree
+    /// of the left panel, and whether it shows records as a whole. `None` if it shows
+    /// nothing of the tree.
+    fn selection(&mut self) -> Option<(&mut BTreeSet<String>, bool)> {
+        None
+    }
 }
 
 /// A view in the layout, shown as a pane in the center.
@@ -81,27 +88,28 @@ pub struct View {
     expanded: Option<(Version, Picks)>,
 }
 
-#[derive(serde::Deserialize, serde::Serialize, Clone)]
-pub enum ViewKind {
-    Plot(plot::Plot),
-    States(states::States),
-    Table(table::Table),
-    Xy(xy::Xy),
-    Heatmap(heatmap::Heatmap),
-    Logs(log_table::LogTable),
-    Actions(actions::Actions),
-}
+/// What a type of view is and what it can show, listed in [`views!`].
+pub trait ViewInfo {
+    const NAME: &'static str;
+    const ICON: &'static str;
+    /// Whether it shows traces or actions chosen in the tree of the left panel.
+    const HAS_SELECTION: bool = true;
+    /// Whether it writes the values of its traces as text, so their display formats
+    /// apply.
+    const WRITES_VALUES: bool = true;
+    /// Whether it shows one trace only.
+    const SHOWS_ONE_TRACE: bool = false;
+    /// Whether it shows the actions chosen in the tree, and no traces.
+    const SHOWS_ACTIONS: bool = false;
 
-/// The kinds of views the user can add.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum ViewType {
-    Plot,
-    States,
-    Table,
-    Xy,
-    Heatmap,
-    Logs,
-    Actions,
+    /// What it can show of `trace`.
+    fn selectable(trace: Trace<'_>) -> Selectable;
+
+    /// Whether it shows `trace` apart from the traces it shows otherwise, i.e. only
+    /// along with other traces it shows apart, see [`Selectable::Array`].
+    fn shows_apart(_trace: Trace<'_>) -> bool {
+        false
+    }
 }
 
 /// What a view can show of a trace.
@@ -117,102 +125,89 @@ pub enum Selectable {
     No(Cow<'static, str>),
 }
 
-impl ViewType {
-    pub const ALL: [ViewType; 7] = [
-        ViewType::Plot,
-        ViewType::States,
-        ViewType::Table,
-        ViewType::Xy,
-        ViewType::Heatmap,
-        ViewType::Logs,
-        ViewType::Actions,
-    ];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            ViewType::Plot => "Plot",
-            ViewType::States => "States",
-            ViewType::Table => "Table",
-            ViewType::Xy => "XY",
-            ViewType::Heatmap => "Heatmap",
-            ViewType::Logs => "Logs",
-            ViewType::Actions => "Actions",
+/// Defines the types of views, `ViewType`, and the state of a view of each,
+/// `ViewKind`, from the list of the types, each the variant name and the type
+/// implementing [`Viewable`], [`ViewInfo`] and `Default`. A new type of view is added
+/// to the list in [`views!`] below; the variant names are saved in layouts.
+macro_rules! views {
+    ($($kind:ident: $view:ty),* $(,)?) => {
+        #[derive(serde::Deserialize, serde::Serialize, Clone)]
+        pub enum ViewKind {
+            $($kind($view)),*
         }
-    }
 
-    pub fn icon(self) -> &'static str {
-        match self {
-            ViewType::Plot => egui_phosphor::regular::CHART_LINE,
-            ViewType::States => egui_phosphor::regular::CHART_BAR_HORIZONTAL,
-            ViewType::Table => egui_phosphor::regular::TABLE,
-            ViewType::Xy => egui_phosphor::regular::CHART_SCATTER,
-            ViewType::Heatmap => egui_phosphor::regular::GRID_NINE,
-            ViewType::Logs => egui_phosphor::regular::LIST_BULLETS,
-            ViewType::Actions => egui_phosphor::regular::SLIDERS_HORIZONTAL,
+        /// The kinds of views the user can add.
+        #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+        pub enum ViewType {
+            $($kind),*
         }
-    }
 
-    /// What a view of this type can show of `trace`.
-    pub fn selectable(self, trace: Trace<'_>) -> Selectable {
-        match (self, &trace.samples) {
-            (ViewType::Logs, _) => Selectable::No("Log views show no traces".into()),
-            (ViewType::Actions, _) => Selectable::No("Action views show no traces".into()),
-            (ViewType::Plot | ViewType::Xy, Samples::Strings(_)) => {
-                Selectable::No("Plots show numbers".into())
+        impl ViewType {
+            pub const ALL: [ViewType; [$(stringify!($kind)),*].len()] = [$(ViewType::$kind),*];
+
+            pub fn name(self) -> &'static str {
+                match self { $(Self::$kind => <$view>::NAME),* }
             }
-            (ViewType::Xy, Samples::Arrays { shape, .. }) if self.shows_apart(trace) => {
-                Selectable::Array {
-                    elements: shape.iter().product::<usize>() <= MAX_LISTED_ELEMENTS,
-                }
+
+            pub fn icon(self) -> &'static str {
+                match self { $(Self::$kind => <$view>::ICON),* }
             }
-            (ViewType::Plot | ViewType::Xy, Samples::Arrays { shape, .. }) => elements(shape),
-            (ViewType::Plot | ViewType::Xy, _) => Selectable::Trace,
-            (
-                ViewType::States,
-                Samples::Numbers(numbers)
-                | Samples::Arrays {
-                    elements: numbers, ..
-                },
-            ) if numbers.kind() == Some(NumberKind::Float) => {
-                Selectable::No("States show strings, bools and integers".into())
+
+            /// See [`ViewInfo::HAS_SELECTION`].
+            pub fn has_selection(self) -> bool {
+                match self { $(Self::$kind => <$view>::HAS_SELECTION),* }
             }
-            (ViewType::States, Samples::Arrays { shape, .. }) => elements(shape),
-            (ViewType::States, _) => Selectable::Trace,
-            (ViewType::Table, _) => Selectable::Trace,
-            (ViewType::Heatmap, Samples::Arrays { shape, .. })
-                if (1..=2).contains(&shape.len()) =>
-            {
-                Selectable::Trace
+
+            /// See [`ViewInfo::WRITES_VALUES`].
+            pub fn writes_values(self) -> bool {
+                match self { $(Self::$kind => <$view>::WRITES_VALUES),* }
             }
-            (ViewType::Heatmap, _) => {
-                Selectable::No("Heatmaps show arrays of one or two dimensions".into())
+
+            /// See [`ViewInfo::SHOWS_ONE_TRACE`].
+            pub fn shows_one_trace(self) -> bool {
+                match self { $(Self::$kind => <$view>::SHOWS_ONE_TRACE),* }
+            }
+
+            /// See [`ViewInfo::SHOWS_ACTIONS`].
+            pub fn shows_actions(self) -> bool {
+                match self { $(Self::$kind => <$view>::SHOWS_ACTIONS),* }
+            }
+
+            /// What a view of this type can show of `trace`.
+            pub fn selectable(self, trace: Trace<'_>) -> Selectable {
+                match self { $(Self::$kind => <$view>::selectable(trace)),* }
+            }
+
+            /// See [`ViewInfo::shows_apart`].
+            pub fn shows_apart(self, trace: Trace<'_>) -> bool {
+                match self { $(Self::$kind => <$view>::shows_apart(trace)),* }
+            }
+
+            fn create(self) -> ViewKind {
+                match self { $(Self::$kind => ViewKind::$kind(<$view>::default())),* }
             }
         }
-    }
 
-    /// Whether a view of this type writes the values of its traces as text, so their
-    /// display formats apply.
-    pub fn writes_values(self) -> bool {
-        !matches!(self, ViewType::Xy | ViewType::Logs | ViewType::Actions)
-    }
+        impl ViewKind {
+            pub fn view_type(&self) -> ViewType {
+                match self { $(Self::$kind(_) => ViewType::$kind),* }
+            }
 
-    /// Whether a view of this type shows `trace` apart from the traces it shows
-    /// otherwise, i.e. only along with other traces it shows apart: XY views plot a 1D
-    /// array as a whole over the indices of its elements, see [`Selectable::Array`].
-    pub fn shows_apart(self, trace: Trace<'_>) -> bool {
-        self == ViewType::Xy
-            && matches!(&trace.samples, Samples::Arrays { shape, .. } if shape.len() == 1)
-    }
+            fn viewable(&mut self) -> &mut dyn Viewable {
+                match self { $(Self::$kind(view) => view),* }
+            }
+        }
+    };
+}
 
-    /// Whether a view of this type shows one trace only.
-    pub fn shows_one_trace(self) -> bool {
-        self == ViewType::Heatmap
-    }
-
-    /// Whether a view of this type shows the actions chosen in the tree, and no traces.
-    pub fn shows_actions(self) -> bool {
-        self == ViewType::Actions
-    }
+views! {
+    Plot: plot::Plot,
+    States: states::States,
+    Table: table::Table,
+    Xy: xy::Xy,
+    Heatmap: heatmap::Heatmap,
+    Logs: log_table::LogTable,
+    Actions: actions::Actions,
 }
 
 /// Id of the flag that a plot zoomed by the mouse wheel contained the pointer.
@@ -395,7 +390,7 @@ pub fn range_rows(ui: &mut egui::Ui, range: &mut Option<(f64, f64)>, fitted: (f6
 }
 
 /// The elements of an array of `shape` if they are few enough to be listed.
-fn elements(shape: &[usize]) -> Selectable {
+pub fn elements(shape: &[usize]) -> Selectable {
     if shape.iter().product::<usize>() > MAX_LISTED_ELEMENTS {
         Selectable::No(
             format!(
@@ -410,18 +405,9 @@ fn elements(shape: &[usize]) -> Selectable {
 
 impl View {
     pub fn new(view_type: ViewType, name: String) -> Self {
-        let kind = match view_type {
-            ViewType::Plot => ViewKind::Plot(plot::Plot::new()),
-            ViewType::States => ViewKind::States(states::States::new()),
-            ViewType::Table => ViewKind::Table(table::Table::new()),
-            ViewType::Xy => ViewKind::Xy(xy::Xy::new()),
-            ViewType::Heatmap => ViewKind::Heatmap(heatmap::Heatmap::new()),
-            ViewType::Logs => ViewKind::Logs(log_table::LogTable::new()),
-            ViewType::Actions => ViewKind::Actions(actions::Actions::new()),
-        };
         Self {
             name,
-            kind,
+            kind: view_type.create(),
             formats: Formats::default(),
             wildcards: BTreeSet::new(),
             expanded: None,
@@ -429,43 +415,23 @@ impl View {
     }
 
     pub fn view_type(&self) -> ViewType {
-        match self.kind {
-            ViewKind::Plot(_) => ViewType::Plot,
-            ViewKind::States(_) => ViewType::States,
-            ViewKind::Table(_) => ViewType::Table,
-            ViewKind::Xy(_) => ViewType::Xy,
-            ViewKind::Heatmap(_) => ViewType::Heatmap,
-            ViewKind::Logs(_) => ViewType::Logs,
-            ViewKind::Actions(_) => ViewType::Actions,
-        }
+        self.kind.view_type()
     }
 
     /// Whether the view shows traces or actions chosen in the tree of the left panel.
     pub fn has_selection(&self) -> bool {
-        !matches!(self.kind, ViewKind::Logs(_))
+        self.view_type().has_selection()
     }
 
     /// What the view shows of the trace tree: traces, records, or the chosen actions
     /// for an actions view, or `None` if it shows nothing of it.
     pub fn selection_mut(&mut self) -> Option<ViewSelection<'_>> {
         let view_type = self.view_type();
-        let mut picks = Picks::from(view_type);
-        let paths = match &mut self.kind {
-            ViewKind::Plot(plot) => &mut plot.traces,
-            ViewKind::States(states) => &mut states.traces,
-            ViewKind::Table(table) => {
-                picks.records = table.layout == table::TableLayout::Records;
-                &mut table.traces
-            }
-            ViewKind::Xy(xy) => &mut xy.traces,
-            ViewKind::Heatmap(heatmap) => &mut heatmap.traces,
-            ViewKind::Actions(actions) => &mut actions.shown,
-            ViewKind::Logs(_) => return None,
-        };
+        let (paths, records) = self.kind.viewable().selection()?;
         Some(ViewSelection {
             paths,
             wildcards: &mut self.wildcards,
-            picks,
+            picks: Picks { view_type, records },
         })
     }
 
@@ -493,27 +459,11 @@ impl Viewable for View {
             invoker: context.invoker,
             formats: &self.formats,
         };
-        match &mut self.kind {
-            ViewKind::Plot(plot) => plot.view(ui, context),
-            ViewKind::States(states) => states.view(ui, context),
-            ViewKind::Table(table) => table.view(ui, context),
-            ViewKind::Xy(xy) => xy.view(ui, context),
-            ViewKind::Heatmap(heatmap) => heatmap.view(ui, context),
-            ViewKind::Logs(logs) => logs.view(ui, context),
-            ViewKind::Actions(actions) => actions.view(ui, context),
-        }
+        self.kind.viewable().view(ui, context);
     }
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, context: &PropertiesContext<'_>) {
-        match &mut self.kind {
-            ViewKind::Plot(plot) => plot.properties_ui(ui, context),
-            ViewKind::States(states) => states.properties_ui(ui, context),
-            ViewKind::Table(table) => table.properties_ui(ui, context),
-            ViewKind::Xy(xy) => xy.properties_ui(ui, context),
-            ViewKind::Heatmap(heatmap) => heatmap.properties_ui(ui, context),
-            ViewKind::Logs(logs) => logs.properties_ui(ui, context),
-            ViewKind::Actions(actions) => actions.properties_ui(ui, context),
-        }
+        self.kind.viewable().properties_ui(ui, context);
         match &mut self.kind {
             ViewKind::Table(table) if table.layout == table::TableLayout::Records => {
                 table.columns_ui(ui, context.model, &mut self.formats);

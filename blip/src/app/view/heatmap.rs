@@ -2,6 +2,7 @@
 //! or a 2D array as a grid of coloured cells at the cursor time. A 1D array can also
 //! be shown at the cursor time as a line over its indices.
 
+use super::Selectable;
 use super::plot::{LineStyle, ShowPoints};
 use super::time_axis::{self, index_at};
 use super::{PropertiesContext, ViewContext, Viewable, text_color_on, with_unit};
@@ -198,10 +199,6 @@ pub(super) fn index_spacer(input: egui_plot::GridInput) -> Vec<egui_plot::GridMa
 }
 
 impl Heatmap {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// The values at the ends of the colour scale.
     fn shown_range(&self) -> (f64, f64) {
         self.value_range.or(self.fitted_range).unwrap_or((0.0, 1.0))
@@ -447,7 +444,25 @@ impl Heatmap {
     }
 }
 
+impl super::ViewInfo for Heatmap {
+    const NAME: &'static str = "Heatmap";
+    const ICON: &'static str = egui_phosphor::regular::GRID_NINE;
+    const SHOWS_ONE_TRACE: bool = true;
+
+    fn selectable(trace: Trace<'_>) -> Selectable {
+        match trace.samples {
+            Samples::Arrays { shape, .. } if (1..=2).contains(&shape.len()) => Selectable::Trace,
+            _ => Selectable::No("Heatmaps show arrays of one or two dimensions".into()),
+        }
+    }
+}
+
 impl Viewable for Heatmap {
+    fn selection(&mut self) -> Option<(&mut BTreeSet<String>, bool)> {
+        let records = false;
+        Some((&mut self.traces, records))
+    }
+
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         let model: &Model = context.model;
         let Some(path) = self.traces.first() else {

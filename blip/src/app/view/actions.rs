@@ -459,10 +459,6 @@ struct Confirmation {
 }
 
 impl Actions {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// The name of the connection of the outpost the action at `path` is sent to: the
     /// one chosen in the properties, also while it does not announce the action, else
     /// the first outpost announcing it whose connection is open, else the first
@@ -838,7 +834,23 @@ impl Actions {
     }
 }
 
+impl super::ViewInfo for Actions {
+    const NAME: &'static str = "Actions";
+    const ICON: &'static str = egui_phosphor::regular::SLIDERS_HORIZONTAL;
+    const WRITES_VALUES: bool = false;
+    const SHOWS_ACTIONS: bool = true;
+
+    fn selectable(_trace: crate::app::model::traces::Trace<'_>) -> super::Selectable {
+        super::Selectable::No("Action views show no traces".into())
+    }
+}
+
 impl Viewable for Actions {
+    fn selection(&mut self) -> Option<(&mut BTreeSet<String>, bool)> {
+        let records = false;
+        Some((&mut self.shown, records))
+    }
+
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         let now = ui.input(|input| input.time);
         let model = context.model;
@@ -1033,8 +1045,10 @@ mod tests {
     /// A harness showing a view of `actions`, announced by the connection without a
     /// name.
     fn harness(actions: Vec<ActionDescriptor>) -> egui_kittest::Harness<'static, State> {
-        let mut view = Actions::new();
-        view.shown = actions.iter().map(|action| action.path.clone()).collect();
+        let view = Actions {
+            shown: actions.iter().map(|action| action.path.clone()).collect(),
+            ..Actions::default()
+        };
         let mut model = Model::default();
         model.actions.set("", actions);
         let mut invoker = Invoker::default();
@@ -1339,8 +1353,10 @@ mod tests {
         };
         model.actions.set("a", vec![speed(Some("rpm"))]);
         model.actions.set("b", vec![speed(None)]);
-        let mut view = Actions::new();
-        view.shown = ["speed".to_owned()].into();
+        let view = Actions {
+            shown: ["speed".to_owned()].into(),
+            ..Actions::default()
+        };
         let mut harness = egui_kittest::Harness::builder()
             .with_size(egui::vec2(300.0, 600.0))
             .build_ui_state(
@@ -1434,9 +1450,11 @@ mod tests {
         assert_eq!(chosen.shown, ["a".to_owned()].into());
         assert!(chosen.outpost.is_none() && chosen.readbacks_off.is_empty());
 
-        let mut view = Actions::new();
-        view.outpost = Some("robby".to_owned());
-        view.readbacks_off.insert("a".to_owned());
+        let view = Actions {
+            outpost: Some("robby".to_owned()),
+            readbacks_off: ["a".to_owned()].into(),
+            ..Actions::default()
+        };
         let json = serde_json::to_string(&view).unwrap();
         let loaded: Actions = serde_json::from_str(&json).unwrap();
         assert_eq!(loaded.outpost, view.outpost);

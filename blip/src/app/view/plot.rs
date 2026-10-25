@@ -1,6 +1,8 @@
+use super::Selectable;
 use super::time_axis::{self, TimeAxis, closest_index, visible_range};
 use super::{Formats, PropertiesContext, ViewContext, Viewable, short_names, with_unit};
 use crate::app::model::numbers::{NumberKind, SHOWN_DIGITS};
+use crate::app::model::traces::{Samples, Trace};
 use crate::app::model::{Model, traces::Series};
 use crate::app::theme;
 use crate::app::time::seconds_since;
@@ -305,10 +307,6 @@ impl Default for Plot {
 }
 
 impl Plot {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Draws the values of `series` within the window of `axis`, as set in the
     /// properties of the plot, with its line in `style`.
     #[allow(clippy::too_many_arguments)]
@@ -556,7 +554,25 @@ fn steps(points: &[[f64; 2]]) -> Vec<[f64; 2]> {
     stepped
 }
 
+impl super::ViewInfo for Plot {
+    const NAME: &'static str = "Plot";
+    const ICON: &'static str = egui_phosphor::regular::CHART_LINE;
+
+    fn selectable(trace: Trace<'_>) -> Selectable {
+        match trace.samples {
+            Samples::Strings(_) => Selectable::No("Plots show numbers".into()),
+            Samples::Arrays { shape, .. } => super::elements(shape),
+            _ => Selectable::Trace,
+        }
+    }
+}
+
 impl Viewable for Plot {
+    fn selection(&mut self) -> Option<(&mut BTreeSet<String>, bool)> {
+        let records = false;
+        Some((&mut self.traces, records))
+    }
+
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         self.line_styles.retain_shown(&self.traces);
         self.show_plot(context, ui);
@@ -705,7 +721,7 @@ mod tests {
                 value: proto::Data::Float(second as f64),
             });
         }
-        let mut plot = Plot::new();
+        let mut plot = Plot::default();
         plot.traces.insert("a".to_owned());
         let state = State {
             plot,
