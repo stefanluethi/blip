@@ -8,6 +8,10 @@
 //! Since version 2, a text string between the messages names the connection the
 //! messages after it were received from, the source. Messages before the first name
 //! have no source, as all messages of version 1, which are those of one connection.
+//!
+//! While recording, the messages are compressed as they arrive, a gzip member for
+//! each [`CHUNK`] bytes of them, so a recording takes a fraction of the memory of the
+//! messages. The members one after another are the file.
 
 use flate2::{Compression, read::MultiGzDecoder, write::GzEncoder};
 use std::io::{Read, Write};
@@ -16,6 +20,8 @@ use std::io::{Read, Write};
 const FORMAT: &str = "blip recording";
 /// Version of the format written by [`Recording::to_file`].
 const VERSION: u32 = 2;
+/// Bytes of messages compressed together into a gzip member while recording.
+const CHUNK: usize = 1 << 20;
 
 /// The first item of a recording file.
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -26,13 +32,40 @@ struct Header {
 }
 
 /// The frames received since the data was last cleared.
-#[derive(Default)]
 pub struct Recording {
-    /// The frames one after another, and the names of their sources where it changes.
-    frames: Vec<u8>,
+    /// The gzip members of the [`CHUNK`]s compressed so far, the first one starting
+    /// with the [`Header`].
+    members: Vec<u8>,
+    /// The frames since the last member, one after another, and the names of their
+    /// sources where it changes; the header before the first member.
+    pending: Vec<u8>,
     len: usize,
     /// The source of the last frame.
     source: String,
+}
+
+impl Default for Recording {
+    fn default() -> Self {
+        let header = Header {
+            format: FORMAT.to_owned(),
+            version: VERSION,
+        };
+        Self {
+            members: vec![],
+            pending: serde_cbor_2::to_vec(&header).expect("writing to memory"),
+            len: 0,
+            source: String::new(),
+        }
+    }
+}
+
+/// `bytes` as one gzip member, compressed fast, as messages arrive all the time.
+fn compress(bytes: &[u8]) -> Vec<u8> {
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
+    encoder
+        .write_all(bytes)
+        .and_then(|()| encoder.finish())
+        .expect("writing to memory does not fail")
 }
 
 /// What [`read_file`] found in a recording file.
@@ -47,11 +80,15 @@ impl Recording {
     /// Records `frame` received from `source`, the name of its connection.
     pub fn push(&mut self, source: &str, frame: &[u8]) {
         if source != self.source {
-            serde_cbor_2::to_writer(&mut self.frames, &source).expect("writing to memory");
+            serde_cbor_2::to_writer(&mut self.pending, &source).expect("writing to memory");
             source.clone_into(&mut self.source);
         }
-        self.frames.extend_from_slice(frame);
+        self.pending.extend_from_slice(frame);
         self.len += 1;
+        if self.pending.len() >= CHUNK {
+            self.members.extend(compress(&self.pending));
+            self.pending.clear();
+        }
     }
 
     /// The number of recorded messages.
@@ -61,17 +98,11 @@ impl Recording {
 
     /// The contents of a recording file of the frames.
     pub fn to_file(&self) -> Vec<u8> {
-        let header = Header {
-            format: FORMAT.to_owned(),
-            version: VERSION,
-        };
-        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        let written = serde_cbor_2::to_writer(&mut encoder, &header)
-            .map_err(std::io::Error::other)
-            .and_then(|()| encoder.write_all(&self.frames));
-        written
-            .and_then(|()| encoder.finish())
-            .expect("writing to memory does not fail")
+        let mut file = self.members.clone();
+        if !self.pending.is_empty() {
+            file.extend(compress(&self.pending));
+        }
+        file
     }
 }
 
@@ -186,6 +217,29 @@ mod tests {
                 problem: None
             })
         );
+    }
+
+    #[test]
+    fn long_recordings_are_compressed_while_recording_and_read_whole() {
+        let mut recording = Recording::default();
+        let mut sent = vec![];
+        let mut timestamp = 0;
+        // several chunks, the source changing across their ends
+        while sent.len() * 30 < 3 * CHUNK {
+            let source = ["a", "b"][sent.len() / 50_000 % 2];
+            let frame = frame(timestamp);
+            recording.push(source, &frame);
+            sent.push((source.to_owned(), frame));
+            timestamp += 1_000_003;
+        }
+        // compressed to a fraction while recording
+        assert!(recording.members.len() * 4 < 3 * CHUNK);
+        assert!(recording.pending.len() < CHUNK);
+        let file = recording.to_file();
+        assert!(is_recording(&file));
+        let (frames, loaded) = read_sourced(&file);
+        assert_eq!(frames, sent);
+        assert_eq!(loaded.unwrap().problem, None);
     }
 
     #[test]

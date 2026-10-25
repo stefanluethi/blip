@@ -127,9 +127,9 @@ The model
   element as a ``Series``, whose ``extent`` reads the blocks.
 * ``Logs``: all log records in the order of their times.
 * ``Actions``: the latest list of actions of each source.
-* ``Recording``: the received messages as one byte buffer, with the source
-  names written in between where the source changes -- the body of a
-  recording file.
+* ``Recording``: the received messages, with the source names written in
+  between where the source changes, compressed as they arrive into a gzip
+  member per MiB -- the members one after another are the recording file.
 * The **descriptions**: the latest units and actions frame of each source,
   re-applied by ``Model::clear``.
 
