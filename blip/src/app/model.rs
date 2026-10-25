@@ -108,14 +108,11 @@ impl Model {
         frame: &[u8],
         recording: bool,
     ) -> Option<proto::ActionResult> {
-        let message = decode::decode(frame, &mut self.flat);
-        let sample = matches!(
-            message,
-            Ok(decode::Message::Value { .. } | decode::Message::Log { .. })
-        );
-        if sample && !recording {
+        // samples are dropped while not recording, without decoding them
+        if !recording && decode::is_sample(frame) {
             return None;
         }
+        let message = decode::decode(frame, &mut self.flat);
         if recording {
             self.recording.push(source, frame);
         }

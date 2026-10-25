@@ -95,10 +95,9 @@ impl Flat {
                 };
                 let (keys, depth) = (self.keys.len(), self.stack.len());
                 for _ in 0..len {
-                    let start = reader.position();
                     let name = reader.str()?;
-                    let name_range =
-                        start + (reader.position() - start - name.len())..reader.position();
+                    // the bytes of the name, which end where the reader is
+                    let name_range = reader.position() - name.len()..reader.position();
                     if self.keys[keys..]
                         .iter()
                         .any(|key| frame[key.clone()] == *name.as_bytes())
@@ -236,6 +235,12 @@ fn kind_name(head: Head) -> &'static str {
         Head::Map(_) => "record",
         _ => "an unsupported CBOR item",
     }
+}
+
+/// Whether `frame` is a value or a log record, read from its start only.
+pub fn is_sample(frame: &[u8]) -> bool {
+    let mut reader = Reader::new(frame);
+    reader.head() == Ok(Head::Map(Some(1))) && matches!(reader.str(), Ok("Value" | "Log"))
 }
 
 /// Decodes the message `frame`, the value of a [`Message::Value`] into `flat`.
@@ -474,6 +479,7 @@ mod tests {
             path: "rpm".to_owned(),
             unit: "1/min".to_owned(),
         });
+        assert!(is_sample(&log) && !is_sample(&frame(&unit)) && !is_sample(&[0xa1]));
         assert_eq!(
             decode(&frame(&unit), &mut flat).unwrap(),
             Message::Other(unit)
