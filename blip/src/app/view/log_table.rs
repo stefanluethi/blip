@@ -65,10 +65,10 @@ pub struct LogTable {
     /// The indices of the entries the filter shows, see [`LogTable::update_shown`].
     #[serde(skip)]
     shown: Vec<u32>,
-    /// What `shown` was made for: the filter, the order of the entries and how many
-    /// of them were filtered.
+    /// What `shown` was made for: a hash of what the filter hides, the order of the
+    /// entries and how many of them were filtered.
     #[serde(skip)]
-    shown_for: Option<Box<(LogFilter, Version, usize)>>,
+    shown_for: Option<Box<(u64, Version, usize)>>,
 }
 
 impl LogTable {
@@ -114,11 +114,14 @@ impl LogTable {
     /// Filters the entries of `logs` that arrived since the last call, or all of them
     /// again if the filter or the order of the entries changed.
     fn update_shown(&mut self, logs: &Logs) {
+        use std::hash::{Hash, Hasher};
         self.update_regex_cache();
-        let filter = LogFilter {
-            auto_scroll: false,
-            ..self.filter.clone()
-        };
+        // without whether to scroll, which shows the same entries
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let filter = &self.filter;
+        (&filter.hidden_levels, &filter.hidden_components).hash(&mut hasher);
+        (&filter.message_regex, filter.case_sensitive).hash(&mut hasher);
+        let filter = hasher.finish();
         let from = match self.shown_for.take().map(|known| *known) {
             Some((known, order, filtered)) if known == filter && order == logs.order() => filtered,
             _ => {
