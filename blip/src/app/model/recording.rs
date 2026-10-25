@@ -9,19 +9,23 @@
 //! messages after it were received from, the source. Messages before the first name
 //! have no source, as all messages of version 1, which are those of one connection.
 //!
-//! While recording, the messages are compressed as they arrive, fast, a gzip member
-//! for each [`CHUNK`] bytes of them, so a recording takes a fraction of the memory of
-//! the messages. Saving compresses them again, smaller, into one member.
+//! While recording, the messages are compressed as they arrive, a gzip member for
+//! each [`CHUNK`] bytes of them, so a recording takes a fraction of the memory of the
+//! messages. The chunks are small and compressed fast, so compressing one takes a
+//! fraction of a frame and the view does not stutter. Saving compresses them again,
+//! smaller, into one member.
 
-use flate2::{Compression, read::MultiGzDecoder, write::GzEncoder};
+use flate2::read::{GzDecoder, MultiGzDecoder};
+use flate2::{Compression, write::GzEncoder};
 use std::io::{Read, Write};
 
 /// The value of [`Header::format`].
 const FORMAT: &str = "blip recording";
 /// Version of the format written by [`Recording::to_file`].
 const VERSION: u32 = 2;
-/// Bytes of messages compressed together into a gzip member while recording.
-const CHUNK: usize = 1 << 20;
+/// Bytes of messages compressed together into a gzip member while recording, about
+/// 0.2 ms of compressing.
+const CHUNK: usize = 1 << 16;
 
 /// The first item of a recording file.
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -34,8 +38,9 @@ struct Header {
 /// The frames received since the data was last cleared.
 pub struct Recording {
     /// The gzip members of the [`CHUNK`]s compressed so far, the first one starting
-    /// with the [`Header`].
-    members: Vec<u8>,
+    /// with the [`Header`], each in a buffer of its own, so adding one never copies
+    /// those before.
+    members: Vec<Vec<u8>>,
     /// The frames since the last member, one after another, and the names of their
     /// sources where it changes; the header before the first member.
     pending: Vec<u8>,
@@ -87,8 +92,8 @@ impl Recording {
         self.len += 1;
         if self.pending.len() >= CHUNK {
             // fast, as messages arrive all the time
-            self.members
-                .extend(compress(&self.pending, Compression::fast()));
+            let member = compress(&self.pending, Compression::fast());
+            self.members.push(member);
             self.pending.clear();
         }
     }
@@ -102,8 +107,8 @@ impl Recording {
     /// recording.
     pub fn to_file(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
-        if !self.members.is_empty() {
-            MultiGzDecoder::new(&self.members[..])
+        for member in &self.members {
+            GzDecoder::new(&member[..])
                 .read_to_end(&mut bytes)
                 .expect("the members were compressed here");
         }
@@ -239,7 +244,7 @@ mod tests {
             timestamp += 1_000_003;
         }
         // compressed to a fraction while recording
-        assert!(recording.members.len() * 4 < 3 * CHUNK);
+        assert!(recording.members.iter().map(Vec::len).sum::<usize>() * 4 < 3 * CHUNK);
         assert!(recording.pending.len() < CHUNK);
         let file = recording.to_file();
         assert!(is_recording(&file));

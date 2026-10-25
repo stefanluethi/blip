@@ -129,8 +129,8 @@ The model
 * ``Actions``: the latest list of actions of each source.
 * ``Recording``: the received messages, with the source names written in
   between where the source changes, compressed fast as they arrive, a gzip
-  member per MiB, and again at gzip's default level into the recording file
-  when it is saved.
+  member per 64 KiB, each a fraction of a millisecond of work, so the view
+  does not stutter; saving compresses them again at gzip's default level.
 * The **descriptions**: the latest units and actions frame of each source,
   re-applied by ``Model::clear``.
 
