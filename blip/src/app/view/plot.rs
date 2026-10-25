@@ -24,24 +24,28 @@ const DOT_SPACING: f32 = 5.0;
 /// pattern, which takes a shape per dash or dot.
 const MAX_PATTERN_LENGTH: f32 = 30_000.0;
 
-/// How a curve goes from one sample to the next.
-#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
-pub enum Interpolation {
-    /// A straight line, except for bools, which always hold their value.
-    #[default]
-    Linear,
-    /// Each value held until the next sample.
-    Step,
+named_enum! {
+    /// How a curve goes from one sample to the next.
+    #[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
+    pub enum Interpolation {
+        /// A straight line, except for bools, which always hold their value.
+        #[default]
+        Linear => "Linear",
+        /// Each value held until the next sample.
+        Step => "Step",
+    }
 }
 
-/// When the samples of a curve are marked.
-#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
-pub enum ShowPoints {
-    /// When they are far enough apart to tell them apart.
-    #[default]
-    Auto,
-    Always,
-    Never,
+named_enum! {
+    /// When the samples of a curve are marked.
+    #[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
+    pub enum ShowPoints {
+        /// When they are far enough apart to tell them apart.
+        #[default]
+        Auto => "Auto",
+        Always => "Always",
+        Never => "Never",
+    }
 }
 
 impl ShowPoints {
@@ -56,47 +60,24 @@ impl ShowPoints {
 
     /// Adds a row to the grid of a properties section to choose when points are marked.
     pub fn choice_row(&mut self, ui: &mut egui::Ui) {
-        super::choice_row(
-            ui,
-            "Points",
-            self,
-            &[
-                (ShowPoints::Auto, "Auto"),
-                (ShowPoints::Always, "Always"),
-                (ShowPoints::Never, "Never"),
-            ],
-        );
+        super::choice_row(ui, "Points", self, &ShowPoints::CHOICES);
     }
 }
 
-/// How the line of a trace is drawn.
-#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
-pub enum LineStyle {
-    #[default]
-    Solid,
-    Dashed,
-    Dotted,
-    /// No line, only the points, which are then always marked.
-    None,
+named_enum! {
+    /// How the line of a trace is drawn.
+    #[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
+    pub enum LineStyle {
+        #[default]
+        Solid => "Solid",
+        Dashed => "Dashed",
+        Dotted => "Dotted",
+        /// No line, only the points, which are then always marked.
+        None => "None",
+    }
 }
 
 impl LineStyle {
-    const ALL: [LineStyle; 4] = [
-        LineStyle::Solid,
-        LineStyle::Dashed,
-        LineStyle::Dotted,
-        LineStyle::None,
-    ];
-
-    fn name(self) -> &'static str {
-        match self {
-            LineStyle::Solid => "Solid",
-            LineStyle::Dashed => "Dashed",
-            LineStyle::Dotted => "Dotted",
-            LineStyle::None => "None",
-        }
-    }
-
     /// How egui_plot draws a line through `points` on a plot with `transform`, `None`
     /// if there is no line. A line too long on screen for its pattern to be drawn
     /// quickly is solid instead, as its dashes or dots would be too dense to see anyway.
@@ -219,36 +200,20 @@ impl LineStyles {
     }
 }
 
-/// Where the legend is shown.
-#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
-pub enum LegendPlacement {
-    Hidden,
-    TopLeft,
-    #[default]
-    TopRight,
-    BottomLeft,
-    BottomRight,
+named_enum! {
+    /// Where the legend is shown.
+    #[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
+    pub enum LegendPlacement {
+        Hidden => "Hidden",
+        TopLeft => "Top left",
+        #[default]
+        TopRight => "Top right",
+        BottomLeft => "Bottom left",
+        BottomRight => "Bottom right",
+    }
 }
 
 impl LegendPlacement {
-    const ALL: [LegendPlacement; 5] = [
-        LegendPlacement::Hidden,
-        LegendPlacement::TopLeft,
-        LegendPlacement::TopRight,
-        LegendPlacement::BottomLeft,
-        LegendPlacement::BottomRight,
-    ];
-
-    fn name(self) -> &'static str {
-        match self {
-            LegendPlacement::Hidden => "Hidden",
-            LegendPlacement::TopLeft => "Top left",
-            LegendPlacement::TopRight => "Top right",
-            LegendPlacement::BottomLeft => "Bottom left",
-            LegendPlacement::BottomRight => "Bottom right",
-        }
-    }
-
     fn corner(self) -> Option<egui_plot::Corner> {
         match self {
             LegendPlacement::Hidden => None,
@@ -606,10 +571,7 @@ impl Viewable for Plot {
                 ui,
                 "Interpolation",
                 &mut self.interpolation,
-                &[
-                    (Interpolation::Linear, "Linear"),
-                    (Interpolation::Step, "Step"),
-                ],
+                &Interpolation::CHOICES,
             );
             super::property_label(ui, "Width");
             ui.add(

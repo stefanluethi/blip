@@ -36,24 +36,16 @@ pub struct Group {
     pub active: Option<usize>,
 }
 
-#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, PartialEq, Eq, Debug)]
-pub enum GroupKind {
-    Tabs,
-    Vertical,
-    Horizontal,
+named_enum! {
+    #[derive(serde::Deserialize, serde::Serialize, Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum GroupKind {
+        Tabs => "Tabs",
+        Vertical => "Vertical",
+        Horizontal => "Horizontal",
+    }
 }
 
 impl GroupKind {
-    pub const ALL: [GroupKind; 3] = [GroupKind::Tabs, GroupKind::Vertical, GroupKind::Horizontal];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            GroupKind::Tabs => "Tabs",
-            GroupKind::Vertical => "Vertical",
-            GroupKind::Horizontal => "Horizontal",
-        }
-    }
-
     pub fn icon(self) -> &'static str {
         match self {
             GroupKind::Tabs => egui_phosphor::regular::TABS,

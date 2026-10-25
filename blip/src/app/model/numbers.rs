@@ -24,28 +24,23 @@ impl NumberKind {
 /// Floats show at most this many significant digits in tables and tooltips.
 pub const SHOWN_DIGITS: usize = 4;
 
-/// How the numbers of a trace are written.
-#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
-pub enum DisplayFormat {
-    /// As decimals, bools as `true` and `false`.
-    #[default]
-    Default,
-    /// Integers and whole floats in hexadecimal, e.g. `0x1f`.
-    Hex,
-    /// Integers and whole floats in binary, e.g. `0b101`.
-    Binary,
-    /// Numbers with an exponent, e.g. `1.5e3`.
-    Scientific,
+named_enum! {
+    /// How the numbers of a trace are written.
+    #[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
+    pub enum DisplayFormat {
+        /// As decimals, bools as `true` and `false`.
+        #[default]
+        Default => "Default",
+        /// Integers and whole floats in hexadecimal, e.g. `0x1f`.
+        Hex => "Hex",
+        /// Integers and whole floats in binary, e.g. `0b101`.
+        Binary => "Binary",
+        /// Numbers with an exponent, e.g. `1.5e3`.
+        Scientific => "Scientific",
+    }
 }
 
 impl DisplayFormat {
-    pub const ALL: [DisplayFormat; 4] = [
-        DisplayFormat::Default,
-        DisplayFormat::Hex,
-        DisplayFormat::Binary,
-        DisplayFormat::Scientific,
-    ];
-
     /// The formats that apply to numbers of `kind`: hex and binary only to integers,
     /// none to bools.
     pub fn of_kind(kind: NumberKind) -> &'static [DisplayFormat] {
@@ -53,15 +48,6 @@ impl DisplayFormat {
             NumberKind::Integer => &Self::ALL,
             NumberKind::Float => &[DisplayFormat::Default, DisplayFormat::Scientific],
             NumberKind::Bool => &[],
-        }
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            DisplayFormat::Default => "Default",
-            DisplayFormat::Hex => "Hex",
-            DisplayFormat::Binary => "Binary",
-            DisplayFormat::Scientific => "Scientific",
         }
     }
 }

@@ -20,26 +20,30 @@ const MAX_TOOLTIP_ELEMENTS: usize = 64;
 /// Indentation of a level of the tree in points.
 const INDENT: f32 = 14.0;
 
-/// How the traces of a table are listed.
-#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
-pub enum TableRows {
-    /// As a tree of their paths.
-    #[default]
-    Tree,
-    /// As a list of their paths.
-    Paths,
-    /// As a list of their names, see [`short_names`].
-    Names,
+named_enum! {
+    /// How the traces of a table are listed.
+    #[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
+    pub enum TableRows {
+        /// As a tree of their paths.
+        #[default]
+        Tree => "Tree",
+        /// As a list of their paths.
+        Paths => "Paths",
+        /// As a list of their names, see [`short_names`].
+        Names => "Names",
+    }
 }
 
-/// What a row of a table is.
-#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
-pub enum TableLayout {
-    /// A trace, with its value in a column.
-    #[default]
-    Traces,
-    /// A record, with the value of each field in a column.
-    Records,
+named_enum! {
+    /// What a row of a table is.
+    #[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
+    pub enum TableLayout {
+        /// A trace, with its value in a column.
+        #[default]
+        Traces => "Traces",
+        /// A record, with the value of each field in a column.
+        Records => "Records",
+    }
 }
 
 /// The values of the selected traces or records at the cursor time.
@@ -560,27 +564,10 @@ impl Viewable for Table {
     fn properties_ui(&mut self, ui: &mut egui::Ui, context: &PropertiesContext<'_>) {
         super::properties_section(ui, "Rows", |ui| {
             let mut layout = self.layout;
-            super::choice_row(
-                ui,
-                "Layout",
-                &mut layout,
-                &[
-                    (TableLayout::Traces, "Traces"),
-                    (TableLayout::Records, "Records"),
-                ],
-            );
+            super::choice_row(ui, "Layout", &mut layout, &TableLayout::CHOICES);
             self.change_layout(context.model, layout);
             if self.layout == TableLayout::Traces {
-                super::choice_row(
-                    ui,
-                    "Traces",
-                    &mut self.rows,
-                    &[
-                        (TableRows::Tree, "Tree"),
-                        (TableRows::Paths, "Paths"),
-                        (TableRows::Names, "Names"),
-                    ],
-                );
+                super::choice_row(ui, "Traces", &mut self.rows, &TableRows::CHOICES);
                 super::property_label(ui, "Empty");
                 ui.checkbox(&mut self.show_empty, "")
                     .on_hover_text("Show traces without a value at the cursor time");

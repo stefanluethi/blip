@@ -1,3 +1,33 @@
+/// Defines a fieldless enum with the name shown for each variant, written
+/// `Variant => "Name"`, and gives it `ALL` its variants in their order, `CHOICES` each
+/// with its name, e.g. for [`view::choice_row`], and `name()`.
+macro_rules! named_enum {
+    (
+        $(#[$meta:meta])*
+        $vis:vis enum $name:ident {
+            $($(#[$variant_meta:meta])* $variant:ident => $text:literal),* $(,)?
+        }
+    ) => {
+        $(#[$meta])*
+        $vis enum $name {
+            $($(#[$variant_meta])* $variant),*
+        }
+
+        #[allow(dead_code)]
+        impl $name {
+            pub const ALL: [Self; [$($text),*].len()] = [$(Self::$variant),*];
+            pub const CHOICES: [(Self, &'static str); [$($text),*].len()] =
+                [$((Self::$variant, $text)),*];
+
+            pub fn name(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $text),*
+                }
+            }
+        }
+    };
+}
+
 mod connections;
 mod files;
 mod layout;

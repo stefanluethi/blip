@@ -35,14 +35,16 @@ const COLOR_MAP: [Color32; 9] = [
     Color32::from_rgb(0xfd, 0xe7, 0x25),
 ];
 
-/// How a 1D array is shown.
-#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
-pub enum ArrayMode {
-    /// Each element as a row of colours over time.
-    #[default]
-    OverTime,
-    /// The elements at the cursor time as a line over their indices.
-    AtCursor,
+named_enum! {
+    /// How a 1D array is shown.
+    #[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
+    pub enum ArrayMode {
+        /// Each element as a row of colours over time.
+        #[default]
+        OverTime => "Over time",
+        /// The elements at the cursor time as a line over their indices.
+        AtCursor => "At cursor",
+    }
 }
 
 /// The selected array trace as a heatmap.
@@ -522,15 +524,7 @@ impl Viewable for Heatmap {
         // the mode is kept for a 2D array, but only applies to a 1D one
         if dimensions != Some(2) {
             super::properties_section(ui, "Array", |ui| {
-                super::choice_row(
-                    ui,
-                    "Show",
-                    &mut self.mode,
-                    &[
-                        (ArrayMode::OverTime, "Over time"),
-                        (ArrayMode::AtCursor, "At cursor"),
-                    ],
-                );
+                super::choice_row(ui, "Show", &mut self.mode, &ArrayMode::CHOICES);
             });
         }
         let fitted = self.shown_range();
