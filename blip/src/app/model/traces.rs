@@ -578,65 +578,21 @@ impl Traces {
     /// Appends the value at `path` with `timestamp`, flattened into `flat` from
     /// `frame`: a sample to the trace of each of its leaves, a null to the other
     /// traces of the path. A value that does not fit the traces at `path` is dropped,
-    /// a field that does not fit is null.
+    /// a field that does not fit is null, a value of which nothing fits is dropped.
     pub fn insert(&mut self, path: &str, timestamp: u64, flat: &Flat, frame: &[u8]) {
-        let table = match self.tables_by_path.get(path) {
-            Some(&table) => table,
-            None => {
-                if flat.leaves.is_empty() || !flat.is_record() && self.by_path.contains_key(path) {
-                    // nothing to keep, or a field of a record has the path
-                    return;
-                }
-                self.tables.push(Table {
-                    path: path.into(),
-                    timestamps: vec![],
-                    columns: vec![],
-                    warned: false,
-                });
-                self.tables_by_path
-                    .insert(path.into(), self.tables.len() - 1);
-                self.tables.len() - 1
-            }
-        };
-        let rows = self.tables[table].timestamps.len();
-        if flat.is_record() {
-            if !self.insert_record(table, flat, frame) {
-                return;
-            }
-        } else {
-            let leaf = &flat.leaves[0].1;
-            let record = self.tables[table]
-                .columns
-                .iter()
-                .any(|&id| self.columns[id].fields_start.is_some());
-            match (record, leaf) {
-                // a missing record leaves a gap in all its fields
-                (true, Leaf::Null) => {}
-                (true, leaf) => {
-                    let problem = format!("a record cannot become {}", leaf_kind(leaf));
-                    self.tables[table].warn(&problem);
-                    return;
-                }
-                (false, leaf) => {
-                    let id = match self.find_column(table, "", 0) {
-                        Some(id) => id,
-                        None => self.add_column(table, "").expect("checked above"),
-                    };
-                    if let Err(problem) = self.columns[id].samples.push(leaf, flat, frame) {
-                        self.tables[table].warn(&problem);
-                        return;
-                    }
+        let known = self.tables_by_path.get(path).copied();
+        if !self.add_value(known, path, flat, frame) {
+            if known.is_none() && self.tables_by_path.contains_key(path) {
+                // the table made for the value holds nothing
+                let table = self.tables.pop().expect("made for the value");
+                self.tables_by_path.remove(path);
+                for id in table.columns {
+                    self.remove_column(id);
                 }
             }
+            return;
         }
-        // the traces without a leaf in the value
-        for &id in &self.tables[table].columns {
-            let samples = &mut self.columns[id].samples;
-            if samples.len() == rows {
-                samples.push_null();
-            }
-        }
-
+        let table = self.tables_by_path[path];
         let table = &mut self.tables[table];
         // searched before the new timestamp is appended, which would leave them unsorted
         let at = table.timestamps.partition_point(|&t| t <= timestamp);
@@ -652,8 +608,78 @@ impl Traces {
         }));
     }
 
+    /// Appends the leaves of the value in `flat` to the traces of `table`, or of a new
+    /// table at `path`, and nulls to its other traces, without its timestamp. Returns
+    /// whether anything of the value was kept; if not, no trace changed.
+    fn add_value(&mut self, table: Option<usize>, path: &str, flat: &Flat, frame: &[u8]) -> bool {
+        let table = match table {
+            Some(table) => table,
+            None => {
+                if flat.leaves.is_empty() || !flat.is_record() && self.by_path.contains_key(path) {
+                    // nothing to keep, or a field of a record has the path
+                    return false;
+                }
+                self.tables.push(Table {
+                    path: path.into(),
+                    timestamps: vec![],
+                    columns: vec![],
+                    warned: false,
+                });
+                self.tables_by_path
+                    .insert(path.into(), self.tables.len() - 1);
+                self.tables.len() - 1
+            }
+        };
+        let rows = self.tables[table].timestamps.len();
+        if flat.is_record() {
+            if !self.insert_record(table, flat, frame) {
+                return false;
+            }
+        } else {
+            let leaf = &flat.leaves[0].1;
+            let record = self.tables[table]
+                .columns
+                .iter()
+                .any(|&id| self.columns[id].fields_start.is_some());
+            match (record, leaf) {
+                // a missing record leaves a gap in all its fields
+                (true, Leaf::Null) => {}
+                (true, leaf) => {
+                    let problem = format!("a record cannot become {}", leaf_kind(leaf));
+                    self.tables[table].warn(&problem);
+                    return false;
+                }
+                (false, leaf) => {
+                    let id = match self.find_column(table, "", 0) {
+                        Some(id) => id,
+                        None => match self.add_column(table, "") {
+                            Some(id) => id,
+                            None => {
+                                self.tables[table].warn("a field of a record has the path");
+                                return false;
+                            }
+                        },
+                    };
+                    if let Err(problem) = self.columns[id].samples.push(leaf, flat, frame) {
+                        self.tables[table].warn(&problem);
+                        return false;
+                    }
+                }
+            }
+        }
+        // the traces without a leaf in the value
+        for &id in &self.tables[table].columns {
+            let samples = &mut self.columns[id].samples;
+            if samples.len() == rows {
+                samples.push_null();
+            }
+        }
+        true
+    }
+
     /// Appends the leaves of the record in `flat` to the traces of their fields in
-    /// `table`. Returns whether it did, i.e. the table holds records.
+    /// `table`. Returns whether any was kept, also as a gap; a leaf that does not fit
+    /// its trace is left for a null.
     fn insert_record(&mut self, table: usize, flat: &Flat, frame: &[u8]) -> bool {
         // a trace that only received nulls so far turns out to be a record
         if let Some(id) = self.find_column(table, "", 0) {
@@ -666,6 +692,7 @@ impl Traces {
         }
         let rows = self.tables[table].timestamps.len();
         let table_path_len = self.tables[table].path.len();
+        let mut kept = false;
         for (index, (field, leaf)) in flat.leaves.iter().enumerate() {
             let field = flat.field(field);
             let id = match self.find_column(table, field, index) {
@@ -680,6 +707,7 @@ impl Traces {
                     };
                     if *leaf == Leaf::Null && fields.iter().any(below) {
                         // a missing record leaves a gap in all its fields
+                        kept = true;
                         continue;
                     }
                     // a field that only received nulls so far turns out to be a record
@@ -709,18 +737,19 @@ impl Traces {
             if column.samples.len() > rows {
                 continue;
             }
-            if let Err(problem) = column.samples.push(leaf, flat, frame) {
-                column.samples.push_null();
-                if !column.warned {
+            match column.samples.push(leaf, flat, frame) {
+                Ok(()) => kept = true,
+                Err(problem) if !column.warned => {
                     column.warned = true;
                     log::warn!(
                         "{}: dropped a sample, {problem} (further ones are dropped silently)",
                         column.path
                     );
                 }
+                Err(_) => {}
             }
         }
-        true
+        kept
     }
 }
 
@@ -1082,6 +1111,35 @@ mod tests {
             value: Data::Array(vec![empty(), empty()]),
         });
         assert_eq!(traces.get("m").unwrap().timestamps, [0, 3]);
+    }
+
+    #[test]
+    fn values_of_which_nothing_fits_add_no_sample() {
+        let mut traces = traces(&[
+            ("a", record(&[("b", record(&[("c", Data::Uint(1))]))])),
+            ("x", record(&[("y", Data::Float(1.0))])),
+        ]);
+        fn append(traces: &mut Traces, timestamp: u64, path: &str, value: Data) {
+            traces.append(&proto::Value {
+                timestamp,
+                path: path.to_owned(),
+                value,
+            });
+        }
+        // the field of a record has the path `a.b.c`
+        append(&mut traces, 10, "a.b", record(&[("c", Data::Uint(2))]));
+        // a string does not fit the float field
+        append(&mut traces, 11, "x", record(&[("y", Data::from("text"))]));
+        assert!(traces.get("a.b").is_none());
+        assert_eq!(traces.get("a.b.c").unwrap().timestamps, [0]);
+        assert_eq!(traces.get("x.y").unwrap().timestamps, [1]);
+        assert_eq!(traces.tables().count(), 2);
+        assert_eq!(traces.time_span(), Some((0, 1)));
+        // a value of which a field fits is kept, the other field is null
+        let both = record(&[("y", Data::from("text")), ("z", Data::Float(2.0))]);
+        append(&mut traces, 12, "x", both);
+        assert_values(values(&traces, "x.y"), &[1.0, f64::NAN]);
+        assert_values(values(&traces, "x.z"), &[f64::NAN, 2.0]);
     }
 
     #[test]
