@@ -428,15 +428,15 @@ impl App {
             &mut self.compatible_only,
             filterable,
         );
-        egui::ScrollArea::vertical()
-            .id_salt("traces")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                let model = &self.state.model;
-                let search = &self.trace_search;
-                let selection = view.and_then(|view| view.selection_mut());
-                view::trace_selection::show(ui, model, search, self.compatible_only, selection);
-            });
+        let model = &self.state.model;
+        let selection = view.and_then(|view| view.selection_mut());
+        view::trace_selection::show(
+            ui,
+            model,
+            &self.trace_search,
+            self.compatible_only,
+            selection,
+        );
     }
 }
 

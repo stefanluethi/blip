@@ -329,186 +329,265 @@ fn trace_picks(trace: Trace<'_>, picks: Picks) -> Vec<String> {
     }
 }
 
-/// Shows `trace` labelled `label` with the icon of its type: a checkbox, or a
-/// collapsible list of checkboxes for its elements below a checkbox for all of them,
-/// after one for the whole array if the view shows it so.
-fn show_trace(
-    ui: &mut Ui,
-    label: &str,
-    key: &str,
-    trace: Trace<'_>,
-    selection: &mut Selection<'_>,
-) {
-    let icon = Some(type_icon(trace.samples));
-    let picks = selection.picks;
-    let paths = trace_picks(trace, picks);
-    let mut hover = format!("{}\n{}", trace.path, trace.samples.type_label());
-    // what the checkbox of the trace picks, the elements listed below it, and whether
-    // the whole array is listed before them
-    let (paths, element_paths, whole) = match picks.view_type.selectable(trace) {
-        _ if picks.records => {
-            hover.push_str("\nTables of records show records");
-            (paths, None, false)
-        }
-        Selectable::Trace => (paths, None, false),
-        Selectable::No(reason) => {
-            hover.push_str(&format!("\n{reason}"));
-            (paths, None, false)
-        }
-        Selectable::Elements => (paths.clone(), Some(paths), false),
-        Selectable::Array { elements: true } => (paths.clone(), Some(paths), true),
-        Selectable::Array { elements: false } => {
-            hover.push_str(&format!("\n{WHOLE_ARRAY_HINT}"));
-            (vec![trace.path.to_owned()], None, false)
-        }
-    };
-    let Some(element_paths) = element_paths else {
-        leaf_row(ui, |ui| {
-            show_checkbox(ui, label, icon, &paths, key, false, selection)
-                .on_hover_text(&hover)
-                .on_disabled_hover_text(hover);
-        });
-        return;
-    };
-    let id = ui.make_persistent_id(("trace_array", &trace.path));
-    egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false)
-        .show_header(ui, |ui| {
-            show_checkbox(ui, label, icon, &paths, key, false, selection).on_hover_text(hover);
-        })
-        .body(|ui| {
-            if whole {
-                leaf_row(ui, |ui| {
-                    let paths = [trace.path.to_owned()];
-                    show_checkbox(ui, "whole array", None, &paths, key, false, selection)
-                        .on_hover_text(format!("{}\n{WHOLE_ARRAY_HINT}", trace.path));
-                });
-            }
-            for path in &element_paths {
-                let label = &path[trace.path.len()..];
-                leaf_row(ui, |ui| {
-                    let paths = std::slice::from_ref(path);
-                    show_checkbox(ui, label, None, paths, key, false, selection)
-                        .on_hover_text(path);
-                });
-            }
-        });
-}
-
-/// What a view showing an array as a whole does with it, see [`Selectable::Array`].
-const WHOLE_ARRAY_HINT: &str = "Plotted as a whole over the indices of its elements";
-
-/// Shows the record at `path` labelled `label`: a checkbox to pick it as a whole.
-fn show_record(ui: &mut Ui, label: &str, key: &str, path: &str, selection: &mut Selection<'_>) {
-    let paths = [path.to_owned()];
-    leaf_row(ui, |ui| {
-        show_checkbox(
-            ui,
-            label,
-            Some(BRACKETS_CURLY),
-            &paths,
-            key,
-            false,
-            selection,
-        )
-        .on_hover_text(format!("{path}\nRecord"));
-    });
-}
-
 /// The path of the action at `path` if a view of `view_type` can show it.
 fn action_path(path: &str, view_type: ViewType) -> Option<String> {
     view_type.shows_actions().then(|| path.to_owned())
 }
 
-/// Shows the action at `path` labelled `label` with the action icon: a checkbox,
-/// disabled unless the view shows actions.
-fn show_action(
-    ui: &mut Ui,
-    label: &str,
-    key: &str,
-    path: &str,
-    unannounced: bool,
-    selection: &mut Selection<'_>,
-) {
-    let paths = Vec::from_iter(action_path(path, selection.picks.view_type));
-    let mut hover = format!("{path}\nAction");
-    if unannounced {
-        hover.push_str(", not announced by any outpost");
-    }
-    if paths.is_empty() {
-        hover.push_str("\nOnly actions views show actions");
-    }
-    leaf_row(ui, |ui| {
-        show_checkbox(ui, label, Some(ACTION_ICON), &paths, key, false, selection)
-            .on_hover_text(&hover)
-            .on_disabled_hover_text(hover);
-    });
+/// What a row of the tree shows.
+enum RowKind<'t, 'a> {
+    /// A branch with what is below it, collapsed unless `open`.
+    Branch {
+        node: &'t TraceTree<'a>,
+        id: egui::Id,
+    },
+    /// A trace, with a button to list its elements if it has an `elements` id.
+    Trace {
+        trace: Trace<'a>,
+        elements: Option<egui::Id>,
+    },
+    /// The whole array trace, before its elements.
+    Whole(Trace<'a>),
+    /// An element of an array trace, its indices in the path from `label_start` on.
+    Element {
+        path: String,
+        label_start: usize,
+    },
+    Record(&'a str),
+    Action {
+        path: &'a str,
+        unannounced: bool,
+    },
 }
 
-/// Shows the trace, the record and the action ending at `node` with `key`, if any,
-/// labelled `label`.
-fn show_leaves(
-    ui: &mut Ui,
-    label: &str,
-    key: &str,
-    node: &TraceTree<'_>,
-    selection: &mut Selection<'_>,
+/// A row of the tree: a branch, a trace, an element of an array, a record or an
+/// action.
+struct Row<'t, 'a> {
+    depth: usize,
+    label: &'t str,
+    /// The key of the node of the row, see [`ViewSelection::wildcards`].
+    key: String,
+    kind: RowKind<'t, 'a>,
+}
+
+/// What a row with a toggle of `id` shows below it, as it was left.
+fn is_open(ctx: &egui::Context, id: egui::Id, default_open: bool) -> bool {
+    egui::collapsing_header::CollapsingState::load_with_default_open(ctx, id, default_open)
+        .is_open()
+}
+
+/// Adds the rows of the trace, the record and the action ending at `node` with `key`,
+/// if any, labelled `label`, at `depth`.
+fn leaf_rows<'t, 'a>(
+    ui: &Ui,
+    node: &'t TraceTree<'a>,
+    (label, key): (&'t str, &str),
+    depth: usize,
+    picks: Picks,
+    rows: &mut Vec<Row<'t, 'a>>,
 ) {
+    let row = |kind| Row {
+        depth,
+        label,
+        key: key.to_owned(),
+        kind,
+    };
     if let Some(trace) = node.trace {
-        show_trace(ui, label, key, trace, selection);
+        let selectable = picks.view_type.selectable(trace);
+        let listed = !picks.records
+            && matches!(
+                selectable,
+                Selectable::Elements | Selectable::Array { elements: true }
+            );
+        let id = ui.make_persistent_id(("trace_array", trace.path));
+        let elements = listed.then_some(id);
+        rows.push(row(RowKind::Trace { trace, elements }));
+        if listed && is_open(ui.ctx(), id, false) {
+            if matches!(selectable, Selectable::Array { .. }) {
+                rows.push(Row {
+                    depth: depth + 1,
+                    label: "whole array",
+                    key: key.to_owned(),
+                    kind: RowKind::Whole(trace),
+                });
+            }
+            for path in trace_paths(trace, picks.view_type) {
+                rows.push(Row {
+                    depth: depth + 1,
+                    label: "",
+                    key: key.to_owned(),
+                    kind: RowKind::Element {
+                        path,
+                        label_start: trace.path.len(),
+                    },
+                });
+            }
+        }
     }
-    if let Some(path) = node.record.filter(|_| selection.picks.records) {
-        show_record(ui, label, key, path, selection);
+    if let Some(path) = node.record.filter(|_| picks.records) {
+        rows.push(row(RowKind::Record(path)));
     }
     if let Some(path) = node.action {
-        show_action(ui, label, key, path, node.unannounced, selection);
+        let unannounced = node.unannounced;
+        rows.push(row(RowKind::Action { path, unannounced }));
     }
 }
 
-/// Shows the row added by `add` indented by the width of the collapse button of a
-/// branch, so its checkbox lines up with those of the branches next to it.
-fn leaf_row(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
-    ui.horizontal(|ui| {
-        ui.add_space(ui.spacing().indent);
-        add(ui);
-    });
-}
-
-/// Shows the children of `node` with the key `prefix` as collapsible branches, traces,
-/// records and actions.
-fn show_trace_tree(ui: &mut Ui, node: &TraceTree<'_>, prefix: &str, selection: &mut Selection<'_>) {
+/// Adds the rows of the children of `node` with the key `prefix` at `depth`: the
+/// branches, and what is below those that are open, the traces, records and actions.
+fn tree_rows<'t, 'a>(
+    ui: &Ui,
+    node: &'t TraceTree<'a>,
+    prefix: &str,
+    depth: usize,
+    (picks, searching): (Picks, bool),
+    rows: &mut Vec<Row<'t, 'a>>,
+) {
     for (segment, child) in &node.children {
         let key = format!("{prefix}/{segment}");
         let label = segment.strip_prefix('.').unwrap_or(segment);
         if child.children.is_empty() {
-            show_leaves(ui, label, &key, child, selection);
-        } else {
-            let icon = child.is_record().then_some(BRACKETS_CURLY);
-            // while searching, branches keep a separate open state, open by default
-            let id = ui.make_persistent_id(("trace_tree", &key, selection.searching));
-            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
-                .show_header(ui, |ui| {
-                    if selection.picks.view_type.shows_one_trace() {
-                        // a branch cannot be selected as one trace
-                        match icon {
-                            Some(icon) => ui.label(format!("{label} {icon}")),
-                            None => ui.label(label),
-                        };
-                    } else {
-                        let paths = child.paths(selection.picks);
-                        show_checkbox(ui, label, icon, &paths, &key, true, selection);
-                    }
-                })
-                .body(|ui| {
-                    // a trace or an action can also be the prefix of other paths
-                    show_leaves(ui, label, &key, child, selection);
-                    show_trace_tree(ui, child, &key, selection);
-                });
+            leaf_rows(ui, child, (label, &key), depth, picks, rows);
+            continue;
+        }
+        // while searching, branches keep a separate open state, open by default
+        let id = ui.make_persistent_id(("trace_tree", &key, searching));
+        let open = is_open(ui.ctx(), id, true);
+        rows.push(Row {
+            depth,
+            label,
+            key: key.clone(),
+            kind: RowKind::Branch { node: child, id },
+        });
+        if open {
+            // a trace or an action can also be the prefix of other paths
+            leaf_rows(ui, child, (label, &key), depth + 1, picks, rows);
+            tree_rows(ui, child, &key, depth + 1, (picks, searching), rows);
         }
     }
 }
 
+/// Shows a button to show or hide what is below a row, whose state is under `id`.
+fn toggle_ui(ui: &mut Ui, id: egui::Id, default_open: bool) {
+    let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
+        ui.ctx(),
+        id,
+        default_open,
+    );
+    state.show_toggle_button(ui, egui::collapsing_header::paint_default_icon);
+    state.store(ui.ctx());
+}
+
+/// What a view showing an array as a whole does with it, see [`Selectable::Array`].
+const WHOLE_ARRAY_HINT: &str = "Plotted as a whole over the indices of its elements";
+
+/// Shows `row`, indented by its depth.
+fn row_ui(ui: &mut Ui, row: &Row<'_, '_>, selection: &mut Selection<'_>) {
+    let (label, key) = (row.label, row.key.as_str());
+    ui.horizontal(|ui| {
+        let indent = ui.spacing().indent;
+        ui.add_space(row.depth as f32 * indent);
+        let toggle = match &row.kind {
+            RowKind::Branch { id, .. } => Some((*id, true)),
+            RowKind::Trace { elements, .. } => elements.map(|id| (id, false)),
+            _ => None,
+        };
+        match toggle {
+            Some((id, default_open)) => toggle_ui(ui, id, default_open),
+            // lined up with the checkboxes of the branches next to it
+            None => ui.add_space(indent),
+        }
+        let picks = selection.picks;
+        match &row.kind {
+            RowKind::Branch { node, .. } => {
+                let icon = node.is_record().then_some(BRACKETS_CURLY);
+                if picks.view_type.shows_one_trace() {
+                    // a branch cannot be selected as one trace
+                    match icon {
+                        Some(icon) => ui.label(format!("{label} {icon}")),
+                        None => ui.label(label),
+                    };
+                } else {
+                    let paths = node.paths(picks);
+                    show_checkbox(ui, label, icon, &paths, key, true, selection);
+                }
+            }
+            RowKind::Trace { trace, .. } => {
+                let trace = *trace;
+                let mut hover = format!("{}\n{}", trace.path, trace.samples.type_label());
+                let paths = match picks.view_type.selectable(trace) {
+                    _ if picks.records => {
+                        hover.push_str("\nTables of records show records");
+                        vec![]
+                    }
+                    Selectable::No(reason) => {
+                        hover.push_str(&format!("\n{reason}"));
+                        vec![]
+                    }
+                    Selectable::Array { elements: false } => {
+                        hover.push_str(&format!("\n{WHOLE_ARRAY_HINT}"));
+                        vec![trace.path.to_owned()]
+                    }
+                    _ => trace_paths(trace, picks.view_type),
+                };
+                let icon = Some(type_icon(trace.samples));
+                show_checkbox(ui, label, icon, &paths, key, false, selection)
+                    .on_hover_text(&hover)
+                    .on_disabled_hover_text(hover);
+            }
+            RowKind::Whole(trace) => {
+                let paths = [trace.path.to_owned()];
+                show_checkbox(ui, label, None, &paths, key, false, selection)
+                    .on_hover_text(format!("{}\n{WHOLE_ARRAY_HINT}", trace.path));
+            }
+            RowKind::Element { path, label_start } => {
+                let paths = std::slice::from_ref(path);
+                show_checkbox(
+                    ui,
+                    &path[*label_start..],
+                    None,
+                    paths,
+                    key,
+                    false,
+                    selection,
+                )
+                .on_hover_text(path);
+            }
+            RowKind::Record(path) => {
+                let paths = [(*path).to_owned()];
+                show_checkbox(
+                    ui,
+                    label,
+                    Some(BRACKETS_CURLY),
+                    &paths,
+                    key,
+                    false,
+                    selection,
+                )
+                .on_hover_text(format!("{path}\nRecord"));
+            }
+            RowKind::Action { path, unannounced } => {
+                let paths = Vec::from_iter(action_path(path, picks.view_type));
+                let mut hover = format!("{path}\nAction");
+                if *unannounced {
+                    hover.push_str(", not announced by any outpost");
+                }
+                if paths.is_empty() {
+                    hover.push_str("\nOnly actions views show actions");
+                }
+                show_checkbox(ui, label, Some(ACTION_ICON), &paths, key, false, selection)
+                    .on_hover_text(&hover)
+                    .on_disabled_hover_text(hover);
+            }
+        }
+    });
+}
+
 /// Whether `path` contains each word of `search`, ignoring case.
 fn matches(path: &str, search: &str) -> bool {
+    if search.trim().is_empty() {
+        return true;
+    }
     let path = path.to_lowercase();
     search
         .to_lowercase()
@@ -567,7 +646,7 @@ pub fn search_ui(ui: &mut Ui, search: &mut String, compatible_only: &mut bool, f
 }
 
 /// Shows the traces and the announced actions of `model` whose path matches `search`
-/// as a tree with checkboxes for what is picked for a view, disabled if there is no
+/// in a scroll area as a tree with checkboxes for what is picked for a view, disabled if there is no
 /// selection to edit. If `compatible_only`, only what the view can show is in the tree,
 /// or all without a view.
 pub fn show(
@@ -634,8 +713,19 @@ pub fn show(
         picks: view.picks,
         searching,
     };
+    let mut rows = vec![];
+    tree_rows(ui, &tree, "", 0, (selection.picks, searching), &mut rows);
+    // only the rows in sight are laid out, also of a tree of thousands of traces
+    let row_height = ui.spacing().interact_size.y;
     ui.add_enabled_ui(enabled, |ui| {
-        show_trace_tree(ui, &tree, "", &mut selection);
+        egui::ScrollArea::vertical()
+            .id_salt("traces")
+            .auto_shrink([false, false])
+            .show_rows(ui, row_height, rows.len(), |ui, shown| {
+                for row in &rows[shown] {
+                    row_ui(ui, row, &mut selection);
+                }
+            });
     });
 }
 
@@ -862,6 +952,49 @@ mod tests {
 
     /// A harness showing the tree of the trace "motor/rpm" and the action
     /// "motor/speed" for a view of `view_type`, with the paths selected for it.
+    /// Measures how long showing the tree of 2000 traces in 20 branches takes per
+    /// frame.
+    #[test]
+    #[ignore = "a benchmark, run with `cargo test --release -p blip tree_frame -- --ignored --nocapture`"]
+    fn tree_frame_time() {
+        let mut model = Model::default();
+        for branch in 0..20 {
+            for leaf in 0..100 {
+                model.traces.append(&proto::Value {
+                    timestamp: 0,
+                    path: format!("node{branch}/sensor{leaf}"),
+                    value: proto::Data::Float(1.0),
+                });
+            }
+        }
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(300.0, 800.0))
+            .build_ui_state(
+                move |ui, paths: &mut BTreeSet<String>| {
+                    let start = std::time::Instant::now();
+                    show(ui, &model, "", true, Some(selection(paths, ViewType::Plot)));
+                    ui.data_mut(|data| {
+                        *data.get_temp_mut_or_default::<f64>(egui::Id::new("spent")) +=
+                            start.elapsed().as_secs_f64();
+                    });
+                },
+                BTreeSet::new(),
+            );
+        harness.run();
+        harness
+            .ctx
+            .data_mut(|data| data.insert_temp(egui::Id::new("spent"), 0.0f64));
+        let frames = 50;
+        for _ in 0..frames {
+            harness.step();
+        }
+        let spent: f64 = harness
+            .ctx
+            .data(|data| data.get_temp(egui::Id::new("spent")))
+            .unwrap();
+        println!("{:.3} ms per frame", spent / f64::from(frames) * 1.0e3);
+    }
+
     fn tree_harness(
         view_type: ViewType,
     ) -> egui_kittest::Harness<'static, (String, BTreeSet<String>)> {
