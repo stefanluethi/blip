@@ -69,7 +69,9 @@ Message flow
   each client.
 * Each client has its own bounded queue (10 000 messages) and a sender task, so
   a slow blip neither holds up the protocol nor the other blips; when its queue
-  is full, messages for it are dropped and counted in the log.
+  is full, messages for it are dropped and counted in the log. The sender sends
+  what is queued together, as a CBOR sequence in frames of up to 64 KiB, so a
+  busy target does not cost a frame per message.
 * A connecting client is checked against the path, gets the cached actions
   first, then everything broadcast from then on; then
   ``on_client_connected`` is called.

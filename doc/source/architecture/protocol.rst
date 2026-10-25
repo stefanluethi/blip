@@ -105,7 +105,8 @@ Text frames received by blip are logged but otherwise ignored.
    frame cannot be read to its end, the messages before are kept. A frame to
    the target carries exactly one request.
 
-   The outpost sends one message per frame. Targets behind its TCP/UDP
+   The outpost sends the messages queued for a blip together, up to 64 KiB
+   in a frame, a larger message in a frame of its own. Targets behind its TCP/UDP
    passthrough may send CBOR sequences: each UDP datagram holds complete
    messages, while over TCP the outpost reassembles messages split across
    reads.

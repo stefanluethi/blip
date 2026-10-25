@@ -37,10 +37,13 @@ of values.
   with a fixed shape. Integers are stored as ``i64``, as ``u64`` once one is
   above ``i64::MAX``, and the column switches to ``f64`` with the first float.
   A sample of an incompatible kind is dropped with a warning, once per trace.
-* **Records** are not stored as such: a record value is split into its
-  fields, each appended to its own trace (``fields_start`` marks where the
-  field names begin in the path). Nested records nest the paths. The tree, the
-  timeline and record tables put the fields back together where needed.
+* **Records** are split into their fields, each a trace of its own
+  (``fields_start`` marks where the field names begin in the path). The
+  traces of a path share its timestamps, so the fields of a record stay
+  together, and a field missing from a value is null. Nested records nest the
+  paths. A value sent to the path of a field is dropped. The tree and record
+  tables put the fields back together where needed, the timeline counts a
+  record once.
 * **Arrays** are stored row-major in one column per trace, with their shape.
   Views pick single elements or the whole array.
 * **Order.** Samples are kept sorted by timestamp; a sample older than the
@@ -62,8 +65,8 @@ of values.
 Logs
 ----
 
-Log records are kept in arrival order with their timestamp, level, component
-and message. A record with the timestamp 0 gets the newest time of the data
+Log records are kept, all of them, in the order of their timestamps with their
+level, component and message. A record with the timestamp 0 gets the newest time of the data
 received so far (or the wall clock if there is none), so it lines up with the
 samples of its target. Levels above 4 count as errors, and a record without a
 component shows the component ``target``.
@@ -75,7 +78,9 @@ Timestamps are nanoseconds in the time domain of the target: UTC or uptime.
 blip guesses which from the value (before 2001 means uptime) and shows the axes
 accordingly. All views share one **time range** -- a window length and an end
 that is either the newest data (live) or a fixed time (paused, or moving at the
-pace of the timestamps while playing) -- and one **time cursor**.
+pace of the timestamps while playing) -- and one **time cursor**. They count
+the time from the first timestamp received, so nanoseconds stay exact also at
+Unix times.
 
 .. figure:: /diagrams/time-states.svg
    :target: ../_images/time-states.svg

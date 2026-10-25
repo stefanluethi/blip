@@ -39,10 +39,10 @@ Structure
        Splits frames into messages and passes them on with the name of their
        connection; sends requests.
    * - ``app/model``
-     - What was received: ``traces`` (with ``numbers``, the columns that keep
-       integers exact), ``logs``, ``actions`` (the announced actions and the
-       ``Invoker``) and ``recording`` (the received messages, and reading and
-       writing recording files).
+     - What was received: ``traces`` (with ``numbers``, the columns of numbers),
+       ``logs``, ``actions`` (the announced actions and the ``Invoker``) and
+       ``recording`` (the received messages, and reading and writing recording
+       files); ``cbor`` and ``decode`` read the messages.
    * - ``app/time.rs``, ``app/time/timeline.rs``
      - The ``TimeRange`` shared by all views, its controls and the timeline
        with the activity bars.
@@ -61,8 +61,12 @@ Structure
      - The notices in the bottom right, and the colours, fonts and shared
        widgets of the look.
 
-The ``proto`` crate holds the wire types; blip decodes them with
-``serde_cbor_2``.
+The ``proto`` crate holds the wire types. Values and log records, which arrive
+all the time, are read by blip's own CBOR reader (``model/cbor.rs`` and
+``model/decode.rs``) in one pass: it borrows the strings of the frame and
+flattens a value into its leaves, the fields of records and their arrays of
+numbers, into a buffer kept for the next value. The other messages are decoded
+with ``serde_cbor_2``.
 
 The frame
 ---------
@@ -93,18 +97,35 @@ draws as often as data arrives, not more.
   wheel zooms the plot or timeline under the pointer without the rest of a
   notch scrolling what the pointer moves on to.
 
+What a frame costs follows what is shown, not how much data there is:
+
+* Ingesting a value costs about the same however many arrived before: the
+  table of its path is found by its path, the samples are appended to columns.
+* A plot reads the lowest and highest value of blocks of 256 samples and picks
+  about two points per pixel of its width.
+* Views find the sample at a time by a binary search of integer timestamps.
+* The traces tree lays out only the rows in sight, the log view only the rows
+  in sight and filters only the records that arrived since the last frame.
+* The timeline counts what arrived at most ten times a second, a heatmap
+  uploads its image only when it changes.
+
 The model
 ---------
 
 ``Model`` owns everything received since the data was last cleared:
 
-* ``Traces``: a map from path to ``Trace``, sorted so the fields of a record
-  follow each other. A trace has ascending ``timestamps`` and ``Samples``:
-  ``Numbers`` (a column of ``i64``, ``u64`` or ``f64`` values or bools, with
-  nulls), ``Strings``, or ``Arrays`` with a shape and their elements row-major
-  in one column. ``Traces::series`` gives views the numbers of a trace or of an
-  array element as a ``Series`` with plotting helpers.
-* ``Logs``: the log records in arrival order.
+* ``Traces``: a table for each path values are sent to, with a column per leaf
+  of its values, its traces, sorted by path so the fields of a record follow
+  each other. The columns of a table share its ascending timestamps, so the
+  fields of a record are kept together; a field missing from a value is null.
+  A column holds ``Samples``: ``Numbers``, ``Strings`` (each different text
+  kept once), or ``Arrays`` with a shape and their elements in rows of a
+  ``Numbers``. ``Numbers`` keeps one ``f64`` per value for plotting, nulls as a
+  NaN of their own, and integers exactly beside them only once one does not
+  fit a float. It keeps the lowest and highest value of each block of 256
+  rows. ``Traces::series`` gives views the numbers of a trace or of an array
+  element as a ``Series``, whose ``extent`` reads the blocks.
+* ``Logs``: all log records in the order of their times.
 * ``Actions``: the latest list of actions of each source.
 * ``Recording``: the received messages as one byte buffer, with the source
   names written in between where the source changes -- the body of a
@@ -131,9 +152,15 @@ reaches the newest data it goes live. Views call ``pan_zoom``, ``set_cursor``
 and ``go_to``, which pause where the user moved away from live. Only the
 window length is persisted.
 
+Its times are seconds as floats, counted from the **origin**, the first
+timestamp the model received, so they keep nanoseconds also at Unix times.
+Views turn them into integer nanoseconds with ``TimeRange::timestamp`` to look
+up samples, and the time axes write the times from those nanoseconds.
+
 The timeline counts what arrived in bins of a round duration with
-``Model::activity`` -- records counted once, by their field with the most
-values -- and recounts only when the bins or the ``samples_version`` change.
+``Model::activity`` -- a record once, as the values of its table -- and counts
+again when the bins change, or the samples changed and a tenth of a second
+passed.
 
 Layout and views
 ----------------
@@ -147,27 +174,38 @@ under the pointer.
 
 A ``View`` has a name, a ``ViewKind`` with the state of its type, the number
 ``Formats`` of its traces and the ``wildcards`` (branch keys checked in the
-tree). Each kind implements ``Viewable``:
+tree). The state of each type implements ``Viewable``, how it is shown, and
+``ViewInfo``, what it is:
 
 .. code-block:: rust
 
    pub trait Viewable {
        fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>);
        fn properties_ui(&mut self, ui: &mut egui::Ui, context: &PropertiesContext<'_>) {}
+       /// The paths it shows of the traces tree, and whether as records.
+       fn selection(&mut self) -> Option<(&mut BTreeSet<String>, bool)> { None }
+   }
+
+   pub trait ViewInfo {
+       const NAME: &'static str;
+       const ICON: &'static str;
+       // HAS_SELECTION, WRITES_VALUES, SHOWS_ONE_TRACE and SHOWS_ACTIONS
+       fn selectable(trace: Trace<'_>) -> Selectable;
+       fn shows_apart(trace: Trace<'_>) -> bool { false }
    }
 
 ``ViewContext`` gives a view the model, the time range (mutable, to pan and
 set the cursor), the invoker (to queue invocations) and its formats.
-``ViewType::selectable`` decides per trace what a view type can show -- the
-trace, its elements, the whole array, or nothing with a reason -- which the
-traces tree uses to enable checkboxes and to filter.
+``selectable`` decides per trace what a view type can show -- the trace, its
+elements, the whole array, or nothing with a reason -- which the traces tree
+uses to enable checkboxes and to filter.
 
-To add a view type: add the struct and its ``Viewable`` implementation in
-``app/view``, a variant to ``ViewKind`` and ``ViewType`` (name, icon,
-``selectable``), and its arms in ``View::new``, ``View::view_type`` and
-``View::selection_mut``. Its settings
-are saved with the layout through serde; give new fields defaults
-(``#[serde(default)]``) so older layouts still load.
+To add a view type: add its struct with ``Default``, ``Viewable`` and
+``ViewInfo`` in a file in ``app/view``, and a line to the list in ``views!`` in
+``app/view/mod.rs``, which makes ``ViewKind``, ``ViewType`` and their
+dispatch. The name of the line is saved in layouts. Its settings are saved
+with the layout through serde; give new fields defaults (``#[serde(default)]``)
+so older layouts still load.
 
 The saved layout
 ~~~~~~~~~~~~~~~~
