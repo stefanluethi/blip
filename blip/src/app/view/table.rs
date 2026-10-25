@@ -198,11 +198,11 @@ impl Table {
     }
 
     /// The rows of the shown traces of `traces` as listed in the properties, without
-    /// those without a sample at `t` seconds unless empty traces are shown.
+    /// those without a sample at `t` nanoseconds unless empty traces are shown.
     fn table_rows<'a>(
         &self,
         traces: impl Iterator<Item = Trace<'a>>,
-        t: Option<f64>,
+        t: Option<u64>,
     ) -> Vec<Row<'a>> {
         let selected: Vec<Trace<'_>> = traces
             .filter(|trace| self.traces.contains(trace.path))
@@ -281,8 +281,9 @@ impl Table {
         self.layout = layout;
     }
 
-    /// Shows a row per shown record with the value of each shown field at `t` seconds.
-    fn show_records(&self, ui: &mut egui::Ui, model: &Model, formats: &Formats, t: Option<f64>) {
+    /// Shows a row per shown record with the value of each shown field at `t` in
+    /// nanoseconds.
+    fn show_records(&self, ui: &mut egui::Ui, model: &Model, formats: &Formats, t: Option<u64>) {
         let records = records(model, &self.traces);
         let columns: Vec<&str> = self
             .columns(&records)
@@ -454,7 +455,7 @@ impl Table {
         }
     }
 
-    fn show_table(&mut self, ui: &mut egui::Ui, model: &Model, formats: &Formats, t: Option<f64>) {
+    fn show_table(&mut self, ui: &mut egui::Ui, model: &Model, formats: &Formats, t: Option<u64>) {
         let table_rows = self.table_rows(model.traces.iter(), t);
         // the `index`th sample of `trace` in its format and with its unit
         let write = |trace: Trace<'_>, index: usize, max_len: usize, digits: Option<usize>| {
@@ -535,7 +536,9 @@ impl Viewable for Table {
             });
             return;
         }
-        let (model, formats, t) = (context.model, context.formats, context.time.cursor());
+        let time = &context.time;
+        let t = time.cursor().map(|t| time.timestamp(t));
+        let (model, formats) = (context.model, context.formats);
         // the table changes the look of the ui
         ui.scope(|ui| match self.layout {
             TableLayout::Traces => self.show_table(ui, model, formats, t),
@@ -730,10 +733,16 @@ mod tests {
                 .map(|row| row.label.to_owned())
                 .collect::<Vec<_>>()
         };
-        assert_eq!(labels(&table, Some(2.0)), ["left/speed", "right/speed"]);
+        assert_eq!(
+            labels(&table, Some(2_000_000_000)),
+            ["left/speed", "right/speed"]
+        );
         table.rows = TableRows::Names;
-        assert_eq!(labels(&table, Some(2.0)), ["left/speed", "right/speed"]);
+        assert_eq!(
+            labels(&table, Some(2_000_000_000)),
+            ["left/speed", "right/speed"]
+        );
         table.show_empty = false;
-        assert_eq!(labels(&table, Some(2.0)), ["speed"]);
+        assert_eq!(labels(&table, Some(2_000_000_000)), ["speed"]);
     }
 }

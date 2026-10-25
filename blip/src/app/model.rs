@@ -41,6 +41,8 @@ pub struct Model {
     samples_version: Version,
     /// The value being applied, kept to apply the next one without allocating.
     flat: decode::Flat,
+    /// The timestamp of the first value or log record, from which times count.
+    origin: Option<u64>,
 }
 
 /// The latest frame of `source` with its actions or the unit of a path.
@@ -119,6 +121,7 @@ impl Model {
         }
         match message {
             Ok(decode::Message::Value { timestamp, path }) => {
+                self.origin.get_or_insert(timestamp);
                 let generation = self.traces.generation();
                 self.traces.insert(path, timestamp, &self.flat, frame);
                 if self.traces.generation() != generation {
@@ -136,6 +139,7 @@ impl Model {
                 // the time domain of the device
                 let now = self.time_span().map(|(_, newest)| newest);
                 let entry = LogEntry::new(timestamp, level, component, message, now);
+                self.origin.get_or_insert(entry.time);
                 self.logs.push(entry);
                 self.samples_version = Version::default();
             }
@@ -157,6 +161,12 @@ impl Model {
             Err(error) => log::warn!("error parsing message: {error}"),
         }
         None
+    }
+
+    /// The timestamp of the first value or log record in nanoseconds, from which the
+    /// times of the views count, `None` before there is one.
+    pub fn origin(&self) -> Option<u64> {
+        self.origin
     }
 
     /// Changes whenever a trace or an announcement of actions arrives.

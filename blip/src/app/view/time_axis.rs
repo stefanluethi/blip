@@ -1,7 +1,7 @@
 //! Plots with the shared time range on the x axis, and finding samples by time.
 
 use crate::app::theme;
-use crate::app::time::{self, TimeBase, TimeRange, timestamp_to_seconds};
+use crate::app::time::{self, TimeBase, TimeRange, timestamp_at};
 use std::cmp::min;
 use std::ops::Range;
 
@@ -11,8 +11,8 @@ const DRAG_LOCK_DISTANCE: f32 = 6.0;
 /// The x axis of a time plot: x is the time in seconds since `origin`.
 #[derive(Clone, Copy)]
 pub struct TimeAxis {
-    /// Time of the first collected data in seconds.
-    pub origin: f64,
+    /// The timestamp in nanoseconds the times count from, see [`TimeRange::origin`].
+    pub origin: u64,
     pub base: TimeBase,
     /// The shown window `[start, end]` in seconds, or `None` if there is no data yet.
     pub range: Option<(f64, f64)>,
@@ -25,6 +25,17 @@ impl TimeAxis {
             base: time.base(),
             range: time.range(),
         }
+    }
+
+    /// The timestamp in nanoseconds at the x coordinate `x`.
+    pub fn timestamp(&self, x: f64) -> u64 {
+        timestamp_at(self.origin, x)
+    }
+
+    /// The shown window in nanoseconds.
+    pub fn timestamps(&self) -> Option<(u64, u64)> {
+        self.range
+            .map(|(start, end)| (self.timestamp(start), self.timestamp(end)))
     }
 }
 
@@ -56,7 +67,7 @@ pub fn plot<'a>(id: egui::Id, time: &TimeRange, visuals: &egui::Visuals) -> egui
         .allow_double_click_reset(false)
         .x_axis_formatter(move |mark, _range| {
             let decimals = (-mark.step_size.log10().floor()).max(0.0) as usize;
-            base.format(mark.value + origin, decimals)
+            base.format(timestamp_at(origin, mark.value), decimals)
         })
 }
 
@@ -106,7 +117,6 @@ pub fn show<'a>(
     build: impl FnOnce(&mut egui_plot::PlotUi<'a>, TimeAxis) + 'a,
 ) -> TimePlotResponse {
     let axis = TimeAxis::of(time);
-    let origin = axis.origin;
     let cursor_id = id.with("cursor");
     let cursor_grabbed = time::cursor_grabbed(ui, cursor_id);
     let drag_y = pan_zoom_y && drags_y(ui, id);
@@ -117,7 +127,7 @@ pub fn show<'a>(
     let plot = plot.allow_zoom([true, zoom_y]);
     let response = plot.show(ui, move |plot_ui| {
         if let Some((start, end)) = axis.range {
-            plot_ui.set_plot_bounds_x(start - origin..=end - origin);
+            plot_ui.set_plot_bounds_x(start..=end);
         }
         build(plot_ui, axis);
         plot_ui
@@ -132,10 +142,9 @@ pub fn show<'a>(
     if let Some((start, end)) = axis.range {
         let bounds = transform.bounds();
         let tolerance = (end - start) * 1.0e-6;
-        if (bounds.min()[0] - (start - origin)).abs() > tolerance
-            || (bounds.max()[0] - (end - origin)).abs() > tolerance
+        if (bounds.min()[0] - start).abs() > tolerance || (bounds.max()[0] - end).abs() > tolerance
         {
-            time.pan_zoom(bounds.min()[0] + origin, bounds.max()[0] + origin);
+            time.pan_zoom(bounds.min()[0], bounds.max()[0]);
             ui.ctx().request_repaint();
         }
     }
@@ -145,19 +154,17 @@ pub fn show<'a>(
         .flatten();
     if let Some(pos) = set_at {
         let cursor = time.cursor();
-        time.set_cursor(transform.value_from_position(pos).x + origin);
+        time.set_cursor(transform.value_from_position(pos).x);
         if time.cursor() != cursor {
             // the views shown before this one show it in the next frame
             ui.ctx().request_repaint();
         }
     }
-    let cursor_x = time
-        .cursor()
-        .map(|t| transform.position_from_point_x(t - origin));
+    let cursor_x = time.cursor().map(|t| transform.position_from_point_x(t));
     time::show_cursor(ui, cursor_id, *transform.frame(), cursor_x, cursor_grabbed);
 
     TimePlotResponse {
-        hovered: response.inner.map(|point| point.x + origin),
+        hovered: response.inner.map(|point| point.x),
         hovered_y: response.inner.map(|point| point.y),
         bounds: *transform.bounds(),
         response: response.response,
@@ -165,41 +172,39 @@ pub fn show<'a>(
     }
 }
 
-/// Index of the timestamp closest to `t` seconds.
-pub fn closest_index(timestamps: &[u64], t: f64) -> Option<usize> {
+/// Index of the timestamp closest to `t`, all in nanoseconds.
+pub fn closest_index(timestamps: &[u64], t: u64) -> Option<usize> {
     // timestamps are ascending
-    let next = timestamps.partition_point(|&timestamp| timestamp_to_seconds(timestamp) < t);
+    let next = timestamps.partition_point(|&timestamp| timestamp < t);
     let candidates = [next.checked_sub(1), Some(next)];
     candidates
         .into_iter()
         .flatten()
         .filter(|&index| index < timestamps.len())
-        .min_by(|&a, &b| {
-            let distance = |index: usize| (timestamp_to_seconds(timestamps[index]) - t).abs();
-            distance(a).total_cmp(&distance(b))
-        })
+        .min_by_key(|&index| timestamps[index].abs_diff(t))
 }
 
-/// Index of the newest timestamp at or before `t` seconds, i.e. of the sample that is
-/// current at `t`.
-pub fn index_at(timestamps: &[u64], t: f64) -> Option<usize> {
+/// Index of the newest timestamp at or before `t`, i.e. of the sample that is current
+/// at `t`, all in nanoseconds.
+pub fn index_at(timestamps: &[u64], t: u64) -> Option<usize> {
     // timestamps are ascending
     timestamps
-        .partition_point(|&timestamp| timestamp_to_seconds(timestamp) <= t)
+        .partition_point(|&timestamp| timestamp <= t)
         .checked_sub(1)
 }
 
-/// Indices of the timestamps within `[start, end]` seconds.
-pub fn within(timestamps: &[u64], (start, end): (f64, f64)) -> Range<usize> {
+/// Indices of the timestamps within `[start, end]`, all in nanoseconds.
+pub fn within(timestamps: &[u64], (start, end): (u64, u64)) -> Range<usize> {
     // timestamps are ascending
-    let first = timestamps.partition_point(|&timestamp| timestamp_to_seconds(timestamp) < start);
-    let last = timestamps.partition_point(|&timestamp| timestamp_to_seconds(timestamp) <= end);
+    let first = timestamps.partition_point(|&timestamp| timestamp < start);
+    let last = timestamps.partition_point(|&timestamp| timestamp <= end);
     first..last.max(first)
 }
 
-/// Indices of the timestamps within `range_x` seconds, plus one neighbour on each side
-/// so the line continues to the plot edges. All indices if `range_x` is `None`.
-pub fn visible_range(timestamps: &[u64], range_x: Option<(f64, f64)>) -> Range<usize> {
+/// Indices of the timestamps within `range_x`, plus one neighbour on each side so the
+/// line continues to the plot edges, all in nanoseconds. All indices if `range_x` is
+/// `None`.
+pub fn visible_range(timestamps: &[u64], range_x: Option<(u64, u64)>) -> Range<usize> {
     let Some(range_x) = range_x else {
         return 0..timestamps.len();
     };
@@ -313,27 +318,31 @@ mod tests {
     #[test]
     fn closest_index_picks_the_closest_timestamp() {
         let timestamps: Vec<u64> = (0..10).map(|i| i * 1_000_000).collect(); // 1 ms apart
-        assert_eq!(closest_index(&timestamps, 0.0024), Some(2));
-        assert_eq!(closest_index(&timestamps, 0.0026), Some(3));
-        assert_eq!(closest_index(&timestamps, 1.0), Some(9));
-        assert!(closest_index(&[], 1.0).is_none());
+        assert_eq!(closest_index(&timestamps, 2_400_000), Some(2));
+        assert_eq!(closest_index(&timestamps, 2_600_000), Some(3));
+        assert_eq!(closest_index(&timestamps, 1_000_000_000), Some(9));
+        assert!(closest_index(&[], 1).is_none());
     }
 
     #[test]
     fn index_at_picks_the_current_sample() {
         let timestamps: Vec<u64> = (0..10).map(|i| i * 1_000_000).collect(); // 1 ms apart
-        assert_eq!(index_at(&timestamps, 0.0026), Some(2));
-        assert_eq!(index_at(&timestamps, 0.003), Some(3));
-        assert_eq!(index_at(&timestamps, 1.0), Some(9));
-        assert!(index_at(&timestamps, -1.0).is_none());
+        assert_eq!(index_at(&timestamps, 2_600_000), Some(2));
+        assert_eq!(index_at(&timestamps, 3_000_000), Some(3));
+        assert_eq!(index_at(&timestamps, 1_000_000_000), Some(9));
+        assert!(index_at(&timestamps[1..], 0).is_none());
     }
 
     #[test]
     fn visible_range_includes_neighbours() {
         let timestamps: Vec<u64> = (0..100).map(|i| i * 1_000_000).collect(); // 1 ms apart
-        assert_eq!(visible_range(&timestamps, Some((0.0105, 0.0205))), 10..22);
+        let ms = |ms: f64| (ms * 1.0e6) as u64;
+        assert_eq!(
+            visible_range(&timestamps, Some((ms(10.5), ms(20.5)))),
+            10..22
+        );
         assert_eq!(visible_range(&timestamps, None), 0..100);
-        assert!(visible_range(&timestamps, Some((1.0, 2.0))).len() <= 1);
-        assert!(within(&timestamps, (1.0, 2.0)).is_empty());
+        assert!(visible_range(&timestamps, Some((ms(1000.0), ms(2000.0)))).len() <= 1);
+        assert!(within(&timestamps, (ms(1000.0), ms(2000.0))).is_empty());
     }
 }

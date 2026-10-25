@@ -9,7 +9,7 @@ use crate::app::model::Model;
 use crate::app::model::numbers::{DisplayFormat, NumberKind, SHOWN_DIGITS};
 use crate::app::model::traces::{Samples, Series, Strings};
 use crate::app::theme;
-use crate::app::time::{TimeBase, timestamp_to_seconds};
+use crate::app::time::{seconds_since, timestamp_at};
 use egui::Color32;
 use std::collections::BTreeSet;
 
@@ -126,19 +126,27 @@ struct Run {
 
 /// The runs of equal values of `samples` within `range` seconds, leaving gaps at nulls.
 /// Each sample holds its value until the next one, the last one until `latest` seconds.
-/// Neighbouring runs shorter than `min_width` seconds are merged into one.
-fn runs(samples: StateSamples<'_>, range: (f64, f64), latest: f64, min_width: f64) -> Vec<Run> {
+/// Neighbouring runs shorter than `min_width` seconds are merged into one. The times
+/// count from `origin` in nanoseconds.
+fn runs(
+    samples: StateSamples<'_>,
+    (from, to): (f64, f64),
+    latest: f64,
+    min_width: f64,
+    origin: u64,
+) -> Vec<Run> {
     let timestamps = samples.timestamps();
+    let range = (timestamp_at(origin, from), timestamp_at(origin, to));
     let indices = visible_range(timestamps, Some(range));
     let mut runs: Vec<Run> = vec![];
     for index in indices {
         if samples.is_null(index) {
             continue;
         }
-        let start = timestamp_to_seconds(timestamps[index]);
+        let start = seconds_since(origin, timestamps[index]);
         let end = timestamps
             .get(index + 1)
-            .map_or(latest.max(start), |&next| timestamp_to_seconds(next));
+            .map_or(latest.max(start), |&next| seconds_since(origin, next));
         match runs.last_mut() {
             Some(run)
                 if run.end == start
@@ -211,15 +219,16 @@ impl States {
         y: f64,
         range: (f64, f64),
         latest: f64,
-        origin: f64,
+        origin: u64,
         plot_ui: &mut egui_plot::PlotUi<'_>,
     ) {
         let visuals = plot_ui.ctx().global_style().visuals.clone();
         let seconds_per_point = plot_ui.transform().dvalue_dpos()[0].abs();
         let (top, bottom) = (y + self.band_height / 2.0, y - self.band_height / 2.0);
-        for run in runs(samples, range, latest, MIN_RUN_WIDTH * seconds_per_point) {
-            let start = run.start.max(range.0) - origin;
-            let end = run.end.min(range.1) - origin;
+        let min_width = MIN_RUN_WIDTH * seconds_per_point;
+        for run in runs(samples, range, latest, min_width, origin) {
+            let start = run.start.max(range.0);
+            let end = run.end.min(range.1);
             let label = run.index.map(|index| samples.label(index));
             let fill = match &label {
                 Some(label) => state_color(label, samples.is_bool(), &visuals),
@@ -254,9 +263,10 @@ impl States {
         model: &Model,
         formats: &Formats,
         t: f64,
-        base: TimeBase,
+        axis: time_axis::TimeAxis,
     ) {
-        ui.label(base.format(t, 3));
+        let t = axis.timestamp(t);
+        ui.label(axis.base.format(t, 3));
         let names = short_names(self.traces.iter().map(String::as_str));
         egui::Grid::new("states_tooltip")
             .num_columns(2)
@@ -326,10 +336,10 @@ impl States {
         if let Some(t) = response.hovered
             && !self.traces.is_empty()
         {
-            let base = response.axis.base;
+            let axis = response.axis;
             response
                 .response
-                .on_hover_ui_at_pointer(|ui| self.tooltip_ui(ui, model, formats, t, base));
+                .on_hover_ui_at_pointer(|ui| self.tooltip_ui(ui, model, formats, t, axis));
         }
     }
 }
@@ -394,7 +404,7 @@ mod tests {
             ("s", Data::from("run")),
         ]);
         let samples = StateSamples::of(&model, "s", DisplayFormat::Default).unwrap();
-        let runs = runs(samples, (0.0, 10.0), 6.0, 0.0);
+        let runs = runs(samples, (0.0, 10.0), 6.0, 0.0, 0);
         assert_eq!(
             spans(&runs),
             [
@@ -416,7 +426,7 @@ mod tests {
         ]);
         let samples = StateSamples::of(&model, "b", DisplayFormat::Default).unwrap();
         assert!(samples.is_bool());
-        let runs = runs(samples, (1.5, 2.5), 3.0, 0.0);
+        let runs = runs(samples, (1.5, 2.5), 3.0, 0.0, 0);
         // the run starts at the sample before the range, which is enough to draw it
         assert_eq!(spans(&runs), [(1.0, 2.0, Some(1)), (2.0, 3.0, Some(2))]);
     }

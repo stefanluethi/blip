@@ -1,4 +1,8 @@
 //! The time range shared by all views, and the controls to play and pause it.
+//!
+//! Timestamps are integer nanoseconds as the targets send them. The time range and the
+//! views count in seconds as floats, but from the origin of the data, the first
+//! timestamp received, so that they keep nanoseconds also for Unix times.
 
 use crate::app::model::Model;
 use crate::app::theme;
@@ -18,18 +22,19 @@ const CURSOR_GRAB_DISTANCE: f32 = 5.0;
 /// Width and height of the handle on top of the cursor line in points.
 const CURSOR_HANDLE_SIZE: egui::Vec2 = egui::vec2(10.0, 6.0);
 
-pub fn timestamp_to_seconds(timestamp: u64) -> f64 {
-    timestamp as f64 / NANOS_PER_SECOND
+/// Seconds from `origin` to `timestamp`, both in nanoseconds, negative before it.
+pub fn seconds_since(origin: u64, timestamp: u64) -> f64 {
+    timestamp.wrapping_sub(origin) as i64 as f64 / NANOS_PER_SECOND
 }
 
-/// Converts `seconds` to a timestamp in nanoseconds, 0 before the epoch.
-pub fn seconds_to_timestamp(seconds: f64) -> u64 {
-    (seconds * NANOS_PER_SECOND).round().max(0.0) as u64
+/// The timestamp `seconds` after `origin` in nanoseconds, 0 before the epoch.
+pub fn timestamp_at(origin: u64, seconds: f64) -> u64 {
+    origin.saturating_add_signed((seconds * NANOS_PER_SECOND).round() as i64)
 }
 
-/// Timestamps after this many seconds are taken as Unix time (after 2001-09-09), earlier
-/// ones as time since the device booted.
-const UNIX_TIME_THRESHOLD: f64 = 1.0e9;
+/// Timestamps from this one on are taken as Unix time (after 2001-09-09), earlier ones
+/// as time since the device booted.
+const UNIX_TIME_THRESHOLD: u64 = 1_000_000_000 * 1_000_000_000;
 
 /// What the timestamps count from, guessed from their value.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -41,20 +46,22 @@ pub enum TimeBase {
 }
 
 impl TimeBase {
-    pub fn guess(seconds: f64) -> Self {
-        if seconds >= UNIX_TIME_THRESHOLD {
+    /// The time base of `timestamp` in nanoseconds.
+    pub fn guess(timestamp: u64) -> Self {
+        if timestamp >= UNIX_TIME_THRESHOLD {
             TimeBase::Unix
         } else {
             TimeBase::SinceBoot
         }
     }
 
-    /// How many seconds the times that [`Self::format`] shows for `seconds` are
+    /// How many seconds the times that [`Self::format`] shows for `timestamp` are
     /// ahead of them: the offset of the local time zone from UTC for Unix time, else 0.
-    pub fn display_offset(self, seconds: f64) -> f64 {
+    pub fn display_offset(self, timestamp: u64) -> f64 {
         match self {
             TimeBase::Unix => {
-                chrono::DateTime::from_timestamp(seconds as i64, 0).map_or(0.0, |utc| {
+                let seconds = (timestamp / 1_000_000_000) as i64;
+                chrono::DateTime::from_timestamp(seconds, 0).map_or(0.0, |utc| {
                     let local: chrono::DateTime<chrono::Local> = utc.into();
                     f64::from(local.offset().local_minus_utc())
                 })
@@ -63,20 +70,16 @@ impl TimeBase {
         }
     }
 
-    /// Formats `seconds` as local time of day, or as hours, minutes and seconds since
-    /// boot, with `decimals` decimals of the seconds.
-    pub fn format(self, seconds: f64, decimals: usize) -> String {
+    /// Formats `timestamp` in nanoseconds as local time of day, or as hours, minutes
+    /// and seconds since boot, with `decimals` decimals of the seconds, rounded.
+    pub fn format(self, timestamp: u64, decimals: usize) -> String {
         let decimals = decimals.min(9);
-        let scale = 10f64.powi(decimals as i32);
-        // round the fraction alone, the whole seconds can be too large for exact decimals
-        let mut whole = seconds.floor();
-        let mut digits = ((seconds - whole) * scale).round();
-        if digits >= scale {
-            whole += 1.0;
-            digits = 0.0;
-        }
+        let unit = 10u64.pow(9 - decimals as u32);
+        let rounded = timestamp.saturating_add(unit / 2) / unit * unit;
+        let whole = rounded / 1_000_000_000;
         let fraction = if decimals > 0 {
-            format!(".{:0decimals$}", digits as u64)
+            let digits = rounded % 1_000_000_000 / unit;
+            format!(".{digits:0decimals$}")
         } else {
             String::new()
         };
@@ -86,10 +89,9 @@ impl TimeBase {
                     let local: chrono::DateTime<chrono::Local> = utc.into();
                     format!("{}{fraction}", local.format("%H:%M:%S"))
                 }
-                None => format!("{seconds}"),
+                None => format!("{timestamp}"),
             },
             TimeBase::SinceBoot => {
-                let whole = whole.max(0.0) as u64;
                 format!(
                     "{}:{:02}:{:02}{fraction}",
                     whole / 3600,
@@ -103,11 +105,14 @@ impl TimeBase {
 
 /// A window of `window` seconds shown by all views. It either follows the newest data
 /// (live), or ends at a time that stays while paused and moves on at the pace of the
-/// timestamps while playing.
+/// timestamps while playing. Its times are seconds since [`Self::origin`].
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct TimeRange {
     window: f64,
+    /// The first timestamp received in nanoseconds, from which the times count.
+    #[serde(skip)]
+    origin: u64,
     /// End of the window in seconds, or `None` to follow the newest data.
     #[serde(skip)]
     end: Option<f64>,
@@ -132,6 +137,7 @@ impl Default for TimeRange {
     fn default() -> Self {
         Self {
             window: 20.0,
+            origin: 0,
             end: None,
             playing: true,
             played_at: None,
@@ -151,9 +157,16 @@ impl TimeRange {
     }
 
     fn update_span(&mut self, model: &Model) {
+        let origin = model.origin().unwrap_or(0);
+        if origin != self.origin {
+            // other data, e.g. of an opened recording
+            self.origin = origin;
+            self.go_live();
+            self.overview = None;
+        }
         self.span = model
             .time_span()
-            .map(|(first, latest)| (timestamp_to_seconds(first), timestamp_to_seconds(latest)));
+            .map(|(first, latest)| (self.seconds(first), self.seconds(latest)));
         if self.span.is_none() {
             self.go_live();
             self.overview = None;
@@ -250,14 +263,24 @@ impl TimeRange {
         self.span.map(|(_, latest)| latest)
     }
 
-    /// Time of the first collected data in seconds, used as origin of the time axes.
-    pub fn origin(&self) -> f64 {
-        self.span.map_or(0.0, |(first, _)| first)
+    /// The first timestamp received in nanoseconds, from which the times count.
+    pub fn origin(&self) -> u64 {
+        self.origin
+    }
+
+    /// The time in seconds of `timestamp` in nanoseconds.
+    pub fn seconds(&self, timestamp: u64) -> f64 {
+        seconds_since(self.origin, timestamp)
+    }
+
+    /// The timestamp in nanoseconds of the time `seconds`.
+    pub fn timestamp(&self, seconds: f64) -> u64 {
+        timestamp_at(self.origin, seconds)
     }
 
     /// What the timestamps of the collected data count from.
     pub fn base(&self) -> TimeBase {
-        TimeBase::guess(self.span.map_or(0.0, |(_, latest)| latest))
+        TimeBase::guess(self.timestamp(self.latest().unwrap_or(0.0)))
     }
 
     pub fn is_live(&self) -> bool {
@@ -597,23 +620,38 @@ mod tests {
 
     #[test]
     fn time_base_is_guessed_from_the_value() {
-        assert_eq!(TimeBase::guess(1.7e9), TimeBase::Unix);
-        assert_eq!(TimeBase::guess(3600.0), TimeBase::SinceBoot);
+        assert_eq!(TimeBase::guess(1_700_000_000_000_000_000), TimeBase::Unix);
+        assert_eq!(TimeBase::guess(3_600_000_000_000), TimeBase::SinceBoot);
     }
 
     #[test]
     fn time_since_boot_is_formatted_as_hours_minutes_seconds() {
-        assert_eq!(TimeBase::SinceBoot.format(3723.4567, 3), "1:02:03.457");
-        assert_eq!(TimeBase::SinceBoot.format(12.3, 1), "0:00:12.3");
-        assert_eq!(TimeBase::SinceBoot.format(59.96, 1), "0:01:00.0");
-        assert_eq!(TimeBase::SinceBoot.format(90000.0, 1), "25:00:00.0");
+        let format =
+            |seconds: f64, decimals| TimeBase::SinceBoot.format(timestamp_at(0, seconds), decimals);
+        assert_eq!(format(3723.4567, 3), "1:02:03.457");
+        assert_eq!(format(12.3, 1), "0:00:12.3");
+        assert_eq!(format(59.96, 1), "0:01:00.0");
+        assert_eq!(format(90000.0, 1), "25:00:00.0");
+        assert_eq!(TimeBase::SinceBoot.format(1, 9), "0:00:00.000000001");
     }
 
     #[test]
     fn unix_time_is_formatted_as_time_of_day() {
-        let text = TimeBase::Unix.format(1.7e9 + 0.25, 2);
+        let text = TimeBase::Unix.format(1_700_000_000_250_000_000, 2);
         assert_eq!(text.len(), "hh:mm:ss.25".len());
         assert!(text.ends_with(":20.25"));
+        // nanoseconds are kept also at Unix times
+        let text = TimeBase::Unix.format(1_700_000_000_000_000_001, 9);
+        assert!(text.ends_with(":20.000000001"), "{text}");
+    }
+
+    #[test]
+    fn times_count_from_the_origin_in_nanoseconds() {
+        let origin = 1_700_000_000_000_000_000;
+        assert_eq!(seconds_since(origin, origin + 1_500), 1.5e-6);
+        assert_eq!(seconds_since(origin, origin - 2_000_000_000), -2.0);
+        assert_eq!(timestamp_at(origin, 1.5e-6), origin + 1_500);
+        assert_eq!(timestamp_at(5, -1.0), 0);
     }
 
     #[test]

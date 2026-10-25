@@ -1,9 +1,9 @@
-use super::time_axis::{self, closest_index, visible_range};
+use super::time_axis::{self, TimeAxis, closest_index, visible_range};
 use super::{Formats, PropertiesContext, ViewContext, Viewable, short_names, with_unit};
 use crate::app::model::numbers::{NumberKind, SHOWN_DIGITS};
 use crate::app::model::{Model, traces::Series};
 use crate::app::theme;
-use crate::app::time::{TimeBase, timestamp_to_seconds};
+use crate::app::time::seconds_since;
 use std::collections::{BTreeMap, BTreeSet};
 
 const Y_MARGIN_FRACTION: f64 = 0.05;
@@ -309,8 +309,8 @@ impl Plot {
         Self::default()
     }
 
-    /// Draws the values of `series` within `range_x` seconds, shifted by `origin`
-    /// seconds, as set in the properties of the plot, with its line in `style`.
+    /// Draws the values of `series` within the window of `axis`, as set in the
+    /// properties of the plot, with its line in `style`.
     #[allow(clippy::too_many_arguments)]
     fn plot_series(
         &self,
@@ -318,13 +318,12 @@ impl Plot {
         series: Series<'_>,
         style: LineStyle,
         color: egui::Color32,
-        range_x: Option<(f64, f64)>,
-        origin: f64,
+        axis: TimeAxis,
         plot_ui: &mut egui_plot::PlotUi<'_>,
     ) {
         let width = plot_ui.transform().frame().width();
-        let visible = series.slice(visible_range(series.timestamps, range_x));
-        let mut points = downsample(visible, origin, width.max(1.0) as usize);
+        let visible = series.slice(visible_range(series.timestamps, axis.timestamps()));
+        let mut points = downsample(visible, axis.origin, width.max(1.0) as usize);
         if self.connect_nulls {
             points.retain(|point| !point[1].is_nan());
         }
@@ -406,9 +405,10 @@ impl Plot {
         model: &Model,
         formats: &Formats,
         t: f64,
-        base: TimeBase,
+        axis: TimeAxis,
     ) {
-        ui.label(base.format(t, 3));
+        let t = axis.timestamp(t);
+        ui.label(axis.base.format(t, 3));
         egui::Grid::new("plot_tooltip")
             .num_columns(2)
             .show(ui, |ui| {
@@ -463,7 +463,7 @@ impl Plot {
                 };
                 let color = theme::trace_color(&visuals, index);
                 let style = this.line_styles.of(path);
-                this.plot_series(name, series, style, color, axis.range, axis.origin, plot_ui);
+                this.plot_series(name, series, style, color, axis, plot_ui);
             }
         });
 
@@ -491,10 +491,10 @@ impl Plot {
         if let Some(t) = response.hovered
             && !self.traces.is_empty()
         {
-            let base = response.axis.base;
+            let axis = response.axis;
             response
                 .response
-                .on_hover_ui_at_pointer(|ui| self.tooltip_ui(ui, model, formats, t, base));
+                .on_hover_ui_at_pointer(|ui| self.tooltip_ui(ui, model, formats, t, axis));
         }
     }
 }
@@ -511,9 +511,10 @@ fn y_bounds(min: Option<f64>, max: Option<f64>, fitted: Option<(f64, f64)>) -> O
 /// samples, the lowest and the highest, so peaks stay visible, and a point with a NaN y
 /// before them for a gap. The extremes come from the blocks of the series, so the cost
 /// follows the buckets and not the samples. The x coordinates are the sample times in
-/// seconds minus `origin`. A series of few samples per bucket is kept as it is.
-fn downsample(series: Series<'_>, origin: f64, buckets: usize) -> Vec<[f64; 2]> {
-    let x = |index: usize| timestamp_to_seconds(series.timestamps[index]) - origin;
+/// seconds since `origin` in nanoseconds. A series of few samples per bucket is kept
+/// as it is.
+fn downsample(series: Series<'_>, origin: u64, buckets: usize) -> Vec<[f64; 2]> {
+    let x = |index: usize| seconds_since(origin, series.timestamps[index]);
     let len = series.len();
     let buckets = buckets.max(1);
     if len <= buckets * 4 {
@@ -652,13 +653,13 @@ mod tests {
     #[test]
     fn downsample_keeps_small_series() {
         let traces = traces(10, false);
-        assert_eq!(downsample(traces.series("a").unwrap(), 0.0, 100).len(), 10);
+        assert_eq!(downsample(traces.series("a").unwrap(), 0, 100).len(), 10);
     }
 
     #[test]
     fn downsample_limits_points_and_keeps_extremes() {
         let traces = traces(1_000_003, false);
-        let points = downsample(traces.series("a").unwrap(), 0.0, 300);
+        let points = downsample(traces.series("a").unwrap(), 0, 300);
         assert!(points.len() <= 1_000);
         assert!(points.windows(2).all(|p| p[0][0] <= p[1][0]));
         assert!(points.iter().any(|p| p[1] == 0.0));
@@ -668,7 +669,7 @@ mod tests {
     #[test]
     fn downsample_keeps_gaps() {
         let traces = traces(1_000_003, true);
-        let points = downsample(traces.series("a").unwrap(), 0.0, 300);
+        let points = downsample(traces.series("a").unwrap(), 0, 300);
         assert!(points.len() <= 1_000);
         assert!(points.windows(2).all(|p| p[0][0] <= p[1][0]));
         assert!(points.iter().any(|p| p[1].is_nan()));

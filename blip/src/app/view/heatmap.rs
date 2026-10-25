@@ -10,6 +10,7 @@ use crate::app::model::numbers::{DisplayFormat, Number, format_significant};
 use crate::app::model::traces::{Samples, Trace};
 use crate::app::theme;
 use crate::app::time::TimeRange;
+use crate::app::time::timestamp_at;
 use egui::Color32;
 use std::collections::BTreeSet;
 
@@ -118,7 +119,7 @@ impl ValueText<'_> {
 /// The elements of the sample of an array trace at the cursor time.
 pub(super) fn sample_at_cursor(trace: Trace<'_>, time: &TimeRange) -> Vec<Number> {
     time.cursor()
-        .and_then(|t| index_at(trace.timestamps, t))
+        .and_then(|t| index_at(trace.timestamps, time.timestamp(t)))
         .and_then(|index| trace.samples.array_sample(index))
         .map(|elements| elements.iter().collect())
         .unwrap_or_default()
@@ -127,13 +128,14 @@ pub(super) fn sample_at_cursor(trace: Trace<'_>, time: &TimeRange) -> Vec<Number
 /// The values of an array trace of `len` elements within `(start, end)` seconds as a
 /// grid of `columns` columns, each with the sample current at its middle, and a row per
 /// element with element 0 in the bottom row. NaN where there is no sample, also after
-/// `latest` seconds.
+/// `latest` seconds. The times count from `origin` in nanoseconds.
 fn over_time(
     trace: Trace<'_>,
     len: usize,
     (start, end): (f64, f64),
     latest: f64,
     columns: usize,
+    origin: u64,
 ) -> Vec<f64> {
     let mut grid = vec![f64::NAN; len * columns];
     let column_width = (end - start) / columns as f64;
@@ -142,8 +144,8 @@ fn over_time(
         if t > latest {
             break;
         }
-        let Some(elements) =
-            index_at(trace.timestamps, t).and_then(|index| trace.samples.array_sample(index))
+        let Some(elements) = index_at(trace.timestamps, timestamp_at(origin, t))
+            .and_then(|index| trace.samples.array_sample(index))
         else {
             continue;
         };
@@ -242,7 +244,9 @@ impl Heatmap {
     ) {
         let columns = (size.x.max(1.0) as usize).min(MAX_COLUMNS);
         let values = match (time.range(), time.latest()) {
-            (Some(range), Some(latest)) => over_time(trace, len, range, latest, columns),
+            (Some(range), Some(latest)) => {
+                over_time(trace, len, range, latest, columns, time.origin())
+            }
             _ => vec![],
         };
         self.fitted_range = value_range(&values);
@@ -259,10 +263,8 @@ impl Heatmap {
         let response = time_axis::show(id, plot, ui, time, false, move |plot_ui, axis| {
             plot_ui.set_plot_bounds_y(-0.5..=len as f64 - 0.5);
             if let (Some(texture), Some((start, end))) = (texture, axis.range) {
-                let center = egui_plot::PlotPoint::new(
-                    (start + end) / 2.0 - axis.origin,
-                    (len as f64 - 1.0) / 2.0,
-                );
+                let center =
+                    egui_plot::PlotPoint::new((start + end) / 2.0, (len as f64 - 1.0) / 2.0);
                 let size = egui::vec2((end - start) as f32, len as f32);
                 plot_ui
                     .image(egui_plot::PlotImage::new("", texture, center, size).allow_hover(false));
@@ -271,6 +273,7 @@ impl Heatmap {
 
         if let (Some(t), Some(y)) = (response.hovered, response.hovered_y) {
             let element = y.round();
+            let t = response.axis.timestamp(t);
             let value = index_at(trace.timestamps, t)
                 .and_then(|index| trace.samples.array_sample(index))
                 .filter(|_| element >= 0.0)
@@ -567,7 +570,7 @@ mod tests {
         }
         let trace = traces.get("a").unwrap();
         // columns centered at 0.5, 1.5, ... 5.5 seconds
-        let grid = over_time(trace, 2, (0.0, 6.0), 4.0, 6);
+        let grid = over_time(trace, 2, (0.0, 6.0), 4.0, 6, 0);
         let bits = |values: &[f64]| {
             values
                 .iter()

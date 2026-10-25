@@ -4,8 +4,8 @@
 //! all data, or a part of it when zoomed in with the mouse wheel.
 
 use super::{
-    MAX_WINDOW, MIN_WINDOW, TimeBase, TimeRange, ZOOM_SPEED, paint_cursor, seconds_to_timestamp,
-    timeline_wheel, timestamp_to_seconds,
+    MAX_WINDOW, MIN_WINDOW, TimeBase, TimeRange, ZOOM_SPEED, paint_cursor, seconds_since,
+    timeline_wheel, timestamp_at,
 };
 use crate::app::model::logs::LogLevel;
 use crate::app::model::{Activity, Model, Version};
@@ -46,6 +46,8 @@ const PILL_OFFSET: f32 = 14.0;
 /// Showing all data, the timeline ends at the next of this many round steps of the
 /// data's duration, so that it rescales now and then instead of all the time.
 const FIT_STEPS: f64 = 8.0;
+/// Seconds the timeline waits at least before it counts the arriving data again.
+const RECOUNT_INTERVAL: f64 = 0.1;
 
 /// What the timeline shows when zoomed in.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -214,7 +216,7 @@ pub(super) fn show(time: &mut TimeRange, ui: &mut egui::Ui, model: &Model) {
         time.set_cursor(scale.t_at(pos.x));
     }
 
-    let bins = Bins::cached(ui, id, model, time.span, &scale);
+    let bins = Bins::cached(ui, id, model, time, &scale);
     let hovered_logs = track
         .hover_pos()
         .filter(|pos| pos.y >= track_rect.bottom() - track_rect.height() * LOG_BAR_SHARE)
@@ -223,7 +225,7 @@ pub(super) fn show(time: &mut TimeRange, ui: &mut egui::Ui, model: &Model) {
     track_input(time, ui, &track, &scale, log_time);
 
     // a new recording starts with its own scale, not animated from the last one's
-    let scale_id = id.with(seconds_to_timestamp(time.origin()));
+    let scale_id = id.with(time.origin());
     bins.paint(ui, scale_id, &painter, track_rect);
     if let Some(range) = time.range() {
         let thumb = thumb_rect(range, track_rect, &scale);
@@ -265,7 +267,15 @@ pub(super) fn show(time: &mut TimeRange, ui: &mut egui::Ui, model: &Model) {
         }
     }
     let base = time.base();
-    paint_ruler(ui, &painter, ruler_rect, label_rect.right(), &scale, base);
+    paint_ruler(
+        ui,
+        &painter,
+        ruler_rect,
+        label_rect.right(),
+        &scale,
+        base,
+        time.origin(),
+    );
     let cursor_x = time.cursor().map(|t| scale.x_at(t));
     let hover_x = ruler.hover_pos().map(|pos| pos.x);
     if let Some(x) = hover_x.filter(|_| !scrubbing) {
@@ -280,7 +290,7 @@ pub(super) fn show(time: &mut TimeRange, ui: &mut egui::Ui, model: &Model) {
     let pill_x = if scrubbing { cursor_x } else { hover_x };
     if let Some(x) = pill_x {
         let decimals = decimals_for(scale.resolution());
-        let text = base.format(scale.t_at(x), decimals);
+        let text = base.format(time.timestamp(scale.t_at(x)), decimals);
         paint_pill(ui, &painter, ruler_rect, x, &text);
     }
     if ruler.hovered() || scrubbing {
@@ -410,6 +420,8 @@ struct HoveredLogs {
 /// What arrived in round steps of time over the shown part of the timeline.
 struct Bins {
     scale: Scale,
+    /// The timestamp in nanoseconds the times count from.
+    origin: u64,
     /// Start of the first bin in nanoseconds, a multiple of the step.
     start: u64,
     /// Duration of a bin in nanoseconds.
@@ -419,42 +431,49 @@ struct Bins {
     span: (f64, f64),
 }
 
-/// The activity counted for a timeline under its id, kept until the bins or the
-/// samples change.
+/// The activity counted for a timeline under its id, kept until the bins change, or
+/// the samples change and [`RECOUNT_INTERVAL`] passed.
 #[derive(Clone)]
 struct CachedActivity {
-    key: (u64, u64, usize, Version),
+    bins: (u64, u64, usize),
+    version: Version,
+    /// When it was counted, in seconds as egui counts them.
+    at: f64,
     activity: Vec<Activity>,
 }
 
 impl Bins {
-    /// The bins over `scale` of the data of `model`, whose first and newest data
-    /// are at the times `span` in seconds.
+    /// The bins over `scale` of the data of `model` shown in `time`.
     #[cfg(test)]
-    fn of(model: &Model, span: Option<(f64, f64)>, scale: &Scale) -> Self {
-        Self::counted(span, scale, |start, step, count| {
+    fn of(model: &Model, time: &TimeRange, scale: &Scale) -> Self {
+        Self::counted(time, scale, |start, step, count| {
             model.activity(start, step, count)
         })
     }
 
     /// Like [`Self::of`], but counted anew under `id` only once the bins or the data
     /// changed.
-    fn cached(
-        ui: &egui::Ui,
-        id: egui::Id,
-        model: &Model,
-        span: Option<(f64, f64)>,
-        scale: &Scale,
-    ) -> Self {
-        Self::counted(span, scale, |start, step, count| {
-            let key = (start, step, count, model.samples_version());
+    fn cached(ui: &egui::Ui, id: egui::Id, model: &Model, time: &TimeRange, scale: &Scale) -> Self {
+        Self::counted(time, scale, |start, step, count| {
+            let (bins, version) = ((start, step, count), model.samples_version());
+            let now = ui.input(|input| input.time);
             let cache_id = id.with("activity");
             match ui.data(|data| data.get_temp::<CachedActivity>(cache_id)) {
-                Some(cached) if cached.key == key => cached.activity,
+                Some(cached)
+                    if cached.bins == bins
+                        && (cached.version == version || now - cached.at < RECOUNT_INTERVAL) =>
+                {
+                    if cached.version != version {
+                        ui.ctx().request_repaint_after_secs(RECOUNT_INTERVAL as f32);
+                    }
+                    cached.activity
+                }
                 _ => {
                     let activity = model.activity(start, step, count);
                     let cached = CachedActivity {
-                        key,
+                        bins,
+                        version,
+                        at: now,
                         activity: activity.clone(),
                     };
                     ui.data_mut(|data| data.insert_temp(cache_id, cached));
@@ -467,21 +486,22 @@ impl Bins {
     /// The bins over `scale` in round steps of time, with what `activity` counts in
     /// the bins from a start, of a step, in nanoseconds, and of a count.
     fn counted(
-        span: Option<(f64, f64)>,
+        time: &TimeRange,
         scale: &Scale,
         activity: impl FnOnce(u64, u64, usize) -> Vec<Activity>,
     ) -> Self {
         let min_step = scale.resolution() * f64::from(MIN_BIN_WIDTH);
-        let step = seconds_to_timestamp(label_step(min_step)).max(1);
-        let start = seconds_to_timestamp(scale.start) / step * step;
-        let end = seconds_to_timestamp(scale.end());
+        let step = timestamp_at(0, label_step(min_step)).max(1);
+        let start = time.timestamp(scale.start) / step * step;
+        let end = time.timestamp(scale.end());
         let count = ((end.saturating_sub(start)) / step + 1) as usize;
         Self {
             scale: *scale,
+            origin: time.origin(),
             start,
             step,
             activity: activity(start, step, count),
-            span: span.unwrap_or_default(),
+            span: time.span.unwrap_or_default(),
         }
     }
 
@@ -489,8 +509,8 @@ impl Bins {
     fn bin_times(&self, bin: usize) -> (f64, f64) {
         let start = self.start + self.step * bin as u64;
         (
-            timestamp_to_seconds(start),
-            timestamp_to_seconds(start + self.step),
+            seconds_since(self.origin, start),
+            seconds_since(self.origin, start + self.step),
         )
     }
 
@@ -545,14 +565,14 @@ impl Bins {
 
     /// The bin of the newest data, which is still filling.
     fn newest_bin(&self) -> Option<usize> {
-        let latest = seconds_to_timestamp(self.span.1);
+        let latest = timestamp_at(self.origin, self.span.1);
         let bin = (latest.checked_sub(self.start)? / self.step) as usize;
         (bin < self.activity.len()).then_some(bin)
     }
 
     /// The log records of the bin at `x`, if it has any.
     fn logs_at(&self, model: &Model, x: f32) -> Option<HoveredLogs> {
-        let t = seconds_to_timestamp(self.scale.t_at(x));
+        let t = timestamp_at(self.origin, self.scale.t_at(x));
         let bin = (t.checked_sub(self.start)? / self.step) as usize;
         if self.activity.get(bin)?.log_count() == 0 {
             return None;
@@ -570,7 +590,7 @@ impl Bins {
         })?;
         Some(HoveredLogs {
             entries: first..last,
-            most_severe: timestamp_to_seconds(entries[most_severe].time),
+            most_severe: seconds_since(self.origin, entries[most_severe].time),
         })
     }
 
@@ -638,7 +658,7 @@ impl Bins {
             .iter()
             .map(|activity| activity.values + activity.log_count())
             .collect();
-        let duration = timestamp_to_seconds(self.step) * counts.len() as f64;
+        let duration = seconds_since(0, self.step) * counts.len() as f64;
         let hatch = egui::Stroke::new(1.0, tokens.border_strong);
         for gap in gaps(&counts, duration) {
             let (start, _) = self.bin_times(first + gap.start);
@@ -741,7 +761,7 @@ fn decimals_for(resolution: f64) -> usize {
 }
 
 /// Paints the ticks and labels of the times on the ruler in `rect`, the labels left
-/// of `labels_end`.
+/// of `labels_end`, the times counting from `origin` in nanoseconds.
 fn paint_ruler(
     ui: &egui::Ui,
     painter: &egui::Painter,
@@ -749,12 +769,14 @@ fn paint_ruler(
     labels_end: f32,
     scale: &Scale,
     base: TimeBase,
+    origin: u64,
 ) {
     let tokens = theme::tokens(ui.visuals());
     let step = label_step(scale.resolution() * f64::from(LABEL_SPACING));
     let decimals = decimals_for(step);
     let font = egui::TextStyle::Body.resolve(ui.style());
-    let mut t = first_tick(scale.start, step, base.display_offset(scale.start));
+    let offset = base.display_offset(timestamp_at(origin, scale.start));
+    let mut t = first_tick(scale.start, step, offset, origin);
     while t <= scale.end() {
         let x = scale.x_at(t);
         painter.vline(
@@ -762,8 +784,8 @@ fn paint_ruler(
             rect.bottom() - TICK_HEIGHT..=rect.bottom(),
             egui::Stroke::new(1.0, tokens.border_strong),
         );
-        let galley =
-            painter.layout_no_wrap(base.format(t, decimals), font.clone(), tokens.text_faint);
+        let text = base.format(timestamp_at(origin, t), decimals);
+        let galley = painter.layout_no_wrap(text, font.clone(), tokens.text_faint);
         // right of the tick, if there is room
         let pos = egui::pos2(x + 3.0, rect.center().y - galley.size().y / 2.0 - 1.0);
         if pos.x + galley.size().x <= labels_end {
@@ -773,11 +795,13 @@ fn paint_ruler(
     }
 }
 
-/// The time of the first tick of the ruler at or after `start` seconds: a multiple of
-/// `step` seconds of the shown time, which is `offset` seconds ahead, e.g. a whole
-/// local hour.
-fn first_tick(start: f64, step: f64, offset: f64) -> f64 {
-    ((start + offset) / step).ceil() * step - offset
+/// The time of the first tick of the ruler at or after `start` seconds since `origin`
+/// in nanoseconds: a multiple of `step` seconds of the shown time, which is `offset`
+/// seconds ahead, e.g. a whole local hour.
+fn first_tick(start: f64, step: f64, offset: f64, origin: u64) -> f64 {
+    // how far the origin is past a multiple of the step, exactly
+    let phase = seconds_since(0, origin % timestamp_at(0, step).max(1));
+    ((start + phase + offset) / step).ceil() * step - phase - offset
 }
 
 /// Paints `text` in a small pill beside `x` on the ruler in `rect`, e.g. the time at
@@ -1033,10 +1057,14 @@ mod tests {
     #[test]
     fn ruler_ticks_are_round_in_the_shown_time() {
         // at whole hours since boot
-        assert_eq!(first_tick(100.0, 3600.0, 0.0), 3600.0);
+        assert_eq!(first_tick(100.0, 3600.0, 0.0, 0), 3600.0);
         // at whole local hours half an hour ahead of UTC
-        assert_eq!(first_tick(100.0, 3600.0, 1800.0), 1800.0);
-        assert_eq!(first_tick(1800.0, 3600.0, 1800.0), 1800.0);
+        assert_eq!(first_tick(100.0, 3600.0, 1800.0, 0), 1800.0);
+        assert_eq!(first_tick(1800.0, 3600.0, 1800.0, 0), 1800.0);
+        // counting from an origin 10 minutes and 1 ns past a whole hour
+        let origin = 1_700_002_800_000_000_000 + 600_000_000_001;
+        let tick = first_tick(100.0, 3600.0, 0.0, origin);
+        assert!((tick - (3000.0 - 1.0e-9)).abs() < 1.0e-6, "{tick}");
     }
 
     #[test]
@@ -1088,7 +1116,11 @@ mod tests {
             start: 0.0,
             duration: 11.0,
         };
-        let bins = Bins::of(&model, Some((0.0, 9.9)), &scale);
+        let time = |latest| TimeRange {
+            span: Some((0.0, latest)),
+            ..TimeRange::default()
+        };
+        let bins = Bins::of(&model, &time(9.9), &scale);
         assert_eq!(bins.step, 1_000_000_000);
         assert_eq!(bins.newest_bin(), Some(9));
         assert_eq!(bins.scale_max(), (10.0, 0));
@@ -1097,7 +1129,7 @@ mod tests {
         for thousandth in 0..30 {
             model.receive("", &value(10.0 + f64::from(thousandth) / 1000.0));
         }
-        let bins = Bins::of(&model, Some((0.0, 10.029)), &scale);
+        let bins = Bins::of(&model, &time(10.029), &scale);
         assert_eq!(bins.newest_bin(), Some(10));
         assert_eq!(bins.scale_max(), (10.0, 0));
         assert_eq!(bins.rate(10), 30.0);

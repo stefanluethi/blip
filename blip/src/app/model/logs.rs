@@ -1,4 +1,4 @@
-use crate::app::time::{TimeBase, timestamp_to_seconds};
+use crate::app::time::TimeBase;
 use std::collections::VecDeque;
 
 #[derive(
@@ -81,8 +81,7 @@ impl LogEntry {
                     .map_or(0, |nanos| nanos as u64)
             })
         };
-        let seconds = timestamp_to_seconds(time);
-        let timestamp = TimeBase::guess(seconds).format(seconds, 3);
+        let timestamp = TimeBase::guess(time).format(time, 3);
 
         let component = if component.is_empty() {
             "target"

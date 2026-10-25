@@ -395,8 +395,10 @@ impl Xy {
         {
             plot = plot.include_y(low).include_y(high);
         }
-        let range = time.range();
-        let cursor = time.cursor();
+        let range = time
+            .range()
+            .map(|(start, end)| (time.timestamp(start), time.timestamp(end)));
+        let cursor = time.cursor().map(|t| time.timestamp(t));
         let ring_color = ui.visuals().strong_text_color();
         let visuals = ui.visuals().clone();
         let response = plot.show(ui, |plot_ui| {

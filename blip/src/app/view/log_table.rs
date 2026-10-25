@@ -1,6 +1,6 @@
 use crate::app::model::logs::{LogEntry, LogLevel, Logs};
 use crate::app::theme;
-use crate::app::time::{TimeRange, timestamp_to_seconds};
+use crate::app::time::TimeRange;
 use crate::app::view::{ViewContext, Viewable};
 use egui_extras::Column;
 use egui_phosphor::regular;
@@ -144,10 +144,10 @@ impl LogTable {
                     .column(Column::remainder().at_least(150.0)); // Message
 
                 let range = time.range();
+                let timestamps =
+                    range.map(|(start, end)| (time.timestamp(start), time.timestamp(end)));
                 let in_range = |entry: &LogEntry| {
-                    range.is_none_or(|(start, end)| {
-                        (start..=end).contains(&timestamp_to_seconds(entry.time))
-                    })
+                    timestamps.is_none_or(|(start, end)| (start..=end).contains(&entry.time))
                 };
                 // the newest entry, also of the range while playing, is followed
                 // without an animation: one that starts again with each new entry
@@ -159,13 +159,13 @@ impl LogTable {
                             .animate_scrolling(false)
                             .scroll_to_row(filtered_entries.len() - 1, Some(egui::Align::Max));
                     }
-                } else if let Some((_, end)) = range
+                } else if let Some((_, end)) = timestamps
                     // while playing, the range moves each frame
                     && (following || !time.is_playing() && range != self.last_range)
                 {
                     // scroll to the newest entry in the moved range
                     let last_in_range = filtered_entries
-                        .partition_point(|entry| timestamp_to_seconds(entry.time) <= end)
+                        .partition_point(|entry| entry.time <= end)
                         .saturating_sub(1);
                     builder = builder
                         .animate_scrolling(!following)
