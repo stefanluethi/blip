@@ -138,8 +138,6 @@ impl LogTable {
     /// filters in the header of the table.
     pub fn ui(&mut self, ui: &mut egui::Ui, logs: &Logs, time: &TimeRange) {
         self.update_shown(logs);
-        let shown = std::mem::take(&mut self.shown);
-        let entry = |row: usize| &logs.entries[shown[row] as usize];
 
         let footer_height = 20.0;
         // the table shrinks to nothing before the footer is pushed out of a small view
@@ -177,17 +175,18 @@ impl LogTable {
                 // never catches up with it
                 let following = self.filter.auto_scroll && time.is_playing();
                 if time.is_live() {
-                    if following && !shown.is_empty() {
+                    if following && !self.shown.is_empty() {
                         builder = builder
                             .animate_scrolling(false)
-                            .scroll_to_row(shown.len() - 1, Some(egui::Align::Max));
+                            .scroll_to_row(self.shown.len() - 1, Some(egui::Align::Max));
                     }
                 } else if let Some((_, end)) = timestamps
                     // while playing, the range moves each frame
                     && (following || !time.is_playing() && range != self.last_range)
                 {
                     // scroll to the newest entry in the moved range
-                    let last_in_range = shown
+                    let last_in_range = self
+                        .shown
                         .partition_point(|&index| logs.entries[index as usize].time <= end)
                         .saturating_sub(1);
                     builder = builder
@@ -213,9 +212,10 @@ impl LogTable {
                     })
                     .body(|mut body| {
                         let lines = lines.in_body(body.ui_mut());
-                        body.rows(row_height, shown.len(), |mut row| {
+                        let shown_entries = &self.shown;
+                        body.rows(row_height, shown_entries.len(), |mut row| {
                             let index = row.index();
-                            let entry = entry(index);
+                            let entry = &logs.entries[shown_entries[index] as usize];
                             let shown = in_range(entry);
                             // the message stands out, the time and the component less,
                             // and all of an entry outside the time range stays faint
@@ -248,8 +248,7 @@ impl LogTable {
             },
         );
 
-        self.footer_ui(ui, shown.len(), logs.entries.len());
-        self.shown = shown;
+        self.footer_ui(ui, self.shown.len(), logs.entries.len());
     }
 
     /// The autoscroll button, how many entries are shown and a button to clear the
