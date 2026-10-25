@@ -1,12 +1,13 @@
+use crate::app::model::Version;
 use crate::app::model::logs::{LogEntry, LogLevel, Logs};
 use crate::app::theme;
-use crate::app::time::TimeRange;
+use crate::app::time::{TimeBase, TimeRange};
 use crate::app::view::{ViewContext, Viewable};
 use egui_extras::Column;
 use egui_phosphor::regular;
 use std::collections::BTreeSet;
 
-#[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
+#[derive(serde::Deserialize, serde::Serialize, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct LogFilter {
     /// The levels whose entries are hidden.
@@ -61,6 +62,13 @@ pub struct LogTable {
     /// The time range shown in the last frame, to scroll to it when it moves.
     #[serde(skip)]
     last_range: Option<(f64, f64)>,
+    /// The indices of the entries the filter shows, see [`LogTable::update_shown`].
+    #[serde(skip)]
+    shown: Vec<u32>,
+    /// What `shown` was made for: the filter, the order of the entries and how many
+    /// of them were filtered.
+    #[serde(skip)]
+    shown_for: Option<Box<(LogFilter, Version, usize)>>,
 }
 
 impl LogTable {
@@ -103,16 +111,35 @@ impl LogTable {
         }
     }
 
+    /// Filters the entries of `logs` that arrived since the last call, or all of them
+    /// again if the filter or the order of the entries changed.
+    fn update_shown(&mut self, logs: &Logs) {
+        self.update_regex_cache();
+        let filter = LogFilter {
+            auto_scroll: false,
+            ..self.filter.clone()
+        };
+        let from = match self.shown_for.take().map(|known| *known) {
+            Some((known, order, filtered)) if known == filter && order == logs.order() => filtered,
+            _ => {
+                self.shown.clear();
+                0
+            }
+        };
+        for (index, entry) in logs.entries.iter().enumerate().skip(from) {
+            if self.matches(entry) {
+                self.shown.push(index as u32);
+            }
+        }
+        self.shown_for = Some(Box::new((filter, logs.order(), logs.entries.len())));
+    }
+
     /// Shows the entries, the ones outside the shown time range greyed out, with the
     /// filters in the header of the table.
     pub fn ui(&mut self, ui: &mut egui::Ui, logs: &Logs, time: &TimeRange) {
-        self.update_regex_cache();
-
-        let filtered_entries: Vec<&LogEntry> = logs
-            .entries
-            .iter()
-            .filter(|entry| self.matches(entry))
-            .collect();
+        self.update_shown(logs);
+        let shown = std::mem::take(&mut self.shown);
+        let entry = |row: usize| &logs.entries[shown[row] as usize];
 
         let footer_height = 20.0;
         // the table shrinks to nothing before the footer is pushed out of a small view
@@ -150,18 +177,18 @@ impl LogTable {
                 // never catches up with it
                 let following = self.filter.auto_scroll && time.is_playing();
                 if time.is_live() {
-                    if following && !filtered_entries.is_empty() {
+                    if following && !shown.is_empty() {
                         builder = builder
                             .animate_scrolling(false)
-                            .scroll_to_row(filtered_entries.len() - 1, Some(egui::Align::Max));
+                            .scroll_to_row(shown.len() - 1, Some(egui::Align::Max));
                     }
                 } else if let Some((_, end)) = timestamps
                     // while playing, the range moves each frame
                     && (following || !time.is_playing() && range != self.last_range)
                 {
                     // scroll to the newest entry in the moved range
-                    let last_in_range = filtered_entries
-                        .partition_point(|entry| entry.time <= end)
+                    let last_in_range = shown
+                        .partition_point(|&index| logs.entries[index as usize].time <= end)
                         .saturating_sub(1);
                     builder = builder
                         .animate_scrolling(!following)
@@ -186,9 +213,9 @@ impl LogTable {
                     })
                     .body(|mut body| {
                         let lines = lines.in_body(body.ui_mut());
-                        body.rows(row_height, filtered_entries.len(), |mut row| {
+                        body.rows(row_height, shown.len(), |mut row| {
                             let index = row.index();
-                            let entry = filtered_entries[row.index()];
+                            let entry = entry(index);
                             let shown = in_range(entry);
                             // the message stands out, the time and the component less,
                             // and all of an entry outside the time range stays faint
@@ -204,7 +231,8 @@ impl LogTable {
                             };
                             row.col(|ui| {
                                 lines.above(ui, index);
-                                ui.label(text(&entry.timestamp, ui, Role::Time));
+                                let time = TimeBase::guess(entry.time).format(entry.time, 3);
+                                ui.label(text(&time, ui, Role::Time));
                             });
                             row.col(|ui| {
                                 level_badge(ui, entry.level, shown);
@@ -220,7 +248,8 @@ impl LogTable {
             },
         );
 
-        self.footer_ui(ui, filtered_entries.len(), logs.entries.len());
+        self.footer_ui(ui, shown.len(), logs.entries.len());
+        self.shown = shown;
     }
 
     /// The autoscroll button, how many entries are shown and a button to clear the
@@ -488,11 +517,41 @@ mod tests {
     fn create_entry(level: LogLevel, component: &str, message: &str) -> LogEntry {
         LogEntry {
             time: 0,
-            timestamp: "12:00:00.000".to_string(),
             component: component.to_string(),
             level,
             message: message.to_string(),
         }
+    }
+
+    #[test]
+    fn new_entries_are_filtered_and_all_again_when_the_filter_or_order_changes() {
+        let at = |time, level| LogEntry {
+            time,
+            ..create_entry(level, "core", "message")
+        };
+        let mut logs = Logs::default();
+        logs.push(at(1, LogLevel::Info));
+        logs.push(at(2, LogLevel::Warn));
+        let mut table = LogTable::default();
+        table.filter.hidden_levels.insert(LogLevel::Info);
+        table.update_shown(&logs);
+        assert_eq!(table.shown, [1]);
+
+        logs.push(at(3, LogLevel::Warn));
+        logs.push(at(4, LogLevel::Info));
+        table.update_shown(&logs);
+        assert_eq!(table.shown, [1, 2]);
+
+        table.filter.hidden_levels.clear();
+        table.update_shown(&logs);
+        assert_eq!(table.shown, [0, 1, 2, 3]);
+
+        // an entry before the others moves them on
+        table.filter.hidden_levels.insert(LogLevel::Info);
+        table.update_shown(&logs);
+        logs.push(at(0, LogLevel::Warn));
+        table.update_shown(&logs);
+        assert_eq!(table.shown, [0, 2, 3]);
     }
 
     #[test]

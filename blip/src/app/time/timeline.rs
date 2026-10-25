@@ -716,9 +716,9 @@ fn paint_hatching(painter: &egui::Painter, rect: egui::Rect, stroke: egui::Strok
 /// Lists the log records `entries` of `model` in a bin.
 fn log_tooltip_ui(ui: &mut egui::Ui, model: &Model, entries: Range<usize>) {
     let count = entries.len();
-    for entry in model.logs.entries.range(entries).take(TOOLTIP_ENTRIES) {
+    for entry in model.logs.entries[entries].iter().take(TOOLTIP_ENTRIES) {
         ui.horizontal(|ui| {
-            ui.weak(&entry.timestamp);
+            ui.weak(TimeBase::guess(entry.time).format(entry.time, 3));
             let level = egui::RichText::new(entry.level.as_str())
                 .color(theme::level_color(ui.visuals(), entry.level))
                 .monospace();

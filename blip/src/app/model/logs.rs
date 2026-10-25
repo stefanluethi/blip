@@ -1,5 +1,4 @@
-use crate::app::time::TimeBase;
-use std::collections::VecDeque;
+use super::Version;
 
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize, serde::Serialize,
@@ -45,9 +44,8 @@ impl LogLevel {
 
 #[derive(Clone, Debug)]
 pub struct LogEntry {
-    /// Nanoseconds since the Unix epoch.
+    /// Nanoseconds in the time domain of the target.
     pub time: u64,
-    pub timestamp: String,
     pub component: String,
     pub level: LogLevel,
     pub message: String,
@@ -81,7 +79,6 @@ impl LogEntry {
                     .map_or(0, |nanos| nanos as u64)
             })
         };
-        let timestamp = TimeBase::guess(time).format(time, 3);
 
         let component = if component.is_empty() {
             "target"
@@ -91,7 +88,6 @@ impl LogEntry {
 
         Self {
             time,
-            timestamp,
             component: component.to_owned(),
             level,
             message: message.to_owned(),
@@ -99,35 +95,35 @@ impl LogEntry {
     }
 }
 
+/// The log records received, all of them, in the order of their times.
+#[derive(Default)]
 pub struct Logs {
-    pub entries: VecDeque<LogEntry>,
-    pub max_entries: usize,
-}
-
-impl Default for Logs {
-    fn default() -> Self {
-        Self {
-            entries: VecDeque::new(),
-            max_entries: 5000,
-        }
-    }
+    pub entries: Vec<LogEntry>,
+    /// Changes when an entry is put before others rather than appended, so views that
+    /// keep what they made of the entries make it anew.
+    order: Version,
 }
 
 impl Logs {
     /// Adds `entry` in the order of the times, after the entries of the same time, e.g.
     /// also when another outpost sends it late.
     pub fn push(&mut self, entry: LogEntry) {
-        if self.entries.len() >= self.max_entries {
-            self.entries.pop_front();
-        }
         let at = self
             .entries
             .partition_point(|known| known.time <= entry.time);
+        if at < self.entries.len() {
+            self.order = Version::default();
+        }
         self.entries.insert(at, entry);
+    }
+
+    /// Changes when an entry is put before others rather than appended.
+    pub fn order(&self) -> Version {
+        self.order
     }
 
     /// Times of the first and the newest entry.
     pub fn time_span(&self) -> Option<(u64, u64)> {
-        Some((self.entries.front()?.time, self.entries.back()?.time))
+        Some((self.entries.first()?.time, self.entries.last()?.time))
     }
 }

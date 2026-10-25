@@ -217,7 +217,7 @@ impl Model {
         }
         let entries = &self.logs.entries;
         let first = entries.partition_point(|entry| entry.time < start);
-        for entry in entries.range(first..) {
+        for entry in &entries[first..] {
             let Some(activity) = usize::try_from((entry.time - start) / step)
                 .ok()
                 .and_then(|bin| activity.get_mut(bin))
