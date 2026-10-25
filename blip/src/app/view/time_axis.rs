@@ -5,6 +5,9 @@ use crate::app::time::{self, TimeBase, TimeRange, timestamp_to_seconds};
 use std::cmp::min;
 use std::ops::Range;
 
+/// How far in points a drag goes before it is locked to panning the time or the y axis.
+const DRAG_LOCK_DISTANCE: f32 = 6.0;
+
 /// The x axis of a time plot: x is the time in seconds since `origin`.
 #[derive(Clone, Copy)]
 pub struct TimeAxis {
@@ -30,6 +33,8 @@ pub struct TimePlotResponse {
     pub hovered: Option<f64>,
     /// The y coordinate hovered in this plot.
     pub hovered_y: Option<f64>,
+    /// The shown bounds after panning and zooming in this frame.
+    pub bounds: egui_plot::PlotBounds,
     pub response: egui::Response,
     pub axis: TimeAxis,
 }
@@ -55,23 +60,61 @@ pub fn plot<'a>(id: egui::Id, time: &TimeRange, visuals: &egui::Visuals) -> egui
         })
 }
 
+/// Whether the drag in progress pans the y axis of the plot under `id` instead of the
+/// time: whether it went more vertically than horizontally when it went far enough to
+/// tell. A drag pans the time until then.
+fn drags_y(ui: &egui::Ui, id: egui::Id) -> bool {
+    let lock_id = id.with("drag lock");
+    let (down, moved) = ui.input(|input| {
+        let pointer = &input.pointer;
+        let moved = pointer
+            .press_origin()
+            .zip(pointer.interact_pos())
+            .map(|(origin, pos)| pos - origin);
+        (pointer.primary_down(), moved)
+    });
+    if !down {
+        ui.data_mut(|data| data.remove::<bool>(lock_id));
+        return false;
+    }
+    if let Some(vertical) = ui.data(|data| data.get_temp(lock_id)) {
+        return vertical;
+    }
+    match moved {
+        Some(moved) if moved.length() > DRAG_LOCK_DISTANCE => {
+            let vertical = moved.y.abs() > moved.x.abs();
+            ui.data_mut(|data| data.insert_temp(lock_id, vertical));
+            vertical
+        }
+        _ => false,
+    }
+}
+
 /// Shows `plot` made with [`plot`] under `id` over the shared window of `time` with
 /// the contents added by `build`, and applies panning and zooming of the plot to
 /// `time`. Shows the cursor of `time` as a vertical line, which a click in the plot puts
 /// there and which can be dragged.
+///
+/// With `pan_zoom_y`, a vertical drag pans the y axis and the wheel with Alt zooms it,
+/// for `build` to keep in [`TimePlotResponse::bounds`].
 pub fn show<'a>(
     id: egui::Id,
     plot: egui_plot::Plot<'a>,
     ui: &mut egui::Ui,
     time: &mut TimeRange,
+    pan_zoom_y: bool,
     build: impl FnOnce(&mut egui_plot::PlotUi<'a>, TimeAxis) + 'a,
 ) -> TimePlotResponse {
     let axis = TimeAxis::of(time);
     let origin = axis.origin;
     let cursor_id = id.with("cursor");
     let cursor_grabbed = time::cursor_grabbed(ui, cursor_id);
+    let drag_y = pan_zoom_y && drags_y(ui, id);
     // dragging the cursor does not pan the plot
-    let plot = plot.allow_drag([!cursor_grabbed, false]);
+    let plot = plot.allow_drag([!cursor_grabbed && !drag_y, !cursor_grabbed && drag_y]);
+    // the wheel zooms the time, and with Alt the y axis only, see `zoom_with_wheel`
+    let zoom_y = pan_zoom_y && ui.input(|input| input.modifiers.alt);
+    let plot = plot.allow_zoom([true, zoom_y]);
     let response = plot.show(ui, move |plot_ui| {
         if let Some((start, end)) = axis.range {
             plot_ui.set_plot_bounds_x(start - origin..=end - origin);
@@ -116,6 +159,7 @@ pub fn show<'a>(
     TimePlotResponse {
         hovered: response.inner.map(|point| point.x + origin),
         hovered_y: response.inner.map(|point| point.y),
+        bounds: *transform.bounds(),
         response: response.response,
         axis,
     }
@@ -189,7 +233,7 @@ mod tests {
                 move |ui, time: &mut TimeRange| {
                     time.update(&model, ui.input(|input| input.time));
                     let id = ui.id().with("plot");
-                    show(id, plot(id, time, ui.visuals()), ui, time, |_, _| {});
+                    show(id, plot(id, time, ui.visuals()), ui, time, false, |_, _| {});
                 },
                 TimeRange::default(),
             )

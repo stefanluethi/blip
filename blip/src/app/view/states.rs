@@ -312,7 +312,7 @@ impl States {
             ]);
 
         let latest = time.latest();
-        let response = time_axis::show(id, plot, ui, time, |plot_ui, axis| {
+        let response = time_axis::show(id, plot, ui, time, false, |plot_ui, axis| {
             plot_ui.set_plot_bounds_y(-0.5..=rows.max(1) as f64 - 0.5);
             let (Some(range), Some(latest)) = (axis.range, latest) else {
                 return;

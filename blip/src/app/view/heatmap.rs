@@ -255,7 +255,7 @@ impl Heatmap {
             .y_axis_label("index")
             .y_grid_spacer(index_spacer)
             .y_axis_formatter(index_formatter(false));
-        let response = time_axis::show(id, plot, ui, time, move |plot_ui, axis| {
+        let response = time_axis::show(id, plot, ui, time, false, move |plot_ui, axis| {
             plot_ui.set_plot_bounds_y(-0.5..=len as f64 - 0.5);
             if let (Some(texture), Some((start, end))) = (texture, axis.range) {
                 let center = egui_plot::PlotPoint::new(

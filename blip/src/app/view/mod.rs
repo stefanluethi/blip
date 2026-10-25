@@ -209,7 +209,8 @@ pub fn zoom_on_wheel(response: &egui::Response) {
 /// Turns the vertical mouse wheel events of `raw_input` without modifiers into zooming,
 /// as with Ctrl, if a plot passed to [`zoom_on_wheel`] contained the pointer in the last
 /// pass. The plot then zooms along its zoomable axes, and the smoothed rest of the
-/// scroll stays a zoom instead of scrolling what the pointer moves on to.
+/// scroll stays a zoom instead of scrolling what the pointer moves on to. With Alt, the
+/// wheel zooms along the y axis only, as with Ctrl and Alt.
 pub fn zoom_with_wheel(ctx: &egui::Context, raw_input: &mut egui::RawInput) {
     let over_plot = ctx.data_mut(|data| data.remove_temp::<bool>(wheel_zoom_id()));
     if over_plot != Some(true) {
@@ -220,10 +221,10 @@ pub fn zoom_with_wheel(ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         if let egui::Event::MouseWheel {
             delta, modifiers, ..
         } = event
-            && modifiers.is_none()
+            && (modifiers.is_none() || *modifiers == egui::Modifiers::ALT)
             && delta.y.abs() >= delta.x.abs()
         {
-            *modifiers = zoom_modifier;
+            *modifiers |= zoom_modifier;
         }
     }
 }

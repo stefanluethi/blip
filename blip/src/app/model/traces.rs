@@ -302,6 +302,9 @@ pub struct Trace {
     pub fields_start: Option<usize>,
     /// Whether a dropped sample was reported, so it is only reported once.
     warned: bool,
+    /// The lowest and highest finite value of all samples, one pair per element of an
+    /// array trace, `None` where all were null so far.
+    ranges: Vec<Option<(f64, f64)>>,
 }
 
 impl Trace {
@@ -312,6 +315,7 @@ impl Trace {
             timestamps: vec![],
             samples: Samples::Empty,
             warned: false,
+            ranges: vec![],
         }
     }
 
@@ -322,6 +326,7 @@ impl Trace {
             self.samples = Samples::with_nulls(data, self.timestamps.len())?;
         }
         self.samples.push(data)?;
+        self.extend_ranges(self.timestamps.len());
         self.timestamps.push(timestamp);
         let at = self.timestamps.partition_point(|&t| t <= timestamp);
         if at < self.timestamps.len() {
@@ -329,6 +334,33 @@ impl Trace {
             self.samples.move_last_to(at);
         }
         Ok(())
+    }
+
+    /// Widens [`Trace::ranges`] to the values of the `index`th sample.
+    fn extend_ranges(&mut self, index: usize) {
+        fn widen(range: &mut Option<(f64, f64)>, number: Number) {
+            let value = number.as_f64();
+            if value.is_finite() {
+                *range = Some(range.map_or((value, value), |(low, high)| {
+                    (low.min(value), high.max(value))
+                }));
+            }
+        }
+        match &self.samples {
+            Samples::Numbers(numbers) => {
+                self.ranges.resize(1, None);
+                widen(&mut self.ranges[0], numbers.get(index));
+            }
+            Samples::Arrays { shape, .. } => {
+                self.ranges.resize(shape.iter().product(), None);
+                if let Some(elements) = self.samples.array_sample(index) {
+                    for (range, number) in self.ranges.iter_mut().zip(elements.iter()) {
+                        widen(range, number);
+                    }
+                }
+            }
+            Samples::Empty | Samples::Strings(_) => {}
+        }
     }
 
     /// The numbers of a numeric trace.
@@ -342,6 +374,7 @@ impl Trace {
             stride: 1,
             offset: 0,
             kind: numbers.kind().unwrap_or(NumberKind::Float),
+            range: self.ranges.first().copied().flatten(),
         })
     }
 }
@@ -356,6 +389,9 @@ pub struct Series<'a> {
     /// Index of the value of the first sample in `numbers`.
     offset: usize,
     pub kind: NumberKind,
+    /// The lowest and highest finite value of all samples, also of those outside a
+    /// [`Series::slice`], `None` if there is none.
+    pub range: Option<(f64, f64)>,
 }
 
 impl Series<'_> {
@@ -477,6 +513,7 @@ impl Traces {
             stride: shape.iter().product(),
             offset,
             kind: elements.kind().unwrap_or(NumberKind::Float),
+            range: trace.ranges.get(offset).copied().flatten(),
         })
     }
 
@@ -598,6 +635,27 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(bits(&actual), bits(expected));
+    }
+
+    #[test]
+    fn series_know_the_range_of_all_their_values() {
+        let traces = traces(&[
+            ("a", Data::Null),
+            ("a", Data::Float(2.0)),
+            ("a", Data::Float(-1.0)),
+            ("a", Data::Float(f64::NAN)),
+            ("a", Data::Int(5)),
+            ("v", array(&[1.0, 10.0])),
+            ("v", array(&[-3.0, 20.0])),
+            ("n", Data::Null),
+        ]);
+        let a = traces.series("a").unwrap();
+        assert_eq!(a.range, Some((-1.0, 5.0)));
+        // also in a slice of the samples
+        assert_eq!(a.slice(0..1).range, Some((-1.0, 5.0)));
+        assert_eq!(traces.series("v[0]").unwrap().range, Some((-3.0, 1.0)));
+        assert_eq!(traces.series("v[1]").unwrap().range, Some((10.0, 20.0)));
+        assert!(traces.series("n").is_none_or(|n| n.range.is_none()));
     }
 
     #[test]

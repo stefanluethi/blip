@@ -1,4 +1,4 @@
-use super::time_axis::{self, closest_index, visible_range, within};
+use super::time_axis::{self, closest_index, visible_range};
 use super::{Formats, PropertiesContext, ViewContext, Viewable, short_names, with_unit};
 use crate::app::model::numbers::{NumberKind, SHOWN_DIGITS};
 use crate::app::model::{Model, traces::Series};
@@ -82,10 +82,14 @@ pub struct Plot {
     /// Paths of the shown traces.
     #[serde(alias = "streams")] // the name before layout version 3
     pub traces: BTreeSet<String>,
-    /// The bottom of the y axis, or `None` to fit the shown values.
+    /// The bottom of the y axis, or `None` to fit all values of the shown traces.
     pub y_min: Option<f64>,
-    /// The top of the y axis, or `None` to fit the shown values.
+    /// The top of the y axis, or `None` to fit all values of the shown traces.
     pub y_max: Option<f64>,
+    /// The y range panned or zoomed to instead of the one of `y_min` and `y_max`, until
+    /// a double click.
+    #[serde(skip)]
+    pub y_view: Option<(f64, f64)>,
     /// Label of the y axis, none if empty.
     pub y_label: String,
     pub interpolation: Interpolation,
@@ -103,6 +107,7 @@ impl Default for Plot {
             traces: BTreeSet::new(),
             y_min: None,
             y_max: None,
+            y_view: None,
             y_label: String::new(),
             interpolation: Interpolation::default(),
             line_width: 1.5,
@@ -167,23 +172,13 @@ impl Plot {
         }
     }
 
-    /// The y range covered by the shown traces within the sample times `[start, end]`
-    /// seconds.
-    fn range_y(&self, model: &Model, range_x: (f64, f64)) -> Option<(f64, f64)> {
-        let mut range: Option<(f64, f64)> = None;
-        for (_, series, _) in self.selected_series_iter(model) {
-            let visible = within(series.timestamps, range_x);
-            for y in visible
-                .map(|index| series.value(index))
-                .filter(|y| !y.is_nan())
-            {
-                range = Some(match range {
-                    Some((low, high)) => (low.min(y), high.max(y)),
-                    None => (y, y),
-                });
-            }
-        }
-
+    /// The y range covered by all values of the shown traces, also outside the shown
+    /// window, with a margin.
+    fn range_y(&self, model: &Model) -> Option<(f64, f64)> {
+        let range = self
+            .selected_series_iter(model)
+            .filter_map(|(_, series, _)| series.range)
+            .reduce(|(low_a, high_a), (low_b, high_b)| (low_a.min(low_b), high_a.max(high_b)));
         range.map(|(low, high)| {
             let margin = if high > low {
                 (high - low) * Y_MARGIN_FRACTION
@@ -246,8 +241,8 @@ impl Plot {
     }
 
     /// Shows the shared time range of `time`, and applies panning and zooming of the
-    /// plot to it.
-    fn show_plot(&self, context: &mut ViewContext<'_>, ui: &mut egui::Ui) {
+    /// plot to it, and to [`Plot::y_view`] along the y axis.
+    fn show_plot(&mut self, context: &mut ViewContext<'_>, ui: &mut egui::Ui) {
         let (model, formats, time) = (context.model, context.formats, &mut *context.time);
         let id = ui.id().with("plot");
         let mut y_axis = egui_plot::AxisHints::new_y()
@@ -266,16 +261,40 @@ impl Plot {
         }
 
         let visuals = ui.visuals().clone();
-        let response = time_axis::show(id, plot, ui, time, |plot_ui, axis| {
-            let fitted = axis.range.and_then(|range| self.range_y(model, range));
-            if let Some((min_y, max_y)) = y_bounds(self.y_min, self.y_max, fitted) {
+        let shown_y = self
+            .y_view
+            .or_else(|| y_bounds(self.y_min, self.y_max, self.range_y(model)));
+        let this = &*self;
+        let response = time_axis::show(id, plot, ui, time, true, |plot_ui, axis| {
+            if let Some((min_y, max_y)) = shown_y {
                 plot_ui.set_plot_bounds_y(min_y..=max_y);
             }
-            for (name, series, index) in self.selected_series_iter(model) {
+            for (name, series, index) in this.selected_series_iter(model) {
                 let color = theme::trace_color(&visuals, index);
-                self.plot_series(name, series, color, axis.range, axis.origin, plot_ui);
+                this.plot_series(name, series, color, axis.range, axis.origin, plot_ui);
             }
         });
+
+        // the first click puts the cursor under the pointer, which gets the second one
+        let double_clicked = ui.input(|input| {
+            input
+                .pointer
+                .button_double_clicked(egui::PointerButton::Primary)
+                && input
+                    .pointer
+                    .interact_pos()
+                    .is_some_and(|pos| response.response.rect.contains(pos))
+        });
+        if double_clicked {
+            self.y_view = None;
+            ui.ctx().request_repaint();
+        } else if let Some((min_y, max_y)) = shown_y {
+            let (low, high) = (response.bounds.min()[1], response.bounds.max()[1]);
+            let tolerance = (max_y - min_y) * 1.0e-6;
+            if (low - min_y).abs() > tolerance || (high - max_y).abs() > tolerance {
+                self.y_view = Some((low, high));
+            }
+        }
 
         if let Some(t) = response.hovered
             && !self.traces.is_empty()
@@ -373,8 +392,13 @@ impl Viewable for Plot {
             .unwrap_or_default()
             .to_owned();
         super::properties_section(ui, "Y axis", |ui| {
+            let range = (self.y_min, self.y_max);
             super::optional_number_row(ui, "Min", &mut self.y_min);
             super::optional_number_row(ui, "Max", &mut self.y_max);
+            if (self.y_min, self.y_max) != range {
+                // show the range as set
+                self.y_view = None;
+            }
             super::property_label(ui, "Label");
             ui.add(
                 egui::TextEdit::singleline(&mut self.y_label)
@@ -492,6 +516,163 @@ mod tests {
         assert_eq!(y_bounds(Some(0.0), Some(1.0), None), Some((0.0, 1.0)));
         assert_eq!(y_bounds(Some(0.0), None, None), None);
         assert_eq!(y_bounds(Some(6.0), None, fitted), None);
+    }
+
+    struct State {
+        plot: Plot,
+        model: Model,
+        time: crate::app::time::TimeRange,
+        invoker: crate::app::model::actions::Invoker,
+    }
+
+    /// A harness showing a plot of a trace `a` whose value is the time in seconds from 0
+    /// to 40 seconds, of which the last 20 seconds are shown.
+    fn plot_harness() -> egui_kittest::Harness<'static, State> {
+        let mut model = Model::default();
+        for second in 0..=40 {
+            model.traces.append(&proto::Value {
+                timestamp: second * 1_000_000_000,
+                path: "a".to_owned(),
+                value: proto::Data::Float(second as f64),
+            });
+        }
+        let mut plot = Plot::new();
+        plot.traces.insert("a".to_owned());
+        let state = State {
+            plot,
+            model,
+            time: Default::default(),
+            invoker: Default::default(),
+        };
+        egui_kittest::Harness::builder()
+            .with_size(egui::vec2(400.0, 300.0))
+            // fast enough for double clicks
+            .with_step_dt(1.0 / 60.0)
+            .with_max_steps(60)
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    state
+                        .time
+                        .update(&state.model, ui.input(|input| input.time));
+                    let mut context = ViewContext {
+                        model: &state.model,
+                        time: &mut state.time,
+                        invoker: &mut state.invoker,
+                        formats: &super::super::NO_FORMATS,
+                    };
+                    state.plot.view(ui, &mut context);
+                },
+                state,
+            )
+    }
+
+    /// The y range of `plot`, the panned or zoomed one or else the fitted one.
+    fn shown_y(state: &State) -> (f64, f64) {
+        let plot = &state.plot;
+        plot.y_view
+            .or_else(|| y_bounds(plot.y_min, plot.y_max, plot.range_y(&state.model)))
+            .unwrap()
+    }
+
+    fn drag(harness: &mut egui_kittest::Harness<'_, State>, from: egui::Pos2, to: egui::Pos2) {
+        harness.hover_at(from);
+        harness.run();
+        harness.drag_at(from);
+        harness.run();
+        for step in 1..=5 {
+            harness.hover_at(from + (to - from) * step as f32 / 5.0);
+            harness.run();
+        }
+        harness.drop_at(to);
+        harness.run();
+    }
+
+    #[test]
+    fn the_y_axis_fits_all_values_and_not_only_the_shown_ones() {
+        let mut harness = plot_harness();
+        harness.run();
+        let (start, _) = harness.state().time.range().unwrap();
+        assert!(start > 10.0, "{start}");
+        let (low, high) = shown_y(harness.state());
+        assert!(low < 0.0 && high > 40.0, "{low} {high}");
+        assert!(harness.state().plot.y_view.is_none());
+    }
+
+    #[test]
+    fn a_vertical_drag_pans_the_y_axis_and_a_double_click_fits_it_again() {
+        let mut harness = plot_harness();
+        harness.run();
+        let range = harness.state().time.range();
+        let (low, high) = shown_y(harness.state());
+
+        // a horizontal drag pans the time and leaves the y axis
+        drag(
+            &mut harness,
+            egui::pos2(150.0, 150.0),
+            egui::pos2(250.0, 152.0),
+        );
+        assert_ne!(harness.state().time.range(), range);
+        assert!(harness.state().plot.y_view.is_none());
+
+        // a vertical drag pans the y axis and leaves the time
+        let range = harness.state().time.range();
+        drag(
+            &mut harness,
+            egui::pos2(150.0, 100.0),
+            egui::pos2(152.0, 200.0),
+        );
+        assert_eq!(harness.state().time.range(), range);
+        let (panned_low, panned_high) = harness.state().plot.y_view.unwrap();
+        assert!(panned_low > low + 1.0, "{panned_low} {low}");
+        assert!(((panned_high - panned_low) - (high - low)).abs() < 1.0e-6);
+        // and stays so in later frames
+        harness.run();
+        assert_eq!(harness.state().plot.y_view, Some((panned_low, panned_high)));
+
+        // without `drop_at`, which takes the pointer away
+        let at = egui::pos2(200.0, 150.0);
+        harness.hover_at(at);
+        for pressed in [true, false, true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.run();
+        }
+        assert!(harness.state().plot.y_view.is_none());
+    }
+
+    #[test]
+    fn the_wheel_with_alt_zooms_the_y_axis_only() {
+        let mut harness = plot_harness();
+        harness.run();
+        let range = harness.state().time.range();
+        let (low, high) = shown_y(harness.state());
+
+        let at = egui::pos2(200.0, 150.0);
+        harness.hover_at(at);
+        harness.run();
+        harness.event(egui::Event::ModifiersChanged(egui::Modifiers::ALT));
+        harness.run();
+        let ctx = harness.ctx.clone();
+        let input = harness.input_mut();
+        input.events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, 100.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::ALT,
+        });
+        super::super::zoom_with_wheel(&ctx, input);
+        harness.run_steps(60);
+
+        assert_eq!(harness.state().time.range(), range);
+        let (zoomed_low, zoomed_high) = harness.state().plot.y_view.unwrap();
+        assert!(
+            zoomed_high - zoomed_low < (high - low) * 0.9,
+            "{zoomed_low} {zoomed_high}"
+        );
     }
 
     #[test]

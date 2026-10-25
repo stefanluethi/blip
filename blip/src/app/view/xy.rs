@@ -181,7 +181,18 @@ impl Xy {
             plot = plot.data_aspect(1.0);
         }
 
+        // the plot fits all values, also outside the shown window, until panned or
+        // zoomed, and again after a double click
         let x = x_path.and_then(|path| model.traces.series(path));
+        if let Some((low, high)) = x.and_then(|x| x.range) {
+            plot = plot.include_x(low).include_x(high);
+        }
+        for (low, high) in y_paths
+            .iter()
+            .filter_map(|path| model.traces.series(path)?.range)
+        {
+            plot = plot.include_y(low).include_y(high);
+        }
         let range = time.range();
         let cursor = time.cursor();
         let ring_color = ui.visuals().strong_text_color();
