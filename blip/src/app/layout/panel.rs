@@ -1,7 +1,7 @@
 //! The layout panel: the groups and views of the layout as a tree, to select, add,
 //! rename, move and remove them.
 
-use super::{Drop, GroupKind, Layout};
+use super::{Drop, GroupKind, Layout, Renaming, rename_field};
 use crate::app::theme;
 use crate::app::view::ViewType;
 use egui_tiles::{Tile, TileId};
@@ -14,8 +14,8 @@ enum Action {
     AddGroup(GroupKind),
     SetGroupKind(TileId, GroupKind),
     StartRename(TileId),
-    FinishRename,
-    CancelRename,
+    /// Ends renaming, keeping the new name or not.
+    EndRename(bool),
     Remove(TileId),
     Drop(TileId, TileId, Drop),
 }
@@ -25,7 +25,7 @@ const DROP_EDGE_FRACTION: f32 = 0.25;
 
 /// What is collected while showing the rows.
 struct RowsState {
-    renaming: Option<(TileId, String)>,
+    renaming: Option<Renaming>,
     actions: Vec<Action>,
     /// The dragged view or group.
     dragged: Option<TileId>,
@@ -70,7 +70,7 @@ impl Layout {
         });
 
         let mut rows = RowsState {
-            renaming: self.renaming.take(),
+            renaming: self.renaming.take_if(|renaming| renaming.in_panel),
             actions,
             dragged: egui::DragAndDrop::payload::<TileId>(ui.ctx()).map(|dragged| *dragged),
             drop_target: None,
@@ -83,7 +83,9 @@ impl Layout {
                     self.tile_ui(ui, tile_id, &mut rows);
                 }
             });
-        self.renaming = rows.renaming;
+        if rows.renaming.is_some() {
+            self.renaming = rows.renaming;
+        }
         let mut actions = rows.actions;
 
         if let Some(dragged) = rows.dragged {
@@ -159,20 +161,15 @@ impl Layout {
         rows: &mut RowsState,
     ) {
         let actions = &mut rows.actions;
-        if let Some((_, name)) = rows.renaming.as_mut().filter(|(id, _)| *id == tile_id) {
+        if let Some(renaming) = rows
+            .renaming
+            .as_mut()
+            .filter(|renaming| renaming.tile_id == tile_id)
+        {
             ui.label(icon);
-            let field = egui::TextEdit::singleline(name)
-                .margin(theme::FIELD_MARGIN)
-                .desired_width(f32::INFINITY);
-            let response = ui.add(field);
-            if response.lost_focus() {
-                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                    actions.push(Action::CancelRename);
-                } else {
-                    actions.push(Action::FinishRename);
-                }
-            } else {
-                response.request_focus();
+            let width = egui::vec2(ui.available_width(), 0.0);
+            if let Some(keep) = rename_field(ui, &mut renaming.name, width) {
+                actions.push(Action::EndRename(keep));
             }
             return;
         }
@@ -275,14 +272,8 @@ impl Layout {
                 self.add_group(kind);
             }
             Action::SetGroupKind(tile_id, kind) => self.set_group_kind(tile_id, kind),
-            Action::StartRename(tile_id) => {
-                self.renaming = Some((tile_id, self.name(tile_id).to_owned()));
-            }
-            Action::FinishRename => {
-                let renamed = self.renaming.take();
-                self.finish_rename(renamed);
-            }
-            Action::CancelRename => self.renaming = None,
+            Action::StartRename(tile_id) => self.start_rename(tile_id, true),
+            Action::EndRename(keep) => self.end_rename(keep),
             Action::Remove(tile_id) => self.remove(tile_id),
             Action::Drop(dragged, target, drop) => self.drop_tile(dragged, target, drop),
         }

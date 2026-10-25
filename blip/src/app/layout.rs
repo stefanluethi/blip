@@ -54,16 +54,38 @@ impl Side {
     }
 }
 
+/// A view or group whose name is edited in a field, and the text of the field.
+pub(super) struct Renaming {
+    tile_id: TileId,
+    name: String,
+    /// Whether the field is in the layout panel, else on the title or tab in the center.
+    in_panel: bool,
+}
+
+/// Shows a field of at least `min_size` to edit `name`, which ends with Enter or a click
+/// elsewhere, or with Escape to cancel. Returns whether to keep the name once it ended.
+fn rename_field(ui: &mut egui::Ui, name: &mut String, min_size: egui::Vec2) -> Option<bool> {
+    let field = egui::TextEdit::singleline(name)
+        .min_size(min_size)
+        .desired_width(min_size.x)
+        .margin(theme::FIELD_MARGIN);
+    let response = ui.add(field);
+    if response.lost_focus() {
+        Some(!ui.input(|i| i.key_pressed(egui::Key::Escape)))
+    } else {
+        response.request_focus();
+        None
+    }
+}
+
 pub struct Layout {
     tree: Tree<View>,
     /// Names of the groups, the views carry their own names.
     group_names: HashMap<TileId, String>,
     /// The view or group selected in the layout panel or by clicking a view.
     selected: Option<TileId>,
-    /// The view or group renamed in the layout panel and its new name.
-    renaming: Option<(TileId, String)>,
-    /// The view or group renamed by clicking its title in the center and its new name.
-    renaming_title: Option<(TileId, String)>,
+    /// The view or group renamed in the layout panel or by clicking its title or tab.
+    renaming: Option<Renaming>,
     /// The view or group whose name is edited in the properties panel and the text of
     /// the field, which may be blank while the name is not.
     properties_name: Option<(TileId, String)>,
@@ -91,7 +113,6 @@ impl Layout {
             group_names,
             selected: None,
             renaming: None,
-            renaming_title: None,
             properties_name: None,
         }
     }
@@ -136,9 +157,21 @@ impl Layout {
         }
     }
 
-    /// Gives a view or group the name of `renamed`, unless the name is blank.
-    fn finish_rename(&mut self, renamed: Option<(TileId, String)>) {
-        if let Some((tile_id, name)) = renamed
+    /// Starts renaming `tile_id` in the layout panel or in the center.
+    fn start_rename(&mut self, tile_id: TileId, in_panel: bool) {
+        let name = self.name(tile_id).to_owned();
+        self.renaming = Some(Renaming {
+            tile_id,
+            name,
+            in_panel,
+        });
+    }
+
+    /// Ends renaming, giving the view or group its new name if `keep` and the name is
+    /// not blank.
+    fn end_rename(&mut self, keep: bool) {
+        if let Some(Renaming { tile_id, name, .. }) = self.renaming.take()
+            && keep
             && !name.trim().is_empty()
         {
             self.set_name(tile_id, name.trim().to_owned());
@@ -463,7 +496,7 @@ impl Layout {
             selected: &mut self.selected,
             panes_in_tabs,
             open_tabs,
-            renaming: &mut self.renaming_title,
+            renaming: &mut self.renaming,
             rename_ended: None,
             tab_bar_bottoms: Vec::new(),
             below_tab_bar: HashSet::new(),
@@ -477,13 +510,8 @@ impl Layout {
             cards: std::mem::take(&mut behavior.cards),
             tab_buttons: std::mem::take(&mut behavior.tab_buttons),
         };
-        match behavior.rename_ended {
-            Some(RenameEnd::Keep) => {
-                let renamed = self.renaming_title.take();
-                self.finish_rename(renamed);
-            }
-            Some(RenameEnd::Cancel) => self.renaming_title = None,
-            None => {}
+        if let Some(keep) = behavior.rename_ended {
+            self.end_rename(keep);
         }
         if add_tab_clicked {
             self.add_tab();
@@ -492,13 +520,6 @@ impl Layout {
             self.center_drop_ui(ui, dragged, &shown);
         }
     }
-}
-
-/// How editing a title ended.
-#[derive(Clone, Copy)]
-enum RenameEnd {
-    Keep,
-    Cancel,
 }
 
 /// Shows the views of the layout in the center pane.
@@ -516,10 +537,10 @@ struct Behavior<'a, 'b> {
     panes_in_tabs: HashSet<TileId>,
     /// The tabs shown in their group.
     open_tabs: HashSet<TileId>,
-    /// The view or group whose title is edited and its new name.
-    renaming: &'a mut Option<(TileId, String)>,
-    /// Set when editing the title ends.
-    rename_ended: Option<RenameEnd>,
+    /// The view or group renamed, see [`Layout::renaming`].
+    renaming: &'a mut Option<Renaming>,
+    /// Set when editing the title ends, whether to keep the name.
+    rename_ended: Option<bool>,
     /// The bottoms of the tab bars shown so far, which egui_tiles shows before the
     /// tiles below them.
     tab_bar_bottoms: Vec<f32>,
@@ -553,22 +574,15 @@ impl Behavior<'_, '_> {
     /// being edited, ending with Enter or a click elsewhere, or Escape to cancel.
     /// Returns whether the field is shown.
     fn rename_ui(&mut self, ui: &mut egui::Ui, tile_id: TileId, min_size: egui::Vec2) -> bool {
-        let Some((_, name)) = self.renaming.as_mut().filter(|(id, _)| *id == tile_id) else {
+        let Some(renaming) = self
+            .renaming
+            .as_mut()
+            .filter(|renaming| renaming.tile_id == tile_id && !renaming.in_panel)
+        else {
             return false;
         };
-        let field = egui::TextEdit::singleline(name)
-            .min_size(min_size)
-            .desired_width(min_size.x)
-            .margin(egui::Margin::symmetric(4, 0));
-        let response = ui.add(field);
-        if response.lost_focus() {
-            self.rename_ended = Some(if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                RenameEnd::Cancel
-            } else {
-                RenameEnd::Keep
-            });
-        } else {
-            response.request_focus();
+        if let Some(keep) = rename_field(ui, &mut renaming.name, min_size) {
+            self.rename_ended = Some(keep);
         }
         true
     }
@@ -641,7 +655,11 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
                                 .on_hover_text("Click to rename, drag to move");
                             title.dnd_set_drag_payload(tile_id);
                             if title.clicked() {
-                                *self.renaming = Some((tile_id, view.name.clone()));
+                                *self.renaming = Some(Renaming {
+                                    tile_id,
+                                    name: view.name.clone(),
+                                    in_panel: false,
+                                });
                             }
                         }
                         ui.allocate_space(ui.available_size())
@@ -704,10 +722,18 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
         // a click on an inactive tab opens it, a click on the open tab renames it
         if response.clicked() && self.open_tabs.contains(&tile_id) {
             let name = self.tab_title_for_tile(tiles, tile_id).text().to_owned();
-            *self.renaming = Some((tile_id, name));
+            *self.renaming = Some(Renaming {
+                tile_id,
+                name,
+                in_panel: false,
+            });
         }
 
-        if self.renaming.as_ref().is_some_and(|(id, _)| *id == tile_id) {
+        if self
+            .renaming
+            .as_ref()
+            .is_some_and(|renaming| renaming.tile_id == tile_id && !renaming.in_panel)
+        {
             // over the tab, which egui_tiles draws as a whole
             let rect = response.rect;
             egui::Area::new(response.id.with("rename"))
@@ -1036,7 +1062,7 @@ mod tests {
                 formats: &crate::app::view::NO_FORMATS,
             };
             layout.ui(ui, &mut context);
-            *renamed.borrow_mut() = layout.renaming_title.as_ref().map(|(id, _)| *id);
+            *renamed.borrow_mut() = layout.renaming.as_ref().map(|renaming| renaming.tile_id);
         });
         harness.run();
 
@@ -1144,7 +1170,7 @@ mod tests {
         let layout = layout.borrow();
         assert_eq!(children(&layout, tab), [plot, logs]);
         assert_eq!(
-            layout.renaming_title.as_ref().map(|(id, _)| *id),
+            layout.renaming.as_ref().map(|renaming| renaming.tile_id),
             Some(plot)
         );
     }
