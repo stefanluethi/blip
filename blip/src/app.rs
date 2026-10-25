@@ -467,29 +467,37 @@ impl eframe::App for App {
                 self.state.bottom_ui(ui, connected);
             });
 
+        // the side panels leave the room at their sides to their sections, so that the
+        // lines between the sections go from edge to edge
+        let side_frame =
+            egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin::symmetric(0, 2));
+        let section_frame = egui::Frame::NONE.inner_margin(egui::Margin::symmetric(8, 4));
+        let rest_frame = egui::Frame::NONE.inner_margin(egui::Margin::symmetric(8, 0));
         egui::Panel::left("left panel")
             .resizable(true)
             .default_size(220.0)
+            .frame(side_frame)
             .show(ui, |ui| {
                 // the traces on top, resizable by dragging the border to the layout
                 egui::Panel::top("traces panel")
                     .resizable(true)
                     .default_size(250.0)
-                    .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(0, 4)))
+                    .frame(section_frame)
                     .show(ui, |ui| self.traces_panel_ui(ui));
                 ui.add_space(4.0);
-                self.layout.panel_ui(ui);
+                rest_frame.show(ui, |ui| self.layout.panel_ui(ui));
             });
 
         egui::Panel::right("properties panel")
             .resizable(true)
             .default_size(264.0)
+            .frame(side_frame)
             .show(ui, |ui| {
                 // the connections below, resizable by dragging the border to the properties
                 egui::Panel::bottom("connections panel")
                     .resizable(true)
                     .default_size(160.0)
-                    .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(0, 4)))
+                    .frame(section_frame)
                     .show(ui, |ui| {
                         self.connections.ui(ui, self.state.recording);
                     });
@@ -498,7 +506,7 @@ impl eframe::App for App {
                     model: &self.state.model,
                     connected: &self.state.invoker.connected,
                 };
-                self.layout.properties_ui(ui, &context);
+                rest_frame.show(ui, |ui| self.layout.properties_ui(ui, &context));
             });
 
         let central = egui::CentralPanel::default()

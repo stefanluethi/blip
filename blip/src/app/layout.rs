@@ -443,6 +443,8 @@ impl Layout {
         let mut behavior = Behavior {
             context,
             root: self.root(),
+            // the center pane is clipped to its edges, without the gap around the views
+            center_x: ui.clip_rect().x_range(),
             add_tab_clicked: false,
             group_names: &self.group_names,
             selected: &mut self.selected,
@@ -491,6 +493,8 @@ struct Behavior<'a, 'b> {
     context: &'a mut ViewContext<'b>,
     /// The tab group at the top level, whose tab bar has a button to add a tab.
     root: TileId,
+    /// The center pane from edge to edge, which the line under the top tab bar spans.
+    center_x: egui::Rangef,
     /// Set when the button to add a tab is clicked.
     add_tab_clicked: bool,
     group_names: &'a HashMap<TileId, String>,
@@ -748,16 +752,23 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
         &mut self,
         _tiles: &egui_tiles::Tiles<View>,
         ui: &mut egui::Ui,
-        _tile_id: TileId,
+        tile_id: TileId,
         _tabs: &egui_tiles::Tabs,
         _scroll_offset: &mut f32,
     ) {
         // the line under the tabs, painted before them so that the underline of the open
-        // tab lies on it
+        // tab lies on it, under the top tabs from edge to edge of the center pane
         let bar = ui.max_rect();
-        let line = bar.with_min_y(bar.bottom() - 1.0);
-        ui.painter()
-            .rect_filled(line, 0.0, theme::tokens(ui.visuals()).border);
+        let x = if tile_id == self.root {
+            self.center_x
+        } else {
+            bar.x_range()
+        };
+        let line = egui::Rect::from_x_y_ranges(x, bar.bottom() - 1.0..=bar.bottom());
+        // egui_tiles clips the tab bar to the tiles, which leaves out the gap around them
+        let mut painter = ui.painter().clone();
+        painter.set_clip_rect(line);
+        painter.rect_filled(line, 0.0, theme::tokens(ui.visuals()).border);
     }
 
     fn tab_bar_trailing_ui(
