@@ -47,6 +47,24 @@ class _Client:
         self.max_batch_bytes = MAX_BATCH_BYTES if batched else 0
         # the messages dropped since the last one sent
         self.dropped = 0
+        # set while the queue is at most half full or the client is gone, see `drain`
+        self.room = asyncio.Event()
+        self.room.set()
+        self.closed = False
+
+    def _has_room(self) -> bool:
+        return self.closed or self.queue.maxsize <= 0 or self.queue.qsize() <= self.queue.maxsize // 2
+
+    async def drain(self) -> None:
+        """Waits until the queue is at most half full, or the client is gone."""
+        while not self._has_room():
+            self.room.clear()
+            await self.room.wait()
+
+    def close(self) -> None:
+        """Marks the client as gone, which ends `drain`."""
+        self.closed = True
+        self.room.set()
 
     def enqueue(self, message: bytes) -> None:
         """Queues `message`, or drops it if the client does not keep up."""
@@ -72,6 +90,8 @@ class _Client:
                     break
                 batch.append(message)
                 size += len(message)
+            if self._has_room():
+                self.room.set()
             # joined once, as adding to bytes copies all before each time
             frame = b"".join(batch)
             if self.dropped:
@@ -110,7 +130,13 @@ class OutpostServer:
         # target announces its actions itself
         self._actions_frame: Optional[bytes] = None
 
-        self.protocol.attach(self.broadcast)
+        self.protocol.attach(self.broadcast, self.drain)
+
+    async def drain(self) -> None:
+        """Waits until every client has room for more messages: its queue is at most
+        half full. Returns right away while no client is connected."""
+        for client in list(self.connected_clients):
+            await client.drain()
 
     async def broadcast(self, message: bytes) -> None:
         """Queues a message of the protocol for all clients, but answers to invocations.
@@ -164,6 +190,7 @@ class OutpostServer:
             logger.error(f"Error handling WebSocket client {client_addr}: {e}")
         finally:
             self.connected_clients.discard(client)
+            client.close()
             sender.cancel()
             try:
                 await sender
@@ -226,6 +253,8 @@ class OutpostServer:
             # also closes the connections and waits for their handlers
             self._server.close()
             await self._server.wait_closed()
+        for client in self.connected_clients:
+            client.close()
         self.connected_clients.clear()
 
         for task in [self._protocol_task, *self._invocations]:

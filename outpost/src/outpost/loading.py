@@ -24,12 +24,14 @@ class LoadError(Exception):
 
 def builtin_protocols() -> Dict[str, Callable[..., Protocol]]:
     """The protocols that come with the outpost by name."""
+    from outpost.protocols.fast import FastProtocol
     from outpost.protocols.replay import ReplayProtocol
     from outpost.protocols.simulator import SimulatorProtocol
     from outpost.protocols.socket import SocketProtocol
 
     return {
         "simulator": SimulatorProtocol,
+        "fast": FastProtocol,
         "replay": ReplayProtocol,
         "tcp": functools.partial(SocketProtocol, mode="tcp"),
         "udp": functools.partial(SocketProtocol, mode="udp"),

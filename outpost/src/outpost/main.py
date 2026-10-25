@@ -77,7 +77,7 @@ def run(
 @click.command()
 @click.option(
     "--protocol", "-p", default="simulator",
-    help="The protocol: simulator, replay, tcp, udp, or a Python file or module of a "
+    help="The protocol: simulator, fast, replay, tcp, udp, or a Python file or module of a "
          "protocol, followed by :ClassName if it defines several (default: simulator).",
 )
 @click.option(

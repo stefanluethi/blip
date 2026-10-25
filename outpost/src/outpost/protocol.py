@@ -10,6 +10,7 @@ from outpost.proto import Data, Message, split_items
 logger = logging.getLogger("outpost.protocol")
 
 SendCallback = Callable[[bytes], Awaitable[None]]
+DrainCallback = Callable[[], Awaitable[None]]
 
 
 class Protocol:
@@ -25,6 +26,7 @@ class Protocol:
 
     _actions: Optional[Actions] = None
     _send_callback: Optional[SendCallback] = None
+    _drain_callback: Optional[DrainCallback] = None
 
     @property
     def actions(self) -> Actions:
@@ -105,9 +107,19 @@ class Protocol:
         """Sends the list of actions to blip, done after each change of `actions`."""
         await self.send(Message.create_actions(self.actions.descriptors()))
 
-    def attach(self, send: Optional[SendCallback]) -> None:
-        """Sets where `send` sends messages to, called by the outpost."""
+    async def drain(self) -> None:
+        """Waits until every blip has room for more messages. A protocol sending
+        faster than blip may take, e.g. data of the past, awaits it now and then, so
+        it slows down to the pace of the slowest blip instead of losing messages for
+        it. Returns right away while no blip is connected."""
+        if self._drain_callback is not None:
+            await self._drain_callback()
+
+    def attach(self, send: Optional[SendCallback], drain: Optional[DrainCallback] = None) -> None:
+        """Sets where `send` sends messages to and what `drain` waits for, called by
+        the outpost."""
         self._send_callback = send
+        self._drain_callback = drain
 
     _announcing: Set["asyncio.Task[Any]"] = set()
 

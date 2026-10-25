@@ -35,7 +35,7 @@ Several blips can be connected at once; each gets all messages.
      - Description
    * - ``--protocol`` / ``-p``
      - ``simulator``
-     - ``simulator``, ``replay``, ``tcp``, ``udp``, or a Python file or
+     - ``simulator``, ``fast``, ``replay``, ``tcp``, ``udp``, or a Python file or
        module of a protocol, followed by ``:ClassName`` if it defines several
    * - ``--option`` / ``-o``
      -
@@ -140,6 +140,66 @@ stays high. Its actions:
      - sends a log record of a level and text
    * - ``imu/calibrate``
      - asks for confirmation, takes two seconds and is disabled meanwhile
+
+fast
+~~~~
+
+A stress test of blip: many traces at high rates, large arrays and a flood of
+log records, to see how fast blip takes in data, how it renders a lot of it,
+and how it copes with much data over time::
+
+   uv run outpost --protocol fast
+   uv run outpost --protocol fast -o traces=500 -o rate_hz=200
+   uv run outpost --protocol fast -o history_s=600
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 15 60
+
+   * - Option
+     - Default
+     - Description
+   * - ``traces``
+     - ``100``
+     - float traces ``fast/signal/N``: sine, square, sawtooth and random walk
+       shapes in turn, at frequencies from 0.05 Hz up to a twentieth of the
+       sample rate, with noise
+   * - ``rate_hz``
+     - ``1000``
+     - samples per second of each of those traces
+   * - ``array_size``
+     - ``1024``
+     - elements of the array ``fast/spectrum`` (dB), a peak sweeping across
+       it; ``0`` for none
+   * - ``frame_size``
+     - ``64``
+     - rows and columns of the frame ``fast/frame`` (°C), for the heatmap, a
+       hot spot circling in it; ``0`` for none
+   * - ``array_rate_hz``
+     - ``30``
+     - samples per second of the array and the frame
+   * - ``log_rate_hz``
+     - ``1000``
+     - log records per second, of all levels, every hundredth a long one
+   * - ``history_s``
+     - ``0``
+     - seconds of data of the past, sent first as fast as blip takes it, once
+       the action ``fast/start`` is run
+
+The defaults are about 100 000 messages, 7.7 MB, per second. It starts when
+the first blip connects. With ``history_s`` it waits for the action
+``fast/start`` instead, as blip keeps only what it receives while recording:
+connect blip, start recording, then run ``fast/start`` in an actions view.
+Unlike the other protocols it
+does not drop messages for a blip that falls behind, but waits for the slowest
+blip, so it measures how fast blip takes in data. Every second it logs what it
+sent and how far behind real time it is, and sends that as the traces
+``fast/stats/messages_per_s``, ``fast/stats/megabytes_per_s`` and
+``fast/stats/lag_s``. A lag that keeps growing means blip does not keep up.
+With ``history_s``, it logs how long the history took once it caught up.
+
+An outpost sends at most about 200 000 messages per second, as far as Python
+gets; connect blip to several outposts on different ports for more.
 
 tcp and udp
 ~~~~~~~~~~~
@@ -299,7 +359,10 @@ see :doc:`concepts`.
 
 A slow blip does not hold up the protocol: each blip has its own queue of
 messages, and messages are dropped (with a warning) when it holds more than
-10 000.
+10 000. A protocol that sends faster than blip may take, e.g. data of the past,
+awaits ``drain()`` every thousand messages or so: it waits until every blip's
+queue is at most half full, so the protocol slows down to the slowest blip
+instead of losing messages.
 
 .. _outpost-actions:
 
@@ -369,7 +432,7 @@ Everything a protocol needs is exported by the ``outpost`` package:
      - Purpose
    * - ``Protocol``
      - base class: ``run``, ``on_client_connected``, ``invoke``, ``send_*``,
-       ``announce_actions``, ``actions``
+       ``drain``, ``announce_actions``, ``actions``
    * - ``action``
      - decorator marking a method as an action
    * - ``Actions``

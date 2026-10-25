@@ -17,6 +17,8 @@ the target is a **protocol**, a Python class provided by the user of blip.
   sliders and dropdowns, with their parameters taken from the type hints.
 - **Simulator**: streams CPU load and simulated sensor measurements at different rates
   and synthetic log records, and offers demo actions. It is also the reference protocol.
+- **Fast mode**: a stress test of blip's ingest and rendering, with many traces at high
+  rates, large arrays, a flood of logs and optionally a backlog of history.
 - **Socket passthrough**: TCP and UDP for targets that speak the blip protocol
   themselves.
 - **Recording and replay** of the messages sent to blip.
@@ -55,6 +57,13 @@ uv run outpost --protocol simulator -o interval_ms=10 -o log_interval_ms=200
 The protocols that come with the outpost:
 
 - `simulator`: synthetic telemetry, logs and demo actions.
+- `fast`: the stress test, by default 100 traces at 1 kHz, a 1024-element array, a 64×64
+  frame and 1000 log records per second, about 100 000 messages per second
+  (`-o traces=… -o rate_hz=… -o array_size=… -o frame_size=… -o array_rate_hz=…
+  -o log_rate_hz=…`). `-o history_s=600` first sends ten minutes of the past as fast as
+  blip takes it, once the action `fast/start` is run (connect blip and start recording
+  first). It waits for blip rather than dropping messages, and reports what it
+  sends and how far behind it is every second, in its log and under `fast/stats`.
 - `replay`: replays a recording (`-o path=recording.blip`, `-o speed=2` replays twice
   as fast). The actions of the recording are shown disabled.
 - `tcp` and `udp`: pass the messages of a target that speaks the blip protocol

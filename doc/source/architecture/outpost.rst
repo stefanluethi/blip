@@ -55,7 +55,8 @@ Structure
      - ``RecordingWriter`` and ``read_frames`` for recording files.
    * - ``protocols/``
      - The built-in ``simulator`` (also the reference protocol, using only the
-       public API), ``replay`` and ``socket`` (TCP/UDP passthrough).
+       public API), ``fast`` (the stress test, encoding its messages from
+       templates), ``replay`` and ``socket`` (TCP/UDP passthrough).
 
 Message flow
 ------------
@@ -73,6 +74,9 @@ Message flow
   what is queued together, as a CBOR sequence in frames of up to 64 KiB, so a
   busy target does not cost a frame per message; a client connecting with
   ``?batch=0`` after the path gets one message per frame.
+* ``Protocol.drain`` waits until the queue of every client is at most half
+  full; a protocol sending faster than real time awaits it now and then and
+  loses no messages, as long as it sends fewer than half a queue in between.
 * A connecting client is checked against the path, gets the cached actions
   first, then everything broadcast from then on; then
   ``on_client_connected`` is called.
