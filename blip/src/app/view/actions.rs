@@ -130,7 +130,7 @@ fn latest_value(model: &Model, path: &str) -> Option<Data> {
             Number::Float(value) => Some(Data::Float(value)),
             Number::Bool(value) => Some(Data::Bool(value)),
         },
-        Samples::Strings(values) => values[last].clone().map(Data::String),
+        Samples::Strings(texts) => texts.get(last).map(Data::from),
         _ => None,
     }
 }

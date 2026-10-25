@@ -153,7 +153,7 @@ impl ViewType {
     }
 
     /// What a view of this type can show of `trace`.
-    pub fn selectable(self, trace: &Trace) -> Selectable {
+    pub fn selectable(self, trace: Trace<'_>) -> Selectable {
         match (self, &trace.samples) {
             (ViewType::Logs, _) => Selectable::No("Log views show no traces".into()),
             (ViewType::Actions, _) => Selectable::No("Action views show no traces".into()),
@@ -199,7 +199,7 @@ impl ViewType {
     /// Whether a view of this type shows `trace` apart from the traces it shows
     /// otherwise, i.e. only along with other traces it shows apart: XY views plot a 1D
     /// array as a whole over the indices of its elements, see [`Selectable::Array`].
-    pub fn shows_apart(self, trace: &Trace) -> bool {
+    pub fn shows_apart(self, trace: Trace<'_>) -> bool {
         self == ViewType::Xy
             && matches!(&trace.samples, Samples::Arrays { shape, .. } if shape.len() == 1)
     }
@@ -589,7 +589,7 @@ fn number_format_ui(
 fn number_kind(model: &Model, path: &str) -> Option<NumberKind> {
     match model.traces.series(path) {
         Some(series) => Some(series.kind),
-        None => match model.traces.get(path).map(|trace| &trace.samples) {
+        None => match model.traces.get(path).map(|trace| trace.samples) {
             Some(Samples::Arrays { elements, .. }) => elements.kind(),
             _ => None,
         },

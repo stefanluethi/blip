@@ -46,7 +46,7 @@ pub struct ViewSelection<'a> {
 #[derive(Default)]
 pub struct TraceTree<'a> {
     /// The trace if one ends at this node.
-    pub trace: Option<&'a Trace>,
+    pub trace: Option<Trace<'a>>,
     /// The path of the record if one ends at this node, i.e. its fields are below it.
     pub record: Option<&'a str>,
     /// The path of the action if one ends at this node.
@@ -58,7 +58,7 @@ pub struct TraceTree<'a> {
 }
 
 impl<'a> TraceTree<'a> {
-    pub fn build(traces: impl Iterator<Item = &'a Trace>) -> Self {
+    pub fn build(traces: impl Iterator<Item = Trace<'a>>) -> Self {
         let mut root = Self::default();
         for trace in traces {
             if let Some(record) = record_path(trace) {
@@ -165,8 +165,8 @@ fn segments(path: &str) -> impl Iterator<Item = &str> {
 
 /// The segments of the node of `trace` in the tree: those of its path between its "/",
 /// then its record fields with their leading ".".
-fn trace_segments(trace: &Trace) -> impl Iterator<Item = &str> {
-    let path = trace.path.as_str();
+fn trace_segments(trace: Trace<'_>) -> impl Iterator<Item = &str> {
+    let path = trace.path;
     let (name, fields) = path.split_at(trace.fields_start.unwrap_or(path.len()));
     let field_starts = fields.match_indices('.').map(|(start, _)| start);
     let field_ends = field_starts.clone().skip(1).chain([fields.len()]);
@@ -177,7 +177,7 @@ fn trace_segments(trace: &Trace) -> impl Iterator<Item = &str> {
 }
 
 /// The path of the record `trace` is a field of, e.g. "imu" for "imu.acc.z".
-pub fn record_path(trace: &Trace) -> Option<&str> {
+pub fn record_path(trace: Trace<'_>) -> Option<&str> {
     trace.fields_start.map(|start| &trace.path[..start])
 }
 
@@ -205,7 +205,7 @@ pub fn expand_wildcards(model: &Model, selection: ViewSelection<'_>) {
 /// The icon of the type of `samples`.
 pub fn type_icon(samples: &Samples) -> &'static str {
     match samples {
-        Samples::Empty | Samples::Numbers { .. } => HASH,
+        Samples::Empty(_) | Samples::Numbers { .. } => HASH,
         Samples::Strings(_) => TEXT_AA,
         Samples::Arrays { .. } => BRACKETS_SQUARE,
     }
@@ -301,27 +301,27 @@ fn element_indices(shape: &[usize], mut flat_index: usize) -> Vec<usize> {
 
 /// The paths of `trace` that a view of `view_type` can show along with other traces,
 /// and so are picked with a branch: its own, those of its elements, or none.
-pub fn trace_paths(trace: &Trace, view_type: ViewType) -> Vec<String> {
+pub fn trace_paths(trace: Trace<'_>, view_type: ViewType) -> Vec<String> {
     match (view_type.selectable(trace), &trace.samples) {
         (
             Selectable::Elements | Selectable::Array { elements: true },
             Samples::Arrays { shape, .. },
         ) => (0..shape.iter().product())
-            .map(|flat_index| element_path(&trace.path, &element_indices(shape, flat_index)))
+            .map(|flat_index| element_path(trace.path, &element_indices(shape, flat_index)))
             .collect(),
         (Selectable::No(_) | Selectable::Array { .. }, _) => vec![],
-        _ => vec![trace.path.clone()],
+        _ => vec![trace.path.to_owned()],
     }
 }
 
 /// The path of `trace` if a view picking `picks` can show it as a whole array, see
 /// [`Selectable::Array`].
-fn whole_array_pick(trace: &Trace, picks: Picks) -> Option<String> {
-    (!picks.records && picks.view_type.shows_apart(trace)).then(|| trace.path.clone())
+fn whole_array_pick(trace: Trace<'_>, picks: Picks) -> Option<String> {
+    (!picks.records && picks.view_type.shows_apart(trace)).then(|| trace.path.to_owned())
 }
 
 /// The paths of `trace` that a view picking `picks` can show, none if it picks records.
-fn trace_picks(trace: &Trace, picks: Picks) -> Vec<String> {
+fn trace_picks(trace: Trace<'_>, picks: Picks) -> Vec<String> {
     if picks.records {
         vec![]
     } else {
@@ -332,8 +332,14 @@ fn trace_picks(trace: &Trace, picks: Picks) -> Vec<String> {
 /// Shows `trace` labelled `label` with the icon of its type: a checkbox, or a
 /// collapsible list of checkboxes for its elements below a checkbox for all of them,
 /// after one for the whole array if the view shows it so.
-fn show_trace(ui: &mut Ui, label: &str, key: &str, trace: &Trace, selection: &mut Selection<'_>) {
-    let icon = Some(type_icon(&trace.samples));
+fn show_trace(
+    ui: &mut Ui,
+    label: &str,
+    key: &str,
+    trace: Trace<'_>,
+    selection: &mut Selection<'_>,
+) {
+    let icon = Some(type_icon(trace.samples));
     let picks = selection.picks;
     let paths = trace_picks(trace, picks);
     let mut hover = format!("{}\n{}", trace.path, trace.samples.type_label());
@@ -353,7 +359,7 @@ fn show_trace(ui: &mut Ui, label: &str, key: &str, trace: &Trace, selection: &mu
         Selectable::Array { elements: true } => (paths.clone(), Some(paths), true),
         Selectable::Array { elements: false } => {
             hover.push_str(&format!("\n{WHOLE_ARRAY_HINT}"));
-            (vec![trace.path.clone()], None, false)
+            (vec![trace.path.to_owned()], None, false)
         }
     };
     let Some(element_paths) = element_paths else {
@@ -372,8 +378,8 @@ fn show_trace(ui: &mut Ui, label: &str, key: &str, trace: &Trace, selection: &mu
         .body(|ui| {
             if whole {
                 leaf_row(ui, |ui| {
-                    let paths = std::slice::from_ref(&trace.path);
-                    show_checkbox(ui, "whole array", None, paths, key, false, selection)
+                    let paths = [trace.path.to_owned()];
+                    show_checkbox(ui, "whole array", None, &paths, key, false, selection)
                         .on_hover_text(format!("{}\n{WHOLE_ARRAY_HINT}", trace.path));
                 });
             }
@@ -577,7 +583,7 @@ pub fn show(
         model
             .traces
             .iter()
-            .filter(|trace| matches(&trace.path, search)),
+            .filter(|trace| matches(trace.path, search)),
     );
     tree.add_actions(model.actions.paths().filter(|path| matches(path, search)));
     // shown actions no outpost announces, copied apart from the selection edited below
@@ -618,8 +624,8 @@ pub fn show(
         picks: ViewType::Plot.into(),
     });
     let apart = (model.traces.iter())
-        .filter(|trace| view.picks.view_type.shows_apart(trace))
-        .map(|trace| trace.path.as_str())
+        .filter(|trace| view.picks.view_type.shows_apart(*trace))
+        .map(|trace| trace.path)
         .collect();
     let mut selection = Selection {
         apart,
@@ -649,24 +655,24 @@ mod tests {
 
     #[test]
     fn trace_tree_branches_at_slashes() {
-        let traces: Vec<Trace> = ["acc/x", "acc/y", "/cpu", "acc"]
+        let traces: Vec<Trace<'_>> = ["acc/x", "acc/y", "/cpu", "acc"]
             .into_iter()
-            .map(|path| Trace::new(path.to_owned(), None))
+            .map(|path| Trace::leaked(path, None, Samples::Empty(0)))
             .collect();
-        let tree = TraceTree::build(traces.iter());
+        let tree = TraceTree::build(traces.iter().copied());
         assert_eq!(
             tree.children.keys().copied().collect::<Vec<_>>(),
             ["acc", "cpu"]
         );
         let acc = &tree.children["acc"];
-        assert_eq!(acc.trace.map(|trace| trace.path.as_str()), Some("acc"));
+        assert_eq!(acc.trace.map(|trace| trace.path), Some("acc"));
         assert_eq!(acc.children.keys().copied().collect::<Vec<_>>(), ["x", "y"]);
         assert_eq!(
-            acc.children["x"].trace.map(|trace| trace.path.as_str()),
+            acc.children["x"].trace.map(|trace| trace.path),
             Some("acc/x")
         );
         assert_eq!(
-            tree.children["cpu"].trace.map(|trace| trace.path.as_str()),
+            tree.children["cpu"].trace.map(|trace| trace.path),
             Some("/cpu")
         );
     }
@@ -674,11 +680,11 @@ mod tests {
     #[test]
     fn trace_tree_branches_at_record_fields() {
         let traces = [
-            Trace::new("sensors/imu.acc.z".to_owned(), Some(11)),
-            Trace::new("sensors/imu.ok".to_owned(), Some(11)),
-            Trace::new("sensors/v1.2".to_owned(), None),
+            Trace::leaked("sensors/imu.acc.z", Some(11), Samples::Empty(0)),
+            Trace::leaked("sensors/imu.ok", Some(11), Samples::Empty(0)),
+            Trace::leaked("sensors/v1.2", None, Samples::Empty(0)),
         ];
-        let tree = TraceTree::build(traces.iter());
+        let tree = TraceTree::build(traces.iter().copied());
         let sensors = &tree.children["sensors"];
         assert_eq!(
             sensors.children.keys().copied().collect::<Vec<_>>(),
@@ -694,7 +700,7 @@ mod tests {
         assert_eq!(
             imu.children[".acc"].children[".z"]
                 .trace
-                .map(|trace| trace.path.as_str()),
+                .map(|trace| trace.path),
             Some("sensors/imu.acc.z")
         );
     }
@@ -702,19 +708,18 @@ mod tests {
     #[test]
     fn trace_tree_paths_list_array_elements() {
         let array = |path: &str, len| {
-            let mut trace = Trace::new(path.to_owned(), Some(3));
-            trace.samples = Samples::Arrays {
+            let samples = Samples::Arrays {
                 shape: vec![len],
                 elements: Default::default(),
             };
-            trace
+            Trace::leaked(path, Some(3), samples)
         };
         let traces = [
             array("imu.acc", 2),
             array("imu.big", MAX_LISTED_ELEMENTS + 1),
-            Trace::new("imu.ok".to_owned(), Some(3)),
+            Trace::leaked("imu.ok", Some(3), Samples::Empty(0)),
         ];
-        let tree = TraceTree::build(traces.iter());
+        let tree = TraceTree::build(traces.iter().copied());
         assert_eq!(
             tree.children["imu"].paths(ViewType::Plot.into()),
             ["imu.acc[0]", "imu.acc[1]", "imu.ok"]
@@ -724,24 +729,22 @@ mod tests {
     #[test]
     fn pruning_keeps_only_what_the_view_can_show() {
         let array = |path: &str, shape: Vec<usize>| {
-            let mut trace = Trace::new(path.to_owned(), None);
-            trace.samples = Samples::Arrays {
+            let samples = Samples::Arrays {
                 shape,
                 elements: Default::default(),
             };
-            trace
+            Trace::leaked(path, None, samples)
         };
-        let mut text = Trace::new("motor/mode".to_owned(), None);
-        text.samples = Samples::Strings(Default::default());
+        let text = Trace::leaked("motor/mode", None, Samples::Strings(Default::default()));
         let traces = [
-            Trace::new("motor/rpm".to_owned(), None),
+            Trace::leaked("motor/rpm", None, Samples::Empty(0)),
             text,
             array("imu/acc", vec![3]),
             // arrays without elements have none to select
             array("imu/none", vec![0]),
             array("imu/big", vec![MAX_LISTED_ELEMENTS + 1]),
         ];
-        let mut tree = TraceTree::build(traces.iter());
+        let mut tree = TraceTree::build(traces.iter().copied());
         tree.add_actions(["reboot"].into_iter());
         tree.retain_selectable(ViewType::Plot.into());
         assert_eq!(
@@ -765,7 +768,7 @@ mod tests {
             ["rpm"]
         );
 
-        let mut tree = TraceTree::build(traces.iter());
+        let mut tree = TraceTree::build(traces.iter().copied());
         tree.add_actions(["motor/rpm", "reboot"].into_iter());
         tree.retain_selectable(ViewType::Actions.into());
         assert_eq!(
@@ -840,15 +843,12 @@ mod tests {
 
     #[test]
     fn actions_join_the_traces_in_the_tree() {
-        let traces = [Trace::new("motor/speed".to_owned(), None)];
-        let mut tree = TraceTree::build(traces.iter());
+        let traces = [Trace::leaked("motor/speed", None, Samples::Empty(0))];
+        let mut tree = TraceTree::build(traces.iter().copied());
         tree.add_actions(["motor/speed", "motor/stop", "reboot"].into_iter());
         let motor = &tree.children["motor"];
         let speed = &motor.children["speed"];
-        assert_eq!(
-            speed.trace.map(|trace| trace.path.as_str()),
-            Some("motor/speed")
-        );
+        assert_eq!(speed.trace.map(|trace| trace.path), Some("motor/speed"));
         assert_eq!(speed.action, Some("motor/speed"));
         assert_eq!(motor.children["stop"].action, Some("motor/stop"));
         assert_eq!(tree.children["reboot"].action, Some("reboot"));

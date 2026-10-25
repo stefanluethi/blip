@@ -116,9 +116,9 @@ impl ValueText<'_> {
 }
 
 /// The elements of the sample of an array trace at the cursor time.
-pub(super) fn sample_at_cursor(trace: &Trace, time: &TimeRange) -> Vec<Number> {
+pub(super) fn sample_at_cursor(trace: Trace<'_>, time: &TimeRange) -> Vec<Number> {
     time.cursor()
-        .and_then(|t| index_at(&trace.timestamps, t))
+        .and_then(|t| index_at(trace.timestamps, t))
         .and_then(|index| trace.samples.array_sample(index))
         .map(|elements| elements.iter().collect())
         .unwrap_or_default()
@@ -129,7 +129,7 @@ pub(super) fn sample_at_cursor(trace: &Trace, time: &TimeRange) -> Vec<Number> {
 /// element with element 0 in the bottom row. NaN where there is no sample, also after
 /// `latest` seconds.
 fn over_time(
-    trace: &Trace,
+    trace: Trace<'_>,
     len: usize,
     (start, end): (f64, f64),
     latest: f64,
@@ -143,7 +143,7 @@ fn over_time(
             break;
         }
         let Some(elements) =
-            index_at(&trace.timestamps, t).and_then(|index| trace.samples.array_sample(index))
+            index_at(trace.timestamps, t).and_then(|index| trace.samples.array_sample(index))
         else {
             continue;
         };
@@ -234,7 +234,7 @@ impl Heatmap {
     fn over_time_ui(
         &mut self,
         ui: &mut egui::Ui,
-        trace: &Trace,
+        trace: Trace<'_>,
         text: ValueText<'_>,
         len: usize,
         time: &mut TimeRange,
@@ -271,7 +271,7 @@ impl Heatmap {
 
         if let (Some(t), Some(y)) = (response.hovered, response.hovered_y) {
             let element = y.round();
-            let value = index_at(&trace.timestamps, t)
+            let value = index_at(trace.timestamps, t)
                 .and_then(|index| trace.samples.array_sample(index))
                 .filter(|_| element >= 0.0)
                 .and_then(|elements| elements.get(element as usize));
@@ -290,7 +290,7 @@ impl Heatmap {
     fn grid_ui(
         &mut self,
         ui: &mut egui::Ui,
-        trace: &Trace,
+        trace: Trace<'_>,
         text: ValueText<'_>,
         (rows, columns): (usize, usize),
         time: &TimeRange,
@@ -365,7 +365,13 @@ impl Heatmap {
 
     /// Shows the elements of a 1D array trace at the cursor time as a line over their
     /// indices.
-    fn line_ui(&mut self, ui: &mut egui::Ui, trace: &Trace, text: ValueText<'_>, time: &TimeRange) {
+    fn line_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        trace: Trace<'_>,
+        text: ValueText<'_>,
+        time: &TimeRange,
+    ) {
         let numbers = sample_at_cursor(trace, time);
         let values: Vec<f64> = numbers.iter().map(|number| number.as_f64()).collect();
         self.fitted_range = value_range(&values);
@@ -389,7 +395,7 @@ impl Heatmap {
                 plot_ui.set_plot_bounds_y(min..=max);
             }
             let (style, points) = (LineStyle::Solid, ShowPoints::Always);
-            super::xy::plot_array(&trace.path, &values, color, style, points, plot_ui);
+            super::xy::plot_array(trace.path, &values, color, style, points, plot_ui);
         });
         super::zoom_on_wheel(&response.response);
     }
@@ -502,7 +508,7 @@ impl Heatmap {
     fn contents_ui(
         &mut self,
         ui: &mut egui::Ui,
-        trace: &Trace,
+        trace: Trace<'_>,
         text: ValueText<'_>,
         shape: &[usize],
         time: &mut TimeRange,
@@ -551,7 +557,7 @@ mod tests {
 
     #[test]
     fn over_time_holds_each_sample_until_the_next() {
-        let mut traces = Traces::new();
+        let mut traces = Traces::default();
         for (second, elements) in [(1, [1.0, 2.0]), (3, [3.0, 4.0])] {
             traces.append(&proto::Value {
                 timestamp: second * 1_000_000_000,

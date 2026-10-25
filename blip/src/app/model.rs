@@ -1,4 +1,6 @@
 pub mod actions;
+pub mod cbor;
+pub mod decode;
 pub mod logs;
 pub mod numbers;
 pub mod recording;
@@ -37,6 +39,8 @@ pub struct Model {
     paths_version: Version,
     /// Changes whenever a value or log record arrives.
     samples_version: Version,
+    /// The value being applied, kept to apply the next one without allocating.
+    flat: decode::Flat,
 }
 
 /// The latest frame of `source` with its actions or the unit of a path.
@@ -102,10 +106,10 @@ impl Model {
         frame: &[u8],
         recording: bool,
     ) -> Option<proto::ActionResult> {
-        let message = serde_cbor_2::from_slice::<proto::Message>(frame);
+        let message = decode::decode(frame, &mut self.flat);
         let sample = matches!(
             message,
-            Ok(proto::Message::Value(_) | proto::Message::Log(_))
+            Ok(decode::Message::Value { .. } | decode::Message::Log { .. })
         );
         if sample && !recording {
             return None;
@@ -114,31 +118,42 @@ impl Model {
             self.recording.push(source, frame);
         }
         match message {
-            Ok(proto::Message::Value(value)) => {
-                let count = self.traces.count();
-                self.traces.append(&value);
-                if self.traces.count() != count {
+            Ok(decode::Message::Value { timestamp, path }) => {
+                let generation = self.traces.generation();
+                self.traces.insert(path, timestamp, &self.flat, frame);
+                if self.traces.generation() != generation {
                     self.paths_version = Version::default();
                 }
                 self.samples_version = Version::default();
             }
-            Ok(proto::Message::ValueMetadata(metadata)) => {
-                self.describe(source, Some(&metadata.path), frame);
-                self.traces.set_unit(&metadata.path, &metadata.unit);
-            }
-            Ok(proto::Message::Log(record)) => {
+            Ok(decode::Message::Log {
+                timestamp,
+                level,
+                component,
+                message,
+            }) => {
                 // a log without a timestamp happened about when the newest data did, in
                 // the time domain of the device
                 let now = self.time_span().map(|(_, newest)| newest);
-                self.logs.push(LogEntry::from_proto(&record, now));
+                let entry = LogEntry::new(timestamp, level, component, message, now);
+                self.logs.push(entry);
                 self.samples_version = Version::default();
             }
-            Ok(proto::Message::Actions(actions)) => {
+            Ok(decode::Message::Other(proto::Message::ValueMetadata(metadata))) => {
+                self.describe(source, Some(&metadata.path), frame);
+                self.traces.set_unit(&metadata.path, &metadata.unit);
+            }
+            Ok(decode::Message::Other(proto::Message::Actions(actions))) => {
                 self.describe(source, None, frame);
                 self.actions.set(source, actions);
                 self.paths_version = Version::default();
             }
-            Ok(proto::Message::ActionResult(result)) => return Some(result),
+            Ok(decode::Message::Other(proto::Message::ActionResult(result))) => {
+                return Some(result);
+            }
+            Ok(decode::Message::Other(proto::Message::Value(_) | proto::Message::Log(_))) => {
+                unreachable!("values and logs are decoded apart")
+            }
             Err(error) => log::warn!("error parsing message: {error}"),
         }
         None
@@ -177,37 +192,19 @@ impl Model {
     }
 
     /// What arrived in each of `bins` bins of `step` nanoseconds from `start`
-    /// nanoseconds on: the values and the log records by level. A record counts once,
-    /// as its fields arrive together: as many times as its field with the most values
-    /// in the bin, so also when some of its messages lack fields.
+    /// nanoseconds on: the values, a record once, and the log records by level.
     pub fn activity(&self, start: u64, step: u64, bins: usize) -> Vec<Activity> {
         let mut activity = vec![Activity::default(); bins];
         let step = step.max(1);
         let edge = |bin: usize| start.saturating_add(step.saturating_mul(bin as u64));
-        // the counts of the record whose fields follow each other, or of a trace
-        let mut counts = vec![0; bins];
-        let mut record = None;
-        let mut add = |counts: &mut Vec<u32>| {
-            for (activity, count) in activity.iter_mut().zip(counts.iter_mut()) {
-                activity.values += std::mem::take(count);
-            }
-        };
-        for trace in self.traces.iter() {
-            let path = trace.fields_start.map(|at| &trace.path[..at]);
-            if path.is_none() || path != record {
-                add(&mut counts);
-            }
-            record = path;
-            let timestamps = &trace.timestamps;
+        for (_, timestamps) in self.traces.tables() {
             let mut from = timestamps.partition_point(|&t| t < start);
-            for (bin, count) in counts.iter_mut().enumerate() {
-                let edge = edge(bin + 1);
-                let to = from + timestamps[from..].partition_point(|&t| t < edge);
-                *count = (*count).max((to - from) as u32);
+            for (bin, activity) in activity.iter_mut().enumerate() {
+                let to = from + timestamps[from..].partition_point(|&t| t < edge(bin + 1));
+                activity.values += (to - from) as u32;
                 from = to;
             }
         }
-        add(&mut counts);
         let entries = &self.logs.entries;
         let first = entries.partition_point(|entry| entry.time < start);
         for entry in entries.range(first..) {
@@ -236,32 +233,6 @@ impl Activity {
     pub fn log_count(&self) -> u32 {
         self.logs.iter().sum()
     }
-}
-
-/// The items of the CBOR sequence (RFC 8742) `bytes`, each as its bytes, e.g. the
-/// messages of a frame. Ends after the first item that cannot be read, with its error.
-pub fn cbor_items(bytes: &[u8]) -> impl Iterator<Item = Result<&[u8], serde_cbor_2::Error>> {
-    let mut items =
-        serde_cbor_2::Deserializer::from_slice(bytes).into_iter::<serde::de::IgnoredAny>();
-    let mut start = 0;
-    std::iter::from_fn(move || {
-        if start > bytes.len() {
-            return None;
-        }
-        match items.next()? {
-            Ok(_) => {
-                let end = items.byte_offset();
-                let item = &bytes[start..end];
-                start = end;
-                Some(Ok(item))
-            }
-            Err(error) => {
-                // the rest cannot be told apart into items
-                start = usize::MAX;
-                Some(Err(error))
-            }
-        }
-    })
 }
 
 #[cfg(test)]
@@ -352,37 +323,6 @@ mod tests {
     }
 
     #[test]
-    fn a_cbor_sequence_is_split_into_its_items() {
-        let value = frame(&proto::Message::Value(proto::Value {
-            timestamp: 1,
-            path: "cpu".to_owned(),
-            value: proto::Data::Float(12.5),
-        }));
-        let log = frame(&proto::Message::Log(proto::LogRecord {
-            timestamp: 2,
-            level: 2,
-            component: String::new(),
-            message: "hi".to_owned(),
-        }));
-        let batch = [value.clone(), log.clone()].concat();
-        let items: Vec<&[u8]> = cbor_items(&batch).collect::<Result<_, _>>().unwrap();
-        assert_eq!(items, [&value[..], &log[..]]);
-        assert_eq!(cbor_items(&value).count(), 1);
-        assert_eq!(cbor_items(&[]).count(), 0);
-
-        // the items end with the first that cannot be read
-        let cut = &batch[..batch.len() - 1];
-        let items: Vec<_> = cbor_items(cut).collect();
-        assert_eq!(items.len(), 2);
-        assert_eq!(items[0].as_ref().ok(), Some(&&value[..]));
-        assert!(items[1].is_err());
-        let broken = [&value[..], &[0xff], &log[..]].concat();
-        let items: Vec<_> = cbor_items(&broken).collect();
-        assert_eq!(items.len(), 2);
-        assert!(items[1].is_err());
-    }
-
-    #[test]
     fn actions_are_kept_with_their_source_and_answers_returned() {
         let actions = frame(&proto::Message::Actions(vec![proto::ActionDescriptor {
             path: "motor/speed".to_owned(),
@@ -403,6 +343,61 @@ mod tests {
         assert!(model.actions.announced("a", "motor/speed").is_none());
         let answer = frame(&proto::Message::ActionResult(result.clone()));
         assert_eq!(model.receive("b", &answer), Some(result));
+    }
+
+    /// Measures how many messages a second the model takes in: scalars on 100 paths
+    /// and a record of a float, an array and a string.
+    #[test]
+    #[ignore = "a benchmark, run with `cargo test --release -p blip ingest -- --ignored --nocapture`"]
+    fn ingest_rate() {
+        let scalar = |timestamp: u64, path: &str| {
+            frame(&proto::Message::Value(proto::Value {
+                timestamp,
+                path: path.to_owned(),
+                value: proto::Data::Float(timestamp as f64 * 0.5),
+            }))
+        };
+        let imu = |timestamp: u64| {
+            frame(&proto::Message::Value(proto::Value {
+                timestamp,
+                path: "sensors/imu".to_owned(),
+                value: proto::Data::Record(vec![
+                    ("t".to_owned(), proto::Data::Float(21.5)),
+                    (
+                        "acc".to_owned(),
+                        proto::Data::Array(vec![proto::Data::Float(0.1); 3]),
+                    ),
+                    ("mode".to_owned(), proto::Data::from("run")),
+                ]),
+            }))
+        };
+        let paths: Vec<String> = (0..100).map(|n| format!("cpu/core{n}")).collect();
+        let frames: Vec<Vec<u8>> = (0..1_000_000u64)
+            .map(|n| match n % 10 {
+                0 => imu(n),
+                _ => scalar(n, &paths[n as usize % 100]),
+            })
+            .collect();
+        let mut model = Model::default();
+        let start = std::time::Instant::now();
+        for frame in &frames {
+            model.receive("a", frame);
+        }
+        let seconds = start.elapsed().as_secs_f64();
+        println!(
+            "{} messages in {seconds:.3} s: {:.0} messages/s",
+            frames.len(),
+            frames.len() as f64 / seconds
+        );
+        assert_eq!(
+            model
+                .traces
+                .get("sensors/imu.mode")
+                .unwrap()
+                .timestamps
+                .len(),
+            100_000
+        );
     }
 
     #[test]

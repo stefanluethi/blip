@@ -1,81 +1,161 @@
-use super::numbers::{DisplayFormat, Number, NumberKind, Numbers};
-use proto::Data;
-use std::collections::BTreeMap;
+//! The values received, as tables: each path that values are sent to is a table with
+//! a column per leaf of its values, e.g. the fields of a record, sharing the
+//! timestamps of the table. A column is a trace.
+
+use super::decode::{Flat, Leaf};
+use super::numbers::{DisplayFormat, Extent, Number, NumberKind, Numbers};
+use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 
-fn data_kind_name(data: &Data) -> &'static str {
-    match data {
-        Data::Null => "null",
-        Data::Uint(_) | Data::Int(_) => "int",
-        Data::Float(_) => "float",
-        Data::Bool(_) => "bool",
-        Data::String(_) => "string",
-        Data::Array(_) => "array",
-        Data::Record(_) => "record",
+/// The value of a string trace that is null.
+const NULL_TEXT: u32 = u32::MAX;
+
+/// The texts of a string trace, each different text kept once.
+#[derive(Debug, Default, PartialEq)]
+pub struct Strings {
+    /// The index of the text of each sample in `texts`, [`NULL_TEXT`] for null.
+    ids: Vec<u32>,
+    texts: Vec<Box<str>>,
+    known: HashMap<Box<str>, u32>,
+}
+
+impl Strings {
+    fn with_nulls(count: usize) -> Self {
+        Self {
+            ids: vec![NULL_TEXT; count],
+            ..Self::default()
+        }
+    }
+
+    fn push(&mut self, text: Option<&str>) {
+        let id = match text {
+            None => NULL_TEXT,
+            Some(text) => match self.known.get(text) {
+                Some(&id) => id,
+                None => {
+                    let id = self.texts.len() as u32;
+                    self.texts.push(text.into());
+                    self.known.insert(text.into(), id);
+                    id
+                }
+            },
+        };
+        self.ids.push(id);
+    }
+
+    /// The text of the `index`th sample, `None` for null.
+    pub fn get(&self, index: usize) -> Option<&str> {
+        self.texts.get(self.ids[index] as usize).map(|text| &**text)
+    }
+
+    /// Whether the `a`th and the `b`th sample are the same text or both null.
+    pub fn same(&self, a: usize, b: usize) -> bool {
+        self.ids[a] == self.ids[b]
     }
 }
 
-/// The sample values of a trace, one per timestamp.
+/// The samples of a trace.
 #[derive(Debug, PartialEq)]
 pub enum Samples {
-    /// Only nulls so far, so the kind is not known yet.
-    Empty,
+    /// This many nulls so far, so the kind is not known yet.
+    Empty(usize),
     /// Numbers or bools.
     Numbers(Numbers),
-    Strings(Vec<Option<String>>),
-    /// Arrays of numbers or bools with the same `shape` in every sample. The elements
-    /// of each sample follow each other in row-major order. Their kind is unknown
-    /// while all elements were null.
+    Strings(Strings),
+    /// Arrays of numbers or bools with the same `shape` in every sample, the elements
+    /// of a sample in a row of `elements`. Their kind is unknown while all elements
+    /// were null.
     Arrays {
         shape: Vec<usize>,
         elements: Numbers,
     },
 }
 
+/// The kind of `leaf` as named in warnings.
+fn leaf_kind(leaf: &Leaf) -> &'static str {
+    match leaf {
+        Leaf::Null => "null",
+        Leaf::Number(number) => number.kind_name(),
+        Leaf::Text(_) => "string",
+        Leaf::Array { .. } => "array",
+        Leaf::Invalid(_) => "invalid value",
+    }
+}
+
 impl Samples {
-    /// Samples of the kind of `data`, starting with `count` nulls.
-    fn with_nulls(data: &Data, count: usize) -> Result<Self, String> {
-        let mut numbers = Numbers::default();
-        Ok(match data {
-            Data::String(_) => Self::Strings(vec![None; count]),
-            Data::Array(_) => {
-                let shape = array_shape(data);
-                numbers.push_nulls(count * shape.iter().product::<usize>());
-                Self::Arrays {
-                    shape,
-                    elements: numbers,
-                }
-            }
-            _ if Number::of(data).is_some() => {
-                numbers.push_nulls(count);
-                Self::Numbers(numbers)
-            }
-            _ => return Err(format!("a trace cannot hold a {}", data_kind_name(data))),
-        })
+    /// The number of samples.
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Empty(count) => *count,
+            Self::Numbers(numbers) => numbers.rows(),
+            Self::Strings(strings) => strings.ids.len(),
+            Self::Arrays { elements, .. } => elements.rows(),
+        }
     }
 
-    fn push(&mut self, data: &Data) -> Result<(), String> {
-        match (self, data) {
-            (Self::Empty, Data::Null) => {}
-            (Self::Numbers(numbers), data) => {
-                let number = Number::of(data).ok_or_else(|| {
-                    let kind = numbers.kind().map_or("null", NumberKind::name);
-                    format!("expected {kind}, got {}", data_kind_name(data))
-                })?;
-                numbers.extend(&[number])?;
+    fn push_null(&mut self) {
+        match self {
+            Self::Empty(count) => *count += 1,
+            Self::Numbers(numbers) => numbers.push_nulls(1),
+            Self::Strings(strings) => strings.push(None),
+            Self::Arrays { elements, .. } => elements.push_nulls(1),
+        }
+    }
+
+    /// Appends `leaf` of `flat` decoded from `frame`, unless its kind does not match.
+    fn push(&mut self, leaf: &Leaf, flat: &Flat, frame: &[u8]) -> Result<(), String> {
+        if let (Self::Empty(count), leaf) = (&*self, leaf) {
+            let count = *count;
+            *self = match leaf {
+                Leaf::Null => Self::Empty(count),
+                Leaf::Number(_) => Self::Numbers(Numbers::default()),
+                Leaf::Text(_) => Self::Strings(Strings::default()),
+                Leaf::Array { shape, .. } => {
+                    let shape = flat.shapes[shape.clone()].to_vec();
+                    Self::Arrays {
+                        elements: Numbers::new(shape.iter().product()),
+                        shape,
+                    }
+                }
+                Leaf::Invalid(problem) => return Err(problem.clone()),
+            };
+            match self {
+                Self::Empty(_) => {}
+                Self::Numbers(numbers)
+                | Self::Arrays {
+                    elements: numbers, ..
+                } => {
+                    numbers.push_nulls(count);
+                }
+                Self::Strings(strings) => *strings = Strings::with_nulls(count),
             }
-            (Self::Strings(values), Data::Null) => values.push(None),
-            (Self::Strings(values), Data::String(value)) => values.push(Some(value.clone())),
-            (Self::Arrays { shape, elements }, data) => {
-                let mut numbers = Vec::with_capacity(shape.iter().product());
-                flatten(data, shape, &mut numbers)?;
-                elements.extend(&numbers)?;
+        }
+        match (self, leaf) {
+            (samples, Leaf::Null) => samples.push_null(),
+            (Self::Numbers(numbers), Leaf::Number(number)) => numbers.push_row(&[*number])?,
+            (Self::Strings(strings), Leaf::Text(text)) => {
+                let text = std::str::from_utf8(&frame[text.clone()]).expect("checked when read");
+                strings.push(Some(text));
             }
-            (samples, data) => {
+            (
+                Self::Arrays { shape, elements },
+                Leaf::Array {
+                    shape: got,
+                    elements: values,
+                },
+            ) => {
+                let got = &flat.shapes[got.clone()];
+                if got != shape.as_slice() {
+                    return Err(format!("expected an array of shape {shape:?}, got {got:?}"));
+                }
+                elements.push_row(&flat.numbers[values.clone()])?;
+            }
+            (_, Leaf::Invalid(problem)) => return Err(problem.clone()),
+            (samples, leaf) => {
                 return Err(format!(
                     "expected {}, got {}",
                     samples.type_label(),
-                    data_kind_name(data)
+                    leaf_kind(leaf)
                 ));
             }
         }
@@ -85,13 +165,14 @@ impl Samples {
     /// Moves the last sample to `index`, after the samples before it.
     fn move_last_to(&mut self, index: usize) {
         match self {
-            Self::Empty => {}
-            Self::Numbers(numbers) => numbers.move_last_to(index, 1),
-            Self::Strings(values) => values[index..].rotate_right(1),
-            Self::Arrays { shape, elements } => {
-                let len = shape.iter().product();
-                elements.move_last_to(index * len, len);
+            Self::Empty(_) => {}
+            Self::Numbers(numbers)
+            | Self::Arrays {
+                elements: numbers, ..
+            } => {
+                numbers.move_last_row_to(index);
             }
+            Self::Strings(strings) => strings.ids[index..].rotate_right(1),
         }
     }
 
@@ -120,9 +201,9 @@ impl Samples {
         format: DisplayFormat,
     ) -> String {
         match self {
-            Self::Empty => "null".to_owned(),
+            Self::Empty(_) => "null".to_owned(),
             Self::Numbers(numbers) => numbers.get(index).format(digits, format),
-            Self::Strings(values) => values[index].clone().unwrap_or_else(|| "null".to_owned()),
+            Self::Strings(strings) => strings.get(index).unwrap_or("null").to_owned(),
             Self::Arrays { shape, .. } => {
                 let elements: Vec<Number> = self
                     .array_sample(index)
@@ -138,7 +219,7 @@ impl Samples {
     /// The type of the samples, e.g. `float` or `int[2×3]`.
     pub fn type_label(&self) -> String {
         match self {
-            Self::Empty => "null".to_owned(),
+            Self::Empty(_) => "null".to_owned(),
             Self::Numbers(numbers) => numbers.kind().map_or("null", NumberKind::name).to_owned(),
             Self::Strings(_) => "string".to_owned(),
             Self::Arrays { shape, elements } => {
@@ -169,6 +250,476 @@ impl<'a> Elements<'a> {
     pub fn iter(&self) -> impl Iterator<Item = Number> + 'a {
         let numbers = self.numbers;
         (self.start..self.start + self.len).map(|index| numbers.get(index))
+    }
+}
+
+/// A trace as views see it: its samples with the timestamps of its table.
+#[derive(Clone, Copy)]
+pub struct Trace<'a> {
+    pub path: &'a str,
+    /// Ascending: a sample older than the newest, e.g. of another outpost sending the
+    /// same path, is put in its place, after those with the same timestamp.
+    pub timestamps: &'a [u64],
+    pub samples: &'a Samples,
+    /// For a field of a record, the index of the `.` in `path` before the first field
+    /// name, e.g. 3 for `imu.acc.z`.
+    pub fields_start: Option<usize>,
+}
+
+impl<'a> Trace<'a> {
+    /// The lowest and highest finite value of all samples, of all elements of an array
+    /// trace, `None` if there is none.
+    pub fn value_range(&self) -> Option<(f64, f64)> {
+        match self.samples {
+            Samples::Numbers(numbers)
+            | Samples::Arrays {
+                elements: numbers, ..
+            } => numbers.total_range(),
+            _ => None,
+        }
+    }
+
+    /// The numbers of a numeric trace.
+    fn series(self) -> Option<Series<'a>> {
+        let Samples::Numbers(numbers) = self.samples else {
+            return None;
+        };
+        Some(Series::new(self.timestamps, numbers, 0))
+    }
+}
+
+#[cfg(test)]
+impl Trace<'static> {
+    /// A trace without timestamps, kept for the rest of a test.
+    pub fn leaked(path: &str, fields_start: Option<usize>, samples: Samples) -> Self {
+        Self {
+            path: Box::leak(path.into()),
+            timestamps: &[],
+            samples: Box::leak(Box::new(samples)),
+            fields_start,
+        }
+    }
+}
+
+/// The numbers of a numeric trace or of one element of an array trace.
+#[derive(Clone, Copy)]
+pub struct Series<'a> {
+    pub timestamps: &'a [u64],
+    numbers: &'a Numbers,
+    /// The element of the rows of `numbers`.
+    lane: usize,
+    /// The row of the first sample.
+    first: usize,
+    pub kind: NumberKind,
+    /// The lowest and highest finite value of all samples, also of those outside a
+    /// [`Series::slice`], `None` if there is none.
+    pub range: Option<(f64, f64)>,
+}
+
+impl<'a> Series<'a> {
+    fn new(timestamps: &'a [u64], numbers: &'a Numbers, lane: usize) -> Self {
+        Self {
+            timestamps,
+            numbers,
+            lane,
+            first: 0,
+            kind: numbers.kind().unwrap_or(NumberKind::Float),
+            range: numbers.range(lane),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.timestamps.len()
+    }
+
+    /// The value of the `index`th sample as a float for plotting, NaN for null.
+    pub fn value(&self, index: usize) -> f64 {
+        self.numbers
+            .value((self.first + index) * self.numbers.lanes() + self.lane)
+    }
+
+    /// The value of the `index`th sample.
+    pub fn number(&self, index: usize) -> Number {
+        self.numbers
+            .get((self.first + index) * self.numbers.lanes() + self.lane)
+    }
+
+    /// The lowest and highest finite value of the samples in `range`, and whether one
+    /// of them is a gap, read from blocks of samples where it can.
+    pub fn extent(&self, range: Range<usize>) -> Extent {
+        self.numbers
+            .extent(self.lane, self.first + range.start..self.first + range.end)
+    }
+
+    /// The samples within `range`.
+    pub fn slice(&self, range: Range<usize>) -> Self {
+        Self {
+            timestamps: &self.timestamps[range.clone()],
+            first: self.first + range.start,
+            ..*self
+        }
+    }
+}
+
+/// A column of a table: the samples of a trace.
+struct Column {
+    path: Box<str>,
+    fields_start: Option<usize>,
+    table: usize,
+    samples: Samples,
+    warned: bool,
+    /// Whether the column was removed, as it only held nulls of what turned out to be a
+    /// record.
+    removed: bool,
+}
+
+/// The values sent to one path, a column per leaf.
+struct Table {
+    path: Box<str>,
+    timestamps: Vec<u64>,
+    columns: Vec<usize>,
+    /// Whether a value was dropped as it did not fit the columns.
+    warned: bool,
+}
+
+impl Table {
+    fn warn(&mut self, problem: &str) {
+        if !self.warned {
+            self.warned = true;
+            log::warn!(
+                "{}: dropped a value, {problem} (further ones are dropped silently)",
+                self.path
+            );
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Traces {
+    columns: Vec<Column>,
+    tables: Vec<Table>,
+    by_path: HashMap<Box<str>, usize>,
+    tables_by_path: HashMap<Box<str>, usize>,
+    /// The columns that were not removed, by their paths, so the fields of a record
+    /// follow each other.
+    sorted: Vec<usize>,
+    /// The units of the traces by their paths, as received in their metadata, also
+    /// for traces without samples yet.
+    units: BTreeMap<String, String>,
+    /// Timestamps of the first and the newest value.
+    span: Option<(u64, u64)>,
+    /// Changes when a trace is added or removed.
+    generation: u64,
+}
+
+impl Traces {
+    fn trace(&self, id: usize) -> Trace<'_> {
+        let column = &self.columns[id];
+        Trace {
+            path: &column.path,
+            timestamps: &self.tables[column.table].timestamps,
+            samples: &column.samples,
+            fields_start: column.fields_start,
+        }
+    }
+
+    /// The traces, sorted by path.
+    pub fn iter(&self) -> impl Iterator<Item = Trace<'_>> {
+        self.sorted.iter().map(|&id| self.trace(id))
+    }
+
+    /// The paths values were sent to with the timestamps of their values, e.g. a
+    /// record once.
+    pub fn tables(&self) -> impl Iterator<Item = (&str, &[u64])> {
+        self.tables
+            .iter()
+            .map(|table| (&*table.path, table.timestamps.as_slice()))
+    }
+
+    /// Changes whenever a trace is added or removed.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Sets the unit of the trace at `path`, an empty `unit` for none.
+    pub fn set_unit(&mut self, path: &str, unit: &str) {
+        if unit.is_empty() {
+            self.units.remove(path);
+        } else if self.units.get(path).is_none_or(|known| known != unit) {
+            self.units.insert(path.to_owned(), unit.to_owned());
+        }
+    }
+
+    /// The unit of the trace at `path`, or of the array trace of an element written by
+    /// [`element_path`].
+    pub fn unit(&self, path: &str) -> Option<&str> {
+        let unit = match self.units.get(path) {
+            Some(unit) => Some(unit),
+            None => self.units.get(parse_element_path(path)?.0),
+        };
+        unit.map(String::as_str)
+    }
+
+    pub fn get(&self, path: &str) -> Option<Trace<'_>> {
+        self.by_path.get(path).map(|&id| self.trace(id))
+    }
+
+    /// The numbers shown for `path`: a numeric trace, or an element of an array
+    /// trace written by [`element_path`].
+    pub fn series(&self, path: &str) -> Option<Series<'_>> {
+        if let Some(trace) = self.get(path) {
+            return trace.series();
+        }
+        let (path, indices) = parse_element_path(path)?;
+        let trace = self.get(path)?;
+        let Samples::Arrays { shape, elements } = trace.samples else {
+            return None;
+        };
+        if indices.len() != shape.len()
+            || indices.iter().zip(shape).any(|(index, len)| index >= len)
+        {
+            return None;
+        }
+        let lane = indices
+            .iter()
+            .zip(shape)
+            .fold(0, |offset, (index, len)| offset * len + index);
+        Some(Series::new(trace.timestamps, elements, lane))
+    }
+
+    /// The paths of the fields of the record at `path`, also of nested records, but not
+    /// of traces whose names only contain a `.`, e.g. `v1.2`.
+    pub fn field_paths(&self, path: &str) -> impl Iterator<Item = &str> {
+        let prefix = format!("{path}.");
+        let start = self
+            .sorted
+            .partition_point(|&id| *self.columns[id].path < *prefix);
+        self.sorted[start..]
+            .iter()
+            .map(|&id| &self.columns[id])
+            .take_while(move |column| column.path.starts_with(&prefix))
+            .filter(move |column| column.fields_start.is_some_and(|start| start <= path.len()))
+            .map(|column| &*column.path)
+    }
+
+    /// Timestamps of the first and the newest value of all traces.
+    pub fn time_span(&self) -> Option<(u64, u64)> {
+        self.span
+    }
+
+    /// Whether a sample at `path` was dropped as its kind did not match, for tests.
+    #[cfg(test)]
+    pub fn warned(&self, path: &str) -> bool {
+        let column = &self.columns[self.by_path[path]];
+        column.warned || self.tables[column.table].warned
+    }
+
+    /// Appends `value` as if received, for tests.
+    #[cfg(test)]
+    pub fn append(&mut self, value: &proto::Value) {
+        let frame = serde_cbor_2::to_vec(&proto::Message::Value(value.clone())).unwrap();
+        let mut flat = Flat::default();
+        let message = super::decode::decode(&frame, &mut flat).unwrap();
+        let super::decode::Message::Value { timestamp, path } = message else {
+            unreachable!("a value was encoded");
+        };
+        self.insert(path, timestamp, &flat, &frame);
+    }
+
+    /// Adds a column for the leaf `field` of `table`, e.g. `.acc`, with nulls for the
+    /// values so far, unless a trace of another table has its path.
+    fn add_column(&mut self, table: usize, field: &str) -> Option<usize> {
+        let path: Box<str> = format!("{}{field}", self.tables[table].path).into();
+        if self.by_path.contains_key(&path) {
+            return None;
+        }
+        let id = self.columns.len();
+        let at = self
+            .sorted
+            .partition_point(|&other| self.columns[other].path < path);
+        self.sorted.insert(at, id);
+        self.by_path.insert(path.clone(), id);
+        let table_path_len = self.tables[table].path.len();
+        self.columns.push(Column {
+            path,
+            fields_start: (!field.is_empty()).then_some(table_path_len),
+            table,
+            samples: Samples::Empty(self.tables[table].timestamps.len()),
+            warned: false,
+            removed: false,
+        });
+        self.tables[table].columns.push(id);
+        self.generation += 1;
+        Some(id)
+    }
+
+    /// Removes the column `id`, which only held nulls.
+    fn remove_column(&mut self, id: usize) {
+        self.columns[id].removed = true;
+        self.by_path.remove(&self.columns[id].path);
+        self.sorted.retain(|&other| other != id);
+        let table = self.columns[id].table;
+        self.tables[table].columns.retain(|&other| other != id);
+        self.generation += 1;
+    }
+
+    /// The column of `table` with the leaf `field`, looked for first at `hint`, the
+    /// index among the columns of the table where the fields usually are.
+    fn find_column(&self, table: usize, field: &str, hint: usize) -> Option<usize> {
+        let table = &self.tables[table];
+        let start = table.path.len();
+        let is_field = |&id: &usize| self.columns[id].path[start..] == *field;
+        match table.columns.get(hint) {
+            Some(&id) if is_field(&id) => Some(id),
+            _ => table.columns.iter().copied().find(is_field),
+        }
+    }
+
+    /// Appends the value at `path` with `timestamp`, flattened into `flat` from
+    /// `frame`: a sample to the trace of each of its leaves, a null to the other
+    /// traces of the path. A value that does not fit the traces at `path` is dropped,
+    /// a field that does not fit is null.
+    pub fn insert(&mut self, path: &str, timestamp: u64, flat: &Flat, frame: &[u8]) {
+        let table = match self.tables_by_path.get(path) {
+            Some(&table) => table,
+            None => {
+                if flat.leaves.is_empty() || !flat.is_record() && self.by_path.contains_key(path) {
+                    // nothing to keep, or a field of a record has the path
+                    return;
+                }
+                self.tables.push(Table {
+                    path: path.into(),
+                    timestamps: vec![],
+                    columns: vec![],
+                    warned: false,
+                });
+                self.tables_by_path
+                    .insert(path.into(), self.tables.len() - 1);
+                self.tables.len() - 1
+            }
+        };
+        let rows = self.tables[table].timestamps.len();
+        if flat.is_record() {
+            if !self.insert_record(table, flat, frame) {
+                return;
+            }
+        } else {
+            let leaf = &flat.leaves[0].1;
+            let record = self.tables[table]
+                .columns
+                .iter()
+                .any(|&id| self.columns[id].fields_start.is_some());
+            match (record, leaf) {
+                // a missing record leaves a gap in all its fields
+                (true, Leaf::Null) => {}
+                (true, leaf) => {
+                    let problem = format!("a record cannot become {}", leaf_kind(leaf));
+                    self.tables[table].warn(&problem);
+                    return;
+                }
+                (false, leaf) => {
+                    let id = match self.find_column(table, "", 0) {
+                        Some(id) => id,
+                        None => self.add_column(table, "").expect("checked above"),
+                    };
+                    if let Err(problem) = self.columns[id].samples.push(leaf, flat, frame) {
+                        self.tables[table].warn(&problem);
+                        return;
+                    }
+                }
+            }
+        }
+        // the traces without a leaf in the value
+        for &id in &self.tables[table].columns {
+            let samples = &mut self.columns[id].samples;
+            if samples.len() == rows {
+                samples.push_null();
+            }
+        }
+
+        let table = &mut self.tables[table];
+        table.timestamps.push(timestamp);
+        let at = table.timestamps.partition_point(|&t| t <= timestamp);
+        if at < table.timestamps.len() {
+            table.timestamps[at..].rotate_right(1);
+            for &id in &table.columns {
+                self.columns[id].samples.move_last_to(at);
+            }
+        }
+        self.span = Some(self.span.map_or((timestamp, timestamp), |(first, last)| {
+            (first.min(timestamp), last.max(timestamp))
+        }));
+    }
+
+    /// Appends the leaves of the record in `flat` to the traces of their fields in
+    /// `table`. Returns whether it did, i.e. the table holds records.
+    fn insert_record(&mut self, table: usize, flat: &Flat, frame: &[u8]) -> bool {
+        // a trace that only received nulls so far turns out to be a record
+        if let Some(id) = self.find_column(table, "", 0) {
+            if !matches!(self.columns[id].samples, Samples::Empty(_)) {
+                let kind = self.columns[id].samples.type_label();
+                self.tables[table].warn(&format!("a {kind} trace cannot become a record"));
+                return false;
+            }
+            self.remove_column(id);
+        }
+        let rows = self.tables[table].timestamps.len();
+        let table_path_len = self.tables[table].path.len();
+        for (index, (field, leaf)) in flat.leaves.iter().enumerate() {
+            let field = flat.field(field);
+            let id = match self.find_column(table, field, index) {
+                Some(id) => id,
+                None => {
+                    let fields = &self.tables[table].columns;
+                    let below = |id: &usize| {
+                        let other = &self.columns[*id].path[table_path_len..];
+                        other.len() > field.len()
+                            && other.starts_with(field)
+                            && other.as_bytes()[field.len()] == b'.'
+                    };
+                    if *leaf == Leaf::Null && fields.iter().any(below) {
+                        // a missing record leaves a gap in all its fields
+                        continue;
+                    }
+                    // a field that only received nulls so far turns out to be a record
+                    let above = fields.iter().copied().find(|&id| {
+                        let other = &self.columns[id].path[table_path_len..];
+                        field.len() > other.len()
+                            && field.starts_with(other)
+                            && field.as_bytes()[other.len()] == b'.'
+                    });
+                    if let Some(above) = above {
+                        if !matches!(self.columns[above].samples, Samples::Empty(_)) {
+                            self.tables[table].warn(&format!("{field} is no record"));
+                            continue;
+                        }
+                        self.remove_column(above);
+                    }
+                    match self.add_column(table, field) {
+                        Some(id) => id,
+                        None => {
+                            self.tables[table].warn(&format!("another trace is at {field}"));
+                            continue;
+                        }
+                    }
+                }
+            };
+            let column = &mut self.columns[id];
+            if column.samples.len() > rows {
+                continue;
+            }
+            if let Err(problem) = column.samples.push(leaf, flat, frame) {
+                column.samples.push_null();
+                if !column.warned {
+                    column.warned = true;
+                    log::warn!(
+                        "{}: dropped a sample, {problem} (further ones are dropped silently)",
+                        column.path
+                    );
+                }
+            }
+        }
+        true
     }
 }
 
@@ -249,186 +800,6 @@ fn format_nested(
     format!("[{}]", parts.join(&separator))
 }
 
-/// The dimensions of the nested arrays `data`, following the first elements.
-fn array_shape(mut data: &Data) -> Vec<usize> {
-    let mut shape = vec![];
-    while let Data::Array(elements) = data {
-        shape.push(elements.len());
-        match elements.first() {
-            Some(first) => data = first,
-            None => break,
-        }
-    }
-    shape
-}
-
-/// Appends the elements of the array `data` of `shape` to `numbers` in row-major
-/// order.
-fn flatten(data: &Data, shape: &[usize], numbers: &mut Vec<Number>) -> Result<(), String> {
-    match (shape.split_first(), data) {
-        (_, Data::Null) => {
-            numbers.extend(std::iter::repeat_n(Number::Null, shape.iter().product()))
-        }
-        (Some((&len, inner)), Data::Array(elements)) => {
-            if elements.len() != len {
-                return Err(format!(
-                    "expected an array of {len} elements, got {}",
-                    elements.len()
-                ));
-            }
-            for element in elements {
-                flatten(element, inner, numbers)?;
-            }
-        }
-        (Some(_), data) => return Err(format!("expected an array, got {}", data_kind_name(data))),
-        (None, data) => numbers.push(Number::of(data).ok_or_else(|| {
-            format!(
-                "array elements must be numbers or bools, got {}",
-                data_kind_name(data)
-            )
-        })?),
-    }
-    Ok(())
-}
-
-pub struct Trace {
-    pub path: String,
-    /// Ascending: a sample older than the newest, e.g. of another outpost sending the
-    /// same path, is put in its place, after those with the same timestamp.
-    pub timestamps: Vec<u64>,
-    pub samples: Samples,
-    /// For a field of a record, the index of the `.` in `path` before the first field
-    /// name, e.g. 3 for `imu.acc.z`.
-    pub fields_start: Option<usize>,
-    /// Whether a dropped sample was reported, so it is only reported once.
-    warned: bool,
-    /// The lowest and highest finite value of all samples, one pair per element of an
-    /// array trace, `None` where all were null so far.
-    ranges: Vec<Option<(f64, f64)>>,
-}
-
-impl Trace {
-    pub fn new(path: String, fields_start: Option<usize>) -> Self {
-        Self {
-            path,
-            fields_start,
-            timestamps: vec![],
-            samples: Samples::Empty,
-            warned: false,
-            ranges: vec![],
-        }
-    }
-
-    /// Adds a sample in the order of the timestamps, unless its kind does not match the
-    /// previous samples.
-    fn push(&mut self, timestamp: u64, data: &Data) -> Result<(), String> {
-        if self.samples == Samples::Empty && *data != Data::Null {
-            self.samples = Samples::with_nulls(data, self.timestamps.len())?;
-        }
-        self.samples.push(data)?;
-        self.extend_ranges(self.timestamps.len());
-        self.timestamps.push(timestamp);
-        let at = self.timestamps.partition_point(|&t| t <= timestamp);
-        if at < self.timestamps.len() {
-            self.timestamps[at..].rotate_right(1);
-            self.samples.move_last_to(at);
-        }
-        Ok(())
-    }
-
-    /// Widens [`Trace::ranges`] to the values of the `index`th sample.
-    fn extend_ranges(&mut self, index: usize) {
-        fn widen(range: &mut Option<(f64, f64)>, number: Number) {
-            let value = number.as_f64();
-            if value.is_finite() {
-                *range = Some(range.map_or((value, value), |(low, high)| {
-                    (low.min(value), high.max(value))
-                }));
-            }
-        }
-        match &self.samples {
-            Samples::Numbers(numbers) => {
-                self.ranges.resize(1, None);
-                widen(&mut self.ranges[0], numbers.get(index));
-            }
-            Samples::Arrays { shape, .. } => {
-                self.ranges.resize(shape.iter().product(), None);
-                if let Some(elements) = self.samples.array_sample(index) {
-                    for (range, number) in self.ranges.iter_mut().zip(elements.iter()) {
-                        widen(range, number);
-                    }
-                }
-            }
-            Samples::Empty | Samples::Strings(_) => {}
-        }
-    }
-
-    /// The lowest and highest finite value of all samples, of all elements of an array
-    /// trace, `None` if there is none.
-    pub fn value_range(&self) -> Option<(f64, f64)> {
-        self.ranges
-            .iter()
-            .flatten()
-            .copied()
-            .reduce(|(low_a, high_a), (low_b, high_b)| (low_a.min(low_b), high_a.max(high_b)))
-    }
-
-    /// The numbers of a numeric trace.
-    fn series(&self) -> Option<Series<'_>> {
-        let Samples::Numbers(numbers) = &self.samples else {
-            return None;
-        };
-        Some(Series {
-            timestamps: &self.timestamps,
-            numbers,
-            stride: 1,
-            offset: 0,
-            kind: numbers.kind().unwrap_or(NumberKind::Float),
-            range: self.ranges.first().copied().flatten(),
-        })
-    }
-}
-
-/// The numbers of a numeric trace or of one element of an array trace.
-#[derive(Clone, Copy)]
-pub struct Series<'a> {
-    pub timestamps: &'a [u64],
-    numbers: &'a Numbers,
-    /// Distance between the values of two samples in `numbers`.
-    stride: usize,
-    /// Index of the value of the first sample in `numbers`.
-    offset: usize,
-    pub kind: NumberKind,
-    /// The lowest and highest finite value of all samples, also of those outside a
-    /// [`Series::slice`], `None` if there is none.
-    pub range: Option<(f64, f64)>,
-}
-
-impl Series<'_> {
-    pub fn len(&self) -> usize {
-        self.timestamps.len()
-    }
-
-    /// The value of the `index`th sample as a float for plotting, NaN for null.
-    pub fn value(&self, index: usize) -> f64 {
-        self.number(index).as_f64()
-    }
-
-    /// The value of the `index`th sample.
-    pub fn number(&self, index: usize) -> Number {
-        self.numbers.get(index * self.stride + self.offset)
-    }
-
-    /// The samples within `range`.
-    pub fn slice(&self, range: Range<usize>) -> Self {
-        Self {
-            timestamps: &self.timestamps[range.clone()],
-            offset: self.offset + range.start * self.stride,
-            ..*self
-        }
-    }
-}
-
 /// The path of an element of an array trace, e.g. `adc[1][0]`.
 pub fn element_path(path: &str, indices: &[usize]) -> String {
     indices
@@ -448,168 +819,10 @@ fn parse_element_path(path: &str) -> Option<(&str, Vec<usize>)> {
     Some((&path[..open], indices))
 }
 
-pub struct Traces {
-    /// Sorted, so the traces of a record follow each other.
-    map: BTreeMap<String, Trace>,
-    /// The units of the traces by their paths, as received in their metadata, also
-    /// for traces without samples yet.
-    units: BTreeMap<String, String>,
-}
-
-impl Default for Traces {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Traces {
-    pub fn new() -> Self {
-        Self {
-            map: BTreeMap::new(),
-            units: BTreeMap::new(),
-        }
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &Trace> {
-        self.map.values()
-    }
-
-    /// The number of traces.
-    pub fn count(&self) -> usize {
-        self.map.len()
-    }
-
-    /// Sets the unit of the trace at `path`, an empty `unit` for none.
-    pub fn set_unit(&mut self, path: &str, unit: &str) {
-        if unit.is_empty() {
-            self.units.remove(path);
-        } else if self.units.get(path).is_none_or(|known| known != unit) {
-            self.units.insert(path.to_owned(), unit.to_owned());
-        }
-    }
-
-    /// The unit of the trace at `path`, or of the array trace of an element written by
-    /// [`element_path`].
-    pub fn unit(&self, path: &str) -> Option<&str> {
-        let unit = match self.units.get(path) {
-            Some(unit) => Some(unit),
-            None => self.units.get(parse_element_path(path)?.0),
-        };
-        unit.map(String::as_str)
-    }
-
-    pub fn get(&self, path: &str) -> Option<&Trace> {
-        self.map.get(path)
-    }
-
-    /// The numbers shown for `path`: a numeric trace, or an element of an array
-    /// trace written by [`element_path`].
-    pub fn series(&self, path: &str) -> Option<Series<'_>> {
-        if let Some(trace) = self.map.get(path) {
-            return trace.series();
-        }
-        let (path, indices) = parse_element_path(path)?;
-        let trace = self.map.get(path)?;
-        let Samples::Arrays { shape, elements } = &trace.samples else {
-            return None;
-        };
-        if indices.len() != shape.len()
-            || indices.iter().zip(shape).any(|(index, len)| index >= len)
-        {
-            return None;
-        }
-        let offset = indices
-            .iter()
-            .zip(shape)
-            .fold(0, |offset, (index, len)| offset * len + index);
-        Some(Series {
-            timestamps: &trace.timestamps,
-            numbers: elements,
-            stride: shape.iter().product(),
-            offset,
-            kind: elements.kind().unwrap_or(NumberKind::Float),
-            range: trace.ranges.get(offset).copied().flatten(),
-        })
-    }
-
-    pub fn append(&mut self, value: &proto::Value) {
-        self.insert(&value.path, None, value.timestamp, &value.value);
-    }
-
-    /// Appends `data` to the trace at `path`, or to the traces of its fields if it is
-    /// a record. The fields of a record are joined to its path with `.`, e.g. `imu.acc`.
-    /// `fields_start` is the [`Trace::fields_start`] of a new trace.
-    fn insert(&mut self, path: &str, fields_start: Option<usize>, timestamp: u64, data: &Data) {
-        match data {
-            Data::Record(fields)
-                if self
-                    .map
-                    .get(path)
-                    .is_none_or(|trace| trace.samples == Samples::Empty) =>
-            {
-                // a trace that only received nulls so far turns out to be a record
-                self.map.remove(path);
-                let fields_start = fields_start.unwrap_or(path.len());
-                for (name, value) in fields {
-                    self.insert(
-                        &format!("{path}.{name}"),
-                        Some(fields_start),
-                        timestamp,
-                        value,
-                    );
-                }
-            }
-            Data::Null
-                if !self.map.contains_key(path) && self.field_paths(path).next().is_some() =>
-            {
-                // a missing record leaves a gap in all its fields
-                let fields: Vec<String> = self.field_paths(path).map(str::to_owned).collect();
-                for field in fields {
-                    self.insert(&field, None, timestamp, data);
-                }
-            }
-            _ => {
-                let trace = self
-                    .map
-                    .entry(path.to_owned())
-                    .or_insert_with(|| Trace::new(path.to_owned(), fields_start));
-                if let Err(error) = trace.push(timestamp, data)
-                    && !trace.warned
-                {
-                    trace.warned = true;
-                    log::warn!(
-                        "{path}: dropped a sample, {error} (further ones are dropped silently)"
-                    );
-                }
-            }
-        }
-    }
-
-    /// The paths of the fields of the record at `path`, also of nested records, but not
-    /// of traces whose names only contain a `.`, e.g. `v1.2`.
-    pub fn field_paths(&self, path: &str) -> impl Iterator<Item = &str> {
-        let prefix = format!("{path}.");
-        self.map
-            .range(prefix.clone()..)
-            .take_while(move |(field, _)| field.starts_with(&prefix))
-            .filter(move |(_, trace)| trace.fields_start.is_some_and(|start| start <= path.len()))
-            .map(|(field, _)| field.as_str())
-    }
-
-    /// Timestamps of the first and the newest value of all traces.
-    pub fn time_span(&self) -> Option<(u64, u64)> {
-        self.map
-            .values()
-            .filter_map(|trace| Some((*trace.timestamps.first()?, *trace.timestamps.last()?)))
-            .reduce(|(first_a, last_a), (first_b, last_b)| {
-                (first_a.min(first_b), last_a.max(last_b))
-            })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proto::Data;
 
     fn record(fields: &[(&str, Data)]) -> Data {
         Data::Record(
@@ -625,7 +838,7 @@ mod tests {
     }
 
     fn traces(samples: &[(&str, Data)]) -> Traces {
-        let mut traces = Traces::new();
+        let mut traces = Traces::default();
         for (timestamp, (path, value)) in samples.iter().enumerate() {
             traces.append(&proto::Value {
                 timestamp: timestamp as u64,
@@ -643,10 +856,17 @@ mod tests {
 
     /// Compares the bit patterns, so NaN equals NaN.
     fn assert_values(actual: Vec<f64>, expected: &[f64]) {
+        // any NaN, also the one of a null
         let bits = |values: &[f64]| {
             values
                 .iter()
-                .map(|value| value.to_bits())
+                .map(|value| {
+                    if value.is_nan() {
+                        u64::MAX
+                    } else {
+                        value.to_bits()
+                    }
+                })
                 .collect::<Vec<_>>()
         };
         assert_eq!(bits(&actual), bits(expected));
@@ -682,7 +902,7 @@ mod tests {
             ("acc", record(&[("z", Data::Uint(9))])),
         ]);
         let traces = traces(&[("imu", imu)]);
-        let paths: Vec<&str> = traces.iter().map(|trace| trace.path.as_str()).collect();
+        let paths: Vec<&str> = traces.iter().map(|trace| trace.path).collect();
         assert_eq!(paths, ["imu.acc.z", "imu.x"]);
         assert_values(values(&traces, "imu.x"), &[0.5]);
         assert_eq!(
@@ -703,7 +923,7 @@ mod tests {
 
     #[test]
     fn late_samples_are_put_in_the_order_of_their_timestamps() {
-        let mut traces = Traces::new();
+        let mut traces = Traces::default();
         let mut push = |timestamp, path: &str, data: Data| {
             traces.append(&proto::Value {
                 timestamp,
@@ -759,7 +979,7 @@ mod tests {
         ]);
         assert_values(values(&traces, "a"), &[1.0, 2.0]);
         assert_eq!(traces.get("a").unwrap().timestamps, [0, 3]);
-        assert!(traces.get("a").unwrap().warned);
+        assert!(traces.warned("a"));
     }
 
     #[test]
@@ -769,7 +989,7 @@ mod tests {
             ("a", record(&[("x", Data::Float(2.0))])),
         ]);
         assert!(traces.get("a.x").is_none());
-        assert!(traces.get("a").unwrap().warned);
+        assert!(traces.warned("a"));
     }
 
     #[test]
@@ -783,20 +1003,21 @@ mod tests {
         assert_values(values(&bools, "a"), &[f64::NAN, 1.0, f64::NAN]);
 
         let strings = traces(&[("s", Data::Null), ("s", Data::from("on"))]);
-        assert_eq!(
-            strings.get("s").unwrap().samples,
-            Samples::Strings(vec![None, Some("on".to_owned())])
-        );
+        let trace = strings.get("s").unwrap();
+        let Samples::Strings(texts) = trace.samples else {
+            panic!("strings expected");
+        };
+        assert_eq!((texts.get(0), texts.get(1)), (None, Some("on")));
     }
 
     #[test]
     fn a_null_record_is_a_gap_in_all_fields() {
         let imu = record(&[("x", Data::Float(1.0)), ("y", Data::Float(2.0))]);
         let traces = traces(&[("imu", Data::Null), ("imu", imu), ("imu", Data::Null)]);
-        // the leading null is dropped with the trace it created
+        // the trace the leading null created turned into the record
         assert!(traces.get("imu").is_none());
-        assert_values(values(&traces, "imu.x"), &[1.0, f64::NAN]);
-        assert_values(values(&traces, "imu.y"), &[2.0, f64::NAN]);
+        assert_values(values(&traces, "imu.x"), &[f64::NAN, 1.0, f64::NAN]);
+        assert_values(values(&traces, "imu.y"), &[f64::NAN, 2.0, f64::NAN]);
     }
 
     #[test]
@@ -809,9 +1030,9 @@ mod tests {
             ("imu.x", Data::Null),
         ]);
         assert_values(values(&traces, "v1.2"), &[1.0]);
-        assert_eq!(traces.get("v1").unwrap().samples, Samples::Empty);
-        // `imu.x` is a field, but not a record
-        assert_values(values(&traces, "imu.x"), &[1.0, f64::NAN]);
+        assert_eq!(*traces.get("v1").unwrap().samples, Samples::Empty(1));
+        // `imu.x` is a field of the record, values cannot be sent to it
+        assert_values(values(&traces, "imu.x"), &[1.0]);
     }
 
     #[test]
@@ -878,7 +1099,7 @@ mod tests {
             ("f", Data::Float(0.031_414_634_623_640_13)),
         ]);
         let format = |path, index, max_len, digits| {
-            let samples = &traces.get(path).unwrap().samples;
+            let samples = traces.get(path).unwrap().samples;
             samples.format(index, max_len, digits, DisplayFormat::Default)
         };
         assert_eq!(format("m", 0, 8, None), "[[0.5, 1, 2],\n [  3, 4, 5]]");
@@ -889,7 +1110,7 @@ mod tests {
         assert_eq!(format("i", 0, 8, Some(2)), "7");
         assert_eq!(format("f", 0, 8, Some(6)), "0.0314146");
         assert_eq!(format("f", 0, 8, None), "0.03141463462364013");
-        let samples = &traces.get("m").unwrap().samples;
+        let samples = traces.get("m").unwrap().samples;
         assert_eq!(
             samples.array_sample(0).unwrap().get(3),
             Some(Number::Float(3.0))
@@ -900,7 +1121,7 @@ mod tests {
     #[test]
     fn array_elements_are_written_in_their_display_format() {
         let traces = traces(&[("a", Data::Array(vec![Data::Uint(10), Data::Uint(255)]))]);
-        let samples = &traces.get("a").unwrap().samples;
+        let samples = traces.get("a").unwrap().samples;
         assert_eq!(
             samples.format(0, 8, None, DisplayFormat::Hex),
             "[0xa, 0xff]"
@@ -911,7 +1132,7 @@ mod tests {
     fn integers_are_exact() {
         let big = Data::Uint((1 << 53) + 1);
         let traces = traces(&[("a", big.clone()), ("m", Data::Array(vec![big]))]);
-        let samples = |path| &traces.get(path).unwrap().samples;
+        let samples = |path| traces.get(path).unwrap().samples;
         assert_eq!(
             samples("a").format(0, 8, None, DisplayFormat::Default),
             "9007199254740993"
@@ -926,7 +1147,7 @@ mod tests {
 
     #[test]
     fn elements_have_the_unit_of_their_array() {
-        let mut traces = Traces::new();
+        let mut traces = Traces::default();
         traces.set_unit("imu.acc", "m/s²");
         traces.set_unit("speed", "");
         assert_eq!(traces.unit("imu.acc"), Some("m/s²"));

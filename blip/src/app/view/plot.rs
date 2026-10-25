@@ -4,12 +4,9 @@ use crate::app::model::numbers::{NumberKind, SHOWN_DIGITS};
 use crate::app::model::{Model, traces::Series};
 use crate::app::theme;
 use crate::app::time::{TimeBase, timestamp_to_seconds};
-use std::cmp::min;
 use std::collections::{BTreeMap, BTreeSet};
 
 const Y_MARGIN_FRACTION: f64 = 0.05;
-/// Upper bound of points drawn per curve within the visible x range.
-const MAX_POINTS_PER_CURVE: usize = 100_000;
 
 /// Points of a curve shown as markers are at least this many points apart on average.
 const MIN_MARKER_SPACING: f32 = 8.0;
@@ -325,12 +322,12 @@ impl Plot {
         origin: f64,
         plot_ui: &mut egui_plot::PlotUi<'_>,
     ) {
+        let width = plot_ui.transform().frame().width();
         let visible = series.slice(visible_range(series.timestamps, range_x));
-        let mut points = downsample(visible, origin, MAX_POINTS_PER_CURVE);
+        let mut points = downsample(visible, origin, width.max(1.0) as usize);
         if self.connect_nulls {
             points.retain(|point| !point[1].is_nan());
         }
-        let width = plot_ui.transform().frame().width();
         let show_points = style.marks_points(self.points, points.len(), width);
         let line_style = style.plot_style(&points, plot_ui.transform());
         let step = self.interpolation == Interpolation::Step || series.kind == NumberKind::Bool;
@@ -510,56 +507,38 @@ fn y_bounds(min: Option<f64>, max: Option<f64>, fitted: Option<(f64, f64)>) -> O
     (min < max).then_some((min, max))
 }
 
-/// Reduces `series` to at most `max_points` points by keeping the minimum and maximum
-/// of equally sized buckets, so peaks stay visible. The x coordinates are the sample
-/// times in seconds minus `origin`. Nulls are kept as points with NaN y to mark gaps.
-fn downsample(series: Series<'_>, origin: f64, max_points: usize) -> Vec<[f64; 2]> {
-    let to_point = |index: usize| {
-        [
-            timestamp_to_seconds(series.timestamps[index]) - origin,
-            series.value(index),
-        ]
-    };
-    if series.len() <= max_points {
-        return (0..series.len()).map(to_point).collect();
+/// Reduces `series` to about two points per one of `buckets` buckets of equally many
+/// samples, the lowest and the highest, so peaks stay visible, and a point with a NaN y
+/// before them for a gap. The extremes come from the blocks of the series, so the cost
+/// follows the buckets and not the samples. The x coordinates are the sample times in
+/// seconds minus `origin`. A series of few samples per bucket is kept as it is.
+fn downsample(series: Series<'_>, origin: f64, buckets: usize) -> Vec<[f64; 2]> {
+    let x = |index: usize| timestamp_to_seconds(series.timestamps[index]) - origin;
+    let len = series.len();
+    let buckets = buckets.max(1);
+    if len <= buckets * 4 {
+        return (0..len)
+            .map(|index| [x(index), series.value(index)])
+            .collect();
     }
-
-    // a bucket adds up to three points: a gap and its two extremes
-    let bucket_size = series.len().div_ceil((max_points / 3).max(1));
-    let mut points = Vec::with_capacity(max_points);
-    for bucket_start in (0..series.len()).step_by(bucket_size) {
-        let mut gap = None;
-        let mut extremes: Option<(usize, usize)> = None;
-        for index in bucket_start..min(bucket_start + bucket_size, series.len()) {
-            let value = series.value(index);
-            if value.is_nan() {
-                gap.get_or_insert(index);
-                continue;
-            }
-            extremes = Some(match extremes {
-                Some((min_index, max_index)) => (
-                    if value < series.value(min_index) {
-                        index
-                    } else {
-                        min_index
-                    },
-                    if value > series.value(max_index) {
-                        index
-                    } else {
-                        max_index
-                    },
-                ),
-                None => (index, index),
-            });
+    let mut points: Vec<[f64; 2]> = Vec::with_capacity(buckets * 3);
+    for bucket in 0..buckets {
+        let (start, end) = (len * bucket / buckets, len * (bucket + 1) / buckets);
+        let extent = series.extent(start..end);
+        if extent.gap {
+            points.push([x(start), f64::NAN]);
         }
-        let mut indices: Vec<usize> = gap.into_iter().collect();
-        if let Some((min_index, max_index)) = extremes {
-            indices.extend([min_index, max_index]);
+        if extent.has_values() {
+            // the extreme nearer to the point before first, so the line does not zigzag
+            let (first, second) = match points.last() {
+                Some(&[_, y]) if (y - extent.max).abs() < (y - extent.min).abs() => {
+                    (extent.max, extent.min)
+                }
+                _ => (extent.min, extent.max),
+            };
+            points.push([x(start), first]);
+            points.push([x(end - 1), second]);
         }
-        // keep the points in time order
-        indices.sort_unstable();
-        indices.dedup();
-        points.extend(indices.into_iter().map(to_point));
     }
     points
 }
@@ -654,7 +633,7 @@ mod tests {
     /// A float trace `a` of `count` values 1 ms apart, with a null every 7th value if
     /// `with_nulls`.
     fn traces(count: u64, with_nulls: bool) -> Traces {
-        let mut traces = Traces::new();
+        let mut traces = Traces::default();
         for i in 0..count {
             let value = if with_nulls && i % 7 == 3 {
                 proto::Data::Null
@@ -679,7 +658,7 @@ mod tests {
     #[test]
     fn downsample_limits_points_and_keeps_extremes() {
         let traces = traces(1_000_003, false);
-        let points = downsample(traces.series("a").unwrap(), 0.0, 1_000);
+        let points = downsample(traces.series("a").unwrap(), 0.0, 300);
         assert!(points.len() <= 1_000);
         assert!(points.windows(2).all(|p| p[0][0] <= p[1][0]));
         assert!(points.iter().any(|p| p[1] == 0.0));
@@ -689,7 +668,7 @@ mod tests {
     #[test]
     fn downsample_keeps_gaps() {
         let traces = traces(1_000_003, true);
-        let points = downsample(traces.series("a").unwrap(), 0.0, 1_000);
+        let points = downsample(traces.series("a").unwrap(), 0.0, 300);
         assert!(points.len() <= 1_000);
         assert!(points.windows(2).all(|p| p[0][0] <= p[1][0]));
         assert!(points.iter().any(|p| p[1].is_nan()));

@@ -56,8 +56,14 @@ pub struct LogEntry {
 impl LogEntry {
     /// A record without a timestamp gets `now`, the newest time of the received data,
     /// or the wall-clock time if there is none.
-    pub fn from_proto(record: &proto::LogRecord, now: Option<u64>) -> Self {
-        let level = match record.level {
+    pub fn new(
+        timestamp: u64,
+        level: u8,
+        component: &str,
+        message: &str,
+        now: Option<u64>,
+    ) -> Self {
+        let level = match level {
             0 => LogLevel::Trace,
             1 => LogLevel::Debug,
             2 => LogLevel::Info,
@@ -66,8 +72,8 @@ impl LogEntry {
             _ => LogLevel::Error,
         };
 
-        let time = if record.timestamp > 0 {
-            record.timestamp
+        let time = if timestamp > 0 {
+            timestamp
         } else {
             now.unwrap_or_else(|| {
                 chrono::Utc::now()
@@ -78,18 +84,18 @@ impl LogEntry {
         let seconds = timestamp_to_seconds(time);
         let timestamp = TimeBase::guess(seconds).format(seconds, 3);
 
-        let component = if record.component.is_empty() {
-            "target".to_string()
+        let component = if component.is_empty() {
+            "target"
         } else {
-            record.component.clone()
+            component
         };
 
         Self {
             time,
             timestamp,
-            component,
+            component: component.to_owned(),
             level,
-            message: record.message.clone(),
+            message: message.to_owned(),
         }
     }
 }

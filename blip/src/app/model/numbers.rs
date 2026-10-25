@@ -1,7 +1,6 @@
 //! Columns of numbers or bools that keep integers exact: a column holds `i64`, or `u64`
 //! once an integer above `i64::MAX` arrives, and switches to `f64` with the first float.
 
-use proto::Data;
 use std::fmt;
 
 /// The kind of the numbers of a trace or of the elements of an array trace.
@@ -78,22 +77,6 @@ pub enum Number {
 }
 
 impl Number {
-    /// The number in `data`, or `None` if it is no number, bool or null. Non-negative
-    /// integers are [`Number::Uint`], so [`Number::Int`] is negative.
-    pub fn of(data: &Data) -> Option<Self> {
-        Some(match *data {
-            Data::Null => Self::Null,
-            Data::Uint(value) => Self::Uint(value),
-            Data::Int(value) => match u64::try_from(value) {
-                Ok(value) => Self::Uint(value),
-                Err(_) => Self::Int(value),
-            },
-            Data::Float(value) => Self::Float(value),
-            Data::Bool(value) => Self::Bool(value),
-            _ => return None,
-        })
-    }
-
     pub fn is_null(self) -> bool {
         self == Self::Null
     }
@@ -109,7 +92,7 @@ impl Number {
         }
     }
 
-    fn kind_name(self) -> &'static str {
+    pub fn kind_name(self) -> &'static str {
         match self {
             Self::Null => "null",
             Self::Int(_) | Self::Uint(_) => "int",
@@ -206,234 +189,299 @@ fn trim_zeros(number: &str) -> &str {
     }
 }
 
-/// How the values of a [`Numbers`] are stored.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Storage {
-    /// Only nulls so far.
-    Null,
-    Int,
-    Uint,
-    Float,
-    Bool,
+/// The bits of the NaN that marks a null in a column, unlike the NaN of arithmetic.
+const NULL_BITS: u64 = 0x7ff8_0000_0000_0b1b;
+
+/// Rows of a column summarized in one [`Block`], so that plotting many rows reads
+/// their blocks instead of each value.
+pub const BLOCK: usize = 256;
+
+/// The lowest and highest finite value of some rows, and whether one is not finite,
+/// e.g. null, which a plot shows as a gap.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Extent {
+    pub min: f64,
+    pub max: f64,
+    pub gap: bool,
 }
 
-impl Storage {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Null => "null",
-            Self::Int | Self::Uint => "int",
-            Self::Float => "float",
-            Self::Bool => "bool",
+impl Extent {
+    const NONE: Extent = Extent {
+        min: f64::INFINITY,
+        max: f64::NEG_INFINITY,
+        gap: false,
+    };
+
+    fn add(&mut self, value: f64) {
+        if value.is_finite() {
+            self.min = self.min.min(value);
+            self.max = self.max.max(value);
+        } else {
+            self.gap = true;
         }
     }
 
-    /// The storage that holds the values stored so far and `number`, given whether a
-    /// negative integer arrived. Integers and floats mix, so a producer may send `0` in
-    /// a float trace.
-    fn with(self, number: Number, negative: bool) -> Result<Self, String> {
-        use Number as N;
-        let fits_i64 = |value: u64| i64::try_from(value).is_ok();
-        Ok(match (self, number) {
-            (_, N::Null) => self,
-            (Self::Null | Self::Int, N::Int(_)) => Self::Int,
-            (Self::Null | Self::Int, N::Uint(value)) if fits_i64(value) => Self::Int,
-            (Self::Null | Self::Int, N::Uint(_)) if !negative => Self::Uint,
-            (Self::Uint, N::Uint(_)) => Self::Uint,
-            (Self::Int | Self::Uint, N::Int(_) | N::Uint(_)) => {
-                return Err(format!(
-                    "{number} does not fit in 64 bits with the other integers of the trace"
-                ));
-            }
-            (Self::Null | Self::Int | Self::Uint | Self::Float, N::Float(_))
-            | (Self::Float, N::Int(_) | N::Uint(_)) => Self::Float,
-            (Self::Null | Self::Bool, N::Bool(_)) => Self::Bool,
-            _ => {
-                return Err(format!(
-                    "expected {}, got {}",
-                    self.name(),
-                    number.kind_name()
-                ));
-            }
-        })
+    fn merge(&mut self, other: Extent) {
+        self.min = self.min.min(other.min);
+        self.max = self.max.max(other.max);
+        self.gap |= other.gap;
+    }
+
+    /// Whether a finite value was added.
+    pub fn has_values(&self) -> bool {
+        self.min <= self.max
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
-enum Values {
-    #[default]
-    Null,
+/// The integers of a column kept exactly, once one cannot be kept as a float.
+#[derive(Clone, Debug, PartialEq)]
+enum Exact {
+    None,
     Int(Vec<i64>),
     Uint(Vec<u64>),
-    Float(Vec<f64>),
-    Bool(Vec<bool>),
 }
 
-impl Values {
-    fn storage(&self) -> Storage {
-        match self {
-            Self::Null => Storage::Null,
-            Self::Int(_) => Storage::Int,
-            Self::Uint(_) => Storage::Uint,
-            Self::Float(_) => Storage::Float,
-            Self::Bool(_) => Storage::Bool,
-        }
-    }
-
-    /// Appends `number`, which the storage holds, any value for null.
-    fn push(&mut self, number: Number) {
-        match self {
-            Self::Null => {}
-            Self::Int(values) => values.push(match number {
-                Number::Int(value) => value,
-                Number::Uint(value) => value as i64,
-                _ => 0,
-            }),
-            Self::Uint(values) => values.push(match number {
-                Number::Uint(value) => value,
-                _ => 0,
-            }),
-            Self::Float(values) => values.push(number.as_f64()),
-            Self::Bool(values) => values.push(number == Number::Bool(true)),
-        }
-    }
-
-    /// The values in `storage`, which holds them all, starting with `len` values for
-    /// nulls if there are none yet.
-    fn convert(self, storage: Storage, len: usize) -> Self {
-        match (self, storage) {
-            (values, storage) if values.storage() == storage => values,
-            (Self::Null, Storage::Int) => Self::Int(vec![0; len]),
-            (Self::Null, Storage::Uint) => Self::Uint(vec![0; len]),
-            (Self::Null, Storage::Float) => Self::Float(vec![f64::NAN; len]),
-            (Self::Null, Storage::Bool) => Self::Bool(vec![false; len]),
-            // only non-negative integers are converted to unsigned
-            (Self::Int(values), Storage::Uint) => {
-                Self::Uint(values.into_iter().map(|value| value as u64).collect())
-            }
-            (Self::Int(values), Storage::Float) => {
-                Self::Float(values.into_iter().map(|value| value as f64).collect())
-            }
-            (Self::Uint(values), Storage::Float) => {
-                Self::Float(values.into_iter().map(|value| value as f64).collect())
-            }
-            (values, storage) => {
-                debug_assert!(false, "{:?} cannot become {storage:?}", values.storage());
-                values
-            }
-        }
-    }
-}
-
-/// A column of numbers of one kind, or of bools, with nulls in between.
-#[derive(Clone, Debug, Default, PartialEq)]
+/// A column of numbers or bools in rows of `lanes` values each, e.g. the elements of
+/// an array. Values are kept as floats for plotting, nulls as a marked NaN. Integers
+/// beyond 2^53 are kept exactly too: as `i64`, or as `u64` once one is above
+/// `i64::MAX`. A column switches to floats with its first float.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Numbers {
-    values: Values,
-    /// A bit per value, set for nulls, up to the last null.
-    nulls: Vec<u64>,
-    len: usize,
+    kind: Option<NumberKind>,
+    values: Vec<f64>,
+    exact: Exact,
     /// Whether a negative integer arrived, so the integers cannot become unsigned.
     negative: bool,
+    lanes: usize,
+    /// The extent of all rows per lane.
+    extents: Vec<Extent>,
+    /// The extent of each [`BLOCK`] of rows, per lane.
+    blocks: Vec<Extent>,
+}
+
+impl Default for Numbers {
+    fn default() -> Self {
+        Self::new(1)
+    }
 }
 
 impl Numbers {
+    pub fn new(lanes: usize) -> Self {
+        let lanes = lanes.max(1);
+        Self {
+            kind: None,
+            values: vec![],
+            exact: Exact::None,
+            negative: false,
+            lanes,
+            extents: vec![Extent::NONE; lanes],
+            blocks: vec![],
+        }
+    }
+
+    /// The number of values, of all lanes.
     pub fn len(&self) -> usize {
-        self.len
+        self.values.len()
+    }
+
+    /// The number of values in a row.
+    pub fn lanes(&self) -> usize {
+        self.lanes
+    }
+
+    /// The number of rows.
+    pub fn rows(&self) -> usize {
+        self.values.len() / self.lanes
     }
 
     /// The kind of the numbers, or `None` while all are null.
     pub fn kind(&self) -> Option<NumberKind> {
-        match self.values {
-            Values::Null => None,
-            Values::Int(_) | Values::Uint(_) => Some(NumberKind::Integer),
-            Values::Float(_) => Some(NumberKind::Float),
-            Values::Bool(_) => Some(NumberKind::Bool),
-        }
+        self.kind
     }
 
+    #[cfg(test)]
     pub fn is_null(&self, index: usize) -> bool {
-        self.nulls
-            .get(index / 64)
-            .is_some_and(|bits| bits >> (index % 64) & 1 == 1)
+        self.values
+            .get(index)
+            .is_some_and(|value| value.to_bits() == NULL_BITS)
+    }
+
+    /// The value at `index` as a float for plotting, NaN for null.
+    pub fn value(&self, index: usize) -> f64 {
+        self.values[index]
     }
 
     pub fn get(&self, index: usize) -> Number {
-        if self.is_null(index) {
+        let value = self.values[index];
+        if value.to_bits() == NULL_BITS {
             return Number::Null;
         }
-        match &self.values {
-            Values::Null => Number::Null,
-            Values::Int(values) => Number::Int(values[index]),
-            Values::Uint(values) => Number::Uint(values[index]),
-            Values::Float(values) => Number::Float(values[index]),
-            Values::Bool(values) => Number::Bool(values[index]),
+        match (self.kind, &self.exact) {
+            (None, _) => Number::Null,
+            (Some(NumberKind::Float), _) => Number::Float(value),
+            (Some(NumberKind::Bool), _) => Number::Bool(value != 0.0),
+            (Some(NumberKind::Integer), Exact::None) => Number::Int(value as i64),
+            (Some(NumberKind::Integer), Exact::Int(exact)) => Number::Int(exact[index]),
+            (Some(NumberKind::Integer), Exact::Uint(exact)) => Number::Uint(exact[index]),
         }
     }
 
-    /// Appends `count` nulls.
-    pub fn push_nulls(&mut self, count: usize) {
-        for _ in 0..count {
-            self.push_unchecked(Number::Null);
+    /// The lowest and highest finite value of all rows in `lane`, `None` if there is
+    /// none.
+    pub fn range(&self, lane: usize) -> Option<(f64, f64)> {
+        let extent = self.extents.get(lane)?;
+        extent.has_values().then_some((extent.min, extent.max))
+    }
+
+    /// The lowest and highest finite value of all lanes, `None` if there is none.
+    pub fn total_range(&self) -> Option<(f64, f64)> {
+        let mut total = Extent::NONE;
+        for extent in &self.extents {
+            total.merge(*extent);
+        }
+        total.has_values().then_some((total.min, total.max))
+    }
+
+    /// The extent of `rows` in `lane`, read from the blocks they cover in whole.
+    pub fn extent(&self, lane: usize, rows: std::ops::Range<usize>) -> Extent {
+        let mut extent = Extent::NONE;
+        let mut row = rows.start;
+        while row < rows.end {
+            if row % BLOCK == 0 && row + BLOCK <= rows.end {
+                extent.merge(self.blocks[row / BLOCK * self.lanes + lane]);
+                row += BLOCK;
+            } else {
+                extent.add(self.values[row * self.lanes + lane]);
+                row += 1;
+            }
+        }
+        extent
+    }
+
+    /// Appends `rows` rows of nulls.
+    pub fn push_nulls(&mut self, rows: usize) {
+        for _ in 0..rows {
+            let start = self.values.len();
+            self.values
+                .extend(std::iter::repeat_n(f64::from_bits(NULL_BITS), self.lanes));
+            match &mut self.exact {
+                Exact::None => {}
+                Exact::Int(exact) => exact.resize(start + self.lanes, 0),
+                Exact::Uint(exact) => exact.resize(start + self.lanes, 0),
+            }
+            self.add_to_blocks(self.rows() - 1);
         }
     }
 
-    /// Appends all of `numbers`, or none if one does not mix with the others or with
-    /// the numbers so far.
-    pub fn extend(&mut self, numbers: &[Number]) -> Result<(), String> {
-        let mut storage = self.values.storage();
-        let mut negative = self.negative;
+    /// Appends a row of `numbers`, one per lane, or nothing if one does not mix with
+    /// the others or with the numbers so far.
+    pub fn push_row(&mut self, numbers: &[Number]) -> Result<(), String> {
+        debug_assert_eq!(numbers.len(), self.lanes);
+        let (mut kind, mut negative) = (self.kind, self.negative);
+        let mut unsigned = matches!(self.exact, Exact::Uint(_));
+        let mut beyond_float = false;
         for &number in numbers {
-            storage = storage.with(number, negative)?;
-            negative |= matches!(number, Number::Int(value) if value < 0);
+            let name = |kind: Option<NumberKind>| kind.map_or("null", NumberKind::name);
+            kind = match (kind, number) {
+                (_, Number::Null) => kind,
+                (None | Some(NumberKind::Bool), Number::Bool(_)) => Some(NumberKind::Bool),
+                (Some(NumberKind::Bool), _) | (Some(_), Number::Bool(_)) => {
+                    return Err(format!(
+                        "expected {}, got {}",
+                        name(kind),
+                        number.kind_name()
+                    ));
+                }
+                (_, Number::Float(_)) | (Some(NumberKind::Float), _) => Some(NumberKind::Float),
+                (_, Number::Int(value)) => {
+                    if unsigned {
+                        return Err(format!(
+                            "{number} does not fit in 64 bits with the other integers of the trace"
+                        ));
+                    }
+                    negative = true;
+                    beyond_float |= value.unsigned_abs() > 1 << 53;
+                    Some(NumberKind::Integer)
+                }
+                (_, Number::Uint(value)) => {
+                    if value > i64::MAX as u64 {
+                        if negative {
+                            return Err(format!(
+                                "{number} does not fit in 64 bits with the other integers of the trace"
+                            ));
+                        }
+                        unsigned = true;
+                    }
+                    beyond_float |= value > 1 << 53;
+                    Some(NumberKind::Integer)
+                }
+            };
         }
-        self.values = std::mem::take(&mut self.values).convert(storage, self.len);
+        self.kind = kind;
         self.negative = negative;
-        for &number in numbers {
-            self.push_unchecked(number);
+        if kind != Some(NumberKind::Integer) {
+            self.exact = Exact::None;
+        } else if unsigned && !matches!(self.exact, Exact::Uint(_)) {
+            let exact = match &self.exact {
+                Exact::Int(exact) => exact.iter().map(|&value| value as u64).collect(),
+                _ => self.values.iter().map(|&value| value as u64).collect(),
+            };
+            self.exact = Exact::Uint(exact);
+        } else if beyond_float && matches!(self.exact, Exact::None) {
+            self.exact = Exact::Int(self.values.iter().map(|&value| value as i64).collect());
         }
+
+        for &number in numbers {
+            self.values.push(match number {
+                Number::Null => f64::from_bits(NULL_BITS),
+                number => number.as_f64(),
+            });
+            match &mut self.exact {
+                Exact::None => {}
+                Exact::Int(exact) => exact.push(match number {
+                    Number::Int(value) => value,
+                    Number::Uint(value) => value as i64,
+                    _ => 0,
+                }),
+                Exact::Uint(exact) => exact.push(match number {
+                    Number::Uint(value) => value,
+                    _ => 0,
+                }),
+            }
+        }
+        self.add_to_blocks(self.rows() - 1);
         Ok(())
     }
 
-    /// Moves the last `count` numbers to `start`, after the numbers before it, e.g. the
-    /// elements of a sample that arrived late.
-    pub fn move_last_to(&mut self, start: usize, count: usize) {
-        match &mut self.values {
-            Values::Null => {}
-            Values::Int(values) => values[start..].rotate_right(count),
-            Values::Uint(values) => values[start..].rotate_right(count),
-            Values::Float(values) => values[start..].rotate_right(count),
-            Values::Bool(values) => values[start..].rotate_right(count),
+    /// Moves the last row to `row`, after the rows before it, e.g. a sample that
+    /// arrived late.
+    pub fn move_last_row_to(&mut self, row: usize) {
+        let start = row * self.lanes;
+        self.values[start..].rotate_right(self.lanes);
+        match &mut self.exact {
+            Exact::None => {}
+            Exact::Int(exact) => exact[start..].rotate_right(self.lanes),
+            Exact::Uint(exact) => exact[start..].rotate_right(self.lanes),
         }
-        let mut nulls: Vec<bool> = (start..self.len).map(|index| self.is_null(index)).collect();
-        nulls.rotate_right(count);
-        for (index, null) in (start..).zip(nulls) {
-            self.set_null(index, null);
-        }
-    }
-
-    /// Marks the number at `index` as null or not.
-    fn set_null(&mut self, index: usize, null: bool) {
-        let word = index / 64;
-        if self.nulls.len() <= word {
-            if !null {
-                return;
-            }
-            self.nulls.resize(word + 1, 0);
-        }
-        let bit = 1 << (index % 64);
-        if null {
-            self.nulls[word] |= bit;
-        } else {
-            self.nulls[word] &= !bit;
+        let first_block = row / BLOCK;
+        self.blocks.truncate(first_block * self.lanes);
+        for row in first_block * BLOCK..self.rows() {
+            self.add_to_blocks(row);
         }
     }
 
-    /// Appends `number`, which the storage holds.
-    fn push_unchecked(&mut self, number: Number) {
-        let index = self.len;
-        self.values.push(number);
-        self.len += 1;
-        if number.is_null() {
-            self.set_null(index, true);
+    /// Adds the values of `row`, the last row or the next one of the blocks, to the
+    /// extents.
+    fn add_to_blocks(&mut self, row: usize) {
+        if self.blocks.len() <= row / BLOCK * self.lanes {
+            self.blocks
+                .extend(std::iter::repeat_n(Extent::NONE, self.lanes));
+        }
+        let first = row / BLOCK * self.lanes;
+        for lane in 0..self.lanes {
+            let value = self.values[row * self.lanes + lane];
+            self.blocks[first + lane].add(value);
+            self.extents[lane].add(value);
         }
     }
 }
@@ -445,7 +493,7 @@ mod tests {
     fn numbers(values: &[Number]) -> Result<Numbers, String> {
         let mut numbers = Numbers::default();
         for &value in values {
-            numbers.extend(&[value])?;
+            numbers.push_row(&[value])?;
         }
         Ok(numbers)
     }
@@ -470,10 +518,10 @@ mod tests {
             [Number::Null, Number::Uint(1), Number::Uint(u64::MAX)]
         );
         let mut column = column;
-        assert!(column.extend(&[Number::Int(-1)]).is_err());
+        assert!(column.push_row(&[Number::Int(-1)]).is_err());
 
         let mut signed = numbers(&[Number::Int(-1)]).unwrap();
-        assert!(signed.extend(&[Number::Uint(u64::MAX)]).is_err());
+        assert!(signed.push_row(&[Number::Uint(u64::MAX)]).is_err());
         assert_eq!(all(&signed), [Number::Int(-1)]);
     }
 
@@ -489,11 +537,14 @@ mod tests {
 
     #[test]
     fn a_rejected_number_leaves_the_column_unchanged() {
-        let mut column = numbers(&[Number::Uint(1)]).unwrap();
+        let mut column = Numbers::new(2);
+        column
+            .push_row(&[Number::Uint(1), Number::Uint(2)])
+            .unwrap();
         let before = column.clone();
         assert!(
             column
-                .extend(&[Number::Float(0.5), Number::Bool(true)])
+                .push_row(&[Number::Float(0.5), Number::Bool(true)])
                 .is_err()
         );
         assert_eq!(column, before);
@@ -504,13 +555,69 @@ mod tests {
         let mut column = Numbers::default();
         column.push_nulls(70);
         assert_eq!(column.kind(), None);
-        column.extend(&[Number::Bool(true), Number::Null]).unwrap();
+        column.push_row(&[Number::Bool(true)]).unwrap();
+        column.push_row(&[Number::Null]).unwrap();
         assert_eq!(column.kind(), Some(NumberKind::Bool));
         assert!(column.is_null(69));
         assert_eq!(column.get(70), Number::Bool(true));
         assert!(column.is_null(71));
         assert!(column.get(71).as_f64().is_nan());
         assert_eq!(column.get(70).as_f64(), 1.0);
+    }
+
+    #[test]
+    fn extents_of_rows_are_read_from_blocks() {
+        let mut column = Numbers::new(2);
+        let rows = 3 * BLOCK + 10;
+        for row in 0..rows {
+            let value = row as f64;
+            let second = if row == 700 {
+                Number::Null
+            } else {
+                Number::Float(-value)
+            };
+            column.push_row(&[Number::Float(value), second]).unwrap();
+        }
+        fn scanned(column: &Numbers, lane: usize, range: std::ops::Range<usize>) -> Extent {
+            let mut extent = Extent::NONE;
+            for row in range {
+                extent.add(column.value(row * 2 + lane));
+            }
+            extent
+        }
+        for range in [0..rows, 5..600, 256..512, 700..701, 3..4, 0..0] {
+            for lane in 0..2 {
+                assert_eq!(
+                    column.extent(lane, range.clone()),
+                    scanned(&column, lane, range.clone())
+                );
+            }
+        }
+        assert!(column.extent(1, 0..rows).gap);
+        assert_eq!(column.range(0), Some((0.0, (rows - 1) as f64)));
+        assert_eq!(
+            column.total_range(),
+            Some((-((rows - 1) as f64), (rows - 1) as f64))
+        );
+
+        // a row moved into place updates the blocks
+        column
+            .push_row(&[Number::Float(-5.0), Number::Float(1.0e6)])
+            .unwrap();
+        column.move_last_row_to(1);
+        assert_eq!(column.get(2), Number::Float(-5.0));
+        assert_eq!(column.extent(0, 0..BLOCK).min, -5.0);
+        assert_eq!(
+            column.extent(1, BLOCK..2 * BLOCK),
+            scanned(&column, 1, BLOCK..2 * BLOCK)
+        );
+    }
+
+    #[test]
+    fn a_target_nan_is_no_null() {
+        let column = numbers(&[Number::Float(f64::NAN), Number::Null]).unwrap();
+        assert!(!column.is_null(0) && column.get(0).as_f64().is_nan());
+        assert!(column.is_null(1));
     }
 
     #[test]

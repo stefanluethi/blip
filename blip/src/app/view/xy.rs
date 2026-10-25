@@ -556,7 +556,7 @@ mod tests {
 
     /// Traces of the given samples at the given timestamps.
     fn traces(samples: &[(u64, &str, Data)]) -> Traces {
-        let mut traces = Traces::new();
+        let mut traces = Traces::default();
         for (timestamp, path, value) in samples {
             traces.append(&proto::Value {
                 timestamp: *timestamp,

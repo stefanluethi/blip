@@ -7,7 +7,7 @@ use super::{
 };
 use crate::app::model::Model;
 use crate::app::model::numbers::{DisplayFormat, NumberKind, SHOWN_DIGITS};
-use crate::app::model::traces::{Samples, Series};
+use crate::app::model::traces::{Samples, Series, Strings};
 use crate::app::theme;
 use crate::app::time::{TimeBase, timestamp_to_seconds};
 use egui::Color32;
@@ -50,7 +50,7 @@ enum StateSamples<'a> {
     Numbers(Series<'a>, DisplayFormat),
     Strings {
         timestamps: &'a [u64],
-        values: &'a [Option<String>],
+        texts: &'a Strings,
     },
 }
 
@@ -61,9 +61,9 @@ impl<'a> StateSamples<'a> {
         }
         let trace = model.traces.get(path)?;
         match &trace.samples {
-            Samples::Strings(values) => Some(Self::Strings {
-                timestamps: &trace.timestamps,
-                values,
+            Samples::Strings(texts) => Some(Self::Strings {
+                timestamps: trace.timestamps,
+                texts,
             }),
             _ => None,
         }
@@ -79,7 +79,7 @@ impl<'a> StateSamples<'a> {
     fn is_null(&self, index: usize) -> bool {
         match self {
             Self::Numbers(series, _) => series.number(index).is_null(),
-            Self::Strings { values, .. } => values[index].is_none(),
+            Self::Strings { texts, .. } => texts.get(index).is_none(),
         }
     }
 
@@ -87,7 +87,7 @@ impl<'a> StateSamples<'a> {
     fn same(&self, a: usize, b: usize) -> bool {
         match self {
             Self::Numbers(series, _) => series.number(a) == series.number(b),
-            Self::Strings { values, .. } => values[a] == values[b],
+            Self::Strings { texts, .. } => texts.same(a, b),
         }
     }
 
@@ -105,9 +105,7 @@ impl<'a> StateSamples<'a> {
             Self::Numbers(series, format) => {
                 series.number(index).format(Some(SHOWN_DIGITS), *format)
             }
-            Self::Strings { values, .. } => {
-                values[index].clone().unwrap_or_else(|| "null".to_owned())
-            }
+            Self::Strings { texts, .. } => texts.get(index).unwrap_or("null").to_owned(),
         }
     }
 
@@ -363,7 +361,7 @@ mod tests {
 
     /// Traces of the given samples, one every second.
     fn traces(samples: &[(&str, Data)]) -> Traces {
-        let mut traces = Traces::new();
+        let mut traces = Traces::default();
         for (second, (path, value)) in samples.iter().enumerate() {
             traces.append(&proto::Value {
                 timestamp: second as u64 * 1_000_000_000,

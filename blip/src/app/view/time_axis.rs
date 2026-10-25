@@ -217,7 +217,7 @@ mod tests {
     /// A harness showing a time plot of data from 0 to 40 seconds, its state is the
     /// shared time range.
     fn time_plot_harness() -> Harness<'static, TimeRange> {
-        let mut traces = Traces::new();
+        let mut traces = Traces::default();
         for second in 0..=40 {
             traces.append(&proto::Value {
                 timestamp: second * 1_000_000_000,

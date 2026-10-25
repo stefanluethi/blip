@@ -116,7 +116,7 @@ pub fn read_file(file: &[u8], mut receive: impl FnMut(&str, &[u8])) -> Result<Lo
 
     let mut messages = 0;
     let mut source = String::new();
-    for item in super::cbor_items(&bytes[items.byte_offset()..]) {
+    for item in super::cbor::items(&bytes[items.byte_offset()..]) {
         let item = match item {
             Ok(item) => item,
             Err(error) => {
@@ -125,8 +125,8 @@ pub fn read_file(file: &[u8], mut receive: impl FnMut(&str, &[u8])) -> Result<Lo
             }
         };
         // messages are maps, a text string names the source
-        if let Ok(name) = serde_cbor_2::from_slice::<String>(item) {
-            source = name;
+        if let Ok(name) = super::cbor::Reader::new(item).str() {
+            name.clone_into(&mut source);
             continue;
         }
         receive(&source, item);

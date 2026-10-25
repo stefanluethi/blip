@@ -204,7 +204,7 @@ impl Connections {
                         socket.open = true;
                     }
                     ewebsock::WsEvent::Message(ewebsock::WsMessage::Binary(frame)) => {
-                        for message in crate::app::model::cbor_items(&frame) {
+                        for message in crate::app::model::cbor::items(&frame) {
                             match message {
                                 Ok(message) => receive(Received::Message {
                                     source: &socket.name,

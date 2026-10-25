@@ -81,7 +81,7 @@ struct Row<'a> {
     label: &'a str,
     /// Identifies the branch, for collapsing it.
     key: String,
-    trace: Option<&'a Trace>,
+    trace: Option<Trace<'a>>,
     is_branch: bool,
     is_record: bool,
 }
@@ -113,7 +113,7 @@ fn rows<'a>(
 /// A record of the records layout with its fields by their paths in it.
 struct Record<'a> {
     path: &'a str,
-    fields: BTreeMap<&'a str, &'a Trace>,
+    fields: BTreeMap<&'a str, Trace<'a>>,
 }
 
 /// The records at `paths` in `model` with their fields, without those that are gone.
@@ -140,7 +140,7 @@ fn column_format_key(column: &str) -> String {
 }
 
 /// A sample of a table: its trace, its index and its value written as text.
-type Cell<'a> = (&'a Trace, usize, String);
+type Cell<'a> = (Trace<'a>, usize, String);
 
 /// `columns` with the one at `from` moved to `to`.
 fn moved(columns: &[&str], from: usize, to: usize) -> Vec<String> {
@@ -155,7 +155,7 @@ struct ColumnDrag(usize);
 
 /// Shows `value` of `trace` without wrapping, in monospace for an array so its
 /// columns line up.
-fn value_label(ui: &mut egui::Ui, trace: &Trace, value: &str) -> egui::Response {
+fn value_label(ui: &mut egui::Ui, trace: Trace<'_>, value: &str) -> egui::Response {
     let text = match trace.samples {
         Samples::Arrays { .. } => egui::RichText::new(value).monospace(),
         _ => egui::RichText::new(value),
@@ -185,7 +185,7 @@ impl Table {
             ui.add_space(ui.spacing().icon_width);
         }
         let icon = match row.trace {
-            Some(trace) => Some(type_icon(&trace.samples)),
+            Some(trace) => Some(type_icon(trace.samples)),
             None => row.is_record.then_some(BRACKETS_CURLY),
         };
         let response = ui.label(row.label);
@@ -193,7 +193,7 @@ impl Table {
             ui.weak(icon);
         }
         if let Some(trace) = row.trace {
-            response.on_hover_text(&trace.path);
+            response.on_hover_text(trace.path);
         }
     }
 
@@ -201,17 +201,17 @@ impl Table {
     /// those without a sample at `t` seconds unless empty traces are shown.
     fn table_rows<'a>(
         &self,
-        traces: impl Iterator<Item = &'a Trace>,
+        traces: impl Iterator<Item = Trace<'a>>,
         t: Option<f64>,
     ) -> Vec<Row<'a>> {
-        let selected: Vec<&Trace> = traces
-            .filter(|trace| self.traces.contains(&trace.path))
+        let selected: Vec<Trace<'_>> = traces
+            .filter(|trace| self.traces.contains(trace.path))
             .filter(|trace| {
-                self.show_empty || t.and_then(|t| index_at(&trace.timestamps, t)).is_some()
+                self.show_empty || t.and_then(|t| index_at(trace.timestamps, t)).is_some()
             })
             .collect();
         let mut table_rows = vec![];
-        let paths = selected.iter().map(|trace| trace.path.as_str());
+        let paths = selected.iter().map(|trace| trace.path);
         let labels: Vec<&str> = match self.rows {
             TableRows::Tree => {
                 let tree = TraceTree::build(selected.iter().copied());
@@ -225,8 +225,8 @@ impl Table {
             table_rows.push(Row {
                 depth: 0,
                 label,
-                key: trace.path.clone(),
-                trace: Some(trace),
+                key: trace.path.to_owned(),
+                trace: Some(*trace),
                 is_branch: false,
                 is_record: false,
             });
@@ -264,11 +264,11 @@ impl Table {
                 continue;
             };
             match layout {
-                TableLayout::Records if self.traces.remove(&trace.path) => {
+                TableLayout::Records if self.traces.remove(trace.path) => {
                     self.traces.insert(record.to_owned());
                 }
                 TableLayout::Traces if self.traces.contains(record) => {
-                    self.traces.insert(trace.path.clone());
+                    self.traces.insert(trace.path.to_owned());
                 }
                 _ => {}
             }
@@ -294,11 +294,11 @@ impl Table {
             .map(|column| formats.of(&column_format_key(column)))
             .collect();
         // the `index`th sample of `trace` in the format of its column and with its unit
-        let write = |trace: &Trace, column: usize, index: usize, max_len: usize| {
+        let write = |trace: Trace<'_>, column: usize, index: usize, max_len: usize| {
             let value = trace
                 .samples
                 .format(index, max_len, Some(SHOWN_DIGITS), formats[column]);
-            match model.traces.unit(&trace.path) {
+            match model.traces.unit(trace.path) {
                 Some(unit) if value != "null" => format!("{value} {unit}"),
                 _ => value,
             }
@@ -312,11 +312,11 @@ impl Table {
                     .enumerate()
                     .map(|(column, name)| {
                         let trace = record.fields.get(name)?;
-                        let index = index_at(&trace.timestamps, t?)?;
+                        let index = index_at(trace.timestamps, t?)?;
                         Some((
                             *trace,
                             index,
-                            write(trace, column, index, MAX_SHOWN_ELEMENTS),
+                            write(*trace, column, index, MAX_SHOWN_ELEMENTS),
                         ))
                     })
                     .collect()
@@ -378,10 +378,10 @@ impl Table {
                         for (column, cell) in cells[index].iter().enumerate() {
                             table_row.col(|ui| {
                                 if let Some((trace, sample, value)) = cell {
-                                    value_label(ui, trace, value).on_hover_ui(|ui| {
+                                    value_label(ui, *trace, value).on_hover_ui(|ui| {
                                         let value =
-                                            write(trace, column, *sample, MAX_TOOLTIP_ELEMENTS);
-                                        value_label(ui, trace, &value);
+                                            write(*trace, column, *sample, MAX_TOOLTIP_ELEMENTS);
+                                        value_label(ui, *trace, &value);
                                     });
                                 }
                             });
@@ -400,7 +400,7 @@ impl Table {
             return;
         }
         // a trace of each column, for its kind of numbers and its unit
-        let samples: Vec<&Trace> = columns
+        let samples: Vec<Trace<'_>> = columns
             .iter()
             .map(|column| {
                 records
@@ -430,8 +430,8 @@ impl Table {
                     }
                 });
                 let key = column_format_key(column);
-                let kind = super::number_kind(model, &trace.path);
-                super::number_format_ui(ui, formats, &key, kind, model.traces.unit(&trace.path));
+                let kind = super::number_kind(model, trace.path);
+                super::number_format_ui(ui, formats, &key, kind, model.traces.unit(trace.path));
                 ui.end_row();
                 // a line where the dragged column would go
                 let row = row.response;
@@ -457,22 +457,22 @@ impl Table {
     fn show_table(&mut self, ui: &mut egui::Ui, model: &Model, formats: &Formats, t: Option<f64>) {
         let table_rows = self.table_rows(model.traces.iter(), t);
         // the `index`th sample of `trace` in its format and with its unit
-        let write = |trace: &Trace, index: usize, max_len: usize, digits: Option<usize>| {
+        let write = |trace: Trace<'_>, index: usize, max_len: usize, digits: Option<usize>| {
             let value = trace
                 .samples
-                .format(index, max_len, digits, formats.of(&trace.path));
-            match model.traces.unit(&trace.path) {
+                .format(index, max_len, digits, formats.of(trace.path));
+            match model.traces.unit(trace.path) {
                 Some(unit) if value != "null" => format!("{value} {unit}"),
                 _ => value,
             }
         };
 
         // the sample of each row current at t, with its value written as text
-        let samples: Vec<Option<(&Trace, usize, String)>> = table_rows
+        let samples: Vec<Option<(Trace<'_>, usize, String)>> = table_rows
             .iter()
             .map(|row| {
                 let trace = row.trace?;
-                let index = index_at(&trace.timestamps, t?)?;
+                let index = index_at(trace.timestamps, t?)?;
                 let value = write(trace, index, MAX_SHOWN_ELEMENTS, Some(SHOWN_DIGITS));
                 Some((trace, index, value))
             })
@@ -514,10 +514,10 @@ impl Table {
                     });
                     table_row.col(|ui| {
                         if let Some((trace, index, value)) = sample {
-                            value_label(ui, trace, value).on_hover_ui(|ui| {
+                            value_label(ui, *trace, value).on_hover_ui(|ui| {
                                 let value =
-                                    write(trace, *index, MAX_TOOLTIP_ELEMENTS, Some(SHOWN_DIGITS));
-                                value_label(ui, trace, &value);
+                                    write(*trace, *index, MAX_TOOLTIP_ELEMENTS, Some(SHOWN_DIGITS));
+                                value_label(ui, *trace, &value);
                             });
                         }
                     });
@@ -583,11 +583,11 @@ mod tests {
     #[test]
     fn collapsed_branches_hide_their_rows() {
         let traces = [
-            Trace::new("motor.speed".to_owned(), Some(5)),
-            Trace::new("motor.state".to_owned(), Some(5)),
-            Trace::new("sensor/temperature".to_owned(), None),
+            Trace::leaked("motor.speed", Some(5), Samples::Empty(0)),
+            Trace::leaked("motor.state", Some(5), Samples::Empty(0)),
+            Trace::leaked("sensor/temperature", None, Samples::Empty(0)),
         ];
-        let tree = TraceTree::build(traces.iter());
+        let tree = TraceTree::build(traces.iter().copied());
         let labels = |collapsed: &BTreeSet<String>| {
             let mut out = vec![];
             rows(&tree, "", 0, collapsed, &mut out);
@@ -710,7 +710,7 @@ mod tests {
 
     #[test]
     fn traces_are_listed_by_path_or_name_without_empty_ones() {
-        let mut traces = crate::app::model::traces::Traces::new();
+        let mut traces = crate::app::model::traces::Traces::default();
         for (seconds, path) in [(1, "cpu"), (1, "left/speed"), (3, "right/speed")] {
             traces.append(&proto::Value {
                 timestamp: seconds * 1_000_000_000,
