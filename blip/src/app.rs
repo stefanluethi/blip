@@ -111,11 +111,16 @@ impl State {
 /// A button showing whether `recording`, which can be started only while `connected`.
 /// Returns whether it was clicked, to switch.
 fn record_button(ui: &mut egui::Ui, recording: bool, connected: bool) -> bool {
-    // red like a record key, filled with a tint of it while recording
+    // plain while idle, red like a record key and filled with a tint of it while recording
     let tokens = theme::tokens(ui.visuals());
     let red = tokens.error;
+    let color = if recording {
+        red
+    } else {
+        ui.visuals().text_color()
+    };
     let dot = egui::Id::new("record dot");
-    let text = egui::RichText::new("Record").color(red);
+    let text = egui::RichText::new("Record").color(color);
     let (fill, stroke) = if recording {
         (tokens.control.lerp_to_gamma(red, 0.2), red)
     } else {
@@ -133,14 +138,14 @@ fn record_button(ui: &mut egui::Ui, recording: bool, connected: bool) -> bool {
     let enabled = recording || connected;
     let shown = ui.add_enabled_ui(enabled, |ui| button.atom_ui(ui)).inner;
     if let Some(rect) = shown.rect(dot) {
-        // a red dot, like the key of a recorder
+        // a dot, like the key of a recorder
         let alpha = if enabled {
             1.0
         } else {
             ui.visuals().disabled_alpha
         };
         ui.painter()
-            .circle_filled(rect.center(), 4.5, red.gamma_multiply(alpha));
+            .circle_filled(rect.center(), 4.5, color.gamma_multiply(alpha));
     }
     shown
         .response
