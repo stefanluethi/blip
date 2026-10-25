@@ -137,7 +137,11 @@ impl Model {
                 // the time domain of the device
                 let now = self.time_span().map(|(_, newest)| newest);
                 let entry = LogEntry::new(timestamp, level, component, message, now);
-                self.origin.get_or_insert(entry.time);
+                if timestamp > 0 {
+                    // not the wall clock of a record without a timestamp, which may be
+                    // far from the time domain of the target
+                    self.origin.get_or_insert(timestamp);
+                }
                 self.logs.push(entry);
                 self.samples_version = Version::default();
             }
@@ -407,6 +411,32 @@ mod tests {
                 .len(),
             100_000
         );
+    }
+
+    #[test]
+    fn the_origin_is_the_first_timestamp_a_target_sent() {
+        let log = |timestamp| {
+            frame(&proto::Message::Log(proto::LogRecord {
+                timestamp,
+                level: 2,
+                component: String::new(),
+                message: "hi".to_owned(),
+            }))
+        };
+        let mut model = Model::default();
+        // a record without a timestamp gets the wall clock, which is no origin
+        model.receive("a", &log(0));
+        assert_eq!(model.origin(), None);
+        model.receive(
+            "a",
+            &frame(&proto::Message::Value(proto::Value {
+                timestamp: 5_000_000_000,
+                path: "rpm".to_owned(),
+                value: proto::Data::Uint(1),
+            })),
+        );
+        model.receive("a", &log(7_000_000_000));
+        assert_eq!(model.origin(), Some(5_000_000_000));
     }
 
     #[test]
