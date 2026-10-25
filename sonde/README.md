@@ -10,7 +10,9 @@ firmware / unit test
            └─(recording file)────────────────────────────────────────────────> blip
 ```
 
-Status: implemented as described here, except [actions](#later-actions). See
+Status: implemented as described here, except [actions](#later-actions). The user guide is
+in the documentation: [sonde](https://stefanluethi.github.io/blip/docs/usage/sonde.html)
+([source](../doc/source/usage/sonde.rst)); this file is the full design. See
 [Build](#build) for building and testing it.
 
 ## Goals

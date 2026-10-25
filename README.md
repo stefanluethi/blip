@@ -9,7 +9,15 @@ a WebSocket, using CBOR-encoded messages. sonde, a C++ library, encodes those me
 target or in unit tests.
 
 Try the web app at <https://stefanluethi.github.io/blip/> and read the
-documentation at <https://stefanluethi.github.io/blip/docs/>.
+documentation at <https://stefanluethi.github.io/blip/docs/>:
+
+- [Quick start](https://stefanluethi.github.io/blip/docs/usage/quickstart.html) — a simulated target in blip in a few minutes
+- User guides for [blip](https://stefanluethi.github.io/blip/docs/usage/blip/index.html),
+  the [outpost](https://stefanluethi.github.io/blip/docs/usage/outpost.html) and
+  [sonde](https://stefanluethi.github.io/blip/docs/usage/sonde.html)
+- [Software architecture](https://stefanluethi.github.io/blip/docs/architecture/index.html) — concepts, wire protocol and the inside of each part
+
+The sources are in [`doc/source`](doc/source).
 
 ```
 embedded target  <-- TCP / UDP -->  outpost (Python)  <-- WebSocket / CBOR -->  blip (Rust)
@@ -22,7 +30,7 @@ embedded target  <-- TCP / UDP -->  outpost (Python)  <-- WebSocket / CBOR -->  
 | `proto/`   | Wire protocol types shared between blip and embedded targets |
 | `outpost/` | Target-side service connecting devices to blip (Python) |
 | `sonde/`   | Tracing library for targets and unit tests (C++17), see [`sonde/README.md`](sonde/README.md) |
-| `doc/`     | User documentation (Sphinx) |
+| `doc/`     | Documentation (Sphinx): user guides, architecture, requirements; diagrams in draw.io |
 
 ## Prerequisites
 

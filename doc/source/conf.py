@@ -1,6 +1,7 @@
 """Sphinx configuration for the blip user documentation."""
 
 import re
+import shutil
 from datetime import date
 from pathlib import Path
 
@@ -38,6 +39,8 @@ html_static_path = ["_static"]
 # theme.css puts shibuya's font sizes and spacing on one scale; needs.css
 # adapts sphinx-needs to shibuya's colors and to that scale.
 html_css_files = ["fonts.css", "theme.css", "needs.css"]
+# themed-images.js shows the dark variant of the diagrams and screenshots in dark mode.
+html_js_files = ["themed-images.js"]
 
 
 def _drop_cdn_fonts(app, exception):
@@ -53,8 +56,21 @@ def _drop_cdn_fonts(app, exception):
         )
 
 
+def _copy_dark_images(app, exception):
+    """Copy the dark variants of the diagrams and screenshots next to the light
+    ones, which the figures reference, for themed-images.js to swap in."""
+    if exception or app.builder.format != "html":
+        return
+    images = Path(app.outdir, "_images")
+    images.mkdir(exist_ok=True)
+    for pattern in ("diagrams/*-dark.svg", "screenshots/*-dark.png"):
+        for image in Path(app.srcdir).glob(pattern):
+            shutil.copyfile(image, images / image.name)
+
+
 def setup(app):
     app.connect("build-finished", _drop_cdn_fonts)
+    app.connect("build-finished", _copy_dark_images)
 
 
 # -- sphinx-needs ------------------------------------------------------------
@@ -105,7 +121,7 @@ needs_fields = {
         },
     },
     "component": {
-        "description": "Affected component(s): blip, proto, outpost",
+        "description": "Affected component(s): blip, proto, outpost, sonde",
         "schema": {"type": "string"},
     },
     "priority": {

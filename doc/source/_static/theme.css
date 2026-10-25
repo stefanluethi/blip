@@ -220,3 +220,34 @@ pre.literal-block {
 .navigation .page-info > span {
   font-size: 0.75rem;
 }
+
+/* draw.io diagrams (doc/source/diagrams), drawn in blip's colours on a card.
+   themed-images.js swaps in the dark variant in dark mode, as for the
+   screenshots. */
+img.diagram {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+  box-sizing: border-box;
+  padding: 12px;
+  /* the card of blip's theme, which the labels of the diagrams are drawn on */
+  background: #ffffff;
+  border: 1px solid var(--sy-c-border);
+  border-radius: 6px;
+}
+
+.dark img.diagram {
+  background: #181b1f;
+}
+
+/* Screenshots of blip (doc/source/screenshots, `make screenshots`), rendered at
+   two pixels per point. */
+img.screenshot {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+  border: 1px solid var(--sy-c-border);
+  border-radius: 6px;
+}

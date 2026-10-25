@@ -1,0 +1,96 @@
+{
+  "version": 3,
+  "root": {
+    "name": "",
+    "kind": "Tabs",
+    "active": 0,
+    "children": [
+      {
+        "Group": {
+          "name": "Overview",
+          "kind": "Vertical",
+          "shares": [2.0, 1.0, 1.6],
+          "children": [
+            {
+              "Group": {
+                "name": "Plots",
+                "kind": "Horizontal",
+                "shares": [1.0, 1.0],
+                "children": [
+                  {
+                    "View": {
+                      "name": "Acceleration",
+                      "kind": { "Plot": { "traces": ["imu.acc[0]", "imu.acc[1]", "imu.acc[2]"] } }
+                    }
+                  },
+                  {
+                    "View": {
+                      "name": "Motor speed",
+                      "kind": { "Plot": { "traces": ["motor.speed_rpm"], "interpolation": "Step" } }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "View": {
+                "name": "Motor state",
+                "kind": { "States": { "traces": ["motor.enabled", "motor.state", "simulator/log_level"] } }
+              }
+            },
+            { "View": { "name": "Log", "kind": { "Logs": {} } } }
+          ]
+        }
+      },
+      {
+        "Group": {
+          "name": "Sensors",
+          "kind": "Horizontal",
+          "shares": [1.8, 1.0, 1.4],
+          "children": [
+            {
+              "View": {
+                "name": "Robot",
+                "kind": {
+                  "Xy": { "x": "robot/pose.x", "traces": ["robot/pose.x", "robot/pose.y"], "equal_axes": true }
+                }
+              }
+            },
+            { "View": { "name": "Thermal camera", "kind": { "Heatmap": { "traces": ["thermal/frame"] } } } },
+            {
+              "View": {
+                "name": "Spectrum",
+                "kind": { "Heatmap": { "traces": ["audio/spectrum"], "mode": "OverTime" } }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "Group": {
+          "name": "Control",
+          "kind": "Horizontal",
+          "shares": [1.0, 1.3],
+          "children": [
+            {
+              "View": {
+                "name": "Actions",
+                "kind": {
+                  "Actions": {
+                    "shown": ["motor/enable", "motor/speed", "thermal/ambient", "log/level", "imu/calibrate"]
+                  }
+                }
+              }
+            },
+            {
+              "View": {
+                "name": "Records",
+                "kind": { "Table": { "layout": "Records", "traces": ["imu", "motor", "robot/pose"] } }
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

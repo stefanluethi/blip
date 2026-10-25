@@ -8,18 +8,18 @@ Components
    :satisfies: REQ_VIS_PLOT, REQ_VIS_LOG, REQ_VIS_STATES, REQ_VIS_TABLE, REQ_VIS_XY, REQ_VIS_HEATMAP, REQ_VIS_CURSOR, REQ_CONN_WS, REQ_PLAT_WEB, REQ_PLAT_NATIVE, REQ_PERSIST_STATE, REQ_CTRL_ACTION, REQ_CTRL_FEEDBACK, REQ_CTRL_VIEW, REQ_CTRL_SAFE
 
    egui/eframe application compiled to WebAssembly (served by Trunk) or to a
-   native binary. Main modules in ``blip/src``:
+   native binary. Main modules in ``blip/src``, see :doc:`blip`:
 
-   * ``app.rs`` -- application state, WebSocket connection handling and the
-     panels of the window.
-   * ``app/proto_parser.rs`` -- decodes binary CBOR frames into ``proto``
-     messages and feeds the model.
-   * ``app/model`` -- data model: value ``traces``, ``logs`` and the
+   * ``app.rs`` -- the panels of the window, the menu, files and persistence,
+     and the ``State`` of time range, recording, model and invoker.
+   * ``app/connections.rs`` -- the WebSocket connections and their panel;
+     splits frames into messages.
+   * ``app/model`` -- the data model: value ``traces``, ``logs``, the
      announced ``actions`` with the ``Invoker``, which sends invocations and
-     tracks their answers.
-   * ``app/time.rs`` -- the time range shared by all views.
+     tracks their answers, and the ``recording`` of the received messages.
+   * ``app/time.rs`` -- the time range shared by all views, and the timeline.
    * ``app/layout`` -- the layout of the views as a tree of groups, shown
-     with ``egui_tiles``, the layout panel to edit it and its versioned
+     with ``egui_tiles``, the layout and properties panels and its versioned
      saved form.
    * ``app/view`` -- views: time-series ``plot``, ``states`` over time,
      ``table`` of values, ``xy`` plot, ``heatmap`` of arrays,
@@ -43,7 +43,8 @@ Components
    :component: outpost
    :satisfies: REQ_OUTPOST_SOCKET, REQ_OUTPOST_SIM, REQ_OUTPOST_PROTOCOL, REQ_CONN_WS, REQ_CTRL_ANNOUNCE, REQ_CTRL_ACTION, REQ_CTRL_FEEDBACK
 
-   Python package (``outpost/src/outpost``) managed with ``uv``. It is a
+   Python package (``outpost/src/outpost``) managed with ``uv``, see
+   :doc:`outpost`. It is a
    framework: the protocol that talks to a target is provided by the user and
    only uses the public API exported by ``outpost/__init__.py``.
 
@@ -64,6 +65,24 @@ Components
      protocol), ``replay`` and ``socket`` (TCP/UDP passthrough).
    * ``main.py`` -- ``click`` based command line entry point (``outpost``) and
      ``run`` to serve a protocol from a script.
+
+.. arch:: sonde
+   :id: ARCH_SONDE
+   :status: implemented
+   :component: sonde
+   :satisfies: REQ_PROTO_CBOR, REQ_PROTO_TYPES
+
+   C++17 library (``sonde``) for firmware and unit tests, see :doc:`sonde`.
+   Encodes ``proto`` messages with tinycbor into batches of whole messages, a
+   lock-free single-producer single-consumer queue per tracer, for the
+   firmware to send to the outpost's socket passthrough, or for a sink to
+   write as a recording file.
+
+   * ``include/sonde/sonde.hpp`` -- ``Tracer``, ``Storage``, ``Sink`` and the
+     encoding of values.
+   * ``include/sonde/file_sink.hpp`` -- ``FileSink`` and ``MemorySink``
+     (hosted builds).
+   * ``src/`` -- ``tracer.cpp``, ``encoder.cpp``, ``file_sink.cpp``.
 
 Component traceability
 ----------------------

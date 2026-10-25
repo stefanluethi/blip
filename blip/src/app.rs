@@ -2,6 +2,8 @@ mod connections;
 mod files;
 mod layout;
 mod model;
+#[cfg(all(test, feature = "screenshots"))]
+mod screenshots;
 mod theme;
 mod time;
 mod toasts;

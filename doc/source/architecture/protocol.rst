@@ -163,6 +163,14 @@ A ``Param`` has a ``name: String``, a ``kind: ParamKind``, a ``unit: String``
    * - ``"String"``
      - string
 
+.. figure:: /diagrams/action-sequence.svg
+   :target: ../_images/action-sequence.svg
+   :class: diagram
+   :alt: Sequence of announcing, invoking, answering and reading back an
+         action.
+
+   The messages of an invocation.
+
 An ``Invoke`` request carries an ``id`` chosen by blip, unique within the
 connection, the ``path`` of the action and its arguments as a record by
 parameter name. The target answers the client that sent it with an
@@ -183,20 +191,28 @@ Example (shown as JSON for readability)::
 Recording files
 ---------------
 
-blip saves the received messages to a recording file (**File > Save
-recording**), and the outpost writes the same format with ``--record``. A
-recording is a CBOR sequence (RFC 8742), i.e. CBOR items one after another
+blip saves the received messages to a recording file (**File › Save
+recording**), the outpost writes the same format with ``--record`` and sonde
+with its ``FileSink``. A recording is a CBOR sequence (RFC 8742), i.e. CBOR items one after another
 without anything around them, compressed with gzip:
+
+.. figure:: /diagrams/recording-file.svg
+   :target: ../_images/recording-file.svg
+   :class: diagram
+   :alt: A recording file: a header, then messages, with text strings naming
+         the connection of the messages after them, all gzip-compressed.
+
+   Layout of a recording file.
 
 #. A header, the map ``{"format": "blip recording", "version": 2}``.
 #. The ``Message`` of each binary frame, byte for byte as received, in the
    order of arrival.
 #. Since version 2, a text string before the messages of another connection
-   with the name of that connection, see :doc:`/usage/ui`. Messages are maps, so
+   with the name of that connection, see :doc:`/usage/blip/connecting`. Messages are maps, so
    a name cannot be taken for a message. Messages before the first name, and
-   all messages of version 1, have no connection name. The outpost writes
-   version 1, it reads version 2 and replays the messages of all its
-   connections without their names.
+   all messages of version 1, have no connection name. The outpost and sonde
+   write version 1 (sonde uncompressed); the outpost reads version 2 and
+   replays the messages of all its connections without their names.
 
 As the frames are stored as received, a recording keeps everything that was
 sent, also messages blip could not read. Appending a frame is writing its

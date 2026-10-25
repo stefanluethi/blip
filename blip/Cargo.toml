@@ -8,6 +8,11 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# Renders the screenshots of the documentation with wgpu, see src/app/screenshots.rs
+# and `make screenshots` in doc/.
+screenshots = ["egui_kittest/wgpu", "egui_kittest/eframe"]
+
 [dependencies]
 proto.workspace = true
 serde.workspace = true

@@ -175,6 +175,19 @@ impl Layout {
         }
     }
 
+    /// Selects the view or group named `name` and shows the tabs it is in, for the
+    /// screenshots. Returns whether there is one.
+    #[cfg(test)]
+    pub fn select_named(&mut self, name: &str) -> bool {
+        let found = (self.tree.tiles.iter())
+            .map(|(&tile_id, _)| tile_id)
+            .find(|&tile_id| self.name(tile_id) == name);
+        if let Some(tile_id) = found {
+            self.select(tile_id);
+        }
+        found.is_some()
+    }
+
     /// Selects a view or group and shows the tabs it is in.
     fn select(&mut self, tile_id: TileId) {
         self.selected = Some(tile_id);

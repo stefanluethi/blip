@@ -1,5 +1,10 @@
 # Outpost
 
+> The user guide is in the documentation:
+> [outpost](https://stefanluethi.github.io/blip/docs/usage/outpost.html)
+> ([source](../doc/source/usage/outpost.rst)); its internals are described in
+> [architecture/outpost](../doc/source/architecture/outpost.rst).
+
 An asynchronous service next to a target, connecting it to blip over WebSocket. It serves
 blip, records the messages and carries out the actions blip invokes. How it talks to
 the target is a **protocol**, a Python class provided by the user of blip.
