@@ -638,9 +638,10 @@ impl Traces {
         }
 
         let table = &mut self.tables[table];
-        table.timestamps.push(timestamp);
+        // searched before the new timestamp is appended, which would leave them unsorted
         let at = table.timestamps.partition_point(|&t| t <= timestamp);
-        if at < table.timestamps.len() {
+        table.timestamps.push(timestamp);
+        if at + 1 < table.timestamps.len() {
             table.timestamps[at..].rotate_right(1);
             for &id in &table.columns {
                 self.columns[id].samples.move_last_to(at);
@@ -1053,6 +1054,34 @@ mod tests {
         assert!(traces.series("m[2][0]").is_none());
         assert!(traces.series("m[0]").is_none());
         assert!(traces.series("m").is_none());
+    }
+
+    #[test]
+    fn arrays_without_elements_are_kept() {
+        let empty = || Data::Array(vec![]);
+        let traces = traces(&[
+            ("e", Data::Null),
+            ("e", empty()),
+            ("e", empty()),
+            ("m", Data::Array(vec![empty(), empty()])),
+        ]);
+        let e = traces.get("e").unwrap();
+        assert_eq!(e.timestamps.len(), 3);
+        assert_eq!(e.samples.type_label(), "null[0]");
+        assert_eq!(e.samples.format(1, 8, None, DisplayFormat::Default), "[]");
+        assert_eq!(e.value_range(), None);
+        let m = traces.get("m").unwrap();
+        assert_eq!(m.samples.type_label(), "null[2×0]");
+        assert!(traces.series("e[0]").is_none());
+
+        // also when a sample arrives late
+        let mut traces = traces;
+        traces.append(&proto::Value {
+            timestamp: 0,
+            path: "m".to_owned(),
+            value: Data::Array(vec![empty(), empty()]),
+        });
+        assert_eq!(traces.get("m").unwrap().timestamps, [0, 3]);
     }
 
     #[test]

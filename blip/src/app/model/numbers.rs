@@ -238,7 +238,10 @@ pub struct Numbers {
     exact: Exact,
     /// Whether a negative integer arrived, so the integers cannot become unsigned.
     negative: bool,
+    /// The values in a row, none for arrays without elements.
     lanes: usize,
+    /// The number of rows, also of rows without values.
+    rows: usize,
     /// The extent of all rows per lane.
     extents: Vec<Extent>,
     /// The extent of each [`BLOCK`] of rows, per lane.
@@ -253,8 +256,8 @@ impl Default for Numbers {
 
 impl Numbers {
     pub fn new(lanes: usize) -> Self {
-        let lanes = lanes.max(1);
         Self {
+            rows: 0,
             kind: None,
             values: vec![],
             exact: Exact::None,
@@ -277,7 +280,7 @@ impl Numbers {
 
     /// The number of rows.
     pub fn rows(&self) -> usize {
-        self.values.len() / self.lanes
+        self.rows
     }
 
     /// The kind of the numbers, or `None` while all are null.
@@ -355,7 +358,8 @@ impl Numbers {
                 Exact::Int(exact) => exact.resize(start + self.lanes, 0),
                 Exact::Uint(exact) => exact.resize(start + self.lanes, 0),
             }
-            self.add_to_blocks(self.rows() - 1);
+            self.rows += 1;
+            self.add_to_blocks(self.rows - 1);
         }
     }
 
@@ -435,7 +439,8 @@ impl Numbers {
                 }),
             }
         }
-        self.add_to_blocks(self.rows() - 1);
+        self.rows += 1;
+        self.add_to_blocks(self.rows - 1);
         Ok(())
     }
 
