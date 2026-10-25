@@ -8,6 +8,11 @@ use super::numbers::{DisplayFormat, Extent, Number, NumberKind, Numbers};
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 
+/// A value older than this many values of its path is dropped: putting it in its place
+/// moves all newer ones, which takes about 1 ms for this many, but a minute for a
+/// stream of values from a clock minutes behind, e.g. of a second outpost.
+const MAX_LATE: usize = 1 << 16;
+
 /// The value of a string trace that is null.
 const NULL_TEXT: u32 = u32::MAX;
 
@@ -579,9 +584,22 @@ impl Traces {
     /// Appends the value at `path` with `timestamp`, flattened into `flat` from
     /// `frame`: a sample to the trace of each of its leaves, a null to the other
     /// traces of the path. A value that does not fit the traces at `path` is dropped,
-    /// a field that does not fit is null, a value of which nothing fits is dropped.
+    /// a field that does not fit is null, a value of which nothing fits is dropped, as
+    /// is a value older than [`MAX_LATE`] values of its path.
     pub fn insert(&mut self, path: &str, timestamp: u64, flat: &Flat, frame: &[u8]) {
         let known = self.tables_by_path.get(path).copied();
+        if let Some(known) = known {
+            let table = &mut self.tables[known];
+            let newer =
+                table.timestamps.len() - table.timestamps.partition_point(|&t| t <= timestamp);
+            if newer > MAX_LATE {
+                table.warn(&format!(
+                    "it is older than the newest {MAX_LATE} values, e.g. from a clock behind \
+                     the others sending to the path"
+                ));
+                return;
+            }
+        }
         let Some(table) = self.add_value(known, path, flat, frame) else {
             if known.is_none()
                 && let Some(table) = self.tables_by_path.remove(path)
@@ -993,6 +1011,32 @@ mod tests {
             .map(|index| a.samples.array_sample(index).unwrap().get(1).unwrap())
             .collect();
         assert_eq!(second, [-0.5, -1.0, -2.0, -3.0, -4.0].map(Number::Float));
+    }
+
+    #[test]
+    fn values_far_older_than_the_newest_are_dropped() {
+        let mut traces = Traces::default();
+        let mut append = |timestamp: u64| {
+            traces.append(&proto::Value {
+                timestamp,
+                path: "a".to_owned(),
+                value: Data::Float(timestamp as f64),
+            });
+        };
+        for timestamp in 1..=MAX_LATE as u64 + 10 {
+            append(timestamp * 10);
+        }
+        // late, but not too late
+        let newest = (MAX_LATE as u64 + 10) * 10;
+        append(newest - 5);
+        // too late
+        append(5);
+        let a = traces.get("a").unwrap();
+        assert_eq!(a.timestamps.len(), MAX_LATE + 11);
+        assert_eq!(a.timestamps[0], 10);
+        assert_eq!(a.timestamps[MAX_LATE + 9], newest - 5);
+        assert!(a.timestamps.is_sorted());
+        assert!(traces.warned("a"));
     }
 
     #[test]

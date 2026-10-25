@@ -47,7 +47,9 @@ of values.
 * **Arrays** are stored row-major in one column per trace, with their shape.
   Views pick single elements or the whole array.
 * **Order.** Samples are kept sorted by timestamp; a sample older than the
-  newest (e.g. from a second outpost) is moved into place.
+  newest (e.g. from a second outpost) is moved into place. One older than the
+  newest 65 536 values of its path is dropped with a warning, as moving all of
+  them for each value of a clock minutes behind would stall blip.
 * **Ranges.** Each trace keeps the lowest and highest finite value (per
   element for arrays), so plots fit all data without scanning it.
 * **Units** come from ``ValueMetadata`` and are kept by path, also before the
