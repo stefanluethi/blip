@@ -40,7 +40,8 @@ of values.
 * **Records** are split into their fields, each a trace of its own
   (``fields_start`` marks where the field names begin in the path). The
   traces of a path share its timestamps, so the fields of a record stay
-  together, and a field missing from a value keeps its value. Nested records nest the
+  together. The first record at a path sets its fields; a record with other
+  fields is dropped with a warning. Nested records nest the
   paths. A value sent to the path of a field is dropped. The tree and record
   tables put the fields back together where needed, the timeline counts a
   record once.

@@ -363,31 +363,6 @@ impl Numbers {
         }
     }
 
-    /// Appends a copy of the last row, or a row of nulls if there is none.
-    pub fn repeat_last_row(&mut self) {
-        let Some(last) = self.rows.checked_sub(1) else {
-            return self.push_nulls(1);
-        };
-        let start = last * self.lanes;
-        for index in start..start + self.lanes {
-            let value = self.values[index];
-            self.values.push(value);
-            match &mut self.exact {
-                Exact::None => {}
-                Exact::Int(exact) => {
-                    let value = exact[index];
-                    exact.push(value);
-                }
-                Exact::Uint(exact) => {
-                    let value = exact[index];
-                    exact.push(value);
-                }
-            }
-        }
-        self.rows += 1;
-        self.add_to_blocks(self.rows - 1);
-    }
-
     /// Appends a row of `numbers`, one per lane, or nothing if one does not mix with
     /// the others or with the numbers so far.
     pub fn push_row(&mut self, numbers: &[Number]) -> Result<(), String> {

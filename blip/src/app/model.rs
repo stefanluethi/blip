@@ -181,12 +181,11 @@ impl Model {
         self.samples_version
     }
 
-    /// The number of samples received of the readback trace at `readback`, 0 if there
-    /// is none.
+    /// The number of samples of the readback trace at `readback`, 0 if there is none.
     pub fn readback_samples(&self, readback: Option<&str>) -> usize {
         readback
             .and_then(|readback| self.traces.get(readback))
-            .map_or(0, |trace| trace.received)
+            .map_or(0, |trace| trace.timestamps.len())
     }
 
     /// Whether values or log records were received, to save or clear them.
@@ -325,14 +324,14 @@ mod tests {
         assert_eq!(values(model.activity(10, 10, 1)), [2]);
         assert!(model.activity(0, 10, 0).is_empty());
 
-        // a record without its first field still counts
+        // a record without a field of the first is dropped and does not count
         let partial = proto::Data::Record(
             [("y".to_owned(), proto::Data::Float(3.0))]
                 .into_iter()
                 .collect(),
         );
         model.receive("", &value(45, "imu", partial));
-        assert_eq!(values(model.activity(40, 10, 1)), [2]);
+        assert_eq!(values(model.activity(40, 10, 1)), [1]);
     }
 
     #[test]
