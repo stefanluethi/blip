@@ -10,7 +10,7 @@ by sonde.
    :target: ../_images/system-context.svg
    :class: diagram
    :alt: System context: the embedded target with firmware and optionally
-         sonde, the outpost with its protocol, WebSocket server and recorder,
+         sonde, the outpost with your script, WebSocket server and recorder,
          blip as web or native app, and recording files written by the
          outpost, by unit tests with sonde and by blip.
 
@@ -36,10 +36,10 @@ by sonde.
        of truth of the schema between the outpost and blip.
    * - ``outpost``
      - Python
-     - Asynchronous service next to a target: runs a protocol that talks to
-       the target, serves its messages to blip, records them, and carries out
-       the actions blip invokes. Comes with a simulator, a replay and a TCP/UDP
-       passthrough.
+     - Library for a script next to a target: the script talks to the
+       target, the outpost serves what it sends to blip, records it, and calls
+       the actions blip invokes. Comes with a replay, a TCP/UDP passthrough and
+       example scripts, among them a simulator.
    * - ``sonde``
      - C++17
      - Tracing library for firmware and unit tests: encodes blip messages

@@ -1,141 +1,147 @@
-# Outpost
+# blip-outpost
 
-> The user guide is in the documentation:
-> [outpost](https://stefanluethi.github.io/blip/docs/usage/outpost.html)
-> ([source](../doc/source/usage/outpost.rst)); its internals are described in
-> [architecture/outpost](../doc/source/architecture/outpost.rst).
+Send the traces, log records and actions of your target to
+[blip](https://stefanluethi.github.io/blip/), the telemetry viewer for embedded systems.
 
-An asynchronous service next to a target, connecting it to blip over WebSocket. It serves
-blip, records the messages and carries out the actions blip invokes. How it talks to
-the target is a **protocol**, a Python class provided by the user of blip.
+Your script talks to the target however it needs to: a serial port, a socket, a CAN bus,
+a vendor library. It decodes what it receives and passes it on. The outpost serves blip
+over a WebSocket, records the messages if asked, and calls your **actions** when blip
+invokes them, e.g. a setpoint or a calibration.
 
-## Features
+The user guide is in the documentation:
+[outpost](https://stefanluethi.github.io/blip/docs/usage/outpost.html). Its internals
+are described in
+[architecture/outpost](https://stefanluethi.github.io/blip/docs/architecture/outpost.html).
 
-- **User-provided protocols**: a protocol is a small Python class against the public
-  API (`from outpost import Protocol, action, ...`), loaded from a file or module.
-- **Actions**: Python functions of the protocol that blip shows as buttons, fields,
-  sliders and dropdowns, with their parameters taken from the type hints.
-- **Simulator**: streams CPU load and simulated sensor measurements at different rates
-  and synthetic log records, and offers demo actions. It is also the reference protocol.
-- **Fast mode**: a stress test of blip's ingest and rendering, with many traces at high
-  rates, large arrays, a flood of logs and optionally a backlog of history.
-- **Socket passthrough**: TCP and UDP for targets that speak the blip protocol
-  themselves.
-- **Recording and replay** of the messages sent to blip.
-- **`uv` Integration**: Managed using `uv` and standard `pyproject.toml`.
-
-## Quick Start
-
-Sync dependencies using `uv`:
+## Install
 
 ```bash
-uv sync
+pip install "blip-outpost @ git+https://github.com/stefanluethi/blip#subdirectory=outpost"
 ```
 
-Run the tests:
+The package is `blip-outpost`, imported as `blip_outpost`.
 
-```bash
-uv run pytest
+## Send to blip
+
+```python
+import random
+import time
+
+import blip_outpost as outpost
+
+outpost.start()                                  # ws://127.0.0.1:3000/ws/outpost
+outpost.send_metadata("room/temperature", "°C")  # units reach every blip, also later ones
+while True:
+    outpost.send_value("room/temperature", 21.0 + random.random())
+    time.sleep(0.1)
 ```
 
-### Running the Outpost
+`start` serves from a thread of its own and returns, so the script keeps its own loop.
+Add the address in blip's **Connections** panel.
 
-The simulator is the default protocol. It serves `ws://127.0.0.1:3000/ws/outpost`:
+`send_value`, `send_metadata`, `send_log` and `send` may be called from any thread and
+never block. A value is `None`, `int`, `float`, `bool`, `str`, a `list` of fixed length
+or a `dict` with `str` keys, nested freely, timestamped now unless given.
 
-```bash
-uv run outpost --protocol simulator --port 3000
-```
+## Actions
 
-The options of a protocol are set with `--option key=value` (`-o`), converted by the
-type hints of its constructor. `--protocol-help` lists them:
-
-```bash
-uv run outpost --protocol simulator --protocol-help
-uv run outpost --protocol simulator -o interval_ms=10 -o log_interval_ms=200
-```
-
-The protocols that come with the outpost:
-
-- `simulator`: synthetic telemetry, logs and demo actions.
-- `fast`: the stress test, by default 100 traces at 1 kHz, a 1024-element array, a 64×64
-  frame and 1000 log records per second, about 100 000 messages per second
-  (`-o traces=… -o rate_hz=… -o array_size=… -o frame_size=… -o array_rate_hz=…
-  -o log_rate_hz=…`). `-o history_s=600` first sends ten minutes of the past as fast as
-  blip takes it, once the action `fast/start` is run (connect blip and start recording
-  first). It waits for blip rather than dropping messages, and reports what it
-  sends and how far behind it is every second, in its log and under `fast/stats`.
-- `replay`: replays a recording (`-o path=recording.blip`, `-o speed=2` replays twice
-  as fast). The actions of the recording are shown disabled.
-- `tcp` and `udp`: pass the messages of a target that speaks the blip protocol
-  through unchanged (`-o remote_host=… -o remote_port=… -o listen=true`), and
-  forward invocations to it. The target may send several messages at once as a
-  CBOR sequence (RFC 8742), their CBOR items one after another: a UDP datagram
-  holds complete messages, over TCP they may be split anywhere. The outpost
-  forwards each complete message, and drops data that is no CBOR.
-
-Record the messages sent to blip with any protocol, to open them in blip later
-(**File > Open recording**):
-
-```bash
-uv run outpost --protocol simulator --record simulator.blip
-```
-
-### Writing a Protocol
-
-A protocol implements `run`, which the outpost runs while it serves and cancels when it
-shuts down. It sends to blip with `send_value`, `send_metadata`, `send_log` or `send`.
-Methods decorated with `@action` are its actions, sharing the link to the target:
+Functions decorated with `@action` are actions blip shows as buttons, fields, sliders
+and dropdowns. Their parameters are taken from the type hints:
 
 ```python
 from typing import Annotated, Literal
 
-from outpost import ActionError, LogLevel, Protocol, Range, Unit, action
+import blip_outpost as outpost
+from blip_outpost import ActionError, Range, Unit
 
 
-class MyTarget(Protocol):
-    def __init__(self, host: str, port: int = 9000) -> None:
-        self.host, self.port = host, port
-        self.link = None
+@outpost.action("motor/speed", readback="motor/speed_rpm")
+def set_speed(rpm: Annotated[int, Range(0, 3000), Unit("rpm")] = 1500) -> None:
+    """Speed setpoint"""
+    if not link.is_open:
+        raise ActionError("not connected")
+    link.write(f"SPEED {rpm}\n".encode())
 
-    async def run(self) -> None:
-        ...  # connect, translate what the target sends, e.g.
-        await self.send_value("motor/speed_rpm", 1432)
 
-    @action("motor/speed", readback="motor/speed_rpm")
-    async def set_speed(self, rpm: Annotated[int, Range(0, 3000), Unit("rpm")]) -> None:
-        """Speed setpoint"""
-        if self.link is None:
-            raise ActionError("not connected")
-        ...
-
-    @action("log/level")
-    async def set_log_level(self, level: Literal["debug", "info", "warn"] = "info") -> None:
-        ...
+@outpost.action("log/level")
+def set_log_level(level: Literal["debug", "info", "warn"] = "info") -> None:
+    ...
 ```
 
-Run it by naming its file, followed by `:ClassName` if the file defines several
-protocols, or its module:
+Parameter types are `bool`, `int`, `float`, `str`, `Literal` of strings and `enum.Enum`
+(offered by member name), optionally in `Annotated` with a `Range` and a `Unit`. A
+default value is the initial value in blip.
 
-```bash
-uv run outpost --protocol ./my_target.py -o host=192.168.1.70
-```
+An action succeeds when it returns and is rejected when it raises, `ActionError` with
+the reason shown in blip. A plain function runs in a thread of its own, so it may block;
+an `async` function runs in the event loop of the outpost. Invocations of one action are
+carried out one after another, in the order blip sent them.
 
-Or serve it from a script of your own with `outpost.run(MyTarget("192.168.1.70"))`.
-
-Actions are carried out one after another per action, in the order blip sent them. An
-action succeeds when it returns and is rejected when it raises, `ActionError` with the
-reason shown in blip. Actions can be added, removed, enabled and disabled at runtime
-through `self.actions`, e.g. `self.actions.set_enabled(False)` while the link to the
+Methods become actions of the objects passed to `outpost.register(obj)`, so they share
+the state of the object. Actions can be added, removed, enabled and disabled at any time
+through `outpost.get_outpost().actions`, e.g. `set_enabled(False)` while the link to the
 target is down; blip gets the new list right away.
 
-Parameter types are `bool`, `int`, `float`, `str`, `Literal` of strings and
-`enum.Enum` (offered by member name), optionally in `Annotated` with a `Range` and a
-`Unit`. A default value is the initial value in blip.
+A script that only offers actions calls `outpost.wait()` after `start`, which blocks
+until Ctrl+C.
 
-## Protocol Data Schema (CBOR)
+## More
 
-Messages sent in binary WebSocket frames match the Rust `proto` crate, see
-`doc/source/architecture/protocol.rst`:
+- `outpost.start(record="run.blip")` records everything sent, to open in blip later
+  (**File > Open recording**).
+- `Outpost(port=3001)` creates another outpost with the same methods, e.g. to serve
+  several targets on different ports.
+- In asyncio code, `async with Outpost() as outpost:` serves from the running event loop.
+- `drain()` blocks until every blip has room for more messages, for scripts sending
+  faster than blip takes them, e.g. a history.
+
+## Command line
+
+Targets that speak the blip protocol themselves, e.g. firmware with the C++ library
+sonde, and recordings need no script:
+
+```bash
+blip-outpost tcp 192.168.1.70 9000          # or --listen to wait for the target
+blip-outpost udp 0.0.0.0 9000 --listen
+blip-outpost replay recording.blip --speed 2
+```
+
+The target sends CBOR messages, several at once as a CBOR sequence (RFC 8742): a UDP
+datagram holds complete messages, over TCP they may be split anywhere. Invocations of
+blip are forwarded to the target. `--ws-port`, `--ws-host` and `--record` apply to every
+command.
+
+## Examples
+
+The [`examples`](https://github.com/stefanluethi/blip/tree/main/outpost/examples)
+folder of the repository holds scripts to try blip and to copy from. They are not part
+of the package. In a checkout:
+
+```bash
+cd outpost
+uv sync
+uv run python examples/minimal.py
+```
+
+- `minimal.py`: a sine wave from a made-up sensor and an action, in plain blocking code.
+- `simulator.py`: CPU load, simulated sensors at different rates, records, arrays,
+  frames, log records and demo actions; written with asyncio and actions as methods.
+- `fast.py`: a stress test of blip's ingest and rendering, by default about 100 000
+  messages per second; `--history-s 600` first sends ten minutes of the past as fast as
+  blip takes it.
+
+## Develop
+
+```bash
+cd outpost
+uv sync
+uv run pytest
+```
+
+## Message schema (CBOR)
+
+Messages sent in binary WebSocket frames match the Rust `proto` crate, see the
+[wire protocol](https://stefanluethi.github.io/blip/docs/architecture/protocol.html):
 
 - **Value**: `{ timestamp: int (ns), path: str, value: any }`, where `value` is a plain CBOR item: `None`, `int`, `float`, `bool`, `str`, a `list` of fixed length or a `dict` with `str` keys, nested freely
 - **ValueMetadata**: `{ path: str, unit: str }`

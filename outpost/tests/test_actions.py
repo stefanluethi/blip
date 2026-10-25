@@ -1,16 +1,17 @@
 """Tests for actions: their parameters, invoking them and serving them to blip."""
 
 import asyncio
+import contextlib
 import enum
-from typing import Annotated, Any, Dict, List, Literal, Optional
+import threading
+from typing import Annotated, Any, AsyncIterator, Dict, List, Literal, Optional
 
 import cbor2
 import pytest
 import websockets
 from websockets.asyncio.server import ServerConnection
 
-from outpost import ActionError, Actions, LogLevel, Protocol, Range, Unit, action
-from outpost.server import OutpostServer
+from blip_outpost import ActionError, Actions, LogLevel, Outpost, Range, Unit, action
 
 from blip_client import receive as receive_message
 
@@ -20,13 +21,12 @@ class Color(enum.Enum):
     GREEN = 2
 
 
-class Target(Protocol):
+class Target:
+    """The code of a script that talks to a target, with its actions as methods."""
+
     def __init__(self) -> None:
         self.calls: List[tuple] = []
         self.release = asyncio.Event()
-
-    async def run(self) -> None:
-        await asyncio.Event().wait()
 
     @action("motor/speed", readback="motor/speed_rpm")
     async def set_speed(self, rpm: Annotated[int, Range(0, 3000), Unit("rpm")]) -> None:
@@ -53,8 +53,14 @@ class Target(Protocol):
         self.calls.append(("slow", step))
 
 
+def registered(target: Target, outpost: Optional[Outpost] = None) -> Outpost:
+    outpost = outpost or Outpost()
+    outpost.register(target)
+    return outpost
+
+
 def test_parameters_are_taken_from_the_signature():
-    descriptors = {d["path"]: d for d in Target().actions.descriptors()}
+    descriptors = {d["path"]: d for d in registered(Target()).actions.descriptors()}
     assert descriptors["motor/speed"] == {
         "path": "motor/speed",
         "description": "Speed setpoint",
@@ -144,20 +150,29 @@ async def test_arguments_are_checked_and_converted():
         await actions.invoke("b", {})
 
 
+async def test_sync_actions_run_outside_the_event_loop():
+    threads = []
+    actions = Actions()
+    actions.add("blocking", lambda: threads.append(threading.current_thread()))
+    await actions.invoke("blocking", {})
+    assert threads and threads[0] is not threading.current_thread()
+
+
 async def test_disabled_actions_are_rejected():
     target = Target()
-    target.actions.set_enabled(False, "motor/enable")
-    assert target.actions.descriptors()[0]["enabled"] is True
+    actions = registered(target).actions
+    actions.set_enabled(False, "motor/enable")
+    assert actions.descriptors()[0]["enabled"] is True
     with pytest.raises(ActionError, match="disabled"):
-        await target.invoke("motor/enable", {})
-    target.actions.set_enabled(True)
-    await target.invoke("motor/enable", {})
+        await actions.invoke("motor/enable", {})
+    actions.set_enabled(True)
+    await actions.invoke("motor/enable", {})
     assert target.calls == [("enable", True)]
 
 
 async def test_exceptions_of_actions_reject_them():
     with pytest.raises(ActionError, match="RuntimeError: flash busy"):
-        await Target().invoke("reboot", {})
+        await registered(Target()).actions.invoke("reboot", {})
 
 
 def test_changes_notify():
@@ -169,15 +184,46 @@ def test_changes_notify():
     actions.remove("a")
     actions.remove("a")  # gone already
     assert changes == [1, 1, 0]
+    with actions.batch():
+        actions.add("a", lambda: None)
+        actions.add("b", lambda: None)
+    assert changes == [1, 1, 0, 2]
+
+
+def test_functions_become_actions_and_methods_those_of_registered_objects():
+    outpost = Outpost()
+
+    @outpost.action("pump/run")
+    def run_pump(seconds: float = 1.0) -> None:
+        """Runs the pump"""
+
+    class Pump:
+        @outpost.action("pump/stop")
+        def stop(self) -> None:
+            pass
+
+    assert [d["path"] for d in outpost.actions.descriptors()] == ["pump/run"]
+    assert outpost.actions.descriptors()[0]["description"] == "Runs the pump"
+    outpost.register(Pump())
+    assert [d["path"] for d in outpost.actions.descriptors()] == ["pump/run", "pump/stop"]
+
+
+def test_registering_announces_the_actions_once():
+    outpost = Outpost()
+    sent: List[dict] = []
+    outpost._send_frame = lambda frame: sent.append(cbor2.loads(frame))  # type: ignore[method-assign]
+    outpost.register(Target())
+    assert [next(iter(message)) for message in sent] == ["Actions"]
+    assert len(sent[0]["Actions"]) == 4
 
 
 # The tests below serve a target and talk to it like blip
 
 
-async def serve(target: Protocol, port: int) -> OutpostServer:
-    server = OutpostServer(protocol=target, host="127.0.0.1", port=port, path="/ws/test")
-    await server.start()
-    return server
+@contextlib.asynccontextmanager
+async def serve(target: Target, port: int) -> AsyncIterator[Outpost]:
+    async with registered(target, Outpost(port=port, path="/ws/test")) as outpost:
+        yield outpost
 
 
 def invoke(id: int, path: str, args: Any) -> bytes:
@@ -193,19 +239,15 @@ async def receive(ws, variant: str) -> Any:
 
 
 async def test_clients_get_the_actions_when_connecting():
-    server = await serve(Target(), 3989)
-    try:
+    async with serve(Target(), 3989):
         async with websockets.connect("ws://127.0.0.1:3989/ws/test") as ws:
             actions = await receive(ws, "Actions")
             assert [a["path"] for a in actions] == ["motor/speed", "motor/enable", "reboot", "slow"]
-    finally:
-        await server.stop()
 
 
 async def test_invocations_are_answered_and_logged():
     target = Target()
-    server = await serve(target, 3988)
-    try:
+    async with serve(target, 3988):
         async with websockets.connect("ws://127.0.0.1:3988/ws/test") as ws:
             await ws.send(invoke(1, "motor/speed", {"rpm": 1500}))
             assert await receive(ws, "ActionResult") == {"id": 1, "result": {"Ok": None}}
@@ -229,14 +271,11 @@ async def test_invocations_are_answered_and_logged():
             await ws.send(invoke(4, "nope", {}))
             assert await receive(ws, "ActionResult") == {"id": 4, "result": {"Err": "unknown action 'nope'"}}
         assert target.calls == [("speed", 1500)]
-    finally:
-        await server.stop()
 
 
 async def test_a_slow_action_holds_up_only_its_own_invocations():
     target = Target()
-    server = await serve(target, 3987)
-    try:
+    async with serve(target, 3987):
         async with websockets.connect("ws://127.0.0.1:3987/ws/test") as ws:
             await ws.send(invoke(1, "slow", {"step": 0}))
             await ws.send(invoke(2, "slow", {"step": 1}))
@@ -246,68 +285,44 @@ async def test_a_slow_action_holds_up_only_its_own_invocations():
             assert (await receive(ws, "ActionResult"))["id"] == 1
             assert (await receive(ws, "ActionResult"))["id"] == 2
         assert target.calls == [("enable", False), ("slow", 0), ("slow", 1)]
-    finally:
-        await server.stop()
-
-
-async def test_declared_actions_are_announced_once_at_startup():
-    sent = []
-
-    async def capture(frame: bytes) -> None:
-        sent.append(cbor2.loads(frame))
-
-    target = Target()
-    target.attach(capture)
-    # the registry is built on first use, here in a running loop
-    assert len(target.actions) == 4
-    await asyncio.sleep(0.05)
-    assert sent == []
-    target.actions.set_enabled(False, "reboot")
-    await asyncio.sleep(0.05)
-    assert [next(iter(message)) for message in sent] == ["Actions"]
 
 
 def test_messages_are_told_apart_by_their_prefix():
-    from outpost.proto import ACTION_RESULT_PREFIX, ACTIONS_PREFIX, Message
+    from blip_outpost.proto import ACTION_RESULT_PREFIX, ACTIONS_PREFIX, METADATA_PREFIX, Message
 
     assert Message.create_actions([]).encode_cbor().startswith(ACTIONS_PREFIX)
     assert Message.create_action_result(1, "no").encode_cbor().startswith(ACTION_RESULT_PREFIX)
+    assert Message.create_metadata("a", "V").encode_cbor().startswith(METADATA_PREFIX)
     assert not Message.create_log(0, "x").encode_cbor().startswith(ACTION_RESULT_PREFIX)
 
 
-async def test_answers_sent_by_the_protocol_are_dropped():
-    from outpost.proto import Message
+async def test_answers_sent_by_the_script_are_dropped():
+    from blip_outpost.proto import Message
 
-    target = Target()
-    server = await serve(target, 3983)
-    try:
+    async with serve(Target(), 3983) as outpost:
         async with websockets.connect("ws://127.0.0.1:3983/ws/test") as ws:
             await receive(ws, "Actions")
             # e.g. a target answering a forwarded invocation with its own id
-            await target.send(Message.create_action_result(0, "not yours"))
-            await target.send_value("after", 1)
+            outpost.send(Message.create_action_result(0, "not yours"))
+            outpost.send_value("after", 1)
             message = cbor2.loads(await receive_message(ws, 2.0))
             assert "Value" in message
-    finally:
-        await server.stop()
 
 
 async def test_a_change_while_a_client_connects_reaches_it(monkeypatch):
-    target = Target()
-    server = await serve(target, 3984)
-    send = ServerConnection.send
-    first = []
+    async with serve(Target(), 3984) as outpost:
+        send = ServerConnection.send
+        first = []
 
-    async def changing_send(connection, message):
-        # the actions change while the cached list is sent to the new client
-        if not first:
-            first.append(message)
-            target.actions.set_enabled(False, "reboot")
-            await asyncio.sleep(0.05)
-        await send(connection, message)
+        async def changing_send(connection, message):
+            # the actions change while the cached list is sent to the new client
+            if not first:
+                first.append(message)
+                outpost.actions.set_enabled(False, "reboot")
+                await asyncio.sleep(0.05)
+            await send(connection, message)
 
-    monkeypatch.setattr(ServerConnection, "send", changing_send)
-    try:
+        monkeypatch.setattr(ServerConnection, "send", changing_send)
         async with websockets.connect("ws://127.0.0.1:3984/ws/test") as ws:
             latest = None
             try:
@@ -318,19 +333,15 @@ async def test_a_change_while_a_client_connects_reaches_it(monkeypatch):
             assert latest is not None
             # the last list the client got is the changed one
             assert {a["path"]: a for a in latest}["reboot"]["enabled"] is False
-    finally:
-        await server.stop()
 
 
 async def test_changed_actions_are_announced_to_all_clients():
-    target = Target()
-    server = await serve(target, 3986)
-    try:
+    async with serve(Target(), 3986) as outpost:
         async with websockets.connect("ws://127.0.0.1:3986/ws/test") as first, \
                 websockets.connect("ws://127.0.0.1:3986/ws/test") as second:
             await receive(first, "Actions")
             await receive(second, "Actions")
-            target.actions.set_enabled(False, "reboot")
+            outpost.actions.set_enabled(False, "reboot")
             for ws in (first, second):
                 actions = {a["path"]: a for a in await receive(ws, "Actions")}
                 assert actions["reboot"]["enabled"] is False
@@ -338,13 +349,10 @@ async def test_changed_actions_are_announced_to_all_clients():
             async with websockets.connect("ws://127.0.0.1:3986/ws/test") as third:
                 actions = {a["path"]: a for a in await receive(third, "Actions")}
                 assert actions["reboot"]["enabled"] is False
-    finally:
-        await server.stop()
 
 
 async def test_results_go_to_the_invoking_client_only():
-    server = await serve(Target(), 3985)
-    try:
+    async with serve(Target(), 3985):
         async with websockets.connect("ws://127.0.0.1:3985/ws/test") as first, \
                 websockets.connect("ws://127.0.0.1:3985/ws/test") as second:
             await first.send(invoke(1, "motor/enable", {}))
@@ -354,5 +362,3 @@ async def test_results_go_to_the_invoking_client_only():
             while "Log" not in message:
                 assert "ActionResult" not in message
                 message = cbor2.loads(await receive_message(second, 2.0))
-    finally:
-        await server.stop()

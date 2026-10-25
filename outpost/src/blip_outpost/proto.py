@@ -140,6 +140,7 @@ def variant_prefix(variant: str) -> bytes:
 
 ACTIONS_PREFIX = variant_prefix("Actions")
 ACTION_RESULT_PREFIX = variant_prefix("ActionResult")
+METADATA_PREFIX = variant_prefix("ValueMetadata")
 
 
 def split_items(data: bytes) -> Tuple[List[bytes], bytes]:

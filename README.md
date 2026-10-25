@@ -4,9 +4,9 @@ Lightweight web tracing tool for embedded systems.
 
 blip shows live values as plots and log records as tables. It runs in the
 browser (WASM) or as a native app, built with [egui](https://github.com/emilk/egui).
-A small Python service, the outpost, connects an embedded target (or a simulator) to blip over
-a WebSocket, using CBOR-encoded messages. sonde, a C++ library, encodes those messages on the
-target or in unit tests.
+The outpost (`blip-outpost`), a small Python library, lets a script that talks to an embedded
+target (or a simulator) send its data to blip over a WebSocket, using CBOR-encoded messages.
+sonde, a C++ library, encodes those messages on the target or in unit tests.
 
 Try the web app at <https://stefanluethi.github.io/blip/> and read the
 documentation at <https://stefanluethi.github.io/blip/docs/>:
@@ -20,15 +20,15 @@ documentation at <https://stefanluethi.github.io/blip/docs/>:
 The sources are in [`doc/source`](doc/source).
 
 ```
-embedded target  <-- TCP / UDP -->  outpost (Python)  <-- WebSocket / CBOR -->  blip (Rust)
-  └─ sonde (C++)
+embedded target  <-- any link -->  your script + outpost (Python)  <-- WebSocket / CBOR -->  blip (Rust)
+  └─ sonde (C++)  <-- TCP / UDP -->  blip-outpost tcp / udp
 ```
 
 | Directory  | Contents |
 |------------|----------|
 | `blip/`    | GUI app (Rust, egui), web and native |
 | `proto/`   | Wire protocol types shared between blip and embedded targets |
-| `outpost/` | Target-side service connecting devices to blip (Python) |
+| `outpost/` | `blip-outpost`, the Python library your script uses to send to blip, and examples |
 | `sonde/`   | Tracing library for targets and unit tests (C++17), see [`sonde/README.md`](sonde/README.md) |
 | `doc/`     | Documentation (Sphinx): user guides, architecture, requirements; diagrams in draw.io |
 
@@ -82,12 +82,12 @@ See [`doc/README.md`](doc/README.md) for more options.
 
 ## Run
 
-Start the outpost with the simulator (no hardware needed). It serves
+Start the outpost with the simulator example (no hardware needed). It serves
 `ws://127.0.0.1:3000/ws/outpost`:
 
 ```bash
 cd outpost
-uv run outpost --protocol simulator --port 3000
+uv run python examples/simulator.py --port 3000
 ```
 
 Then start blip, either in the browser:
@@ -103,13 +103,22 @@ or natively:
 cargo run --release -p blip
 ```
 
-To connect a real TCP endpoint instead of the simulator:
+To connect a target of your own, write a script that reads it and passes on what it
+decodes, see the [outpost guide](https://stefanluethi.github.io/blip/docs/usage/outpost.html):
 
-```bash
-uv run outpost --protocol tcp --remote-host 127.0.0.1 --remote-port 9000
+```python
+import blip_outpost as outpost
+
+outpost.start()
+while True:
+    outpost.send_value("motor/speed_rpm", read_speed())
 ```
 
-Run `uv run outpost --help` for all options.
+A target that speaks the blip protocol itself, e.g. with sonde, needs no script:
+
+```bash
+uv run blip-outpost tcp 127.0.0.1 9000
+```
 
 ## Checks
 

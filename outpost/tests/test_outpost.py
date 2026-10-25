@@ -1,228 +1,149 @@
-"""Integration tests for protocol to websocket outpost."""
+"""Tests of the outpost as a script uses it: serving from a thread, sending from any
+thread, and what blips connecting later get."""
 
 import asyncio
+from typing import List
+
+import cbor2
+import pytest
 import websockets
 
-from outpost.server import OutpostServer
-from outpost.protocols.simulator import SimulatorProtocol
-from outpost.proto import decode_cbor_message
+import blip_outpost
+from blip_outpost import Outpost
+from blip_outpost.recording import read_frames
 
 from blip_client import receive
 
 
-async def test_simulator_outpost():
-    # 1. Start server with SimulatorProtocol
-    proto = SimulatorProtocol(interval_ms=10)
-    server = OutpostServer(protocol=proto, host="127.0.0.1", port=3999, path="/ws/test")
-    await server.start()
+def connect(port: int):
+    return websockets.connect(f"ws://127.0.0.1:{port}/ws/outpost")
 
-    await asyncio.sleep(0.05)
 
+async def messages_until(ws, variant: str, count: int = 1) -> List[dict]:
+    """The messages received until `count` of `variant` arrived."""
+    received: List[dict] = []
+    while sum(variant in message for message in received) < count:
+        received.append(cbor2.loads(await receive(ws, 2.0)))
+    return received
+
+
+def test_a_started_outpost_serves_from_its_own_thread():
+    outpost = Outpost(port=3970).start()
     try:
-        # 2. Connect client to websocket
-        async with websockets.connect("ws://127.0.0.1:3999/ws/test") as ws:
-            # 3. Receive telemetry message (skipping the units and log records)
-            for _ in range(100):
-                msg_bytes = await receive(ws, 2.0)
-                assert isinstance(msg_bytes, bytes)
+        assert outpost.serving
+        with pytest.raises(RuntimeError, match="serves already"):
+            outpost.start()
 
-                data = decode_cbor_message(msg_bytes)
-                assert data is not None
-                if "Value" in data:
-                    break
-            # Message structure is {"Value": {"timestamp": ..., "path": ..., "value": ...}}
-            assert "Value" in data
-            val_struct = data["Value"]
-            assert "path" in val_struct
-            assert "timestamp" in val_struct
-            assert "value" in val_struct
+        async def blip() -> List[dict]:
+            async with connect(3970) as ws:
+                # sent from this thread while blip is connected
+                assert await asyncio.to_thread(outpost.wait_for_client, 2.0)
+                await asyncio.to_thread(send_from_another_thread, outpost)
+                return await messages_until(ws, "Value", 100)
 
+        values = [m["Value"]["value"] for m in asyncio.run(blip()) if "Value" in m]
+        # in the order they were sent
+        assert values == list(range(100))
     finally:
-        await server.stop()
+        outpost.stop()
+    assert not outpost.serving
+    assert not outpost.wait_for_client(0.0)
 
 
-async def test_simulator_outpost_logs():
-    proto = SimulatorProtocol(interval_ms=10, log_interval_ms=20)
-    server = OutpostServer(protocol=proto, host="127.0.0.1", port=3998, path="/ws/test")
-    await server.start()
+def send_from_another_thread(outpost: Outpost) -> None:
+    for i in range(100):
+        outpost.send_value("count", i)
 
-    await asyncio.sleep(0.05)
 
+def test_a_port_in_use_is_reported_by_start():
+    first = Outpost(port=3971).start()
     try:
-        async with websockets.connect("ws://127.0.0.1:3998/ws/test") as ws:
-            # Collect log records until a few have arrived
-            logs = []
-            for _ in range(500):
-                data = decode_cbor_message(await receive(ws, 2.0))
-                assert data is not None
-                if "Log" in data:
-                    logs.append(data["Log"])
-                    if len(logs) >= 3:
-                        break
-
-            assert len(logs) >= 3, "Simulator did not emit log records"
-            for log in logs:
-                assert set(log) == {"timestamp", "level", "component", "message"}
-                assert isinstance(log["timestamp"], int) and log["timestamp"] > 0
-                assert 0 <= log["level"] <= 4
-                assert log["component"]
-                assert log["message"]
-
+        with pytest.raises(OSError):
+            Outpost(port=3971).start()
     finally:
-        await server.stop()
+        first.stop()
 
 
-async def test_simulator_outpost_typed_values():
-    proto = SimulatorProtocol(interval_ms=10)
-    server = OutpostServer(protocol=proto, host="127.0.0.1", port=3995, path="/ws/test")
-    await server.start()
+async def test_units_and_actions_reach_blips_connecting_later():
+    outpost = Outpost(port=3972)
+    # before serving: the units and the actions are kept, the samples dropped
+    outpost.send_metadata("motor/speed_rpm", "rpm")
+    outpost.send_value("motor/speed_rpm", 1)
+    outpost.send_metadata("imu.acc", "g")
+    outpost.send_metadata("imu.acc", "m/s²")
 
-    await asyncio.sleep(0.05)
+    @outpost.action("motor/stop")
+    def stop() -> None:
+        pass
 
-    try:
-        async with websockets.connect("ws://127.0.0.1:3995/ws/test") as ws:
-            # Collect the first value of each typed trace
-            typed_paths = (
-                "imu",
-                "motor",
-                "robot/pose",
-                "audio/spectrum",
-                "thermal/frame",
-                "sensor/temperature",
-            )
-            values = {}
-            for _ in range(500):
-                msg_bytes = await receive(ws, 2.0)
-                # blip accepts frames of up to 2048 bytes
-                assert len(msg_bytes) <= 2048
-                data = decode_cbor_message(msg_bytes)
-                assert data is not None
-                if "Value" in data and data["Value"]["path"] in typed_paths:
-                    values.setdefault(data["Value"]["path"], data["Value"]["value"])
-                    if len(values) == len(typed_paths):
-                        break
-
-            # Records and arrays arrive as plain CBOR maps and arrays
-            assert set(values["imu"]) == {"acc", "gyro"}
-            assert len(values["imu"]["acc"]) == 3
-            assert all(isinstance(v, float) for v in values["imu"]["acc"])
-            motor = values["motor"]
-            assert isinstance(motor["speed_rpm"], int) and not isinstance(motor["speed_rpm"], bool)
-            assert isinstance(motor["enabled"], bool)
-            assert isinstance(motor["state"], str)
-            pose = values["robot/pose"]
-            assert set(pose) == {"x", "y", "heading"}
-            assert all(isinstance(v, float) for v in pose.values())
-            assert len(values["audio/spectrum"]) == 64
-            frame = values["thermal/frame"]
-            assert len(frame) == 8 and all(len(row) == 8 for row in frame)
-            assert values["sensor/temperature"] is None or isinstance(values["sensor/temperature"], float)
-
-    finally:
-        await server.stop()
-
-
-async def test_simulator_outpost_units():
-    proto = SimulatorProtocol(interval_ms=10)
-    server = OutpostServer(protocol=proto, host="127.0.0.1", port=3994, path="/ws/test")
-    await server.start()
-
-    try:
-        async with websockets.connect("ws://127.0.0.1:3994/ws/test") as ws:
-            # the units are repeated, so a client connecting later gets them too
-            units = {}
-            for _ in range(2000):
-                data = decode_cbor_message(await receive(ws, 2.0))
-                if "ValueMetadata" in data:
-                    metadata = data["ValueMetadata"]
-                    units[metadata["path"]] = metadata["unit"]
-                    if "sensor/temperature" in units and "sysinfo/cpu/cpu0" in units:
-                        break
-
-            assert units["sensor/temperature"] == "°C"
-            assert units["sysinfo/cpu/cpu0"] == "%"
-    finally:
-        await server.stop()
-
-
-async def test_simulator_outpost_rates():
-    proto = SimulatorProtocol(interval_ms=10)
-    server = OutpostServer(protocol=proto, host="127.0.0.1", port=3993, path="/ws/test")
-    await server.start()
-
-    try:
-        async with websockets.connect("ws://127.0.0.1:3993/ws/test") as ws:
-            # count the samples of each trace for a while
-            counts = {}
-            loop = asyncio.get_running_loop()
-            end = loop.time() + 1.5
-            while loop.time() < end:
-                data = decode_cbor_message(await receive(ws, 2.0))
-                if "Value" in data:
-                    path = data["Value"]["path"]
-                    counts[path] = counts.get(path, 0) + 1
-
-            # every 10 ms, 50 ms, 100 ms, 250 ms and 1 s
-            rates = ["accelerometer", "motor", "robot/pose", "sysinfo/cpu/cpu0", "sensor/temperature"]
-            assert [counts[path] for path in rates] == sorted(
-                (counts[path] for path in rates), reverse=True
-            ), counts
-            assert counts["accelerometer"] > 3 * counts["motor"] > 0, counts
-            assert counts["robot/pose"] > 2 * counts["sensor/temperature"] > 0, counts
-    finally:
-        await server.stop()
-
-
-async def test_simulator_actions_change_what_it_sends(monkeypatch):
-    import outpost.protocols.simulator as simulator
-    from outpost import ActionError, LogLevel
-
-    proto = SimulatorProtocol(interval_ms=10)
-    paths = [d["path"] for d in proto.actions.descriptors()]
-    assert paths == [
-        "motor/enable", "motor/speed", "thermal/ambient", "log/level", "log/message", "imu/calibrate"
+    async with outpost:
+        outpost.send_value("motor/speed_rpm", 2)
+        async with connect(3972) as ws:
+            first = [cbor2.loads(await receive(ws, 2.0)) for _ in range(3)]
+    assert first == [
+        {"ValueMetadata": {"path": "motor/speed_rpm", "unit": "rpm"}},
+        {"ValueMetadata": {"path": "imu.acc", "unit": "m/s²"}},
+        {"Actions": outpost.actions.descriptors()},
     ]
 
-    await proto.invoke("motor/enable", {"enabled": False})
-    assert proto._motor_message().data.value["enabled"] is False
+
+async def test_the_recording_starts_with_the_units_and_actions_sent_before(tmp_path):
+    path = tmp_path / "run.blip"
+    outpost = Outpost(port=3973, record=path)
+    outpost.send_metadata("speed", "rpm")
+    outpost.actions.add("stop", lambda: None)
+    async with outpost:
+        outpost.send_value("speed", 1500, timestamp_ns=1)
+    recorded = [cbor2.loads(frame) for frame in read_frames(path)]
+    assert [next(iter(message)) for message in recorded] == ["ValueMetadata", "Actions", "Value"]
+
+
+async def test_actions_may_change_from_another_thread():
+    async with Outpost(port=3974) as outpost:
+        outpost.actions.add("stop", lambda: None)
+        async with connect(3974) as ws:
+            await messages_until(ws, "Actions")
+            await asyncio.to_thread(outpost.actions.set_enabled, False)
+            actions = (await messages_until(ws, "Actions"))[-1]["Actions"]
+            assert actions[0]["enabled"] is False
+
+
+async def test_drain_waits_for_room_from_another_thread():
+    async with Outpost(port=3975, max_queued=10) as outpost:
+        # no blip: returns right away
+        await asyncio.wait_for(asyncio.to_thread(outpost.drain), 1.0)
+        with pytest.raises(RuntimeError, match="drain_async"):
+            outpost.drain()
+        await asyncio.wait_for(outpost.drain_async(), 1.0)
+
+
+def test_the_module_functions_use_one_outpost():
+    outpost = blip_outpost.get_outpost()
+    assert blip_outpost.serve(port=3976) is outpost
+    assert outpost.port == 3976
+
+    @blip_outpost.action("test/module")
+    def module_action() -> None:
+        pass
+
+    class Device:
+        @blip_outpost.action("test/device")
+        def method(self) -> None:
+            pass
+
     try:
-        await proto.invoke("motor/speed", {"rpm": 1000})
-        raise AssertionError("the speed of a disabled motor was set")
-    except ActionError as e:
-        assert "disabled" in str(e)
-    await proto.invoke("motor/enable", {"enabled": True})
-    await proto.invoke("motor/speed", {"rpm": 1000})
-    for _ in range(1000):
-        motor = proto._motor_message().data.value
-    assert motor["state"] == "running" and abs(motor["speed_rpm"] - 1000) < 50
-
-    sent = []
-
-    async def capture(frame: bytes) -> None:
-        sent.append(decode_cbor_message(frame))
-
-    proto.attach(capture)
-    await proto.invoke("log/level", {"level": "WARN"})
-    assert proto._log_level == LogLevel.WARN
-    assert {"path": "simulator/log_level", "value": "WARN"}.items() <= sent[-1]["Value"].items()
-    await proto._send_log(LogLevel.INFO, "test", "dropped")
-    await proto._send_log(LogLevel.ERROR, "test", "kept")
-    assert [m["Log"]["message"] for m in sent if "Log" in m] == ["kept"]
-
-    monkeypatch.setattr(simulator, "CALIBRATION_SEC", 0.05)
-    calibration = asyncio.create_task(proto.invoke("imu/calibrate", {}))
-    await asyncio.sleep(0.01)
-    assert not proto.actions.is_enabled("imu/calibrate")
-    await calibration
-    assert proto.actions.is_enabled("imu/calibrate")
-    assert proto._gyro_bias == [0.0, 0.0, 0.0]
-    proto.attach(None)
+        assert "test/module" in outpost.actions
+        assert "test/device" not in outpost.actions
+        blip_outpost.register(Device())
+        assert "test/device" in outpost.actions
+    finally:
+        outpost.actions.clear()
 
 
-if __name__ == "__main__":
-    asyncio.run(test_simulator_outpost())
-    asyncio.run(test_simulator_outpost_logs())
-    asyncio.run(test_simulator_outpost_typed_values())
-    asyncio.run(test_simulator_outpost_units())
-    asyncio.run(test_simulator_outpost_rates())
-    print("ALL TESTS PASSED SUCCESSFULLY!")
+def test_stop_finishes_the_recording_of_a_started_outpost(tmp_path):
+    path = tmp_path / "run.blip"
+    outpost = Outpost(port=3977, record=path).start()
+    # sent right before stopping, still recorded
+    outpost.send_value("speed", 1500)
+    outpost.stop()
+    assert [next(iter(cbor2.loads(frame))) for frame in read_frames(path)] == ["Value"]

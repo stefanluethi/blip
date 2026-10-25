@@ -7,10 +7,10 @@ from pathlib import Path
 import cbor2
 import websockets
 
-from outpost.proto import Message, split_items
-from outpost.protocols.replay import ReplayProtocol, timestamp
-from outpost.recording import FORMAT, VERSION, RecordingWriter, read_frames
-from outpost.server import OutpostServer
+from blip_outpost import Outpost
+from blip_outpost.proto import Message, split_items
+from blip_outpost.recording import FORMAT, VERSION, RecordingWriter, read_frames
+from blip_outpost.replay import Replay, timestamp
 
 from blip_client import receive
 
@@ -75,17 +75,15 @@ async def test_replay_sends_and_records_the_frames_unchanged(tmp_path):
     copy = tmp_path / "copy.blip"
     write(original, frames())
 
-    proto = ReplayProtocol(original, speed=1.0)
-    server = OutpostServer(
-        protocol=proto, host="127.0.0.1", port=3997, path="/ws/test",
-        recorder=RecordingWriter(copy),
-    )
-    await server.start()
-    try:
-        async with websockets.connect("ws://127.0.0.1:3997/ws/test") as ws:
-            received = [await receive(ws, 2.0) for _ in frames()]
-    finally:
-        await server.stop()
+    async with Outpost(port=3997, path="/ws/test", record=copy) as outpost:
+        replay = Replay(outpost, original, speed=1.0)
+        task = asyncio.create_task(replay.run())
+        try:
+            async with websockets.connect("ws://127.0.0.1:3997/ws/test") as ws:
+                received = [await receive(ws, 2.0) for _ in frames()]
+            await asyncio.wait_for(task, 2.0)
+        finally:
+            task.cancel()
 
     assert received == frames()
     assert list(read_frames(copy)) == frames()

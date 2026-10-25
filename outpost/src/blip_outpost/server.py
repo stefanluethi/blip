@@ -1,19 +1,27 @@
-"""WebSocket server connecting blip clients to a protocol."""
+"""The WebSocket server sending to the connected blips and passing on their invocations."""
 
 import asyncio
 import logging
-from typing import Any, Optional, Set
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
 from urllib.parse import parse_qs, urlsplit
 
 import websockets
 from websockets.asyncio.server import Server, ServerConnection, serve
 
-from outpost.actions import ActionError
-from outpost.proto import ACTION_RESULT_PREFIX, ACTIONS_PREFIX, LogLevel, Message, decode_request
-from outpost.protocol import Protocol
-from outpost.recording import RecordingWriter
+import cbor2
 
-logger = logging.getLogger("outpost.server")
+from blip_outpost.actions import ActionError
+from blip_outpost.proto import (
+    ACTION_RESULT_PREFIX,
+    ACTIONS_PREFIX,
+    METADATA_PREFIX,
+    LogLevel,
+    Message,
+    decode_request,
+)
+from blip_outpost.recording import RecordingWriter
+
+logger = logging.getLogger(__name__)
 
 # The component of the log records about invocations
 ACTIONS_COMPONENT = "actions"
@@ -101,36 +109,42 @@ class _Client:
 
 
 class OutpostServer:
-    """WebSocket server sending the messages of a protocol to all blip clients and
-    passing the invocations of each client to the protocol."""
+    """WebSocket server sending each message to all blip clients and passing the
+    invocations of each client to `invoke`.
+
+    It keeps the latest list of actions and the latest unit of each trace, and sends
+    them to each client when it connects and to a recording when it starts, so they
+    may be sent once at any time, also before the server starts."""
 
     def __init__(
         self,
-        protocol: Protocol,
-        host: str = "127.0.0.1",
-        port: int = 3000,
-        path: str = "/ws/outpost",
-        recorder: Optional[RecordingWriter] = None,
+        invoke: Callable[[str, Any], Awaitable[None]],
         max_queued: int = 10000,
+        on_clients: Callable[[int], None] = lambda count: None,
     ) -> None:
-        self.protocol = protocol
+        # carries out an invocation, raises ActionError to reject it
+        self.invoke = invoke
+        # called with the number of clients when a client connects or disconnects
+        self.on_clients = on_clients
         # records the binary messages, also while no client is connected
-        self.recorder = recorder
-        self.host = host
-        self.port = port
-        self.path = path.rstrip("/")
+        self.recorder: Optional[RecordingWriter] = None
+        self.path = ""
         # the messages queued for a client at most, more are dropped
         self.max_queued = max_queued
 
         self.connected_clients: Set[_Client] = set()
         self._server: Optional[Server] = None
-        self._protocol_task: Optional[asyncio.Task] = None
         self._invocations: Set[asyncio.Task] = set()
-        # the latest list of actions sent, for clients connecting later, also when the
-        # target announces its actions itself
         self._actions_frame: Optional[bytes] = None
+        # the latest ValueMetadata message of each path
+        self._metadata: Dict[str, bytes] = {}
 
-        self.protocol.attach(self.broadcast, self.drain)
+    def cached_frames(self) -> List[bytes]:
+        """The messages a client gets when it connects: the units and the actions."""
+        frames = list(self._metadata.values())
+        if self._actions_frame is not None:
+            frames.append(self._actions_frame)
+        return frames
 
     async def drain(self) -> None:
         """Waits until every client has room for more messages: its queue is at most
@@ -138,20 +152,34 @@ class OutpostServer:
         for client in list(self.connected_clients):
             await client.drain()
 
-    async def broadcast(self, message: bytes) -> None:
-        """Queues a message of the protocol for all clients, but answers to invocations.
-        A single one, `Protocol.send` splits the batches of a target."""
+    def broadcast(self, message: bytes) -> None:
+        """Queues a single message for all clients and records it, but answers to
+        invocations: the server answers them itself. Called in the event loop of the
+        server, or while it is not running, when it only keeps the units and the
+        actions."""
         if message.startswith(ACTION_RESULT_PREFIX):
             # e.g. of a target that knows the actions itself, or of a replay: the outpost
             # answers the invoking client itself, and these ids are not that client's
-            logger.debug("Dropping an ActionResult of the protocol")
+            logger.debug("Dropping an ActionResult")
             return
         if message.startswith(ACTIONS_PREFIX):
             self._actions_frame = message
+        elif message.startswith(METADATA_PREFIX):
+            self._remember_metadata(message)
         if self.recorder:
             self.recorder.write(message)
         for client in self.connected_clients:
             client.enqueue(message)
+
+    def _remember_metadata(self, message: bytes) -> None:
+        try:
+            path = cbor2.loads(message)["ValueMetadata"]["path"]
+        except Exception:
+            return
+        if isinstance(path, str):
+            # moved to the end, so a client gets the units in the order they were last sent
+            self._metadata.pop(path, None)
+            self._metadata[path] = message
 
     async def _handle_connection(self, websocket: ServerConnection) -> None:
         """Handle individual WebSocket client connection."""
@@ -166,28 +194,28 @@ class OutpostServer:
             return
 
         client_addr = websocket.remote_address
-        logger.info(f"WebSocket client connected from {client_addr} on path '{path}'")
-        # added and given the latest actions without awaiting in between, so a change
-        # announced later is queued after the list it replaces
+        logger.info(f"blip connected from {client_addr}")
+        # added and given the cached messages without awaiting in between, so a change
+        # announced later is queued after what it replaces
         client = _Client(websocket, self.max_queued, batched)
         self.connected_clients.add(client)
-        if self._actions_frame is not None:
-            client.enqueue(self._actions_frame)
+        for frame in self.cached_frames():
+            client.enqueue(frame)
         sender = asyncio.create_task(client.send_queued())
+        self.on_clients(len(self.connected_clients))
 
         try:
-            await self.protocol.on_client_connected()
             async for message in websocket:
                 if isinstance(message, str):
                     logger.warning(f"Ignoring a text message from {client_addr}")
                     continue
                 self._start_invocation(client, message)
         except websockets.ConnectionClosedOK:
-            logger.info(f"WebSocket client {client_addr} disconnected cleanly")
+            logger.info(f"blip {client_addr} disconnected")
         except websockets.ConnectionClosedError as e:
-            logger.warning(f"WebSocket client {client_addr} connection closed with error: {e}")
+            logger.warning(f"blip {client_addr} disconnected with an error: {e}")
         except Exception as e:
-            logger.error(f"Error handling WebSocket client {client_addr}: {e}")
+            logger.error(f"Error handling blip {client_addr}: {e}")
         finally:
             self.connected_clients.discard(client)
             client.close()
@@ -197,7 +225,8 @@ class OutpostServer:
             except (asyncio.CancelledError, websockets.ConnectionClosed):
                 pass
             except Exception as e:
-                logger.error(f"Error sending to WebSocket client {client_addr}: {e}")
+                logger.error(f"Error sending to blip {client_addr}: {e}")
+            self.on_clients(len(self.connected_clients))
 
     def _start_invocation(self, client: _Client, frame: bytes) -> None:
         try:
@@ -213,7 +242,7 @@ class OutpostServer:
     async def _invoke(self, client: _Client, id: int, path: str, args: Any) -> None:
         error: Optional[str] = None
         try:
-            await self.protocol.invoke(path, args)
+            await self.invoke(path, args)
         except ActionError as e:
             error = str(e) or "rejected"
         except Exception as e:
@@ -231,44 +260,38 @@ class OutpostServer:
             log = Message.create_log(
                 LogLevel.WARN, f"{describe(path, args)} rejected: {error}", component=ACTIONS_COMPONENT
             )
-        await self.broadcast(log.encode_cbor())
+        self.broadcast(log.encode_cbor())
 
-    @property
-    def protocol_task(self) -> Optional[asyncio.Task]:
-        """The task running the protocol."""
-        return self._protocol_task
-
-    async def start(self) -> None:
-        """Start the protocol and the WebSocket server."""
-        if len(self.protocol.actions):
-            await self.protocol.announce_actions()
-        self._protocol_task = asyncio.create_task(self.protocol.run())
-        logger.info(f"Starting WebSocket server on ws://{self.host}:{self.port}{self.path or '/'}")
-        self._server = await serve(self._handle_connection, self.host, self.port)
+    async def start(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 3000,
+        path: str = "/ws/outpost",
+        recorder: Optional[RecordingWriter] = None,
+    ) -> None:
+        """Starts the WebSocket server, recording to `recorder` if given, which gets the
+        units and the actions sent before first."""
+        self.path = path.rstrip("/")
+        self._server = await serve(self._handle_connection, host, port)
+        self.recorder = recorder
+        if recorder:
+            for frame in self.cached_frames():
+                recorder.write(frame)
 
     async def stop(self) -> None:
-        """Close WebSocket server and its connections, and stop the protocol."""
-        logger.info("Shutting down WebSocket server...")
+        """Closes the WebSocket server and its connections, cancels the invocations
+        under way and finishes the recording."""
         if self._server:
             # also closes the connections and waits for their handlers
             self._server.close()
             await self._server.wait_closed()
+            self._server = None
         for client in self.connected_clients:
             client.close()
         self.connected_clients.clear()
 
-        for task in [self._protocol_task, *self._invocations]:
-            if task is not None and not task.done():
-                task.cancel()
-        if self._protocol_task is not None:
-            try:
-                await self._protocol_task
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                # reported by whoever watched the task
-                pass
-        self.protocol.attach(None)
+        for task in list(self._invocations):
+            task.cancel()
         if self.recorder:
             self.recorder.close()
-        logger.info("WebSocket server shutdown complete.")
+            self.recorder = None

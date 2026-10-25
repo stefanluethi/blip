@@ -15,7 +15,7 @@ from typing import Iterator, Union
 
 import cbor2
 
-logger = logging.getLogger("outpost.recording")
+logger = logging.getLogger("blip_outpost.recording")
 
 FORMAT = "blip recording"
 # The version written, of the messages of one connection.

@@ -180,7 +180,7 @@ parameter name. The target answers the client that sent it with an
 ``ActionResult`` of the same ``id``, ``{"Ok": null}`` if it carried the action
 out, ``{"Err": "reason"}`` if it rejected it. Whether the action had the
 desired effect shows in the traces, e.g. the readback. The outpost answers the
-invocations itself and drops ``ActionResult`` messages a protocol sends, e.g.
+invocations itself and drops ``ActionResult`` messages sent to it, e.g.
 those of a passthrough target or of a replayed recording.
 
 Example (shown as JSON for readability)::
@@ -195,7 +195,7 @@ Recording files
 ---------------
 
 blip saves the received messages to a recording file (**File › Save
-recording**), the outpost writes the same format with ``--record`` and sonde
+recording**), the outpost writes the same format when asked to record and sonde
 with its ``FileSink``. A recording is a CBOR sequence (RFC 8742), i.e. CBOR items one after another
 without anything around them, compressed with gzip:
 

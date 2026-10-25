@@ -8,30 +8,26 @@ import cbor2
 import pytest
 import websockets
 
-from outpost.loading import LoadError, create_protocol, load_protocol
-from outpost.proto import Message
-from outpost.protocols.fast import (
+from blip_outpost import Outpost
+from blip_outpost.proto import Message
+from blip_outpost.server import _Client
+
+from blip_client import receive
+from fast import (
     DRAIN_EVERY,
-    FastProtocol,
+    Fast,
     due,
     encode_float_value,
     encode_stamp,
     signal_frequencies,
     value_middle,
 )
-from outpost.server import OutpostServer, _Client
-
-from blip_client import receive
 
 
-def capture(protocol: FastProtocol) -> list:
-    """The messages `protocol` sends, decoded."""
+def capture(outpost: Outpost) -> list:
+    """The messages sent to `outpost`, decoded."""
     sent: list = []
-
-    async def send(frame: bytes) -> None:
-        sent.append(cbor2.loads(frame))
-
-    protocol.attach(send)
+    outpost._send_frame = lambda frame: sent.append(cbor2.loads(frame))  # type: ignore[method-assign]
     return sent
 
 
@@ -62,10 +58,11 @@ def test_signal_frequencies_span_what_the_rate_shows():
 
 
 async def test_it_sends_what_is_due_once():
-    protocol = FastProtocol(
-        traces=3, rate_hz=100, array_size=8, frame_size=4, array_rate_hz=10, log_rate_hz=50
+    outpost = Outpost()
+    sent = capture(outpost)
+    protocol = Fast(
+        outpost, traces=3, rate_hz=100, array_size=8, frame_size=4, array_rate_hz=10, log_rate_hz=50
     )
-    sent = capture(protocol)
     protocol._origin_ns = 1_000_000_000_000
 
     await protocol.send_until(1.0)
@@ -99,19 +96,18 @@ async def test_it_sends_what_is_due_once():
 
 
 async def test_it_sends_only_what_is_asked_for():
-    protocol = FastProtocol(traces=0, array_size=0, frame_size=0, log_rate_hz=0)
-    sent = capture(protocol)
+    outpost = Outpost()
+    sent = capture(outpost)
+    protocol = Fast(outpost, traces=0, array_size=0, frame_size=0, log_rate_hz=0)
     await protocol.send_until(1.0)
     assert sent == []
     assert protocol.messages_per_second() == 0
 
 
 def test_options_are_checked():
-    factory = load_protocol("fast")
-    assert factory is FastProtocol
-    assert create_protocol(factory, ["traces=5", "history_s=2.5"]).traces == 5
-    with pytest.raises(LoadError, match="rate_hz must not be negative"):
-        create_protocol(factory, ["rate_hz=-1"])
+    assert Fast(Outpost(), traces=5, history_s=2.5).traces == 5
+    with pytest.raises(ValueError, match="rate_hz must not be negative"):
+        Fast(Outpost(), rate_hz=-1)
 
 
 class GatedSocket:
@@ -129,14 +125,17 @@ class GatedSocket:
 
 
 async def test_only_history_waits_for_the_start_action():
-    assert "fast/start" not in [d["path"] for d in FastProtocol().actions.descriptors()]
-    protocol = FastProtocol(history_s=1.0)
-    assert [d["path"] for d in protocol.actions.descriptors()] == ["fast/start"]
-    await protocol.on_client_connected()
+    outpost = Outpost()
+    Fast(outpost)
+    assert len(outpost.actions) == 0
+
+    outpost = Outpost()
+    protocol = Fast(outpost, history_s=1.0)
+    assert [d["path"] for d in outpost.actions.descriptors()] == ["fast/start"]
     assert not protocol._started.is_set()
-    await protocol.invoke("fast/start", {})
+    await outpost.actions.invoke("fast/start", {})
     assert protocol._started.is_set()
-    assert not protocol.actions.is_enabled("fast/start")
+    assert not outpost.actions.is_enabled("fast/start")
 
 
 async def test_drain_waits_until_the_queue_is_half_empty():
@@ -165,38 +164,36 @@ async def test_drain_ends_when_the_client_is_gone():
 
 
 async def test_drain_returns_without_clients():
-    server = OutpostServer(protocol=FastProtocol(), port=3989)
-    await asyncio.wait_for(server.protocol.drain(), 1.0)
+    await asyncio.wait_for(Outpost().drain_async(), 1.0)
 
 
 async def test_the_history_reaches_a_client_without_losing_messages():
     traces, rate_hz, history_s = 10, 1000.0, 2.0
-    protocol = FastProtocol(
-        traces=traces, rate_hz=rate_hz, array_size=0, frame_size=0, log_rate_hz=0,
+    # a queue that holds one more batch than it may be at, after waiting for room
+    outpost = Outpost(port=3988, path="/ws/test", max_queued=2 * DRAIN_EVERY + 1)
+    protocol = Fast(
+        outpost, traces=traces, rate_hz=rate_hz, array_size=0, frame_size=0, log_rate_hz=0,
         history_s=history_s,
     )
-    # a queue that holds one more batch than it may be at, after waiting for room
-    server = OutpostServer(
-        protocol=protocol, host="127.0.0.1", port=3988, path="/ws/test", max_queued=2 * DRAIN_EVERY + 1
-    )
-    await server.start()
-    try:
-        async with websockets.connect("ws://127.0.0.1:3988/ws/test") as ws:
-            await asyncio.sleep(0.2)
-            assert protocol.messages == 0, "the history waits for fast/start"
-            await protocol.invoke("fast/start", {})
-            expected = int(history_s * rate_hz)
-            stamps = defaultdict(list)
-            while min((len(s) for s in stamps.values()), default=0) < expected or len(stamps) < traces:
-                message = cbor2.loads(await receive(ws, 5.0))
-                value = message.get("Value")
-                if value and value["path"].startswith("fast/signal/"):
-                    stamps[value["path"]].append(value["timestamp"])
-            assert len(stamps) == traces
-            for path_stamps in stamps.values():
-                # one sample every millisecond, none lost
-                steps = {b - a for a, b in zip(path_stamps[:expected], path_stamps[1:expected])}
-                assert steps == {1_000_000}
-            assert not any(client.dropped for client in server.connected_clients)
-    finally:
-        await server.stop()
+    async with outpost:
+        task = asyncio.create_task(protocol.run())
+        try:
+            async with websockets.connect("ws://127.0.0.1:3988/ws/test") as ws:
+                await asyncio.sleep(0.2)
+                assert protocol.messages == 0, "the history waits for fast/start"
+                await outpost.actions.invoke("fast/start", {})
+                expected = int(history_s * rate_hz)
+                stamps = defaultdict(list)
+                while min((len(s) for s in stamps.values()), default=0) < expected or len(stamps) < traces:
+                    message = cbor2.loads(await receive(ws, 5.0))
+                    value = message.get("Value")
+                    if value and value["path"].startswith("fast/signal/"):
+                        stamps[value["path"]].append(value["timestamp"])
+                assert len(stamps) == traces
+                for path_stamps in stamps.values():
+                    # one sample every millisecond, none lost
+                    steps = {b - a for a, b in zip(path_stamps[:expected], path_stamps[1:expected])}
+                    assert steps == {1_000_000}
+                assert not any(client.dropped for client in outpost._server.connected_clients)
+        finally:
+            task.cancel()

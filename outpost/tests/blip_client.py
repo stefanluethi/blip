@@ -2,7 +2,7 @@
 
 import asyncio
 
-from outpost.proto import split_items
+from blip_outpost.proto import split_items
 
 
 async def receive(ws, timeout: float = 2.0) -> bytes:

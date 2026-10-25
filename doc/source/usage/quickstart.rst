@@ -34,7 +34,7 @@ outpost first, see :doc:`installation`.
 ::
 
    cd outpost
-   uv run outpost --protocol simulator
+   uv run python examples/simulator.py
 
 It serves ``ws://127.0.0.1:3000/ws/outpost`` and logs each blip that connects.
 Leave it running.
@@ -144,6 +144,6 @@ Next steps
 
 * :doc:`concepts` -- the ideas behind traces, records, the time range and
   actions.
-* :doc:`outpost` -- connect your own target: write a protocol class in Python,
+* :doc:`outpost` -- connect your own target: a Python script with ``blip_outpost``,
   or pass through a target that speaks the blip protocol.
 * :doc:`sonde` -- trace from firmware or unit tests in C++.

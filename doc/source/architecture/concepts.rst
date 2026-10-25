@@ -113,7 +113,7 @@ Actions
 * An **invocation** carries an id unique within the connection. blip tracks
   each pending invocation per (source, path) until its ``ActionResult``
   arrives or five seconds pass.
-* The outpost answers invocations itself, after the protocol's action
+* The outpost answers invocations itself, after the script's action
   returned or raised; ``ActionResult`` messages coming from a target or a
   replay are dropped by the outpost, as their ids belong to another
   connection.

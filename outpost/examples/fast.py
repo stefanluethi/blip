@@ -9,9 +9,12 @@ reports what it sends every second, in its log and as traces under ``fast/stats`
 
 Unlike the simulator it encodes its messages from templates, ten times as fast as
 `Message`, and sends them with the internal `_send_frame`, so it measures blip rather
-than the encoding in Python.
+than the encoding in Python. Your own scripts use `send_value`.
+
+    python examples/fast.py [--traces 100] [--rate-hz 1000] [--history-s 600] ...
 """
 
+import argparse
 import asyncio
 import itertools
 import logging
@@ -23,10 +26,9 @@ from typing import List
 
 import cbor2
 
-from outpost import LogLevel, Protocol, action
-from outpost.protocols.simulator import sleep_until
+from blip_outpost import LogLevel, Outpost, action, sleep_until
 
-logger = logging.getLogger("outpost.fast")
+logger = logging.getLogger("fast")
 
 # How often the data that is due is sent (s), at most this much of it (s) at once
 TICK_SEC = 0.01
@@ -134,18 +136,19 @@ def due(end_s: float, rate_hz: float) -> int:
     return math.ceil(end_s * rate_hz) if rate_hz > 0 else 0
 
 
-class FastProtocol(Protocol):
-    """Sends `traces` float traces of `rate_hz` samples per second each, an array of
-    `array_size` and a frame of `frame_size` × `frame_size` floats `array_rate_hz`
-    times per second and `log_rate_hz` log records per second, after `history_s`
-    seconds of data of the past.
+class Fast:
+    """Sends to `outpost` `traces` float traces of `rate_hz` samples per second each, an
+    array of `array_size` and a frame of `frame_size` × `frame_size` floats
+    `array_rate_hz` times per second and `log_rate_hz` log records per second, after
+    `history_s` seconds of data of the past.
 
-    Starts when the first client connects. With history, it waits for the action
+    Starts when the first blip connects. With history, it waits for the action
     `fast/start` instead: blip keeps only what it receives while recording, which it
     starts once connected."""
 
     def __init__(
         self,
+        outpost: Outpost,
         traces: int = 100,
         rate_hz: float = 1000.0,
         array_size: int = 1024,
@@ -161,6 +164,7 @@ class FastProtocol(Protocol):
         ]:
             if value < 0:
                 raise ValueError(f"{name} must not be negative")
+        self.outpost = outpost
         self.traces = traces
         self.rate_hz = float(rate_hz)
         self.array_size = array_size
@@ -187,19 +191,21 @@ class FastProtocol(Protocol):
         self.bytes = 0
         self._drain_at = DRAIN_EVERY
         self._started = asyncio.Event()
-        if self.history_s == 0.0:
-            self.actions.remove("fast/start")
-
-    async def on_client_connected(self) -> None:
-        await self._send_units()
-        if self.history_s == 0.0:
-            self._started.set()
+        if self.history_s > 0.0:
+            outpost.register(self)
 
     @action("fast/start")
     async def start(self) -> None:
         """Sends the history, then the data as it is due; record in blip first"""
         self._started.set()
-        self.actions.set_enabled(False, "fast/start")
+        self.outpost.actions.set_enabled(False, "fast/start")
+
+    async def wait_for_start(self) -> None:
+        """Waits for a blip, or with history for the action fast/start."""
+        if self.history_s > 0.0:
+            await self._started.wait()
+        else:
+            await self.outpost.wait_for_client_async()
 
     async def run(self) -> None:
         logger.info(
@@ -211,7 +217,8 @@ class FastProtocol(Protocol):
             + ("Waiting for fast/start: connect blip, start recording, then run it"
                if self.history_s else "Waiting for a blip to connect")
         )
-        await self._started.wait()
+        self._send_units()
+        await self.wait_for_start()
         # the clock (perf_counter) at the time of the first sample
         start = time.perf_counter() - self.history_s
         self._origin_ns = time.time_ns() - round(self.history_s * 1e9)
@@ -237,7 +244,7 @@ class FastProtocol(Protocol):
             await asyncio.sleep(0)
 
             if now - stats_at >= STATS_INTERVAL_SEC:
-                await self._send_stats(
+                self._send_stats(
                     now - stats_at, self.messages - stats_messages,
                     self.bytes - stats_bytes, elapsed_s - sent_s,
                 )
@@ -262,10 +269,10 @@ class FastProtocol(Protocol):
         """Sends the bytes of one message, waiting for room at the blips now and then."""
         self.messages += 1
         self.bytes += len(frame)
-        await self._send_frame(frame)
+        self.outpost._send_frame(frame)
         if self.messages >= self._drain_at:
             self._drain_at = self.messages + DRAIN_EVERY
-            await self.drain()
+            await self.outpost.drain_async()
 
     async def _send_signals(self, end_s: float) -> None:
         if not self._signals:
@@ -345,11 +352,11 @@ class FastProtocol(Protocol):
             await self._emit(cbor2.dumps({"Log": record}))
         self._next_log = max(self._next_log, until)
 
-    async def _send_units(self) -> None:
+    def _send_units(self) -> None:
         for path, unit in UNITS.items():
-            await self.send_metadata(path, unit)
+            self.outpost.send_metadata(path, unit)
 
-    async def _send_stats(self, interval_s: float, messages: int, size: int, lag_s: float) -> None:
+    def _send_stats(self, interval_s: float, messages: int, size: int, lag_s: float) -> None:
         """What was sent in the last `interval_s`, and how far behind real time it is."""
         per_second = messages / interval_s
         megabytes = size / interval_s / 1e6
@@ -357,6 +364,36 @@ class FastProtocol(Protocol):
             f"Sent {per_second:,.0f} messages/s, {megabytes:.2f} MB/s, {lag_s:.2f} s behind"
         )
         now = time.time_ns()
-        await self.send_value("fast/stats/messages_per_s", per_second, now)
-        await self.send_value("fast/stats/megabytes_per_s", megabytes, now)
-        await self.send_value("fast/stats/lag_s", lag_s, now)
+        self.outpost.send_value("fast/stats/messages_per_s", per_second, now)
+        self.outpost.send_value("fast/stats/megabytes_per_s", megabytes, now)
+        self.outpost.send_value("fast/stats/lag_s", lag_s, now)
+
+
+async def main(args: argparse.Namespace) -> None:
+    async with Outpost(host=args.host, port=args.port, record=args.record) as outpost:
+        logger.info(f"Serving blip on {outpost.url}, Ctrl+C to stop")
+        fast = Fast(
+            outpost, args.traces, args.rate_hz, args.array_size, args.frame_size,
+            args.array_rate_hz, args.log_rate_hz, args.history_s,
+        )
+        await fast.run()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--host", default="127.0.0.1", help="address to serve blip on")
+    parser.add_argument("--port", type=int, default=3000, help="port to serve blip on")
+    parser.add_argument("--record", help="record what is sent to this file")
+    parser.add_argument("--traces", type=int, default=100, help="float traces fast/signal/N")
+    parser.add_argument("--rate-hz", type=float, default=1000.0, help="samples per second of each trace")
+    parser.add_argument("--array-size", type=int, default=1024, help="elements of fast/spectrum, 0 for none")
+    parser.add_argument("--frame-size", type=int, default=64, help="rows and columns of fast/frame, 0 for none")
+    parser.add_argument("--array-rate-hz", type=float, default=30.0, help="samples per second of the array and frame")
+    parser.add_argument("--log-rate-hz", type=float, default=1000.0, help="log records per second")
+    parser.add_argument("--history-s", type=float, default=0.0,
+                        help="seconds of the past sent first, once the action fast/start is run")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    try:
+        asyncio.run(main(parser.parse_args()))
+    except KeyboardInterrupt:
+        pass

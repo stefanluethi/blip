@@ -35,7 +35,7 @@ Components
 
    Rust crate defining the serde-serialisable wire types. It is the single
    source of truth for the message schema; the outpost mirrors it in
-   ``outpost/src/outpost/proto.py``.
+   ``outpost/src/blip_outpost/proto.py``.
 
 .. arch:: outpost
    :id: ARCH_OUTPOST
@@ -43,28 +43,28 @@ Components
    :component: outpost
    :satisfies: REQ_OUTPOST_SOCKET, REQ_OUTPOST_SIM, REQ_OUTPOST_PROTOCOL, REQ_CONN_WS, REQ_CTRL_ANNOUNCE, REQ_CTRL_ACTION, REQ_CTRL_FEEDBACK
 
-   Python package (``outpost/src/outpost``) managed with ``uv``, see
-   :doc:`outpost`. It is a
-   framework: the protocol that talks to a target is provided by the user and
-   only uses the public API exported by ``outpost/__init__.py``.
+   Python library ``blip-outpost`` (``outpost/src/blip_outpost``) managed
+   with ``uv``, see :doc:`outpost`. The user's script talks to the target and
+   calls the public API exported by ``blip_outpost/__init__.py``.
 
-   * ``protocol.py`` -- ``Protocol``, the base class of protocols: ``run``
-     talks to the target, ``send_*`` send to blip, ``invoke`` carries out
-     invocations.
-   * ``actions.py`` -- ``@action`` and the ``Actions`` registry, which takes
-     the parameters of actions from the type hints of their functions, checks
-     the arguments and runs the invocations of an action one after another.
+   * ``outpost.py`` -- ``Outpost``, which serves blip from a thread of its own
+     or from the running event loop, takes messages from any thread, and holds
+     the actions declared with ``@action``.
+   * ``actions.py`` -- the ``Actions`` registry, which takes the parameters of
+     actions from the type hints of their functions, checks the arguments and
+     runs the invocations of an action one after another.
    * ``server.py`` -- ``OutpostServer``, an asyncio WebSocket server that
-     broadcasts protocol messages to all connected clients, sends the list of
-     actions to clients connecting later, and passes the invocations of each
-     client to the protocol, answering that client and logging to all.
-   * ``loading.py`` -- loads the protocol named with ``--protocol`` from a
-     file or module and converts the ``--option`` values by the type hints of
-     its constructor.
-   * ``protocols/`` -- the built-in ``simulator`` (also the reference
-     protocol), ``replay`` and ``socket`` (TCP/UDP passthrough).
-   * ``main.py`` -- ``click`` based command line entry point (``outpost``) and
-     ``run`` to serve a protocol from a script.
+     broadcasts messages to all connected clients, sends the units and the
+     list of actions to clients connecting later, and passes the invocations
+     of each client on, answering that client and logging to all.
+   * ``passthrough.py``, ``replay.py`` -- the TCP/UDP passthrough and the
+     replay of recordings.
+   * ``main.py`` -- ``click`` based command line (``blip-outpost``) for the
+     passthrough and the replay.
+
+   The ``minimal`` and ``simulator`` scripts (the simulator also the
+   reference) and ``fast`` (the stress test) are examples in
+   ``outpost/examples``, outside the library.
 
 .. arch:: sonde
    :id: ARCH_SONDE

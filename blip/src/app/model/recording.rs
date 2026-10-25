@@ -307,7 +307,7 @@ mod tests {
 
     #[test]
     fn reads_recordings_of_the_python_outpost() {
-        // gzip.compress(header() + frames, mtime=0) of outpost.recording, with the
+        // gzip.compress(header() + frames, mtime=0) of blip_outpost.recording, with the
         // frames of the metadata of `speed`, the value 2^53 + 1 and a log record
         let hex = "1f8b080000000000020a4dca411282300c4661ca35dc7020ddba0fed4fc94cd366dad0fb801e14\
                    71a36ffbbe63594a15b23c27d6a9c2971a38c7d8511b97ec767952daf0805120a32328d98aa640\

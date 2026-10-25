@@ -189,7 +189,7 @@ Recordings and files
 
 Recording file (``.blip``)
    The messages as they were received, in order, compressed. Saved by blip,
-   written by the outpost with ``--record`` and by sonde's ``FileSink``.
+   written by the outpost with ``record`` and by sonde's ``FileSink``.
    Opened by blip, replayed by the outpost.
 
 Layout file (``.json``)

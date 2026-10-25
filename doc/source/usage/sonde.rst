@@ -258,8 +258,8 @@ Trace in an ISR, send by DMA over a UART:
 * Batch size and count are yours: e.g. the MTU for UDP, more batches for bursts.
   Add framing where the link needs it, e.g. COBS on a UART.
 * A batch only ever holds whole messages, a CBOR sequence, so each datagram or
-  write decodes on its own. Receive it with the outpost's ``tcp`` or ``udp``
-  protocol, see :doc:`outpost`.
+  write decodes on its own. Receive it with ``blip-outpost tcp`` or ``udp``,
+  see :doc:`outpost`.
 
 The constructors are ``constexpr``: a static tracer is ready before any code
 runs, e.g. for an ISR that fires before the static constructors.

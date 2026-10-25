@@ -3,11 +3,11 @@
 import asyncio
 import socket
 
-import outpost.protocols.socket as socket_protocol
-from outpost.proto import Message
-from outpost.protocols.socket import SocketProtocol
-from outpost.recording import RecordingWriter, read_frames
-from outpost.server import OutpostServer
+import blip_outpost.passthrough as socket_protocol
+from blip_outpost import Outpost
+from blip_outpost.passthrough import SocketPassthrough
+from blip_outpost.proto import Message
+from blip_outpost.recording import read_frames
 
 
 def messages() -> list[bytes]:
@@ -29,27 +29,22 @@ class Reads:
         return self.reads.pop(0) if self.reads else b""
 
 
-def attached(protocol: SocketProtocol) -> list[bytes]:
-    """The frames `protocol` sends to blip, as they arrive."""
-    frames = []
-
-    async def send(frame: bytes) -> None:
-        frames.append(frame)
-
-    protocol.attach(send)
-    return frames
+def passthrough(**options) -> tuple[SocketPassthrough, list[bytes]]:
+    """A passthrough and the frames it sends to blip, as they arrive."""
+    frames: list[bytes] = []
+    outpost = Outpost()
+    outpost._send_frame = frames.append  # type: ignore[method-assign]
+    return SocketPassthrough(outpost, **options), frames
 
 
 async def test_several_messages_of_one_read_are_sent_one_by_one():
-    protocol = SocketProtocol()
-    frames = attached(protocol)
+    protocol, frames = passthrough()
     await protocol._forward(Reads(b"".join(messages())))
     assert frames == messages()
 
 
 async def test_messages_split_over_reads_are_sent_once_complete():
-    protocol = SocketProtocol()
-    frames = attached(protocol)
+    protocol, frames = passthrough()
     data = b"".join(messages())
     # within the first message, and within the third
     cuts = [3, len(messages()[0]) + len(messages()[1]) + 5]
@@ -58,16 +53,14 @@ async def test_messages_split_over_reads_are_sent_once_complete():
 
 
 async def test_an_incomplete_message_at_the_end_of_the_stream_is_dropped():
-    protocol = SocketProtocol()
-    frames = attached(protocol)
+    protocol, frames = passthrough()
     first, second = messages()[:2]
     await protocol._forward(Reads(first + second[:-1]))
     assert frames == [first]
 
 
 async def test_undecodable_data_is_dropped_and_later_messages_are_sent():
-    protocol = SocketProtocol()
-    frames = attached(protocol)
+    protocol, frames = passthrough()
     first, second = messages()[:2]
     # 0x1c is no CBOR
     await protocol._forward(Reads(bytes.fromhex("1c") + first, second))
@@ -76,8 +69,7 @@ async def test_undecodable_data_is_dropped_and_later_messages_are_sent():
 
 async def test_a_message_that_does_not_end_is_dropped(monkeypatch):
     monkeypatch.setattr(socket_protocol, "MAX_PENDING_BYTES", 100)
-    protocol = SocketProtocol()
-    frames = attached(protocol)
+    protocol, frames = passthrough()
     # a byte string of 2^32 bytes
     await protocol._forward(Reads(bytes.fromhex("5a ffffffff") + bytes(200), messages()[0]))
     assert frames == [messages()[0]]
@@ -87,8 +79,7 @@ async def test_several_messages_of_one_datagram_are_sent_one_by_one():
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
-    protocol = SocketProtocol(mode="udp", remote_port=port, listen=True)
-    frames = attached(protocol)
+    protocol, frames = passthrough(mode="udp", port=port, listen=True)
     task = asyncio.create_task(protocol.run())
     try:
         for _ in range(100):
@@ -107,19 +98,22 @@ async def test_several_messages_of_one_datagram_are_sent_one_by_one():
 
 
 async def test_actions_and_action_results_within_a_batch_are_told_apart(tmp_path):
-    protocol = SocketProtocol()
     path = tmp_path / "batch.blip"
-    server = OutpostServer(protocol=protocol, recorder=RecordingWriter(path))
     actions = Message.create_actions([{"path": "motor/stop", "enabled": True}]).encode_cbor()
     result = Message.create_action_result(7).encode_cbor()
     value, log = messages()[1], messages()[3]
 
-    await protocol._forward(Reads(value + actions + result + log))
-    server.recorder.close()
-
-    # kept for clients connecting later, while the result of the target is dropped
-    assert server._actions_frame == actions
+    async with Outpost(port=3969, record=path) as outpost:
+        await SocketPassthrough(outpost)._forward(Reads(value + actions + result + log))
+        # kept for clients connecting later, while the result of the target is dropped
+        assert outpost._server._actions_frame == actions
     assert list(read_frames(path)) == [value, actions, log]
+
+
+async def test_invocations_are_forwarded_to_the_target():
+    outpost = Outpost()
+    protocol = SocketPassthrough(outpost)
+    assert outpost.on_invoke == protocol.invoke
 
 
 async def test_unexpected_errors_reconnect_instead_of_stopping(monkeypatch):
@@ -131,7 +125,7 @@ async def test_unexpected_errors_reconnect_instead_of_stopping(monkeypatch):
 
     monkeypatch.setattr(socket_protocol, "RETRY_DELAY_SEC", 0.01)
     monkeypatch.setattr(asyncio, "open_connection", open_connection)
-    task = asyncio.create_task(SocketProtocol(remote_port=9999).run())
+    task = asyncio.create_task(SocketPassthrough(Outpost(), port=9999).run())
     await asyncio.sleep(0.2)
     try:
         assert not task.done(), "run() ended on an unexpected error"
@@ -150,7 +144,7 @@ async def test_failing_udp_endpoints_are_retried(monkeypatch):
 
     monkeypatch.setattr(socket_protocol, "RETRY_DELAY_SEC", 0.01)
     monkeypatch.setattr(loop, "create_datagram_endpoint", create_datagram_endpoint)
-    task = asyncio.create_task(SocketProtocol(mode="udp", listen=True).run())
+    task = asyncio.create_task(SocketPassthrough(Outpost(), mode="udp", listen=True).run())
     await asyncio.sleep(0.2)
     try:
         assert not task.done(), "run() ended on a failing endpoint"

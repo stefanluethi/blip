@@ -1,25 +1,31 @@
-"""Simulator protocol implementation matching Rust simulator app.
+"""A made-up target to try blip without hardware, served by an outpost.
 
-It only uses the public API of the outpost, so it is the reference for protocols of
-users. Its actions change what it sends: the motor follows its speed setpoint, the log
-level filters its log records and the ambient temperature shows in the thermal frame.
+    python examples/simulator.py [--port 3000] [--record simulator.blip]
+
+It is also the reference for scripts with asyncio: `Simulator` stands for the code that
+talks to a target, sends what it reads to the outpost and offers its actions as
+methods. Its actions change what it sends: the motor follows its speed setpoint, the
+log level filters its log records and the ambient temperature shows in the thermal
+frame.
 
 Its traces are sampled at different rates, like the sensors of a real target: the
 accelerometer and the IMU every sampling interval, the others at their own periods,
 which are no multiples of each other, so their samples rarely share a timestamp.
 """
 
+import argparse
 import asyncio
+import logging
 import math
 import random
-import logging
 import time
-from typing import Annotated, Awaitable, Callable
+from typing import Annotated, Callable
+
 import psutil
 
-from outpost import ActionError, LogLevel, Message, Protocol, Range, Unit, action
+from blip_outpost import ActionError, LogLevel, Message, Outpost, Range, Unit, action, sleep_until
 
-logger = logging.getLogger("outpost.simulator")
+logger = logging.getLogger("simulator")
 
 TRACE, DEBUG, INFO, WARN, ERROR = LogLevel
 
@@ -51,8 +57,8 @@ SPECTRUM_PERIOD_SEC = 0.033
 THERMAL_PERIOD_SEC = 0.115
 TEMPERATURE_PERIOD_SEC = 1.0
 
-# Units of the traces, sent as metadata every METADATA_INTERVAL_SEC so blip clients
-# connecting later get them too. The fields of a record are joined to its path with "."
+# Units of the traces, sent once at the start: the outpost passes them on to blips
+# connecting later. The fields of a record are joined to its path with "."
 UNITS = {
     "accelerometer": "m/s²",
     "imu.acc": "m/s²",
@@ -66,7 +72,6 @@ UNITS = {
     "sensor/temperature": "°C",
 }
 CPU_UNIT = "%"
-METADATA_INTERVAL_SEC = 1.0
 
 # The simulated robot drives a figure eight of this size (m) in this time (s)
 POSE_EXTENT_M = 2.0
@@ -94,18 +99,11 @@ _RANDOM_LOGS = [
 ]
 
 
-async def sleep_until(deadline: float) -> None:
-    """Sleeps until `time.perf_counter()` reaches `deadline`. On Windows the event loop
-    runs timers up to its clock resolution of about 16 ms early, so a single sleep of
-    10 ms may return right away."""
-    while (remaining := deadline - time.perf_counter()) > 0:
-        await asyncio.sleep(remaining)
+class Simulator:
+    """Sends synthetic telemetry and log records to `outpost`, and offers its actions."""
 
-
-class SimulatorProtocol(Protocol):
-    """Simulator protocol driving synthetic telemetry (CPU usage & accelerometer) and logs."""
-
-    def __init__(self, interval_ms: int = 20, log_interval_ms: int = 500) -> None:
+    def __init__(self, outpost: Outpost, interval_ms: int = 20, log_interval_ms: int = 500) -> None:
+        self.outpost = outpost
         self.interval_sec = interval_ms / 1000.0
         self.log_interval_sec = log_interval_ms / 1000.0
         self._seq = 0
@@ -121,91 +119,81 @@ class SimulatorProtocol(Protocol):
         self._cpu_count = psutil.cpu_count() or 1
         # Start of the simulated time, which the slowly changing traces follow
         self._start = time.perf_counter()
-        # set when a client connected, to send it the units right away
-        self._client_connected = asyncio.Event()
-
-    async def on_client_connected(self) -> None:
-        self._client_connected.set()
+        # the methods decorated with @action become the actions of the outpost
+        outpost.register(self)
 
     async def run(self) -> None:
-        """Broadcasts the traces, each at its own rate, and logs encoded in CBOR."""
+        """Sends the traces, each at its own rate, and log records until cancelled."""
         logger.info(
             f"Simulator started (sampling interval: {self.interval_sec * 1000:.0f}ms, "
             f"log interval: {self.log_interval_sec * 1000:.0f}ms)"
         )
         # Initialize psutil cpu percent calculation
         self._cpu_count = len(psutil.cpu_percent(percpu=True))
-        await self._send_log(
-            INFO, "main", f"simulator booted ({self._cpu_count} CPU cores detected)"
-        )
+        self._send_units()
+        self._send_log(INFO, "main", f"simulator booted ({self._cpu_count} CPU cores detected)")
         self._start = time.perf_counter()
+        send = self.outpost.send
         await asyncio.gather(
-            self._repeat_metadata(),
             self._every(self.interval_sec, self._send_accelerometer),
-            self._every(self.interval_sec, lambda: self.send(self._imu_message())),
+            self._every(self.interval_sec, lambda: send(self._imu_message())),
             self._every(CPU_PERIOD_SEC, self._send_cpu),
-            self._every(MOTOR_PERIOD_SEC, lambda: self.send(self._motor_message())),
-            self._every(POSE_PERIOD_SEC, lambda: self.send(self._pose_message())),
-            self._every(SPECTRUM_PERIOD_SEC, lambda: self.send(self._spectrum_message())),
-            self._every(THERMAL_PERIOD_SEC, lambda: self.send(self._thermal_message())),
+            self._every(MOTOR_PERIOD_SEC, lambda: send(self._motor_message())),
+            self._every(POSE_PERIOD_SEC, lambda: send(self._pose_message())),
+            self._every(SPECTRUM_PERIOD_SEC, lambda: send(self._spectrum_message())),
+            self._every(THERMAL_PERIOD_SEC, lambda: send(self._thermal_message())),
             self._every(TEMPERATURE_PERIOD_SEC, self._send_temperature),
             self._send_random_logs(),
         )
 
-    async def _every(self, period_sec: float, send: Callable[[], Awaitable[None]]) -> None:
+    async def _every(self, period_sec: float, send: Callable[[], None]) -> None:
         """Calls `send` every `period_sec` until cancelled, skipping the calls it is too
         late for."""
         next_tick = time.perf_counter()
         while True:
             try:
-                await send()
+                send()
             except Exception as e:
                 logger.error(f"Error in simulator loop: {e}")
             next_tick = max(next_tick + period_sec, time.perf_counter())
             await sleep_until(next_tick)
 
-    async def _repeat_metadata(self) -> None:
-        """The units of the traces, repeated for clients connecting later and sent right
-        away to a client that connected."""
-        while True:
-            self._client_connected.clear()
-            try:
-                await self._send_metadata()
-            except Exception as e:
-                logger.error(f"Error in simulator loop: {e}")
-            try:
-                await asyncio.wait_for(self._client_connected.wait(), METADATA_INTERVAL_SEC)
-            except asyncio.TimeoutError:
-                pass
-
     def _sim_time(self) -> float:
         """The simulated time (s) since the simulator started."""
         return time.perf_counter() - self._start
 
-    async def _send_accelerometer(self) -> None:
-        self._accel = random.uniform(-10.0, 10.0)
-        await self.send_value("accelerometer", self._accel)
+    def _send_units(self) -> None:
+        """The units of all traces, and the log level."""
+        units = dict(UNITS)
+        units.update({f"sysinfo/cpu/cpu{idx}": CPU_UNIT for idx in range(self._cpu_count)})
+        for path, unit in units.items():
+            self.outpost.send_metadata(path, unit)
+        self._send_log_level()
 
-    async def _send_cpu(self) -> None:
+    def _send_accelerometer(self) -> None:
+        self._accel = random.uniform(-10.0, 10.0)
+        self.outpost.send_value("accelerometer", self._accel)
+
+    def _send_cpu(self) -> None:
         """The load (percent) of each core, and a log record when it changes range."""
         cpu_percentages = psutil.cpu_percent(percpu=True)
         for idx, cpu_val in enumerate(cpu_percentages):
-            await self.send_value(f"sysinfo/cpu/cpu{idx}", float(cpu_val))
-        await self._log_cpu_transitions(cpu_percentages)
+            self.outpost.send_value(f"sysinfo/cpu/cpu{idx}", float(cpu_val))
+        self._log_cpu_transitions(cpu_percentages)
 
-    async def _send_temperature(self) -> None:
+    def _send_temperature(self) -> None:
         """A sensor that sometimes delivers no value, sent as null."""
         temperature = None
         if random.random() >= SENSOR_DROPOUT_PROBABILITY:
             temperature = 25.0 + random.gauss(0.0, 0.2)
-        await self.send_value("sensor/temperature", temperature)
+        self.outpost.send_value("sensor/temperature", temperature)
 
     async def _send_random_logs(self) -> None:
         """Random background logs, at a jittered rate."""
         while True:
             await asyncio.sleep(self.log_interval_sec * random.uniform(0.5, 1.5))
             try:
-                await self._send_random_log(self._accel)
+                self._send_random_log(self._accel)
             except Exception as e:
                 logger.error(f"Error in simulator loop: {e}")
 
@@ -270,17 +258,9 @@ class SimulatorProtocol(Protocol):
         ]
         return Message.create_value("thermal/frame", frame)
 
-    async def _send_metadata(self) -> None:
-        """Broadcast the units of all traces."""
-        units = dict(UNITS)
-        units.update({f"sysinfo/cpu/cpu{idx}": CPU_UNIT for idx in range(self._cpu_count)})
-        for path, unit in units.items():
-            await self.send(Message.create_metadata(path, unit))
-        await self._send_log_level()
-
-    async def _send_log_level(self) -> None:
+    def _send_log_level(self) -> None:
         """The log level as a trace, the readback of the log/level action."""
-        await self.send_value("simulator/log_level", self._log_level.name)
+        self.outpost.send_value("simulator/log_level", self._log_level.name)
 
     # The actions, offered to blip in this order
 
@@ -288,7 +268,7 @@ class SimulatorProtocol(Protocol):
     async def enable_motor(self, enabled: bool = True) -> None:
         """Switches the motor on or off"""
         self._motor_enabled = enabled
-        await self._send_log(INFO, "motor", "motor enabled" if enabled else "motor disabled")
+        self._send_log(INFO, "motor", "motor enabled" if enabled else "motor disabled")
 
     @action("motor/speed", readback="motor.speed_rpm")
     async def set_motor_speed(self, rpm: Annotated[int, Range(0, 3000), Unit("rpm")] = 1500) -> None:
@@ -296,7 +276,7 @@ class SimulatorProtocol(Protocol):
         if not self._motor_enabled:
             raise ActionError("the motor is disabled, enable it first")
         self._motor_setpoint = rpm
-        await self._send_log(INFO, "motor", f"speed setpoint changed to {rpm} rpm")
+        self._send_log(INFO, "motor", f"speed setpoint changed to {rpm} rpm")
 
     @action("thermal/ambient")
     async def set_ambient(
@@ -309,35 +289,34 @@ class SimulatorProtocol(Protocol):
     async def set_log_level(self, level: LogLevel = LogLevel.TRACE) -> None:
         """Lowest level of the log records sent"""
         self._log_level = level
-        await self._send_log_level()
+        self._send_log_level()
 
     @action("log/message")
     async def log_message(self, level: LogLevel = LogLevel.INFO, text: str = "hello") -> None:
         """Sends a log record"""
         if not text.strip():
             raise ActionError("the text is empty")
-        await self.send_log(level, text, component="user")
+        self.outpost.send_log(level, text, component="user")
 
     @action("imu/calibrate", confirm=True)
     async def calibrate_imu(self) -> None:
         """Removes the bias of the gyroscope, takes a moment"""
-        self.actions.set_enabled(False, "imu/calibrate")
+        self.outpost.actions.set_enabled(False, "imu/calibrate")
         try:
-            await self._send_log(INFO, "imu", "calibration started, keep the device still")
+            self._send_log(INFO, "imu", "calibration started, keep the device still")
             await asyncio.sleep(CALIBRATION_SEC)
             self._gyro_bias = [0.0, 0.0, 0.0]
-            await self._send_log(INFO, "imu", "calibration done")
+            self._send_log(INFO, "imu", "calibration done")
         finally:
-            self.actions.set_enabled(True, "imu/calibrate")
+            self.outpost.actions.set_enabled(True, "imu/calibrate")
 
-    async def _send_log(self, level: int, component: str, message: str) -> None:
-        """Broadcast a single log record, unless below the log level."""
+    def _send_log(self, level: int, component: str, message: str) -> None:
+        """Sends a single log record, unless below the log level."""
         if level < self._log_level:
             return
-        log_msg = Message.create_log(level, message, component=component)
-        await self.send(log_msg)
+        self.outpost.send_log(level, message, component=component)
 
-    async def _log_cpu_transitions(self, cpu_percentages: list[float]) -> None:
+    def _log_cpu_transitions(self, cpu_percentages: list[float]) -> None:
         """Log when a core's smoothed load enters or leaves the high-load range."""
         alpha = min(1.0, CPU_PERIOD_SEC / CPU_SMOOTHING_SEC)
         for idx, cpu_val in enumerate(cpu_percentages):
@@ -346,13 +325,13 @@ class SimulatorProtocol(Protocol):
             self._cpu_avg[idx] = avg
             if avg >= CPU_HIGH_THRESHOLD and idx not in self._cpu_high:
                 self._cpu_high.add(idx)
-                await self._send_log(WARN, "sysinfo", f"cpu{idx} load high: {avg:.1f}%")
+                self._send_log(WARN, "sysinfo", f"cpu{idx} load high: {avg:.1f}%")
             elif avg < CPU_NORMAL_THRESHOLD and idx in self._cpu_high:
                 self._cpu_high.discard(idx)
-                await self._send_log(INFO, "sysinfo", f"cpu{idx} load back to normal: {avg:.1f}%")
+                self._send_log(INFO, "sysinfo", f"cpu{idx} load back to normal: {avg:.1f}%")
 
-    async def _send_random_log(self, accel_val: float) -> None:
-        """Pick a weighted random background log message and broadcast it."""
+    def _send_random_log(self, accel_val: float) -> None:
+        """Pick a weighted random background log message and send it."""
         self._seq += 1
         _, level, component, template = random.choices(
             _RANDOM_LOGS, weights=[entry[0] for entry in _RANDOM_LOGS]
@@ -367,4 +346,24 @@ class SimulatorProtocol(Protocol):
             addr=0x19,
             flash_addr=random.randrange(0x08000000, 0x08100000, 0x100),
         )
-        await self._send_log(level, component, message)
+        self._send_log(level, component, message)
+
+
+async def main(args: argparse.Namespace) -> None:
+    async with Outpost(host=args.host, port=args.port, record=args.record) as outpost:
+        logger.info(f"Serving blip on {outpost.url}, Ctrl+C to stop")
+        await Simulator(outpost, args.interval_ms, args.log_interval_ms).run()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--host", default="127.0.0.1", help="address to serve blip on")
+    parser.add_argument("--port", type=int, default=3000, help="port to serve blip on")
+    parser.add_argument("--record", help="record what is sent to this file")
+    parser.add_argument("--interval-ms", type=int, default=20, help="sampling interval")
+    parser.add_argument("--log-interval-ms", type=int, default=500, help="mean time between log records")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    try:
+        asyncio.run(main(parser.parse_args()))
+    except KeyboardInterrupt:
+        pass

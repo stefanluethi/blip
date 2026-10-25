@@ -284,15 +284,15 @@ Outpost
    The outpost shall forward COBS-framed CBOR messages between a serial port
    and WebSocket clients.
 
-.. req:: User-provided protocols
+.. req:: Library for user scripts
    :id: REQ_OUTPOST_PROTOCOL
    :status: implemented
    :component: outpost
    :satisfies: STK_DEVICE_IF, STK_CONTROL
 
-   The outpost shall load the protocol that talks to the target from a Python
-   file or module provided by the user, configured with options converted by
-   the type hints of its constructor. A protocol shall declare its actions as
+   The outpost shall be a Python library that a script of the user, which
+   talks to the target, calls to send values, units and log records to blip
+   from any thread, without blocking. The script shall declare its actions as
    Python functions whose parameters are taken from their type hints, and may
    change them at runtime.
 
@@ -315,10 +315,10 @@ Outpost
    :component: outpost
    :satisfies: STK_DEVICE_IF, STK_CONTROL
 
-   The outpost shall provide a simulator mode that streams synthetic CPU load
-   and sensor values at different sampling rates, and log records of all
-   severity levels, without hardware, and offers actions that change what it
-   streams.
+   The outpost shall come with a simulator, an example script that streams
+   synthetic CPU load and sensor values at different sampling rates, and log
+   records of all severity levels, without hardware, and offers actions that
+   change what it streams.
 
 .. req:: Record messages
    :id: REQ_OUTPOST_RECORD

@@ -66,13 +66,18 @@ behind ``wss://``.
 outpost
 -------
 
-::
+The outpost is the Python library ``blip-outpost``. Add it to a project of
+your own straight from the repository::
+
+   pip install "blip-outpost @ git+https://github.com/stefanluethi/blip#subdirectory=outpost"
+
+or, with uv and a checkout next to your project,
+``uv add --editable ../blip/outpost``. Then ``import blip_outpost`` in your
+script and the command ``blip-outpost`` are available, see :doc:`outpost`.
+
+To run the examples and the tests in the repository::
 
    cd outpost && uv sync
-
-``uv run outpost --help`` then lists its options, see :doc:`outpost`. To use
-it in a project of your own, add it as a dependency, e.g. with
-``uv add --editable ../blip/outpost``.
 
 sonde
 -----

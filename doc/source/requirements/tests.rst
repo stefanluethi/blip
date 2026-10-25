@@ -7,7 +7,7 @@ Test Cases
    :component: outpost
    :verifies: REQ_OUTPOST_SIM, REQ_PROTO_CBOR
 
-   ``outpost/tests/test_outpost.py::test_simulator_outpost`` -- connects a
+   ``outpost/tests/test_simulator.py::test_simulator_outpost`` -- connects a
    WebSocket client to the outpost in simulator mode and checks that valid
    CBOR messages are received.
 
@@ -17,7 +17,7 @@ Test Cases
    :component: outpost
    :verifies: REQ_OUTPOST_SIM, REQ_PROTO_CBOR
 
-   ``outpost/tests/test_outpost.py::test_simulator_outpost_logs`` -- connects a
+   ``outpost/tests/test_simulator.py::test_simulator_outpost_logs`` -- connects a
    WebSocket client to the outpost in simulator mode and checks that well-formed
    ``Log`` records are received.
 
@@ -27,7 +27,7 @@ Test Cases
    :component: outpost
    :verifies: REQ_OUTPOST_SIM, REQ_PROTO_TYPES
 
-   ``outpost/tests/test_outpost.py::test_simulator_outpost_typed_values`` --
+   ``outpost/tests/test_simulator.py::test_simulator_outpost_typed_values`` --
    connects a WebSocket client to the outpost in simulator mode and checks that
    records, arrays, integers, bools, strings and nulls arrive as plain CBOR
    items.
@@ -38,7 +38,7 @@ Test Cases
    :component: outpost
    :verifies: REQ_OUTPOST_SIM
 
-   ``outpost/tests/test_outpost.py::test_simulator_outpost_rates`` -- connects
+   ``outpost/tests/test_simulator.py::test_simulator_outpost_rates`` -- connects
    a WebSocket client to the outpost in simulator mode and checks that faster
    sampled traces arrive more often than slower ones.
 
@@ -198,16 +198,18 @@ Test Cases
    invoking client, logs to all, and runs a slow action without holding up
    others.
 
-.. test:: Outpost loads user-provided protocols
-   :id: TEST_OUTPOST_LOADING
+.. test:: Outpost serves a script
+   :id: TEST_OUTPOST_LIBRARY
    :status: implemented
    :component: outpost
-   :verifies: REQ_OUTPOST_PROTOCOL
+   :verifies: REQ_OUTPOST_PROTOCOL, REQ_OUTPOST_RECORD
 
-   ``outpost/tests/test_loading.py`` -- loads built-in protocols by name and
-   user protocols from files with and without a class name, converts the
-   options by the type hints of the constructor and reports unknown, missing
-   and invalid ones.
+   ``outpost/tests/test_outpost.py`` -- serves from a thread of its own and
+   passes on what another thread sends, in order; reports a port in use;
+   sends the units and actions sent before to blips connecting later and to
+   the recording; announces actions changed from another thread; finishes the
+   recording on stop; and makes functions actions right away and methods those
+   of registered objects.
 
 .. test:: Simulator actions change what it sends
    :id: TEST_OUTPOST_SIM_ACTIONS
@@ -215,7 +217,7 @@ Test Cases
    :component: outpost
    :verifies: REQ_OUTPOST_SIM
 
-   ``outpost/tests/test_outpost.py::test_simulator_actions_change_what_it_sends``
+   ``outpost/tests/test_simulator.py::test_simulator_actions_change_what_it_sends``
    -- the motor follows its setpoint and rejects it while disabled, the log
    level filters log records and is sent as its readback, and the
    calibration is disabled while it runs.

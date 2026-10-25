@@ -8,11 +8,12 @@ from typing import Optional
 
 import cbor2
 
-from outpost import ActionError, Protocol
-from outpost.proto import ACTIONS_PREFIX
-from outpost.recording import read_frames
+from blip_outpost.actions import ActionError
+from blip_outpost.outpost import Outpost
+from blip_outpost.proto import ACTIONS_PREFIX
+from blip_outpost.recording import read_frames
 
-logger = logging.getLogger("outpost.replay")
+logger = logging.getLogger(__name__)
 
 
 def timestamp(frame: bytes) -> Optional[int]:
@@ -42,25 +43,24 @@ def disable_actions(frame: bytes) -> bytes:
         return frame
 
 
-class ReplayProtocol(Protocol):
-    """Sends the messages of a recording file unchanged, each after the time between
-    its timestamp and the first one divided by `speed`. Messages without a timestamp
-    are sent right away. Starts when the first client connects, so it sees the whole
-    recording. The actions of the recording are shown disabled."""
+class Replay:
+    """Sends the messages of a recording file to the blips of `outpost` unchanged, each
+    after the time between its timestamp and the first one divided by `speed`. Messages
+    without a timestamp are sent right away. Starts when the first blip connects, so it
+    sees the whole recording. The actions of the recording are shown disabled."""
 
-    def __init__(self, path: Path, speed: float = 1.0) -> None:
+    def __init__(self, outpost: Outpost, path: Path, speed: float = 1.0) -> None:
+        self.outpost = outpost
         self.path = Path(path)
         self.speed = speed
-        self.client_connected = asyncio.Event()
         # read now, so a missing or wrong file stops the outpost at startup
         self._frames = list(read_frames(self.path))
+        outpost.on_invoke = self.invoke
         logger.info(f"Replaying {len(self._frames)} messages of {self.path} at {self.speed}x")
 
-    async def on_client_connected(self) -> None:
-        self.client_connected.set()
-
     async def run(self) -> None:
-        await self.client_connected.wait()
+        """Waits for a blip, then sends the recording; returns at its end."""
+        await self.outpost.wait_for_client_async()
         first: Optional[int] = None
         start = time.monotonic()
         for frame in self._frames:
@@ -72,7 +72,7 @@ class ReplayProtocol(Protocol):
                 delay = due - time.monotonic()
                 if delay > 0:
                     await asyncio.sleep(delay)
-            await self.send(disable_actions(frame))
+            self.outpost._send_frame(disable_actions(frame))
         logger.info("Replay finished")
 
     async def invoke(self, path: str, args: dict) -> None:

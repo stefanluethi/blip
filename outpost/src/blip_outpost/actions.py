@@ -1,12 +1,11 @@
-"""Actions a protocol offers to blip, e.g. to set a motor setpoint or a log level.
+"""Actions offered to blip, e.g. to set a motor setpoint or a log level.
 
 An action is a Python function. Its parameters are taken from its signature, so the
 type hints decide how blip lets the user enter the arguments::
 
-    class MyTarget(Protocol):
-        @action("motor/speed", readback="motor.speed_rpm")
-        async def set_speed(self, rpm: Annotated[int, Range(0, 3000), Unit("rpm")]) -> None:
-            ...
+    @blip_outpost.action("motor/speed", readback="motor.speed_rpm")
+    def set_speed(rpm: Annotated[int, Range(0, 3000), Unit("rpm")]) -> None:
+        ...
 
 Supported parameter types are ``bool``, ``int``, ``float``, ``str``, ``Literal`` of
 strings and ``enum.Enum`` subclasses (offered by member name), each optionally wrapped
@@ -15,14 +14,16 @@ offered as the initial value in blip.
 """
 
 import asyncio
+import contextlib
 import enum
 import inspect
 import logging
+import threading
 import typing
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
+from typing import Any, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 
-logger = logging.getLogger("outpost.actions")
+logger = logging.getLogger(__name__)
 
 # The attribute holding the ActionInfo of a function decorated with @action
 _ACTION_ATTRIBUTE = "__blip_action__"
@@ -54,29 +55,28 @@ class _ActionInfo:
     confirm: bool
 
 
-def action(
+def mark_action(
+    function: Callable,
     path: str,
-    *,
     description: str = "",
     readback: Optional[str] = None,
     confirm: bool = False,
-) -> Callable[[Callable], Callable]:
-    """Marks a method of a protocol as an action.
+) -> None:
+    """Marks `function` as the action at `path`, so `declared_actions` finds it on the
+    objects of its class."""
+    setattr(function, _ACTION_ATTRIBUTE, _ActionInfo(path, description, readback, confirm))
 
-    `path` names the action, levels separated by "/". The description defaults to the
-    first line of the docstring. `readback` is the path of the trace that shows the
-    current value of what the action sets. With `confirm`, blip asks the user before
-    sending the action.
-    """
-    def decorate(function: Callable) -> Callable:
-        setattr(function, _ACTION_ATTRIBUTE, _ActionInfo(path, description, readback, confirm))
-        return function
-    return decorate
+
+def is_method(function: Callable) -> bool:
+    """Whether `function` is defined in a class body, so it is an action only of the
+    objects registered later, not by itself."""
+    parts = function.__qualname__.split(".")
+    return len(parts) > 1 and parts[-2] != "<locals>"
 
 
 def declared_actions(owner: object) -> List[tuple]:
-    """The methods of `owner` decorated with @action, bound to it, with their info, in
-    the order they are defined, base classes first."""
+    """The methods of `owner` marked as actions, bound to it, with their info, in the
+    order they are defined, base classes first."""
     members: Dict[str, Any] = {}
     for cls in reversed(type(owner).__mro__):
         members.update(vars(cls))
@@ -231,12 +231,40 @@ class _Action:
 
 
 class Actions:
-    """The actions of a protocol. Changing them announces them to blip again."""
+    """The actions of an outpost. Changing them announces them to blip again. They may
+    be changed from any thread, also from an action."""
 
     def __init__(self, on_change: Callable[[], None] = lambda: None) -> None:
         self._actions: Dict[str, _Action] = {}
+        self._lock = threading.RLock()
         # called after each change
         self.on_change = on_change
+        # changes within `batch` notify once at its end, see `_changed`
+        self._batching = 0
+        self._batch_changed = False
+
+    @contextlib.contextmanager
+    def batch(self) -> Iterator[None]:
+        """Notifies the changes made within once, at the end."""
+        with self._lock:
+            self._batching += 1
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._batching -= 1
+                notify = self._batching == 0 and self._batch_changed
+                if notify:
+                    self._batch_changed = False
+            if notify:
+                self.on_change()
+
+    def _changed(self) -> None:
+        with self._lock:
+            if self._batching:
+                self._batch_changed = True
+                return
+        self.on_change()
 
     def add(
         self,
@@ -255,31 +283,36 @@ class Actions:
             raise ValueError("an action needs a path")
         if not description:
             description = (inspect.getdoc(function) or "").split("\n", 1)[0]
-        self._actions[path] = _Action(
-            path, function, _params(function), description, readback, confirm, enabled
-        )
-        self.on_change()
+        added = _Action(path, function, _params(function), description, readback, confirm, enabled)
+        with self._lock:
+            self._actions[path] = added
+        self._changed()
 
     def remove(self, path: str) -> None:
-        if self._actions.pop(path, None) is not None:
-            self.on_change()
+        with self._lock:
+            removed = self._actions.pop(path, None)
+        if removed is not None:
+            self._changed()
 
     def clear(self) -> None:
-        if self._actions:
+        with self._lock:
+            had_actions = bool(self._actions)
             self._actions.clear()
-            self.on_change()
+        if had_actions:
+            self._changed()
 
     def set_enabled(self, enabled: bool, *paths: str) -> None:
         """Enables or disables the actions at `paths`, all actions if none are given."""
         changed = False
-        for path in paths or list(self._actions):
-            action = self._actions.get(path)
-            if action is None:
-                raise KeyError(f"no action '{path}'")
-            changed |= action.enabled != enabled
-            action.enabled = enabled
+        with self._lock:
+            for path in paths or list(self._actions):
+                action = self._actions.get(path)
+                if action is None:
+                    raise KeyError(f"no action '{path}'")
+                changed |= action.enabled != enabled
+                action.enabled = enabled
         if changed:
-            self.on_change()
+            self._changed()
 
     def is_enabled(self, path: str) -> bool:
         return self._actions[path].enabled
@@ -292,12 +325,14 @@ class Actions:
 
     def descriptors(self) -> List[Dict[str, Any]]:
         """The actions as sent to blip in an Actions message."""
-        return [action.to_dict() for action in self._actions.values()]
+        with self._lock:
+            return [action.to_dict() for action in self._actions.values()]
 
     async def invoke(self, path: str, args: Any) -> None:
         """Carries out the action at `path` with the record `args`, raises ActionError
         if the action is unknown or disabled, the arguments are invalid or the action
-        rejects them."""
+        rejects them. An async function runs in the event loop, any other in a thread
+        of its own, so it may block without holding up the outpost."""
         action = self._actions.get(path)
         if action is None:
             raise ActionError(f"unknown action '{path}'")
@@ -317,7 +352,10 @@ class Actions:
 
         async with action.lock:
             try:
-                result = action.function(**kwargs)
+                if inspect.iscoroutinefunction(action.function):
+                    result = action.function(**kwargs)
+                else:
+                    result = await asyncio.to_thread(action.function, **kwargs)
                 if inspect.isawaitable(result):
                     await result
             except ActionError:

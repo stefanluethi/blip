@@ -7,17 +7,15 @@ from typing import List
 
 import websockets
 
-from outpost import Protocol
-from outpost.server import OutpostServer
+from blip_outpost.server import OutpostServer
 
 # large enough to fill the socket buffers of a client that does not read, uncompressed
 MESSAGE_SIZE = 128 * 1024
 MESSAGES = 400
 
 
-class Idle(Protocol):
-    async def run(self) -> None:
-        await asyncio.Event().wait()
+async def no_actions(path: str, args: object) -> None:
+    raise AssertionError("no invocations expected")
 
 
 def message(index: int) -> bytes:
@@ -30,8 +28,8 @@ def index(message: bytes) -> int:
 
 
 async def serve(port: int, max_queued: int) -> OutpostServer:
-    server = OutpostServer(protocol=Idle(), host="127.0.0.1", port=port, path="/ws/test", max_queued=max_queued)
-    await server.start()
+    server = OutpostServer(no_actions, max_queued=max_queued)
+    await server.start("127.0.0.1", port, "/ws/test")
     return server
 
 
@@ -49,7 +47,7 @@ async def receive_until(ws, last: int) -> List[int]:
 
 async def broadcast_all(server: OutpostServer) -> None:
     for i in range(MESSAGES):
-        await asyncio.wait_for(server.broadcast(message(i)), timeout=1.0)
+        server.broadcast(message(i))
         # lets the senders run, as a protocol receiving from a target would
         await asyncio.sleep(0)
 
@@ -74,7 +72,7 @@ async def test_a_client_that_does_not_read_does_not_block_the_others():
 
 
 async def test_messages_go_together_unless_a_client_asks_for_one_per_frame():
-    from outpost.proto import Message
+    from blip_outpost.proto import Message
 
     server = await serve(3977, max_queued=MESSAGES)
     messages = [Message.create_value("a", index, index).encode_cbor() for index in range(50)]
@@ -85,7 +83,7 @@ async def test_messages_go_together_unless_a_client_asks_for_one_per_frame():
             await asyncio.sleep(0.05)
             # queued at once, before the senders run
             for message in messages:
-                await server.broadcast(message)
+                server.broadcast(message)
             frames = [await asyncio.wait_for(single.recv(), timeout=2.0) for _ in messages]
             assert frames == messages
             joined = b""
@@ -97,7 +95,7 @@ async def test_messages_go_together_unless_a_client_asks_for_one_per_frame():
 
 
 async def test_messages_for_a_client_that_does_not_keep_up_are_dropped(caplog):
-    caplog.set_level(logging.WARNING, logger="outpost.server")
+    caplog.set_level(logging.WARNING, logger="blip_outpost.server")
     server = await serve(3978, max_queued=4)
     try:
         async with connect(3978, max_queue=1) as stalled:
@@ -112,7 +110,7 @@ async def test_messages_for_a_client_that_does_not_keep_up_are_dropped(caplog):
             reader = asyncio.create_task(receive_until(stalled, MESSAGES))
             while client.queue.full():
                 await asyncio.sleep(0.01)
-            await server.broadcast(message(MESSAGES))
+            server.broadcast(message(MESSAGES))
             received = await reader
             assert received == sorted(received)
             assert len(received) < MESSAGES

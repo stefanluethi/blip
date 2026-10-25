@@ -19,7 +19,7 @@
         <mxCell id="op" value="&lt;b&gt;outpost&lt;/b&gt; (Python)" style="fontColor=#24292e;fontFamily=Fira Sans,Helvetica,Arial,sans-serif;swimlane;startSize=26;html=1;rounded=1;arcSize=6;fillColor=#d6cffa;strokeColor=#785ef0;fontSize=13;" vertex="1" parent="1">
           <mxGeometry x="400" y="20" width="250" height="300" as="geometry"/>
         </mxCell>
-        <mxCell id="proto" value="&lt;b&gt;Protocol&lt;/b&gt;&lt;br&gt;simulator · replay · tcp · udp&lt;br&gt;or your own Python class" style="fontColor=#24292e;fontFamily=Fira Sans,Helvetica,Arial,sans-serif;rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#785ef0;fontSize=12;" vertex="1" parent="op">
+        <mxCell id="proto" value="&lt;b&gt;your script&lt;/b&gt;&lt;br&gt;or blip-outpost&lt;br&gt;tcp · udp · replay" style="fontColor=#24292e;fontFamily=Fira Sans,Helvetica,Arial,sans-serif;rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#785ef0;fontSize=12;" vertex="1" parent="op">
           <mxGeometry x="25" y="40" width="200" height="60" as="geometry"/>
         </mxCell>
         <mxCell id="srv" value="&lt;b&gt;WebSocket server&lt;/b&gt;&lt;br&gt;broadcasts messages,&lt;br&gt;carries out invocations" style="fontColor=#24292e;fontFamily=Fira Sans,Helvetica,Arial,sans-serif;rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#785ef0;fontSize=12;" vertex="1" parent="op">

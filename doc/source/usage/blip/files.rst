@@ -31,7 +31,7 @@ File menu
 Recording and layout files can also be **dropped onto the window**; blip tells
 them apart by their contents.
 
-Recording files are also written by the outpost (``--record``, see
+Recording files are also written by the outpost (``record``, see
 :doc:`/usage/outpost`) and by sonde's ``FileSink`` (see :doc:`/usage/sonde`),
 and the outpost replays them. Their format is described in
 :doc:`/architecture/protocol`.

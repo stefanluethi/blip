@@ -289,7 +289,7 @@ mod tests {
                 message => panic!("not a value: {message:?}"),
             }
         };
-        // outpost.proto.Message.create_value(...).encode_cbor() of cbor2 5.x
+        // blip_outpost.proto.Message.create_value(...).encode_cbor() of cbor2 5.x
         let motor = "a16556616c7565a36974696d657374616d70016470617468656d6f746f726576616c7565a3\
                      6973706565645f72706d1905dc67656e61626c6564f56573746174656772756e6e696e67";
         assert_eq!(

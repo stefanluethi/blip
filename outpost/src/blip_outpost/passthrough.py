@@ -1,4 +1,5 @@
-"""Socket (TCP/UDP) protocol for targets that speak the blip protocol themselves."""
+"""Passes through the messages of a target that speaks the blip protocol itself, over
+TCP or UDP, e.g. firmware using sonde."""
 
 import asyncio
 import logging
@@ -6,10 +7,11 @@ from typing import Optional
 
 import cbor2
 
-from outpost import ActionError, Protocol
-from outpost.proto import split_items
+from blip_outpost.actions import ActionError
+from blip_outpost.outpost import Outpost
+from blip_outpost.proto import split_items
 
-logger = logging.getLogger("outpost.socket")
+logger = logging.getLogger(__name__)
 
 # Seconds before connecting again after an error
 RETRY_DELAY_SEC = 3.0
@@ -18,34 +20,41 @@ RETRY_DELAY_SEC = 3.0
 MAX_PENDING_BYTES = 16 * 1024 * 1024
 
 
-class SocketProtocol(Protocol):
-    """Passes the messages a target sends over TCP or UDP to blip unchanged, and forwards
-    the invocations of blip to the target as Invoke requests. The target announces its
-    actions itself, an invocation succeeds once it is forwarded. The ActionResult
-    messages of the target are dropped by the outpost, which answered already.
+class SocketPassthrough:
+    """Passes the messages a target sends over TCP or UDP to the blips of `outpost`
+    unchanged, and forwards their invocations to the target as Invoke requests. The
+    target announces its actions itself, an invocation succeeds once it is forwarded.
+    The ActionResult messages of the target are dropped by the outpost, which answered
+    already.
 
     The target sends its messages as a CBOR sequence (RFC 8742), any number at once;
-    over TCP they may be split anywhere, a UDP datagram holds complete messages."""
+    over TCP they may be split anywhere, a UDP datagram holds complete messages. With
+    `listen`, the passthrough waits for the target at `host` and `port` instead of
+    connecting to it."""
 
     def __init__(
         self,
+        outpost: Outpost,
         mode: str = "tcp",
-        remote_host: str = "127.0.0.1",
-        remote_port: int = 9000,
-        listen: bool = False
+        host: str = "127.0.0.1",
+        port: int = 9000,
+        listen: bool = False,
     ) -> None:
         self.mode = mode.lower()
         if self.mode not in ("tcp", "udp"):
             raise ValueError(f"unknown mode '{mode}', expected tcp or udp")
-        self.host = remote_host
-        self.port = remote_port
+        self.outpost = outpost
+        self.host = host
+        self.port = port
         self.listen = listen
 
         self.writer: Optional[asyncio.StreamWriter] = None
         self._udp_transport: Optional[asyncio.DatagramTransport] = None
         self._next_id = 0
+        outpost.on_invoke = self.invoke
 
     async def run(self) -> None:
+        """Passes the messages through until cancelled, connecting again after errors."""
         try:
             if self.mode == "udp":
                 await self._udp()
@@ -61,7 +70,7 @@ class SocketProtocol(Protocol):
                 self.writer.close()
             if self._udp_transport:
                 self._udp_transport.close()
-            logger.info("Socket protocol stopped.")
+            logger.info("Socket passthrough stopped.")
 
     async def _tcp_client_loop(self) -> None:
         """Connect as TCP client and forward data."""
@@ -114,28 +123,27 @@ class SocketProtocol(Protocol):
                 logger.error(f"Dropping {len(pending)} bytes of a message that does not end: {pending[:32].hex()}")
                 pending = b""
             for frame in frames:
-                await self._send_frame(frame)
+                self.outpost._send_frame(frame)
 
     async def _udp(self) -> None:
         """Sets up the UDP endpoint, retrying while that fails."""
-        class UDPProtocol(asyncio.DatagramProtocol):
-            def __init__(self, outer: 'SocketProtocol') -> None:
-                self.outer = outer
+        outpost = self.outpost
 
+        class UDPProtocol(asyncio.DatagramProtocol):
             def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
-                asyncio.create_task(self.outer.send(data))
+                outpost.send(data)
 
         loop = asyncio.get_running_loop()
         while True:
             try:
                 if self.listen:
                     transport, _ = await loop.create_datagram_endpoint(
-                        lambda: UDPProtocol(self), local_addr=(self.host, self.port)
+                        UDPProtocol, local_addr=(self.host, self.port)
                     )
                     logger.info(f"UDP listener active on {self.host}:{self.port}")
                 else:
                     transport, _ = await loop.create_datagram_endpoint(
-                        lambda: UDPProtocol(self), remote_addr=(self.host, self.port)
+                        UDPProtocol, remote_addr=(self.host, self.port)
                     )
                     logger.info(f"UDP socket bound to remote {self.host}:{self.port}")
                 break
