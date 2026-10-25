@@ -73,6 +73,29 @@ async def test_a_client_that_does_not_read_does_not_block_the_others():
         await server.stop()
 
 
+async def test_messages_go_together_unless_a_client_asks_for_one_per_frame():
+    from outpost.proto import Message
+
+    server = await serve(3977, max_queued=MESSAGES)
+    messages = [Message.create_value("a", index, index).encode_cbor() for index in range(50)]
+    try:
+        async with connect(3977) as batched, websockets.connect(
+            "ws://127.0.0.1:3977/ws/test?batch=0"
+        ) as single:
+            await asyncio.sleep(0.05)
+            # queued at once, before the senders run
+            for message in messages:
+                await server.broadcast(message)
+            frames = [await asyncio.wait_for(single.recv(), timeout=2.0) for _ in messages]
+            assert frames == messages
+            joined = b""
+            while len(joined) < len(b"".join(messages)):
+                joined += await asyncio.wait_for(batched.recv(), timeout=2.0)
+            assert joined == b"".join(messages)
+    finally:
+        await server.stop()
+
+
 async def test_messages_for_a_client_that_does_not_keep_up_are_dropped(caplog):
     caplog.set_level(logging.WARNING, logger="outpost.server")
     server = await serve(3978, max_queued=4)

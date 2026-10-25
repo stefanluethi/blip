@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from typing import Any, Optional, Set
+from urllib.parse import parse_qs, urlsplit
 
 import websockets
 from websockets.asyncio.server import Server, ServerConnection, serve
@@ -19,7 +20,8 @@ ACTIONS_COMPONENT = "actions"
 
 # The messages queued for a client are sent together in one WebSocket frame, as a CBOR
 # sequence, up to this many bytes, so that a busy target does not cost a frame per
-# message, neither here nor in blip.
+# message, neither here nor in blip. A client that reads one message per frame asks
+# for that with `?batch=0` after the path.
 MAX_BATCH_BYTES = 64 * 1024
 
 
@@ -38,9 +40,11 @@ class _Client:
     client go through the queue, so they are sent in the order they were queued, those
     queued together in one frame."""
 
-    def __init__(self, websocket: ServerConnection, max_queued: int) -> None:
+    def __init__(self, websocket: ServerConnection, max_queued: int, batched: bool = True) -> None:
         self.websocket = websocket
         self.queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=max_queued)
+        # the bytes of messages sent together in a frame at most, 0 for one per frame
+        self.max_batch_bytes = MAX_BATCH_BYTES if batched else 0
         # the messages dropped since the last one sent
         self.dropped = 0
 
@@ -55,7 +59,7 @@ class _Client:
 
     async def send_queued(self) -> None:
         """Sends the queued messages until the connection is closed, as many in a frame
-        as are queued, up to `MAX_BATCH_BYTES`, a larger message in a frame of its own."""
+        as are queued, up to `max_batch_bytes`, a larger message in a frame of its own."""
         held: Optional[bytes] = None
         while True:
             batch = [held if held is not None else await self.queue.get()]
@@ -63,7 +67,7 @@ class _Client:
             size = len(batch[0])
             while not self.queue.empty():
                 message = self.queue.get_nowait()
-                if size + len(message) > MAX_BATCH_BYTES:
+                if size + len(message) > self.max_batch_bytes:
                     held = message
                     break
                 batch.append(message)
@@ -126,7 +130,9 @@ class OutpostServer:
     async def _handle_connection(self, websocket: ServerConnection) -> None:
         """Handle individual WebSocket client connection."""
         path = websocket.request.path if websocket.request else ""
-        req_path = path.rstrip("/")
+        url = urlsplit(path)
+        req_path = url.path.rstrip("/")
+        batched = parse_qs(url.query).get("batch", ["1"])[-1] != "0"
         # Allow connecting to target path or wildcard root
         if self.path and req_path != self.path and req_path != "":
             logger.warning(f"Connection rejected: Path '{req_path}' does not match expected '{self.path}'")
@@ -137,7 +143,7 @@ class OutpostServer:
         logger.info(f"WebSocket client connected from {client_addr} on path '{path}'")
         # added and given the latest actions without awaiting in between, so a change
         # announced later is queued after the list it replaces
-        client = _Client(websocket, self.max_queued)
+        client = _Client(websocket, self.max_queued, batched)
         self.connected_clients.add(client)
         if self._actions_frame is not None:
             client.enqueue(self._actions_frame)

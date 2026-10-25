@@ -106,7 +106,9 @@ Text frames received by blip are logged but otherwise ignored.
    the target carries exactly one request.
 
    The outpost sends the messages queued for a blip together, up to 64 KiB
-   in a frame, a larger message in a frame of its own. Targets behind its TCP/UDP
+   in a frame, a larger message in a frame of its own. A client that reads
+   one message per frame connects with ``?batch=0`` after the path, e.g.
+   ``ws://127.0.0.1:3000/ws/outpost?batch=0``. Targets behind its TCP/UDP
    passthrough may send CBOR sequences: each UDP datagram holds complete
    messages, while over TCP the outpost reassembles messages split across
    reads.
