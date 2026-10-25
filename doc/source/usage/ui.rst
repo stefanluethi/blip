@@ -82,7 +82,8 @@ Right panel
    to resize them.
 
 Center
-   The views, laid out as edited in the layout panel. Errors, e.g. when
+   The views, laid out as edited in the layout panel or by dragging them in
+   the center, see `Layout`_. Errors, e.g. when
    connecting fails or a file cannot be opened or saved, and warnings, e.g.
    when a recording file is cut off, show as notices stacked in its bottom
    right corner. They disappear after a few seconds, later while the pointer
@@ -231,6 +232,13 @@ by side.
   after that row, onto a group to move it into the group, or onto a view to
   put both into a new group. A new group stacks its children across the
   direction of its parent group.
+* Drag a view by its title in the center, or a view or group shown as a tab by
+  its tab, onto the side of another view. A line in the gap shows a move next
+  to that view, where its group stacks its children across that side. A
+  highlighted half shows a new group of both, stacked across that side; a
+  group of just the two turns instead. Dropping onto a tab moves before or
+  after it, and onto an empty group into it. Hovering a tab while dragging
+  opens it. Views can also be dragged between the center and the layout panel.
 * Right-click a row to rename or delete it, or to change the type of a group.
   Double-clicking a row also renames it, as does clicking the title of a view
   or the open tab in the center. Enter keeps the new name, Escape drops it.

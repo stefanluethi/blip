@@ -2,6 +2,7 @@
 //! leaves. The top level groups are tabs, the groups below show their children as tabs,
 //! stacked vertically or side by side.
 
+mod drag;
 mod file;
 mod panel;
 mod properties;
@@ -10,11 +11,11 @@ pub use file::{GroupKind, LayoutFile};
 
 use crate::app::theme;
 use crate::app::view::{View, ViewContext, ViewType, Viewable};
-use egui_tiles::{Container, Tile, TileId, Tree};
+use egui_tiles::{Container, ContainerKind, Tile, TileId, Tree};
 use std::collections::{HashMap, HashSet};
 
-/// Where a view or group dragged in the layout panel is dropped, relative to the row it
-/// is dropped on.
+/// Where a view or group dragged in the layout panel or the center pane is dropped,
+/// relative to the row, view or tab it is dropped on.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Drop {
     Before,
@@ -23,6 +24,34 @@ pub enum Drop {
     Into,
     /// Into a new group together with the view dropped on.
     Group,
+    /// At a side of the view dropped on in the center pane: next to it in its group if
+    /// the group stacks its children across that side, otherwise into a new group with
+    /// the view, stacked across that side.
+    Side(Side),
+}
+
+/// A side of a view in the center pane.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Side {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+impl Side {
+    /// The kind of group that stacks its children across this side.
+    fn kind(self) -> GroupKind {
+        match self {
+            Side::Left | Side::Right => GroupKind::Horizontal,
+            Side::Top | Side::Bottom => GroupKind::Vertical,
+        }
+    }
+
+    /// Whether a view dropped at this side goes after the view dropped on.
+    fn is_after(self) -> bool {
+        matches!(self, Side::Right | Side::Bottom)
+    }
 }
 
 pub struct Layout {
@@ -288,49 +317,98 @@ impl Layout {
         };
         let old_parent = self.parent(dragged);
         match drop {
-            Drop::Before | Drop::After => {
-                let index = self
-                    .container(parent)
-                    .and_then(|container| container.children().position(|&id| id == target))
-                    .map_or(usize::MAX, |index| index + usize::from(drop == Drop::After));
-                self.tree
-                    .move_tile_to_container(dragged, parent, index, true);
-            }
+            Drop::Before | Drop::After => self.move_next_to(dragged, target, drop == Drop::After),
             Drop::Into => self
                 .tree
                 .move_tile_to_container(dragged, target, usize::MAX, true),
             Drop::Group => {
-                if let Some(old_parent) = self.parent(dragged)
-                    && let Some(container) = self.container_mut(old_parent)
-                {
-                    container.remove_child(dragged);
-                }
                 // alternate the direction at each level, the groups at the top level are
                 // tabs stacking their views vertically
                 let kind = match self.container(parent).map(GroupKind::of) {
                     Some(GroupKind::Vertical) => GroupKind::Horizontal,
                     _ => GroupKind::Vertical,
                 };
-                let name = self.unique_name(if parent == self.root() {
-                    "Tab"
-                } else {
-                    "Group"
-                });
-                let group = self
-                    .tree
-                    .tiles
-                    .insert_container(Container::new(kind.container_kind(), vec![target, dragged]));
-                self.group_names.insert(group, name);
-                if let Some(container) = self.container_mut(parent) {
-                    // `target` is a child of `parent`, so it is always replaced
-                    let _ = container.replace_child(target, group);
-                }
+                self.group_with(dragged, target, kind, true);
             }
+            Drop::Side(side) if self.reorders(target, side) => {
+                self.move_next_to(dragged, target, side.is_after());
+            }
+            Drop::Side(side) if self.are_only_children(dragged, target) => {
+                // turn the group instead of nesting a new one in it
+                self.set_group_kind(parent, side.kind());
+                self.move_next_to(dragged, target, side.is_after());
+            }
+            Drop::Side(side) => self.group_with(dragged, target, side.kind(), side.is_after()),
         }
         if let Some(old_parent) = old_parent {
             self.remove_if_empty(old_parent);
         }
         self.select(dragged);
+    }
+
+    /// Whether dropping at `side` of `target` moves the dropped view next to `target` in
+    /// its group, instead of grouping them.
+    fn reorders(&self, target: TileId, side: Side) -> bool {
+        self.parent(target)
+            .and_then(|parent| self.container(parent))
+            .is_some_and(|parent| GroupKind::of(parent) == side.kind())
+    }
+
+    /// Whether `dragged` and `target` are the only children of a vertical or horizontal
+    /// group.
+    fn are_only_children(&self, dragged: TileId, target: TileId) -> bool {
+        let parent = self.parent(target);
+        parent == self.parent(dragged)
+            && parent
+                .and_then(|parent| self.container(parent))
+                .is_some_and(|parent| {
+                    parent.kind() != ContainerKind::Tabs && parent.num_children() == 2
+                })
+    }
+
+    /// Moves `dragged` before or after `target` in the group of `target`.
+    fn move_next_to(&mut self, dragged: TileId, target: TileId, after: bool) {
+        let Some(parent) = self.parent(target) else {
+            return;
+        };
+        let index = self
+            .container(parent)
+            .and_then(|container| container.children().position(|&id| id == target))
+            .map_or(usize::MAX, |index| index + usize::from(after));
+        self.tree
+            .move_tile_to_container(dragged, parent, index, true);
+    }
+
+    /// Puts `target` and `dragged` into a new group of `kind` in place of `target`,
+    /// `dragged` before or after it.
+    fn group_with(&mut self, dragged: TileId, target: TileId, kind: GroupKind, after: bool) {
+        let Some(parent) = self.parent(target) else {
+            return;
+        };
+        if let Some(old_parent) = self.parent(dragged)
+            && let Some(container) = self.container_mut(old_parent)
+        {
+            container.remove_child(dragged);
+        }
+        let name = self.unique_name(if parent == self.root() {
+            "Tab"
+        } else {
+            "Group"
+        });
+        let children = if after {
+            vec![target, dragged]
+        } else {
+            vec![dragged, target]
+        };
+        let group = self
+            .tree
+            .tiles
+            .insert_container(Container::new(kind.container_kind(), children));
+        self.group_names.insert(group, name);
+        if let Some(container) = self.container_mut(parent) {
+            // `target` is a child of `parent`, so it is always replaced
+            let _ = container.replace_child(target, group);
+        }
     }
 
     /// Shows the views in the center pane.
@@ -358,6 +436,10 @@ impl Layout {
         // egui_tiles takes a group out of the tree while showing its tabs, so which tabs
         // are open is looked up before
         let open_tabs = tab_groups.iter().filter_map(|tabs| tabs.active).collect();
+        // a view or group dragged in the center or from the layout panel
+        let dragged = egui::DragAndDrop::payload::<TileId>(ui.ctx())
+            .map(|dragged| *dragged)
+            .filter(|&dragged| self.tree.tiles.get(dragged).is_some());
         let mut behavior = Behavior {
             context,
             group_names: &self.group_names,
@@ -368,8 +450,15 @@ impl Layout {
             rename_ended: None,
             tab_bar_bottoms: Vec::new(),
             below_tab_bar: HashSet::new(),
+            dragged,
+            cards: Vec::new(),
+            tab_buttons: Vec::new(),
         };
         self.tree.ui(&mut behavior, ui);
+        let shown = drag::Shown {
+            cards: std::mem::take(&mut behavior.cards),
+            tab_buttons: std::mem::take(&mut behavior.tab_buttons),
+        };
         match behavior.rename_ended {
             Some(RenameEnd::Keep) => {
                 let renamed = self.renaming_title.take();
@@ -377,6 +466,9 @@ impl Layout {
             }
             Some(RenameEnd::Cancel) => self.renaming_title = None,
             None => {}
+        }
+        if let Some(dragged) = dragged {
+            self.center_drop_ui(ui, dragged, &shown);
         }
     }
 }
@@ -406,7 +498,16 @@ struct Behavior<'a, 'b> {
     tab_bar_bottoms: Vec<f32>,
     /// The views right below a tab bar, whose cards leave a gap to it.
     below_tab_bar: HashSet<TileId>,
+    /// The view or group being dragged, shown dimmed.
+    dragged: Option<TileId>,
+    /// The cards of the views shown, to drop on.
+    cards: Vec<(TileId, egui::Rect)>,
+    /// The tab buttons shown, to drop on.
+    tab_buttons: Vec<(TileId, egui::Rect)>,
 }
+
+/// Height of the title bar of a view not shown as a tab, which moves it by drag and drop.
+const TITLE_BAR_HEIGHT: f32 = 28.0;
 
 /// The card of a view in `rect`, leaving a gap to a tab bar right above it.
 fn card_rect(rect: egui::Rect, below_tab_bar: bool) -> egui::Rect {
@@ -465,8 +566,10 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
         }
         // each view is a card on the canvas
         let tokens = theme::tokens(ui.visuals());
+        let card = card_rect(ui.max_rect(), below_tab_bar);
+        self.cards.push((tile_id, card));
         ui.painter().rect(
-            card_rect(ui.max_rect(), below_tab_bar),
+            card,
             theme::CARD_RADIUS,
             tokens.card,
             egui::Stroke::new(1.0, tokens.border),
@@ -475,6 +578,16 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
 
         let titled = !self.panes_in_tabs.contains(&tile_id);
         if titled {
+            // the title bar moves the view by drag and drop, it is registered before the
+            // title so that clicks on the title still rename the view
+            let bar = card.with_max_y(card.top() + TITLE_BAR_HEIGHT);
+            ui.interact(
+                bar,
+                ui.id().with("title_bar"),
+                egui::Sense::click_and_drag(),
+            )
+            .on_hover_cursor(egui::CursorIcon::Grab)
+            .dnd_set_drag_payload(tile_id);
             egui::Frame::NONE
                 .inner_margin(egui::Margin {
                     left: 10,
@@ -491,13 +604,13 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
                         let field_size = egui::vec2(ui.available_width(), 0.0);
                         if !self.rename_ui(ui, tile_id, field_size) {
                             let title = egui::Label::new(egui::RichText::new(&view.name).strong())
-                                .sense(egui::Sense::click());
-                            if ui
+                                .sense(egui::Sense::click_and_drag());
+                            let title = ui
                                 .add(title)
                                 .on_hover_cursor(egui::CursorIcon::Text)
-                                .on_hover_text("Click to rename")
-                                .clicked()
-                            {
+                                .on_hover_text("Click to rename, drag to move");
+                            title.dnd_set_drag_payload(tile_id);
+                            if title.clicked() {
                                 *self.renaming = Some((tile_id, view.name.clone()));
                             }
                         }
@@ -547,6 +660,10 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
         response: egui::Response,
     ) -> egui::Response {
         self.tab_bar_bottoms.push(response.rect.bottom());
+        self.tab_buttons.push((tile_id, response.interact_rect));
+        // egui_tiles takes a drag of its tab button as a drag of its own, so the tab is
+        // moved by a button of blip on top of it
+        let response = drag::tab_drag_button(&response, tile_id);
         if self.open_tabs.contains(&tile_id) {
             paint_tab_underline(
                 &response.ctx.layer_painter(response.layer_id),
@@ -581,6 +698,11 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
         tile_id: TileId,
         rect: egui::Rect,
     ) {
+        if self.dragged == Some(tile_id) {
+            let rect = card_rect(rect, self.below_tab_bar.contains(&tile_id));
+            let veil = theme::tokens(&style.visuals).canvas.gamma_multiply(0.6);
+            painter.rect_filled(rect, theme::CARD_RADIUS, veil);
+        }
         if *self.selected == Some(tile_id) {
             let stroke = egui::Stroke::new(1.0, theme::tokens(&style.visuals).accent);
             let rect = card_rect(rect, self.below_tab_bar.contains(&tile_id));
@@ -732,6 +854,64 @@ mod tests {
     }
 
     #[test]
+    fn dropping_at_a_side_along_the_group_reorders() {
+        let (mut layout, tab, plot, logs) = default_layout();
+        layout.drop_tile(logs, plot, Drop::Side(Side::Top));
+        assert_eq!(children(&layout, tab), [logs, plot]);
+        layout.drop_tile(logs, plot, Drop::Side(Side::Bottom));
+        assert_eq!(children(&layout, tab), [plot, logs]);
+    }
+
+    #[test]
+    fn dropping_at_a_side_across_a_group_of_just_the_two_turns_the_group() {
+        let (mut layout, tab, plot, logs) = default_layout();
+        layout.drop_tile(logs, plot, Drop::Side(Side::Left));
+        assert_eq!(children(&layout, layout.root()), [tab]);
+        assert_eq!(kind(&layout, tab), GroupKind::Horizontal);
+        assert_eq!(children(&layout, tab), [logs, plot]);
+    }
+
+    #[test]
+    fn dropping_at_a_side_across_the_group_groups_in_that_direction() {
+        let (mut layout, tab, plot, logs) = default_layout();
+        layout.select(logs);
+        layout.add_view(ViewType::States);
+        let states = children(&layout, tab)[2];
+        layout.drop_tile(logs, plot, Drop::Side(Side::Left));
+        let group = children(&layout, tab)[0];
+        assert_eq!(children(&layout, tab), [group, states]);
+        assert_eq!(kind(&layout, group), GroupKind::Horizontal);
+        assert_eq!(children(&layout, group), [logs, plot]);
+        assert_eq!(layout.name(group), "Group 1");
+
+        // the side decides the direction, not the level
+        layout.select(plot);
+        layout.add_view(ViewType::Table);
+        let table = children(&layout, group)[2];
+        layout.drop_tile(table, logs, Drop::Side(Side::Left));
+        assert_eq!(children(&layout, group), [table, logs, plot]);
+        layout.drop_tile(table, plot, Drop::Side(Side::Bottom));
+        let inner = children(&layout, group)[1];
+        assert_eq!(children(&layout, group), [logs, inner]);
+        assert_eq!(kind(&layout, inner), GroupKind::Vertical);
+        assert_eq!(children(&layout, inner), [plot, table]);
+    }
+
+    #[test]
+    fn dropping_at_a_side_of_a_tab_groups_it_in_its_place() {
+        let (mut layout, tab, plot, logs) = default_layout();
+        layout.drop_tile(plot, tab, Drop::Before);
+        assert_eq!(children(&layout, layout.root()), [plot, tab]);
+        layout.drop_tile(logs, plot, Drop::Side(Side::Bottom));
+        let new_tab = children(&layout, layout.root())[0];
+        assert_eq!(kind(&layout, new_tab), GroupKind::Vertical);
+        assert_eq!(children(&layout, new_tab), [plot, logs]);
+        assert!(layout.name(new_tab).starts_with("Tab "));
+        // the old tab was left empty by the move
+        assert_eq!(children(&layout, layout.root()), [new_tab]);
+    }
+
+    #[test]
     fn moving_the_last_view_out_of_a_group_removes_the_group() {
         let (mut layout, tab, plot, logs) = default_layout();
         let new_tab = layout.add_tab();
@@ -794,6 +974,90 @@ mod tests {
         harness.get_by_label("Tab 1").click();
         harness.run();
         assert_eq!(*renaming.borrow(), Some(main));
+    }
+
+    /// A harness showing `layout` in the center pane.
+    fn center_harness(layout: Rc<RefCell<Layout>>) -> Harness<'static> {
+        let model = Model::default();
+        let mut time = TimeRange::default();
+        let mut invoker = crate::app::model::actions::Invoker::default();
+        Harness::builder()
+            .with_size(egui::vec2(800.0, 600.0))
+            .build_ui(move |ui| {
+                let mut context = ViewContext {
+                    model: &model,
+                    time: &mut time,
+                    invoker: &mut invoker,
+                    formats: &crate::app::view::NO_FORMATS,
+                };
+                layout.borrow_mut().ui(ui, &mut context);
+            })
+    }
+
+    #[test]
+    fn dragging_a_view_by_its_title_to_the_side_of_another_moves_it_there() {
+        let (layout, tab, plot, logs) = default_layout();
+        let layout = Rc::new(RefCell::new(layout));
+        let mut harness = center_harness(layout.clone());
+        harness.run();
+
+        let title = harness.get_by_label("Plot 1").rect().center();
+        let logs_title = harness.get_by_label("Logs 1").rect().center();
+        // the right side of the log view, below its title
+        let target = egui::pos2(780.0, logs_title.y + 80.0);
+        harness.drag_at(title);
+        harness.run();
+        harness.hover_at(title + egui::vec2(40.0, 40.0));
+        harness.run();
+        harness.hover_at(target);
+        harness.run();
+        harness.drop_at(target);
+        harness.run();
+
+        // the tab held just the two views, so it turns
+        let layout = layout.borrow();
+        assert_eq!(kind(&layout, tab), GroupKind::Horizontal);
+        assert_eq!(children(&layout, tab), [logs, plot]);
+        assert_eq!(layout.selected, Some(plot));
+    }
+
+    #[test]
+    fn dragging_a_tab_onto_another_tab_reorders_the_tabs() {
+        let (mut layout, tab, _, _) = default_layout();
+        let second = layout.add_tab();
+        let layout = Rc::new(RefCell::new(layout));
+        let mut harness = center_harness(layout.clone());
+        harness.run();
+
+        let from = harness.get_by_label("Tab 2").rect().center();
+        let to = harness.get_by_label("Tab 1").rect().left_center() + egui::vec2(4.0, 0.0);
+        harness.drag_at(from);
+        harness.run();
+        harness.hover_at(from + egui::vec2(-20.0, 0.0));
+        harness.run();
+        harness.hover_at(to);
+        harness.run();
+        harness.drop_at(to);
+        harness.run();
+
+        let layout = layout.borrow();
+        assert_eq!(children(&layout, layout.root()), [second, tab]);
+    }
+
+    #[test]
+    fn clicking_a_title_renames_the_view_without_moving_it() {
+        let (layout, tab, plot, logs) = default_layout();
+        let layout = Rc::new(RefCell::new(layout));
+        let mut harness = center_harness(layout.clone());
+        harness.run();
+        harness.get_by_label("Plot 1").click();
+        harness.run();
+        let layout = layout.borrow();
+        assert_eq!(children(&layout, tab), [plot, logs]);
+        assert_eq!(
+            layout.renaming_title.as_ref().map(|(id, _)| *id),
+            Some(plot)
+        );
     }
 
     #[test]

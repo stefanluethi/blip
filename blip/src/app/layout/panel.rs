@@ -255,7 +255,8 @@ impl Layout {
         match drop {
             Drop::Before => painter.hline(row.x_range(), row.top(), stroke),
             Drop::After => painter.hline(row.x_range(), row.bottom(), stroke),
-            Drop::Into | Drop::Group => {
+            // the panel does not drop at sides, only the center pane does
+            Drop::Into | Drop::Group | Drop::Side(_) => {
                 painter.rect_stroke(row, 2.0, stroke, egui::StrokeKind::Inside)
             }
         };
