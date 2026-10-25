@@ -1,6 +1,7 @@
 pub mod actions;
 pub mod cbor;
 pub mod decode;
+pub mod growing;
 pub mod logs;
 pub mod numbers;
 pub mod recording;

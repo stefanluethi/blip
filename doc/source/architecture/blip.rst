@@ -101,6 +101,10 @@ What a frame costs follows what is shown, not how much data there is:
 
 * Ingesting a value costs about the same however many arrived before: the
   table of its path is found by its path, the samples are appended to columns.
+  A long column grows into a buffer twice as large while it fills its last
+  eighth, a few values copied with each one appended, instead of copying all
+  at once when full, so also a trace of tens of millions of samples grows
+  without a pause.
 * A plot reads the lowest and highest value of blocks of 256 samples and picks
   about two points per pixel of its width.
 * Views find the sample at a time by a binary search of integer timestamps.

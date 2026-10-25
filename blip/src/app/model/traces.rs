@@ -3,6 +3,7 @@
 //! timestamps of the table. A column is a trace.
 
 use super::decode::{Flat, Leaf};
+use super::growing::Growing;
 use super::numbers::{DisplayFormat, Extent, Number, NumberKind, Numbers};
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
@@ -14,7 +15,7 @@ const NULL_TEXT: u32 = u32::MAX;
 #[derive(Debug, Default, PartialEq)]
 pub struct Strings {
     /// The index of the text of each sample in `texts`, [`NULL_TEXT`] for null.
-    ids: Vec<u32>,
+    ids: Growing<u32>,
     texts: Vec<Box<str>>,
     known: HashMap<Box<str>, u32>,
 }
@@ -22,7 +23,7 @@ pub struct Strings {
 impl Strings {
     fn with_nulls(count: usize) -> Self {
         Self {
-            ids: vec![NULL_TEXT; count],
+            ids: vec![NULL_TEXT; count].into(),
             ..Self::default()
         }
     }
@@ -172,7 +173,7 @@ impl Samples {
             } => {
                 numbers.move_last_row_to(index);
             }
-            Self::Strings(strings) => strings.ids[index..].rotate_right(1),
+            Self::Strings(strings) => strings.ids.rotate_tail(index, 1),
         }
     }
 
@@ -376,7 +377,7 @@ struct Column {
 /// The values sent to one path, a column per leaf.
 struct Table {
     path: Box<str>,
-    timestamps: Vec<u64>,
+    timestamps: Growing<u64>,
     columns: Vec<usize>,
     /// Whether a value was dropped as it did not fit the columns.
     warned: bool,
@@ -417,7 +418,7 @@ impl Traces {
         let column = &self.columns[id];
         Trace {
             path: &column.path,
-            timestamps: &self.tables[column.table].timestamps,
+            timestamps: &self.tables[column.table].timestamps[..],
             samples: &column.samples,
             fields_start: column.fields_start,
         }
@@ -433,7 +434,7 @@ impl Traces {
     pub fn tables(&self) -> impl Iterator<Item = (&str, &[u64])> {
         self.tables
             .iter()
-            .map(|table| (&*table.path, table.timestamps.as_slice()))
+            .map(|table| (&*table.path, &table.timestamps[..]))
     }
 
     /// Changes whenever a trace is added or removed.
@@ -598,7 +599,7 @@ impl Traces {
         let at = table.timestamps.partition_point(|&t| t <= timestamp);
         table.timestamps.push(timestamp);
         if at + 1 < table.timestamps.len() {
-            table.timestamps[at..].rotate_right(1);
+            table.timestamps.rotate_tail(at, 1);
             for &id in &table.columns {
                 self.columns[id].samples.move_last_to(at);
             }
@@ -621,7 +622,7 @@ impl Traces {
                 }
                 self.tables.push(Table {
                     path: path.into(),
-                    timestamps: vec![],
+                    timestamps: Growing::default(),
                     columns: vec![],
                     warned: false,
                 });

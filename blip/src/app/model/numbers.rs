@@ -1,6 +1,7 @@
 //! Columns of numbers or bools that keep integers exact: a column holds `i64`, or `u64`
 //! once an integer above `i64::MAX` arrives, and switches to `f64` with the first float.
 
+use super::growing::Growing;
 use std::fmt;
 
 /// The kind of the numbers of a trace or of the elements of an array trace.
@@ -223,8 +224,8 @@ impl Extent {
 #[derive(Clone, Debug, PartialEq)]
 enum Exact {
     None,
-    Int(Vec<i64>),
-    Uint(Vec<u64>),
+    Int(Growing<i64>),
+    Uint(Growing<u64>),
 }
 
 /// A column of numbers or bools in rows of `lanes` values each, e.g. the elements of
@@ -234,7 +235,7 @@ enum Exact {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Numbers {
     kind: Option<NumberKind>,
-    values: Vec<f64>,
+    values: Growing<f64>,
     exact: Exact,
     /// Whether a negative integer arrived, so the integers cannot become unsigned.
     negative: bool,
@@ -259,7 +260,7 @@ impl Numbers {
         Self {
             rows: 0,
             kind: None,
-            values: vec![],
+            values: Growing::default(),
             exact: Exact::None,
             negative: false,
             lanes,
@@ -350,13 +351,12 @@ impl Numbers {
     /// Appends `rows` rows of nulls.
     pub fn push_nulls(&mut self, rows: usize) {
         for _ in 0..rows {
-            let start = self.values.len();
             self.values
-                .extend(std::iter::repeat_n(f64::from_bits(NULL_BITS), self.lanes));
+                .extend_repeat(f64::from_bits(NULL_BITS), self.lanes);
             match &mut self.exact {
                 Exact::None => {}
-                Exact::Int(exact) => exact.resize(start + self.lanes, 0),
-                Exact::Uint(exact) => exact.resize(start + self.lanes, 0),
+                Exact::Int(exact) => exact.extend_repeat(0, self.lanes),
+                Exact::Uint(exact) => exact.extend_repeat(0, self.lanes),
             }
             self.rows += 1;
             self.add_to_blocks(self.rows - 1);
@@ -448,11 +448,11 @@ impl Numbers {
     /// arrived late.
     pub fn move_last_row_to(&mut self, row: usize) {
         let start = row * self.lanes;
-        self.values[start..].rotate_right(self.lanes);
+        self.values.rotate_tail(start, self.lanes);
         match &mut self.exact {
             Exact::None => {}
-            Exact::Int(exact) => exact[start..].rotate_right(self.lanes),
-            Exact::Uint(exact) => exact[start..].rotate_right(self.lanes),
+            Exact::Int(exact) => exact.rotate_tail(start, self.lanes),
+            Exact::Uint(exact) => exact.rotate_tail(start, self.lanes),
         }
         let first_block = row / BLOCK;
         self.blocks.truncate(first_block * self.lanes);
