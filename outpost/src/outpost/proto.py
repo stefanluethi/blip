@@ -3,7 +3,7 @@
 import enum
 import io
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 import cbor2
 
@@ -23,7 +23,7 @@ class ValueMetadata:
     unit: str
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        return {"path": self.path, "unit": self.unit}
 
 
 # A trace value as sent to blip: None (no value), int, float, bool, str, a list of
@@ -39,7 +39,8 @@ class Value:
     value: Data
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        # not `asdict`, which copies the value, field by field: it takes twice as long
+        return {"timestamp": self.timestamp, "path": self.path, "value": self.value}
 
 
 @dataclass
@@ -50,7 +51,12 @@ class LogRecord:
     message: str
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        return {
+            "timestamp": self.timestamp,
+            "level": self.level,
+            "component": self.component,
+            "message": self.message,
+        }
 
 
 @dataclass
