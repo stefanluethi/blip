@@ -410,6 +410,9 @@ struct Table {
     columns: Vec<usize>,
     /// Whether a value was dropped as it did not fit the columns.
     warned: bool,
+    /// Whether a value was dropped as it was too late, warned apart from the rest, as a
+    /// clock behind the others is a problem of its own.
+    warned_late: bool,
 }
 
 impl Table {
@@ -542,7 +545,8 @@ impl Traces {
     #[cfg(test)]
     pub fn warned(&self, path: &str) -> bool {
         let column = &self.columns[self.by_path[path]];
-        column.warned || self.tables[column.table].warned
+        let table = &self.tables[column.table];
+        column.warned || table.warned || table.warned_late
     }
 
     /// Appends `value` as if received, for tests.
@@ -619,10 +623,15 @@ impl Traces {
             let newer =
                 table.timestamps.len() - table.timestamps.partition_point(|&t| t <= timestamp);
             if newer > MAX_LATE {
-                table.warn(&format!(
-                    "it is older than the newest {MAX_LATE} values, e.g. from a clock behind \
-                     the others sending to the path"
-                ));
+                if !table.warned_late {
+                    table.warned_late = true;
+                    log::warn!(
+                        "{}: dropped a value older than the newest {MAX_LATE}, e.g. from a \
+                         clock behind the others sending to the path (further ones are \
+                         dropped silently)",
+                        table.path
+                    );
+                }
                 return;
             }
         }
@@ -676,6 +685,7 @@ impl Traces {
                     timestamps: Growing::default(),
                     columns: vec![],
                     warned: false,
+                    warned_late: false,
                 });
                 self.tables_by_path
                     .insert(path.into(), self.tables.len() - 1);
