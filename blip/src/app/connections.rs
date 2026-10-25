@@ -263,10 +263,7 @@ impl Connections {
             return;
         };
         let packet = serde_cbor_2::to_vec(request).expect("requests encode");
-        log::debug!(
-            "send request {}",
-            hex_string::HexString::from_bytes(&packet).as_string()
-        );
+        log::debug!("send request {request:?} to {name}");
         socket.sender.send(ewebsock::WsMessage::Binary(packet));
     }
 

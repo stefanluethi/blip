@@ -502,7 +502,6 @@ dependencies = [
  "env_logger",
  "ewebsock",
  "flate2",
- "hex-string",
  "image",
  "js-sys",
  "log",
@@ -1795,12 +1794,6 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
-
-[[package]]
-name = "hex-string"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "848ec2dd093df965a34b434580d94852197fc83feac5b2c1962399bbf2cb4f0b"
 
 [[package]]
 name = "http"

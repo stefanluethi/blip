@@ -33,7 +33,6 @@ egui-phosphor = "0.13.0"
 chrono = { version = "0.4", features = ["clock", "std", "wasm-bindgen"] }
 ewebsock = "0.8.0"
 flate2 = "1.1.10" # gzip of recordings
-hex-string = "0.1.0"
 image = { version = "0.25.6", default-features = false, features = ["png"] } # the icon in the menu bar
 log = "0.4"
 regex = "1"
