@@ -134,7 +134,7 @@ The model
 * ``Recording``: the received messages, with the source names written in
   between where the source changes, compressed fast as they arrive, a gzip
   member per 64 KiB, each a fraction of a millisecond of work, so the view
-  does not stutter; saving compresses them again at gzip's default level.
+  does not stutter; saving writes the members one after another as they are.
 * The **descriptions**: the latest units and actions frame of each source,
   re-applied by ``Model::clear``.
 

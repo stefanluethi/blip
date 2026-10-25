@@ -63,11 +63,15 @@ impl<T> FromIterator<T> for Growing<T> {
 }
 
 /// Frees `items`, a large buffer apart from the frame on native platforms, where
-/// returning it to the system takes as long as copying it.
+/// returning it to the system takes as long as copying it, or right away if no thread
+/// can be made for it.
 fn release<T: Send + 'static>(items: Vec<T>) {
     #[cfg(not(target_arch = "wasm32"))]
     if items.capacity() >= MIN_CAPACITY {
-        std::thread::spawn(move || drop(items));
+        // if the thread cannot be made, the closure and the items are dropped here
+        let _ = std::thread::Builder::new()
+            .name("blip free".to_owned())
+            .spawn(move || drop(items));
         return;
     }
     drop(items);

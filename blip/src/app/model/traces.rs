@@ -582,18 +582,19 @@ impl Traces {
     /// a field that does not fit is null, a value of which nothing fits is dropped.
     pub fn insert(&mut self, path: &str, timestamp: u64, flat: &Flat, frame: &[u8]) {
         let known = self.tables_by_path.get(path).copied();
-        if !self.add_value(known, path, flat, frame) {
-            if known.is_none() && self.tables_by_path.contains_key(path) {
-                // the table made for the value holds nothing
-                let table = self.tables.pop().expect("made for the value");
-                self.tables_by_path.remove(path);
-                for id in table.columns {
+        let Some(table) = self.add_value(known, path, flat, frame) else {
+            if known.is_none()
+                && let Some(table) = self.tables_by_path.remove(path)
+            {
+                // the table made for the value holds nothing: its traces go first, as
+                // they refer to it, then the table, the last one made
+                for id in self.tables[table].columns.clone() {
                     self.remove_column(id);
                 }
+                self.tables.pop();
             }
             return;
-        }
-        let table = self.tables_by_path[path];
+        };
         let table = &mut self.tables[table];
         // searched before the new timestamp is appended, which would leave them unsorted
         let at = table.timestamps.partition_point(|&t| t <= timestamp);
@@ -611,14 +612,20 @@ impl Traces {
 
     /// Appends the leaves of the value in `flat` to the traces of `table`, or of a new
     /// table at `path`, and nulls to its other traces, without its timestamp. Returns
-    /// whether anything of the value was kept; if not, no trace changed.
-    fn add_value(&mut self, table: Option<usize>, path: &str, flat: &Flat, frame: &[u8]) -> bool {
+    /// the table if anything of the value was kept; if not, no trace changed.
+    fn add_value(
+        &mut self,
+        table: Option<usize>,
+        path: &str,
+        flat: &Flat,
+        frame: &[u8],
+    ) -> Option<usize> {
         let table = match table {
             Some(table) => table,
             None => {
                 if flat.leaves.is_empty() || !flat.is_record() && self.by_path.contains_key(path) {
                     // nothing to keep, or a field of a record has the path
-                    return false;
+                    return None;
                 }
                 self.tables.push(Table {
                     path: path.into(),
@@ -634,7 +641,7 @@ impl Traces {
         let rows = self.tables[table].timestamps.len();
         if flat.is_record() {
             if !self.insert_record(table, flat, frame) {
-                return false;
+                return None;
             }
         } else {
             let leaf = &flat.leaves[0].1;
@@ -648,7 +655,7 @@ impl Traces {
                 (true, leaf) => {
                     let problem = format!("a record cannot become {}", leaf_kind(leaf));
                     self.tables[table].warn(&problem);
-                    return false;
+                    return None;
                 }
                 (false, leaf) => {
                     let id = match self.find_column(table, "", 0) {
@@ -657,13 +664,13 @@ impl Traces {
                             Some(id) => id,
                             None => {
                                 self.tables[table].warn("a field of a record has the path");
-                                return false;
+                                return None;
                             }
                         },
                     };
                     if let Err(problem) = self.columns[id].samples.push(leaf, flat, frame) {
                         self.tables[table].warn(&problem);
-                        return false;
+                        return None;
                     }
                 }
             }
@@ -675,7 +682,7 @@ impl Traces {
                 samples.push_null();
             }
         }
-        true
+        Some(table)
     }
 
     /// Appends the leaves of the record in `flat` to the traces of their fields in
@@ -1129,6 +1136,15 @@ mod tests {
         }
         // the field of a record has the path `a.b.c`
         append(&mut traces, 10, "a.b", record(&[("c", Data::Uint(2))]));
+        // the first value of a new path, of which no trace can hold anything
+        append(&mut traces, 10, "t", Data::Array(vec![Data::from("a")]));
+        append(
+            &mut traces,
+            10,
+            "r",
+            record(&[("s", Data::Array(vec![Data::from("a")]))]),
+        );
+        assert!(traces.get("t").is_none() && traces.get("r.s").is_none());
         // a string does not fit the float field
         append(&mut traces, 11, "x", record(&[("y", Data::from("text"))]));
         assert!(traces.get("a.b").is_none());

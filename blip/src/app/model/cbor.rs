@@ -71,6 +71,15 @@ impl<'b> Reader<'b> {
         }
     }
 
+    /// Takes the `len` bytes of a string, a length that cannot be in memory, e.g. above
+    /// 4 GiB on 32 bit platforms, ending the bytes too.
+    fn take_string(&mut self, len: u64) -> Result<&'b [u8]> {
+        match usize::try_from(len) {
+            Ok(len) => self.take(len),
+            Err(_) => self.error("unexpected end"),
+        }
+    }
+
     fn uint(&mut self, len: usize) -> Result<u64> {
         let bytes = self.take(len)?;
         Ok(bytes
@@ -129,7 +138,7 @@ impl<'b> Reader<'b> {
             return self.error("indefinite text string");
         };
         let start = self.pos;
-        let bytes = self.take(len as usize)?;
+        let bytes = self.take_string(len)?;
         std::str::from_utf8(bytes).map_err(|_| Error {
             at: start,
             what: "invalid UTF-8",
@@ -156,7 +165,7 @@ impl<'b> Reader<'b> {
     pub fn skip_rest(&mut self, head: Head) -> Result<()> {
         let mut items = match head {
             Head::Bytes(Some(len)) | Head::Text(Some(len)) => {
-                self.take(len as usize)?;
+                self.take_string(len)?;
                 return Ok(());
             }
             Head::Array(Some(len)) => Some(len),
@@ -255,6 +264,10 @@ mod tests {
         assert_eq!(Reader::new(&bytes).str().unwrap(), "motor/rpm");
         assert!(Reader::new(&[0x62, 0xff, 0xfe]).str().is_err());
         assert!(Reader::new(&[0x65, b'a']).str().is_err());
+        // a length beyond the bytes, also beyond 32 bits
+        let huge = [0x7b, 0, 0, 0, 1, 0, 0, 0, 5, b'a'];
+        assert!(Reader::new(&huge).str().is_err());
+        assert!(Reader::new(&huge).skip().is_err());
     }
 
     #[test]

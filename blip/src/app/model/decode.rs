@@ -150,7 +150,8 @@ impl Flat {
         dimensions: &mut Option<usize>,
     ) -> cbor::Result<Option<String>> {
         let level = base + depth;
-        let len = len as usize;
+        // more elements than fit in memory cannot be in the message
+        let len = usize::try_from(len).map_err(|_| error(reader, "unexpected end"))?;
         let mut problem = None;
         if level == self.shapes.len() {
             self.shapes.push(len);
