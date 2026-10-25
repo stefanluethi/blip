@@ -1,5 +1,5 @@
-use crate::app::model::Model;
 use crate::app::model::traces::{Samples, Trace, element_path};
+use crate::app::model::{Model, Version};
 use crate::app::theme;
 use crate::app::view::{Selectable, ViewType};
 use egui::{RichText, Ui};
@@ -7,6 +7,7 @@ use egui_phosphor::regular::{
     BRACKETS_CURLY, BRACKETS_SQUARE, FUNNEL, HASH, LIGHTNING, MAGNIFYING_GLASS, TEXT_AA, X,
 };
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 /// Arrays with up to this many elements list each element for selection.
 pub const MAX_LISTED_ELEMENTS: usize = 16;
@@ -216,7 +217,7 @@ struct Selection<'a> {
     paths: &'a mut BTreeSet<String>,
     /// The paths of the traces the view shows apart from the others, see
     /// [`ViewType::shows_apart`].
-    apart: BTreeSet<&'a str>,
+    apart: &'a BTreeSet<String>,
     wildcards: &'a mut BTreeSet<String>,
     picks: Picks,
     /// Whether only the traces matching a search are shown.
@@ -267,10 +268,10 @@ fn show_checkbox(
             }
             // what is shown apart and what is not are not shown together
             let apart = &selection.apart;
-            let adds_apart = paths.iter().any(|path| apart.contains(path.as_str()));
+            let adds_apart = paths.iter().any(|path| apart.contains(path));
             selection
                 .paths
-                .retain(|path| apart.contains(path.as_str()) == adds_apart);
+                .retain(|path| apart.contains(path) == adds_apart);
             if adds_apart {
                 // they would add what is not shown apart
                 selection.wildcards.clear();
@@ -334,40 +335,42 @@ fn action_path(path: &str, view_type: ViewType) -> Option<String> {
     view_type.shows_actions().then(|| path.to_owned())
 }
 
-/// What a row of the tree shows.
-enum RowKind<'t, 'a> {
-    /// A branch with what is below it, collapsed unless `open`.
+/// What a row of the tree shows, owned so the rows are kept from frame to frame.
+enum RowKind {
+    /// A branch with what is below it, `paths` it picks as a whole.
     Branch {
-        node: &'t TraceTree<'a>,
         id: egui::Id,
+        paths: Vec<String>,
+        record: bool,
     },
-    /// A trace, with a button to list its elements if it has an `elements` id.
+    /// The trace at `path`, with a button to list its elements if it has an
+    /// `elements` id.
     Trace {
-        trace: Trace<'a>,
+        path: Box<str>,
         elements: Option<egui::Id>,
     },
-    /// The whole array trace, before its elements.
-    Whole(Trace<'a>),
+    /// The whole array trace at the path, before its elements.
+    Whole(Box<str>),
     /// An element of an array trace, its indices in the path from `label_start` on.
     Element {
         path: String,
         label_start: usize,
     },
-    Record(&'a str),
+    Record(Box<str>),
     Action {
-        path: &'a str,
+        path: Box<str>,
         unannounced: bool,
     },
 }
 
 /// A row of the tree: a branch, a trace, an element of an array, a record or an
 /// action.
-struct Row<'t, 'a> {
+struct Row {
     depth: usize,
-    label: &'t str,
+    label: Box<str>,
     /// The key of the node of the row, see [`ViewSelection::wildcards`].
     key: String,
-    kind: RowKind<'t, 'a>,
+    kind: RowKind,
 }
 
 /// What a row with a toggle of `id` shows below it, as it was left.
@@ -378,17 +381,17 @@ fn is_open(ctx: &egui::Context, id: egui::Id, default_open: bool) -> bool {
 
 /// Adds the rows of the trace, the record and the action ending at `node` with `key`,
 /// if any, labelled `label`, at `depth`.
-fn leaf_rows<'t, 'a>(
+fn leaf_rows(
     ui: &Ui,
-    node: &'t TraceTree<'a>,
-    (label, key): (&'t str, &str),
+    node: &TraceTree<'_>,
+    (label, key): (&str, &str),
     depth: usize,
     picks: Picks,
-    rows: &mut Vec<Row<'t, 'a>>,
+    rows: &mut Vec<Row>,
 ) {
     let row = |kind| Row {
         depth,
-        label,
+        label: label.into(),
         key: key.to_owned(),
         kind,
     };
@@ -401,47 +404,47 @@ fn leaf_rows<'t, 'a>(
             );
         let id = ui.make_persistent_id(("trace_array", trace.path));
         let elements = listed.then_some(id);
-        rows.push(row(RowKind::Trace { trace, elements }));
+        rows.push(row(RowKind::Trace {
+            path: trace.path.into(),
+            elements,
+        }));
         if listed && is_open(ui.ctx(), id, false) {
+            let below = |label: &str, kind| Row {
+                depth: depth + 1,
+                label: label.into(),
+                key: key.to_owned(),
+                kind,
+            };
             if matches!(selectable, Selectable::Array { .. }) {
-                rows.push(Row {
-                    depth: depth + 1,
-                    label: "whole array",
-                    key: key.to_owned(),
-                    kind: RowKind::Whole(trace),
-                });
+                rows.push(below("whole array", RowKind::Whole(trace.path.into())));
             }
             for path in trace_paths(trace, picks.view_type) {
-                rows.push(Row {
-                    depth: depth + 1,
-                    label: "",
-                    key: key.to_owned(),
-                    kind: RowKind::Element {
-                        path,
-                        label_start: trace.path.len(),
-                    },
-                });
+                let label_start = trace.path.len();
+                rows.push(below("", RowKind::Element { path, label_start }));
             }
         }
     }
     if let Some(path) = node.record.filter(|_| picks.records) {
-        rows.push(row(RowKind::Record(path)));
+        rows.push(row(RowKind::Record(path.into())));
     }
     if let Some(path) = node.action {
         let unannounced = node.unannounced;
-        rows.push(row(RowKind::Action { path, unannounced }));
+        rows.push(row(RowKind::Action {
+            path: path.into(),
+            unannounced,
+        }));
     }
 }
 
 /// Adds the rows of the children of `node` with the key `prefix` at `depth`: the
 /// branches, and what is below those that are open, the traces, records and actions.
-fn tree_rows<'t, 'a>(
+fn tree_rows(
     ui: &Ui,
-    node: &'t TraceTree<'a>,
+    node: &TraceTree<'_>,
     prefix: &str,
     depth: usize,
     (picks, searching): (Picks, bool),
-    rows: &mut Vec<Row<'t, 'a>>,
+    rows: &mut Vec<Row>,
 ) {
     for (segment, child) in &node.children {
         let key = format!("{prefix}/{segment}");
@@ -455,9 +458,13 @@ fn tree_rows<'t, 'a>(
         let open = is_open(ui.ctx(), id, true);
         rows.push(Row {
             depth,
-            label,
+            label: label.into(),
             key: key.clone(),
-            kind: RowKind::Branch { node: child, id },
+            kind: RowKind::Branch {
+                id,
+                paths: child.paths(picks),
+                record: child.is_record(),
+            },
         });
         if open {
             // a trace or an action can also be the prefix of other paths
@@ -467,6 +474,11 @@ fn tree_rows<'t, 'a>(
     }
 }
 
+/// Id of the number of clicks on the toggles of the tree, which change its rows.
+fn toggles_id() -> egui::Id {
+    egui::Id::new("trace tree toggles")
+}
+
 /// Shows a button to show or hide what is below a row, whose state is under `id`.
 fn toggle_ui(ui: &mut Ui, id: egui::Id, default_open: bool) {
     let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
@@ -474,16 +486,21 @@ fn toggle_ui(ui: &mut Ui, id: egui::Id, default_open: bool) {
         id,
         default_open,
     );
-    state.show_toggle_button(ui, egui::collapsing_header::paint_default_icon);
+    if state
+        .show_toggle_button(ui, egui::collapsing_header::paint_default_icon)
+        .clicked()
+    {
+        ui.data_mut(|data| *data.get_temp_mut_or_default::<u64>(toggles_id()) += 1);
+    }
     state.store(ui.ctx());
 }
 
 /// What a view showing an array as a whole does with it, see [`Selectable::Array`].
 const WHOLE_ARRAY_HINT: &str = "Plotted as a whole over the indices of its elements";
 
-/// Shows `row`, indented by its depth.
-fn row_ui(ui: &mut Ui, row: &Row<'_, '_>, selection: &mut Selection<'_>) {
-    let (label, key) = (row.label, row.key.as_str());
+/// Shows `row` of a trace of `model`, indented by its depth.
+fn row_ui(ui: &mut Ui, model: &Model, row: &Row, selection: &mut Selection<'_>) {
+    let (label, key) = (&*row.label, row.key.as_str());
     ui.horizontal(|ui| {
         let indent = ui.spacing().indent;
         ui.add_space(row.depth as f32 * indent);
@@ -505,8 +522,8 @@ fn row_ui(ui: &mut Ui, row: &Row<'_, '_>, selection: &mut Selection<'_>) {
         }
         let picks = selection.picks;
         match &row.kind {
-            RowKind::Branch { node, .. } => {
-                let icon = node.is_record().then_some(BRACKETS_CURLY);
+            RowKind::Branch { paths, record, .. } => {
+                let icon = record.then_some(BRACKETS_CURLY);
                 if picks.view_type.shows_one_trace() {
                     // a branch cannot be selected as one trace
                     match icon {
@@ -514,12 +531,13 @@ fn row_ui(ui: &mut Ui, row: &Row<'_, '_>, selection: &mut Selection<'_>) {
                         None => ui.label(label),
                     };
                 } else {
-                    let paths = node.paths(picks);
-                    show_checkbox(ui, label, icon, &paths, key, true, selection);
+                    show_checkbox(ui, label, icon, paths, key, true, selection);
                 }
             }
-            RowKind::Trace { trace, .. } => {
-                let trace = *trace;
+            RowKind::Trace { path, .. } => {
+                let Some(trace) = model.traces.get(path) else {
+                    return;
+                };
                 let mut hover = format!("{}\n{}", trace.path, trace.samples.type_label());
                 let paths = match picks.view_type.selectable(trace) {
                     _ if picks.records => {
@@ -541,10 +559,10 @@ fn row_ui(ui: &mut Ui, row: &Row<'_, '_>, selection: &mut Selection<'_>) {
                     .on_hover_text(&hover)
                     .on_disabled_hover_text(hover);
             }
-            RowKind::Whole(trace) => {
-                let paths = [trace.path.to_owned()];
+            RowKind::Whole(path) => {
+                let paths = [path.to_string()];
                 show_checkbox(ui, label, None, &paths, key, false, selection)
-                    .on_hover_text(format!("{}\n{WHOLE_ARRAY_HINT}", trace.path));
+                    .on_hover_text(format!("{path}\n{WHOLE_ARRAY_HINT}"));
             }
             RowKind::Element { path, label_start } => {
                 let paths = std::slice::from_ref(path);
@@ -560,7 +578,7 @@ fn row_ui(ui: &mut Ui, row: &Row<'_, '_>, selection: &mut Selection<'_>) {
                 .on_hover_text(path);
             }
             RowKind::Record(path) => {
-                let paths = [(*path).to_owned()];
+                let paths = [path.to_string()];
                 show_checkbox(
                     ui,
                     label,
@@ -651,10 +669,87 @@ pub fn search_ui(ui: &mut Ui, search: &mut String, compatible_only: &mut bool, f
     });
 }
 
+/// What the rows of the tree were made from: the paths of the model and the kinds of
+/// its traces, the search, the filter, what the view picks, the actions it shows that
+/// no outpost announces and the clicks on the toggles.
+#[derive(Clone, PartialEq)]
+struct RowsKey {
+    paths: Version,
+    kinds: u64,
+    search: String,
+    filter: Option<Picks>,
+    picks: Picks,
+    unannounced: Vec<String>,
+    toggles: u64,
+}
+
+/// The rows of the tree, or why there are none, and the paths of the traces the view
+/// shows apart, kept from frame to frame until their [`RowsKey`] changes.
+#[derive(Clone)]
+struct Rows {
+    key: RowsKey,
+    rows: Arc<Vec<Row>>,
+    empty: Option<&'static str>,
+    apart: Arc<BTreeSet<String>>,
+}
+
+/// The rows of the tree for `key`, made anew only when it changed since the last
+/// frame.
+fn rows(ui: &Ui, model: &Model, key: RowsKey) -> Rows {
+    let id = ui.id().with("trace tree rows");
+    if let Some(rows) = ui.data(|data| data.get_temp::<Rows>(id))
+        && rows.key == key
+    {
+        return rows;
+    }
+    let search = key.search.as_str();
+    let mut tree = TraceTree::build(
+        model
+            .traces
+            .iter()
+            .filter(|trace| matches(trace.path, search)),
+    );
+    tree.add_actions(model.actions.paths().filter(|path| matches(path, search)));
+    tree.add_unannounced_actions(key.unannounced.iter().map(String::as_str));
+    if key.picks.records {
+        tree.fold_records();
+    }
+    if let Some(picks) = key.filter {
+        tree.retain_selectable(picks);
+    }
+    let searching = !search.trim().is_empty();
+    let empty = tree
+        .children
+        .is_empty()
+        .then(|| match (key.filter, searching) {
+            _ if model.traces.iter().next().is_none() && model.actions.is_empty() => {
+                "No traces or actions received"
+            }
+            (Some(_), true) => "No traces or actions the selected view can show match the search",
+            (Some(_), false) => "The selected view can show none of the traces and actions",
+            (None, _) => "No traces or actions match the search",
+        });
+    let mut rows = vec![];
+    tree_rows(ui, &tree, "", 0, (key.picks, searching), &mut rows);
+    let apart = (model.traces.iter())
+        .filter(|trace| key.picks.view_type.shows_apart(*trace))
+        .map(|trace| trace.path.to_owned())
+        .collect();
+    let rows = Rows {
+        key,
+        rows: Arc::new(rows),
+        empty,
+        apart: Arc::new(apart),
+    };
+    ui.data_mut(|data| data.insert_temp(id, rows.clone()));
+    rows
+}
+
 /// Shows the traces and the announced actions of `model` whose path matches `search`
-/// in a scroll area as a tree with checkboxes for what is picked for a view, disabled if there is no
-/// selection to edit. If `compatible_only`, only what the view can show is in the tree,
-/// or all without a view.
+/// in a scroll area as a tree with checkboxes for what is picked for a view, disabled
+/// if there is no selection to edit. If `compatible_only`, only what the view can show
+/// is in the tree, or all without a view. The rows are made anew only when what they
+/// show changed, and only the rows in sight are laid out.
 pub fn show(
     ui: &mut Ui,
     model: &Model,
@@ -663,14 +758,6 @@ pub fn show(
     selection: Option<ViewSelection<'_>>,
 ) {
     let picks = selection.as_ref().map(|selection| selection.picks);
-    let filter = picks.filter(|_| compatible_only);
-    let mut tree = TraceTree::build(
-        model
-            .traces
-            .iter()
-            .filter(|trace| matches(trace.path, search)),
-    );
-    tree.add_actions(model.actions.paths().filter(|path| matches(path, search)));
     // shown actions no outpost announces, copied apart from the selection edited below
     let unannounced: Vec<String> = match &selection {
         Some(selection) if selection.picks.view_type.shows_actions() => selection
@@ -682,23 +769,18 @@ pub fn show(
             .collect(),
         _ => vec![],
     };
-    tree.add_unannounced_actions(unannounced.iter().map(String::as_str));
-    if picks.is_some_and(|picks| picks.records) {
-        tree.fold_records();
-    }
-    if let Some(picks) = filter {
-        tree.retain_selectable(picks);
-    }
-    let searching = !search.trim().is_empty();
-    if tree.children.is_empty() {
-        ui.weak(match (filter, searching) {
-            _ if model.traces.iter().next().is_none() && model.actions.is_empty() => {
-                "No traces or actions received"
-            }
-            (Some(_), true) => "No traces or actions the selected view can show match the search",
-            (Some(_), false) => "The selected view can show none of the traces and actions",
-            (None, _) => "No traces or actions match the search",
-        });
+    let key = RowsKey {
+        paths: model.paths_version(),
+        kinds: model.traces.kinds(),
+        search: search.to_owned(),
+        filter: picks.filter(|_| compatible_only),
+        picks: picks.unwrap_or(ViewType::Plot.into()),
+        unannounced,
+        toggles: ui.data(|data| data.get_temp::<u64>(toggles_id()).unwrap_or(0)),
+    };
+    let rows = rows(ui, model, key);
+    if let Some(empty) = rows.empty {
+        ui.weak(empty);
         return;
     }
     let enabled = selection.is_some();
@@ -708,28 +790,21 @@ pub fn show(
         wildcards: &mut no_wildcards,
         picks: ViewType::Plot.into(),
     });
-    let apart = (model.traces.iter())
-        .filter(|trace| view.picks.view_type.shows_apart(*trace))
-        .map(|trace| trace.path)
-        .collect();
     let mut selection = Selection {
-        apart,
+        apart: &rows.apart,
         paths: view.paths,
         wildcards: view.wildcards,
         picks: view.picks,
-        searching,
+        searching: !search.trim().is_empty(),
     };
-    let mut rows = vec![];
-    tree_rows(ui, &tree, "", 0, (selection.picks, searching), &mut rows);
-    // only the rows in sight are laid out, also of a tree of thousands of traces
     let row_height = ui.spacing().interact_size.y;
     ui.add_enabled_ui(enabled, |ui| {
         egui::ScrollArea::vertical()
             .id_salt("traces")
             .auto_shrink([false, false])
-            .show_rows(ui, row_height, rows.len(), |ui, shown| {
-                for row in &rows[shown] {
-                    row_ui(ui, row, &mut selection);
+            .show_rows(ui, row_height, rows.rows.len(), |ui, shown| {
+                for row in &rows.rows[shown] {
+                    row_ui(ui, model, row, &mut selection);
                 }
             });
     });

@@ -108,6 +108,17 @@ impl Samples {
         }
     }
 
+    /// What decides what views can show of the samples: their variant and the kind
+    /// of their numbers.
+    fn kind(&self) -> (u8, Option<NumberKind>) {
+        match self {
+            Self::Empty(_) => (0, None),
+            Self::Numbers(numbers) => (1, numbers.kind()),
+            Self::Strings(_) => (2, None),
+            Self::Arrays { elements, .. } => (3, elements.kind()),
+        }
+    }
+
     /// Appends the value of the last sample again, null if there is none, for a
     /// record that lacks the field of these samples, which keeps its value.
     fn push_previous(&mut self) {
@@ -443,6 +454,8 @@ pub struct Traces {
     span: Option<(u64, u64)>,
     /// Changes when a trace is added or removed.
     generation: u64,
+    /// Changes when the kind of a trace changes, see [`Self::kinds`].
+    kinds: u64,
 }
 
 impl Traces {
@@ -473,6 +486,30 @@ impl Traces {
     /// Changes whenever a trace is added or removed.
     pub fn generation(&self) -> u64 {
         self.generation
+    }
+
+    /// Changes whenever the kind of a trace changes, e.g. with its first value or the
+    /// first float of an integer trace, which changes what views can show of it.
+    pub fn kinds(&self) -> u64 {
+        self.kinds
+    }
+
+    /// Appends `leaf` to the samples of the column `id`, counting a change of their
+    /// kind.
+    fn push_leaf(
+        &mut self,
+        id: usize,
+        leaf: &Leaf,
+        flat: &Flat,
+        frame: &[u8],
+    ) -> Result<(), String> {
+        let samples = &mut self.columns[id].samples;
+        let kind = samples.kind();
+        let pushed = samples.push(leaf, flat, frame);
+        if samples.kind() != kind {
+            self.kinds += 1;
+        }
+        pushed
     }
 
     /// Sets the unit of the trace at `path`, an empty `unit` for none.
@@ -728,7 +765,7 @@ impl Traces {
                             }
                         },
                     };
-                    if let Err(problem) = self.columns[id].samples.push(leaf, flat, frame) {
+                    if let Err(problem) = self.push_leaf(id, leaf, flat, frame) {
                         self.tables[table].warn(&problem);
                         return None;
                     }
@@ -802,11 +839,12 @@ impl Traces {
                     }
                 }
             };
-            let column = &mut self.columns[id];
-            if column.samples.len() > rows {
+            if self.columns[id].samples.len() > rows {
                 continue;
             }
-            match column.samples.push(leaf, flat, frame) {
+            let pushed = self.push_leaf(id, leaf, flat, frame);
+            let column = &mut self.columns[id];
+            match pushed {
                 Ok(()) => {
                     kept = true;
                     column.received += 1;
@@ -1105,6 +1143,24 @@ mod tests {
         assert_eq!(a.timestamps[MAX_LATE + 9], newest - 5);
         assert!(a.timestamps.is_sorted());
         assert!(traces.warned("a"));
+    }
+
+    #[test]
+    fn kinds_change_when_a_trace_turns_out_of_another_kind() {
+        let mut traces = Traces::default();
+        let mut append = |value: Data| {
+            traces.append(&proto::Value {
+                timestamp: 0,
+                path: "a".to_owned(),
+                value,
+            });
+            traces.kinds()
+        };
+        let nulls = append(Data::Null);
+        let ints = append(Data::Uint(1));
+        assert_ne!(ints, nulls);
+        assert_eq!(append(Data::Uint(2)), ints);
+        assert_ne!(append(Data::Float(0.5)), ints);
     }
 
     #[test]
