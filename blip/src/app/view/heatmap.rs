@@ -60,7 +60,14 @@ pub struct Heatmap {
     fitted_range: Option<(f64, f64)>,
     #[serde(skip)]
     texture: Option<egui::TextureHandle>,
+    /// What the texture shows: the bits of its values, its size and the colour scale,
+    /// to upload it again only when they change.
+    #[serde(skip)]
+    uploaded: Option<Box<Uploaded>>,
 }
+
+/// The bits of the values of a texture, its size and the ends of its colour scale.
+type Uploaded = (Vec<u64>, [usize; 2], (f64, f64));
 
 /// The colour of `value` on the scale from `min` to `max`, transparent for NaN.
 fn color_of(value: f64, (min, max): (f64, f64)) -> Color32 {
@@ -204,7 +211,8 @@ impl Heatmap {
         self.value_range.or(self.fitted_range).unwrap_or((0.0, 1.0))
     }
 
-    /// Uploads the colours of `values` as an image of `size` pixels, returns its texture.
+    /// Uploads the colours of `values` as an image of `size` pixels unless they are
+    /// uploaded already, returns its texture.
     fn texture(
         &mut self,
         ctx: &egui::Context,
@@ -212,6 +220,17 @@ impl Heatmap {
         values: &[f64],
     ) -> egui::TextureId {
         let range = self.shown_range();
+        let shown = (
+            values.iter().map(|value| value.to_bits()).collect(),
+            size,
+            range,
+        );
+        if let Some(texture) = &self.texture
+            && self.uploaded.as_deref() == Some(&shown)
+        {
+            return texture.id();
+        }
+        self.uploaded = Some(Box::new(shown));
         let pixels = values.iter().map(|&value| color_of(value, range)).collect();
         let image = egui::ColorImage::new(size, pixels);
         let options = egui::TextureOptions::NEAREST;
