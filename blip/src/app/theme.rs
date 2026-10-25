@@ -462,6 +462,15 @@ impl TableLines {
         self
     }
 
+    /// The lines across the columns of `widths`, which can be wider than the ui the
+    /// table was built in, e.g. in a horizontal scroll area.
+    pub fn across(mut self, widths: &[f32], spacing: f32) -> Self {
+        let gaps = widths.len().saturating_sub(1) as f32 * spacing;
+        let width = widths.iter().sum::<f32>() + gaps;
+        self.span.max = self.span.max.max(self.span.min + width);
+        self
+    }
+
     /// Draws the line above the `row`th row of the body with `cell`, a cell of the row.
     /// The first row of a table without a header has none.
     pub fn above(&self, cell: &egui::Ui, row: usize) {

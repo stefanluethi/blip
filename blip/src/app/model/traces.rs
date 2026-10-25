@@ -464,6 +464,11 @@ impl Traces {
         self.map.values()
     }
 
+    /// The number of traces.
+    pub fn count(&self) -> usize {
+        self.map.len()
+    }
+
     /// Sets the unit of the trace at `path`, an empty `unit` for none.
     pub fn set_unit(&mut self, path: &str, unit: &str) {
         if unit.is_empty() {
@@ -572,7 +577,7 @@ impl Traces {
 
     /// The paths of the fields of the record at `path`, also of nested records, but not
     /// of traces whose names only contain a `.`, e.g. `v1.2`.
-    fn field_paths(&self, path: &str) -> impl Iterator<Item = &str> {
+    pub fn field_paths(&self, path: &str) -> impl Iterator<Item = &str> {
         let prefix = format!("{path}.");
         self.map
             .range(prefix.clone()..)

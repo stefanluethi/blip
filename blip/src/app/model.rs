@@ -8,6 +8,19 @@ use crate::app::model::actions::Actions;
 use crate::app::model::logs::{LogEntry, Logs};
 use crate::app::model::recording::Recording;
 use crate::app::model::traces::Traces;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Identifies the paths of the traces and actions of a model: it changes whenever a
+/// trace or an announcement of actions arrives, and no two models share one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct PathsVersion(u64);
+
+impl Default for PathsVersion {
+    fn default() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
 
 #[derive(Default)]
 pub struct Model {
@@ -20,6 +33,7 @@ pub struct Model {
     /// The latest frames the targets describe themselves with, which they send only
     /// once or seldom, in the order they first arrived.
     descriptions: Vec<Description>,
+    paths_version: PathsVersion,
 }
 
 /// The latest frame of `source` with its actions or the unit of a path.
@@ -97,7 +111,13 @@ impl Model {
             self.recording.push(source, frame);
         }
         match message {
-            Ok(proto::Message::Value(value)) => self.traces.append(&value),
+            Ok(proto::Message::Value(value)) => {
+                let count = self.traces.count();
+                self.traces.append(&value);
+                if self.traces.count() != count {
+                    self.paths_version = PathsVersion::default();
+                }
+            }
             Ok(proto::Message::ValueMetadata(metadata)) => {
                 self.describe(source, Some(&metadata.path), frame);
                 self.traces.set_unit(&metadata.path, &metadata.unit);
@@ -111,11 +131,17 @@ impl Model {
             Ok(proto::Message::Actions(actions)) => {
                 self.describe(source, None, frame);
                 self.actions.set(source, actions);
+                self.paths_version = PathsVersion::default();
             }
             Ok(proto::Message::ActionResult(result)) => return Some(result),
             Err(error) => log::warn!("error parsing message: {error}"),
         }
         None
+    }
+
+    /// Changes whenever a trace or an announcement of actions arrives.
+    pub fn paths_version(&self) -> PathsVersion {
+        self.paths_version
     }
 
     /// The number of samples of the readback trace at `readback`, 0 if there is none.

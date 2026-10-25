@@ -38,7 +38,7 @@ Visualisation
    :satisfies: STK_LIVE_OBSERVE
 
    blip shall display the values of traces of any type in a table, at the
-   time of the time cursor.
+   time of the time cursor, also as a row per record with a column per field.
 
 .. req:: Plot traces against each other
    :id: REQ_VIS_XY

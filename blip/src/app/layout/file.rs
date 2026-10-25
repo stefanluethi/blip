@@ -256,8 +256,8 @@ mod tests {
             .enumerate()
             .map(|(index, view_type)| {
                 let mut view = View::new(view_type, format!("View {index}"));
-                if let Some((traces, _)) = view.selection_mut() {
-                    traces.insert("imu.acc[1]".to_owned());
+                if let Some(selection) = view.selection_mut() {
+                    selection.paths.insert("imu.acc[1]".to_owned());
                 }
                 Node::View(view)
             })

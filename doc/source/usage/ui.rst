@@ -62,7 +62,9 @@ Left panel
    announced action, and the **Layout** of the views below. Drag the border
    between them to resize them. The checkboxes choose the traces a view shows,
    or the actions of an actions view; traces cannot be checked for an actions
-   view, nor actions for other views. The fields of a
+   view, nor actions for other views. Checking a branch also checks what is
+   added below it later, e.g. a trace that arrives after it was checked; while
+   searching, it checks only the matching traces. The fields of a
    record are separate traces joined to its path with ``.``, e.g.
    ``imu.acc``, listed below the record as ``.acc``. Arrays list their
    elements, e.g. ``imu.acc[0]``, if they have at most 16; larger arrays
@@ -135,6 +137,15 @@ Plot
    Numbers are drawn as lines and bools as steps between 0 and 1, both with
    gaps where a ``null`` was received. Strings cannot be plotted, show them
    in a states or table view.
+
+Table
+   The values of the traces checked in the left panel at the time cursor.
+   With the **Records** layout in the properties, each row is a record and
+   each column one of its fields: the left panel then checks records as a
+   whole, and a checked branch adds the records that arrive in it later. The
+   **Columns** section of the properties shows, hides and reorders the
+   fields by dragging them, and sets the number format of each; new fields
+   are shown.
 
 Logs
    Table of received ``Log`` records with timestamp, level, component and

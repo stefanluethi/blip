@@ -210,7 +210,7 @@ mod tests {
         model.traces.set_unit("motor/errors", "count");
         let mut harness = harness_with(model, |_, views| views[0]);
         let view = harness.state_mut().selected_view_mut().unwrap();
-        let selection = view.selection_mut().unwrap().0;
+        let selection = view.selection_mut().unwrap().paths;
         selection.insert("motor/errors".to_owned());
         selection.insert("motor/state".to_owned());
         harness.run();
@@ -244,7 +244,7 @@ mod tests {
         let view = harness.state_mut().selected_view_mut().unwrap();
         view.selection_mut()
             .unwrap()
-            .0
+            .paths
             .insert("motor/speed".to_owned());
         harness.run();
         harness

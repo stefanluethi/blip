@@ -8,15 +8,15 @@ pub mod time_axis;
 pub mod trace_selection;
 pub mod xy;
 
-use crate::app::model::Model;
 use crate::app::model::actions::Invoker;
 use crate::app::model::numbers::{DisplayFormat, NumberKind};
 use crate::app::model::traces::{Samples, Trace};
+use crate::app::model::{Model, PathsVersion};
 use crate::app::theme;
 use crate::app::time::TimeRange;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use trace_selection::MAX_LISTED_ELEMENTS;
+use trace_selection::{MAX_LISTED_ELEMENTS, Picks, ViewSelection};
 
 /// What views get from the app to show their contents.
 pub struct ViewContext<'a> {
@@ -71,6 +71,14 @@ pub struct View {
     pub kind: ViewKind,
     #[serde(default)]
     pub formats: Formats,
+    /// The keys of the branches of the trace tree whose traces, records or actions are
+    /// all shown, also those added later, see [`ViewSelection::wildcards`].
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub wildcards: BTreeSet<String>,
+    /// The paths of the model and what the view picked when the wildcards were last
+    /// expanded, to expand them only when either changes.
+    #[serde(skip)]
+    expanded: Option<(PathsVersion, Picks)>,
 }
 
 #[derive(serde::Deserialize, serde::Serialize, Clone)]
@@ -399,6 +407,8 @@ impl View {
             name,
             kind,
             formats: Formats::default(),
+            wildcards: BTreeSet::new(),
+            expanded: None,
         }
     }
 
@@ -419,25 +429,48 @@ impl View {
         !matches!(self.kind, ViewKind::Logs(_))
     }
 
-    /// The paths of the traces the view shows, or of the chosen actions for an actions
-    /// view, and its type, or `None` if it shows neither.
-    pub fn selection_mut(&mut self) -> Option<(&mut BTreeSet<String>, ViewType)> {
+    /// What the view shows of the trace tree: traces, records, or the chosen actions
+    /// for an actions view, or `None` if it shows nothing of it.
+    pub fn selection_mut(&mut self) -> Option<ViewSelection<'_>> {
         let view_type = self.view_type();
+        let mut picks = Picks::from(view_type);
         let paths = match &mut self.kind {
             ViewKind::Plot(plot) => &mut plot.traces,
             ViewKind::States(states) => &mut states.traces,
-            ViewKind::Table(table) => &mut table.traces,
+            ViewKind::Table(table) => {
+                picks.records = table.layout == table::TableLayout::Records;
+                &mut table.traces
+            }
             ViewKind::Xy(xy) => &mut xy.traces,
             ViewKind::Heatmap(heatmap) => &mut heatmap.traces,
             ViewKind::Actions(actions) => &mut actions.shown,
             ViewKind::Logs(_) => return None,
         };
-        Some((paths, view_type))
+        Some(ViewSelection {
+            paths,
+            wildcards: &mut self.wildcards,
+            picks,
+        })
+    }
+
+    /// Adds what was added to the model below the wildcards of the view.
+    fn expand_wildcards(&mut self, model: &Model) {
+        let Some(picks) = self.selection_mut().map(|selection| selection.picks) else {
+            return;
+        };
+        let expanded = Some((model.paths_version(), picks));
+        if self.expanded != expanded
+            && let Some(selection) = self.selection_mut()
+        {
+            trace_selection::expand_wildcards(model, selection);
+            self.expanded = expanded;
+        }
     }
 }
 
 impl Viewable for View {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
+        self.expand_wildcards(context.model);
         let context = &mut ViewContext {
             model: context.model,
             time: context.time,
@@ -465,7 +498,12 @@ impl Viewable for View {
             ViewKind::Logs(logs) => logs.properties_ui(ui, context),
             ViewKind::Actions(actions) => actions.properties_ui(ui, context),
         }
-        self.number_format_ui(ui, context.model);
+        match &mut self.kind {
+            ViewKind::Table(table) if table.layout == table::TableLayout::Records => {
+                table.columns_ui(ui, context.model, &mut self.formats);
+            }
+            _ => self.number_format_ui(ui, context.model),
+        }
     }
 }
 
@@ -477,42 +515,57 @@ impl View {
             return;
         }
         let paths: Vec<String> = match self.selection_mut() {
-            Some((paths, _)) if !paths.is_empty() => paths.iter().cloned().collect(),
+            Some(selection) if !selection.paths.is_empty() => {
+                selection.paths.iter().cloned().collect()
+            }
             _ => return,
         };
         let names = short_names(paths.iter().map(String::as_str));
         properties_section(ui, "Number format", |ui| {
             for (path, name) in paths.iter().zip(names) {
                 property_label(ui, name).on_hover_text(path);
-                ui.horizontal(|ui| {
-                    let current = self.formats.of(path);
-                    let formats = number_kind(model, path).map_or(&[][..], DisplayFormat::of_kind);
-                    ui.add_enabled_ui(!formats.is_empty(), |ui| {
-                        egui::ComboBox::from_id_salt(("number format", path))
-                            .selected_text(current.name())
-                            .width(90.0)
-                            .show_ui(ui, |ui| {
-                                for &format in formats {
-                                    if ui
-                                        .selectable_label(current == format, format.name())
-                                        .clicked()
-                                    {
-                                        self.formats.set(path, format);
-                                    }
-                                }
-                            })
-                            .response
-                            .on_hover_text("How the numbers of the trace are written")
-                            .on_disabled_hover_text("Only numbers have a format");
-                    });
-                    if let Some(unit) = model.traces.unit(path) {
-                        ui.weak(unit);
-                    }
-                });
+                let kind = number_kind(model, path);
+                number_format_ui(ui, &mut self.formats, path, kind, model.traces.unit(path));
                 ui.end_row();
             }
         });
     }
+}
+
+/// Shows a choice of the format in `formats` under `key` for numbers of `kind`,
+/// disabled if there are none, followed by `unit`.
+fn number_format_ui(
+    ui: &mut egui::Ui,
+    formats: &mut Formats,
+    key: &str,
+    kind: Option<NumberKind>,
+    unit: Option<&str>,
+) {
+    ui.horizontal(|ui| {
+        let current = formats.of(key);
+        let choices = kind.map_or(&[][..], DisplayFormat::of_kind);
+        ui.add_enabled_ui(!choices.is_empty(), |ui| {
+            egui::ComboBox::from_id_salt(("number format", key))
+                .selected_text(current.name())
+                .width(90.0)
+                .show_ui(ui, |ui| {
+                    for &format in choices {
+                        if ui
+                            .selectable_label(current == format, format.name())
+                            .clicked()
+                        {
+                            formats.set(key, format);
+                        }
+                    }
+                })
+                .response
+                .on_hover_text("How the numbers are written")
+                .on_disabled_hover_text("Only numbers have a format");
+        });
+        if let Some(unit) = unit {
+            ui.weak(unit);
+        }
+    });
 }
 
 /// The kind of the numbers of the trace at `path`, or of its elements if it is an
@@ -574,6 +627,39 @@ pub fn scroll_wheel<State>(
 mod tests {
     use super::*;
     use egui_kittest::Harness;
+
+    #[test]
+    fn wildcards_pick_new_paths_once_the_model_has_them() {
+        let frame = |path: &str| {
+            serde_cbor_2::to_vec(&proto::Message::Value(proto::Value {
+                timestamp: 0,
+                path: path.to_owned(),
+                value: proto::Data::Uint(1),
+            }))
+            .unwrap()
+        };
+        let mut model = Model::default();
+        model.receive("a", &frame("motor/a"));
+        let mut view = View::new(ViewType::Plot, "plot".to_owned());
+        view.wildcards.insert("/motor".to_owned());
+        let paths = |view: &mut View| view.selection_mut().unwrap().paths.clone();
+        view.expand_wildcards(&model);
+        assert_eq!(paths(&mut view), ["motor/a".to_owned()].into());
+
+        // without new paths in the model, the wildcards are not expanded again
+        view.selection_mut().unwrap().paths.clear();
+        model.receive("a", &frame("motor/a"));
+        view.expand_wildcards(&model);
+        assert!(paths(&mut view).is_empty());
+
+        model.receive("a", &frame("motor/b"));
+        model.receive("a", &frame("cpu"));
+        view.expand_wildcards(&model);
+        assert_eq!(
+            paths(&mut view),
+            ["motor/a".to_owned(), "motor/b".to_owned()].into()
+        );
+    }
 
     /// A harness showing a plot of a line that can be zoomed by the mouse wheel, as the
     /// XY and heatmap views, in a ui that is `enabled` or not. Its state is the shown

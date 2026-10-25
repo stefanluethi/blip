@@ -14,12 +14,41 @@ pub const MAX_LISTED_ELEMENTS: usize = 16;
 /// The icon marking an action in the tree, in place of the type of a trace.
 pub const ACTION_ICON: &str = LIGHTNING;
 
+/// What a view picks in the tree.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Picks {
+    pub view_type: ViewType,
+    /// Whether the view picks whole records instead of traces, like a table of records.
+    pub records: bool,
+}
+
+impl From<ViewType> for Picks {
+    fn from(view_type: ViewType) -> Self {
+        Self {
+            view_type,
+            records: false,
+        }
+    }
+}
+
+/// What is picked for a view in the tree.
+pub struct ViewSelection<'a> {
+    /// The paths of the picked traces, array elements, records or actions.
+    pub paths: &'a mut BTreeSet<String>,
+    /// The keys of the branches that also pick what is added below them later. The key
+    /// of a node is the segments leading to it, each after a "/", e.g. "/sensors/imu".
+    pub wildcards: &'a mut BTreeSet<String>,
+    pub picks: Picks,
+}
+
 /// Trace and action paths split into a tree at each "/", and trace paths also at each
 /// "." between the fields of a record.
 #[derive(Default)]
 pub struct TraceTree<'a> {
     /// The trace if one ends at this node.
     pub trace: Option<&'a Trace>,
+    /// The path of the record if one ends at this node, i.e. its fields are below it.
+    pub record: Option<&'a str>,
     /// The path of the action if one ends at this node.
     pub action: Option<&'a str>,
     /// Whether the action is shown by the view, but no outpost announces it.
@@ -32,14 +61,10 @@ impl<'a> TraceTree<'a> {
     pub fn build(traces: impl Iterator<Item = &'a Trace>) -> Self {
         let mut root = Self::default();
         for trace in traces {
-            let path = trace.path.as_str();
-            let (name, fields) = path.split_at(trace.fields_start.unwrap_or(path.len()));
-            let field_starts = fields.match_indices('.').map(|(start, _)| start);
-            let field_ends = field_starts.clone().skip(1).chain([fields.len()]);
-            let field_segments = field_starts
-                .zip(field_ends)
-                .map(|(start, end)| &fields[start..end]);
-            root.node_mut(segments(name).chain(field_segments)).trace = Some(trace);
+            if let Some(record) = record_path(trace) {
+                root.node_mut(segments(record)).record = Some(record);
+            }
+            root.node_mut(trace_segments(trace)).trace = Some(trace);
         }
         root
     }
@@ -70,43 +95,66 @@ impl<'a> TraceTree<'a> {
         node
     }
 
-    /// Removes the traces and actions of which a view of `view_type` can show nothing,
-    /// and the branches left without any.
-    pub fn retain_selectable(&mut self, view_type: ViewType) {
+    /// The node with `key` below this one, see [`ViewSelection::wildcards`].
+    fn node(&self, key: &str) -> Option<&Self> {
+        key.split('/')
+            .filter(|segment| !segment.is_empty())
+            .try_fold(self, |node, segment| node.children.get(segment))
+    }
+
+    /// Removes the fields of the records, so that records are picked as a whole.
+    fn fold_records(&mut self) {
+        if self.record.is_some() {
+            self.children.retain(|segment, _| !segment.starts_with('.'));
+        }
+        for child in self.children.values_mut() {
+            child.fold_records();
+        }
+    }
+
+    /// Removes the traces, records and actions of which a view picking `picks` can show
+    /// nothing, and the branches left without any.
+    pub fn retain_selectable(&mut self, picks: Picks) {
         if self
             .trace
-            .is_some_and(|trace| trace_paths(trace, view_type).is_empty())
+            .is_some_and(|trace| trace_picks(trace, picks).is_empty())
         {
             self.trace = None;
         }
+        if !picks.records {
+            self.record = None;
+        }
         if self
             .action
-            .is_some_and(|path| action_path(path, view_type).is_none())
+            .is_some_and(|path| action_path(path, picks.view_type).is_none())
         {
             self.action = None;
         }
         self.children.retain(|_, child| {
-            child.retain_selectable(view_type);
-            child.trace.is_some() || child.action.is_some() || !child.children.is_empty()
+            child.retain_selectable(picks);
+            child.trace.is_some()
+                || child.record.is_some()
+                || child.action.is_some()
+                || !child.children.is_empty()
         });
     }
 
     pub fn is_record(&self) -> bool {
-        self.children.keys().any(|segment| segment.starts_with('.'))
+        self.record.is_some() || self.children.keys().any(|segment| segment.starts_with('.'))
     }
 
-    /// The paths of all traces at and below this node that a view of `view_type` can
-    /// show, and of all actions if it shows actions.
-    fn paths(&self, view_type: ViewType) -> Vec<String> {
+    /// The paths of all traces, records and actions at and below this node that a view
+    /// picking `picks` can show.
+    fn paths(&self, picks: Picks) -> Vec<String> {
         self.trace
             .into_iter()
-            .flat_map(|trace| trace_paths(trace, view_type))
-            .chain(self.action.and_then(|path| action_path(path, view_type)))
+            .flat_map(|trace| trace_picks(trace, picks))
+            .chain(self.record.filter(|_| picks.records).map(str::to_owned))
             .chain(
-                self.children
-                    .values()
-                    .flat_map(|child| child.paths(view_type)),
+                self.action
+                    .and_then(|path| action_path(path, picks.view_type)),
             )
+            .chain(self.children.values().flat_map(|child| child.paths(picks)))
             .collect()
     }
 }
@@ -114,6 +162,45 @@ impl<'a> TraceTree<'a> {
 /// The segments of `path` between its "/".
 fn segments(path: &str) -> impl Iterator<Item = &str> {
     path.split('/').filter(|segment| !segment.is_empty())
+}
+
+/// The segments of the node of `trace` in the tree: those of its path between its "/",
+/// then its record fields with their leading ".".
+fn trace_segments(trace: &Trace) -> impl Iterator<Item = &str> {
+    let path = trace.path.as_str();
+    let (name, fields) = path.split_at(trace.fields_start.unwrap_or(path.len()));
+    let field_starts = fields.match_indices('.').map(|(start, _)| start);
+    let field_ends = field_starts.clone().skip(1).chain([fields.len()]);
+    let field_segments = field_starts
+        .zip(field_ends)
+        .map(|(start, end)| &fields[start..end]);
+    segments(name).chain(field_segments)
+}
+
+/// The path of the record `trace` is a field of, e.g. "imu" for "imu.acc.z".
+pub fn record_path(trace: &Trace) -> Option<&str> {
+    trace.fields_start.map(|start| &trace.path[..start])
+}
+
+/// Whether the node with `key` is below the node with `branch`.
+fn key_is_below(key: &str, branch: &str) -> bool {
+    key.strip_prefix(branch)
+        .is_some_and(|rest| rest.starts_with('/'))
+}
+
+/// Adds the paths a view picking `selection.picks` can show below its wildcards, so
+/// that what is added to a branch later is picked as well.
+pub fn expand_wildcards(model: &Model, selection: ViewSelection<'_>) {
+    if selection.wildcards.is_empty() {
+        return;
+    }
+    let mut tree = TraceTree::build(model.traces.iter());
+    tree.add_actions(model.actions.paths());
+    for key in selection.wildcards.iter() {
+        if let Some(node) = tree.node(key) {
+            selection.paths.extend(node.paths(selection.picks));
+        }
+    }
 }
 
 /// The icon of the type of `samples`.
@@ -125,43 +212,64 @@ pub fn type_icon(samples: &Samples) -> &'static str {
     }
 }
 
-/// The traces selected for a view.
+/// What is picked for a view while the tree is shown, see [`ViewSelection`].
 struct Selection<'a> {
     paths: &'a mut BTreeSet<String>,
-    view_type: ViewType,
+    wildcards: &'a mut BTreeSet<String>,
+    picks: Picks,
     /// Whether only the traces matching a search are shown.
     searching: bool,
 }
 
-/// Shows a checkbox labelled `label` with a weak `icon` after it for selecting all
-/// `paths`: indeterminate if only some are selected, and disabled if there are none.
+/// Shows a checkbox labelled `label` with a weak `icon` after it for picking all
+/// `paths` of the node with `key`: indeterminate if only some are picked, and disabled
+/// if there are none. Checking a `branch` also picks what is added below it later,
+/// unless only the traces matching a search are shown.
 fn show_checkbox(
     ui: &mut Ui,
     label: &str,
     icon: Option<&str>,
     paths: &[String],
+    key: &str,
+    branch: bool,
     selection: &mut Selection<'_>,
 ) -> egui::Response {
-    let selected_count = paths
+    let picked_count = paths
         .iter()
         .filter(|path| selection.paths.contains(*path))
         .count();
-    let mut selected = !paths.is_empty() && selected_count == paths.len();
+    let all = !paths.is_empty() && picked_count == paths.len();
+    let mut checked = all;
     let checkbox = match icon {
-        Some(icon) => egui::Checkbox::new(&mut selected, (label, RichText::new(icon).weak())),
-        None => egui::Checkbox::new(&mut selected, label),
+        Some(icon) => egui::Checkbox::new(&mut checked, (label, RichText::new(icon).weak())),
+        None => egui::Checkbox::new(&mut checked, label),
     };
-    let checkbox = checkbox.indeterminate(selected_count > 0 && selected_count < paths.len());
-    let response = ui.add_enabled(!paths.is_empty(), checkbox);
-    if response.changed() {
-        if selected && selection.view_type.shows_one_trace() {
-            selection.paths.clear();
-        }
-        for path in paths {
-            if selected {
-                selection.paths.insert(path.clone());
-            } else {
+    let checkbox = checkbox.indeterminate(picked_count > 0 && picked_count < paths.len());
+    let mut response = ui.add_enabled(!paths.is_empty(), checkbox);
+    let wildcard = branch && !selection.searching;
+    if wildcard {
+        response = response.on_hover_text("Checking it also picks what is added to it later");
+    }
+    if response.clicked() {
+        if all {
+            // a wildcard at or above it would pick it again
+            selection.wildcards.retain(|wildcard| {
+                wildcard != key && !key_is_below(key, wildcard) && !key_is_below(wildcard, key)
+            });
+            for path in paths {
                 selection.paths.remove(path);
+            }
+        } else {
+            if selection.picks.view_type.shows_one_trace() {
+                selection.paths.clear();
+            }
+            selection.paths.extend(paths.iter().cloned());
+            if wildcard {
+                // what was a wildcard below it is part of this one
+                selection
+                    .wildcards
+                    .retain(|wildcard| !key_is_below(wildcard, key));
+                selection.wildcards.insert(key.to_owned());
             }
         }
     }
@@ -191,26 +299,39 @@ pub fn trace_paths(trace: &Trace, view_type: ViewType) -> Vec<String> {
     }
 }
 
+/// The paths of `trace` that a view picking `picks` can show, none if it picks records.
+fn trace_picks(trace: &Trace, picks: Picks) -> Vec<String> {
+    if picks.records {
+        vec![]
+    } else {
+        trace_paths(trace, picks.view_type)
+    }
+}
+
 /// Shows `trace` labelled `label` with the icon of its type: a checkbox, or a
 /// collapsible list of checkboxes for its elements.
-fn show_trace(ui: &mut Ui, label: &str, trace: &Trace, selection: &mut Selection<'_>) {
+fn show_trace(ui: &mut Ui, label: &str, key: &str, trace: &Trace, selection: &mut Selection<'_>) {
     let icon = Some(type_icon(&trace.samples));
-    let paths = trace_paths(trace, selection.view_type);
+    let picks = selection.picks;
+    let paths = trace_picks(trace, picks);
     let mut hover = format!("{}\n{}", trace.path, trace.samples.type_label());
-    match selection.view_type.selectable(trace) {
+    match picks.view_type.selectable(trace) {
+        _ if picks.records => hover.push_str("\nTables of records show records"),
         Selectable::Trace => {}
         Selectable::No(reason) => hover.push_str(&format!("\n{reason}")),
         Selectable::Elements => {
             let id = ui.make_persistent_id(("trace_array", &trace.path));
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false)
                 .show_header(ui, |ui| {
-                    show_checkbox(ui, label, icon, &paths, selection).on_hover_text(hover);
+                    show_checkbox(ui, label, icon, &paths, key, false, selection)
+                        .on_hover_text(hover);
                 })
                 .body(|ui| {
                     for path in &paths {
                         let label = &path[trace.path.len()..];
                         leaf_row(ui, |ui| {
-                            show_checkbox(ui, label, None, std::slice::from_ref(path), selection)
+                            let paths = std::slice::from_ref(path);
+                            show_checkbox(ui, label, None, paths, key, false, selection)
                                 .on_hover_text(path);
                         });
                     }
@@ -219,9 +340,26 @@ fn show_trace(ui: &mut Ui, label: &str, trace: &Trace, selection: &mut Selection
         }
     }
     leaf_row(ui, |ui| {
-        show_checkbox(ui, label, icon, &paths, selection)
+        show_checkbox(ui, label, icon, &paths, key, false, selection)
             .on_hover_text(&hover)
             .on_disabled_hover_text(hover);
+    });
+}
+
+/// Shows the record at `path` labelled `label`: a checkbox to pick it as a whole.
+fn show_record(ui: &mut Ui, label: &str, key: &str, path: &str, selection: &mut Selection<'_>) {
+    let paths = [path.to_owned()];
+    leaf_row(ui, |ui| {
+        show_checkbox(
+            ui,
+            label,
+            Some(BRACKETS_CURLY),
+            &paths,
+            key,
+            false,
+            selection,
+        )
+        .on_hover_text(format!("{path}\nRecord"));
     });
 }
 
@@ -235,11 +373,12 @@ fn action_path(path: &str, view_type: ViewType) -> Option<String> {
 fn show_action(
     ui: &mut Ui,
     label: &str,
+    key: &str,
     path: &str,
     unannounced: bool,
     selection: &mut Selection<'_>,
 ) {
-    let paths = Vec::from_iter(action_path(path, selection.view_type));
+    let paths = Vec::from_iter(action_path(path, selection.picks.view_type));
     let mut hover = format!("{path}\nAction");
     if unannounced {
         hover.push_str(", not announced by any outpost");
@@ -248,19 +387,29 @@ fn show_action(
         hover.push_str("\nOnly actions views show actions");
     }
     leaf_row(ui, |ui| {
-        show_checkbox(ui, label, Some(ACTION_ICON), &paths, selection)
+        show_checkbox(ui, label, Some(ACTION_ICON), &paths, key, false, selection)
             .on_hover_text(&hover)
             .on_disabled_hover_text(hover);
     });
 }
 
-/// Shows the trace and the action ending at `node`, if any, labelled `label`.
-fn show_leaves(ui: &mut Ui, label: &str, node: &TraceTree<'_>, selection: &mut Selection<'_>) {
+/// Shows the trace, the record and the action ending at `node` with `key`, if any,
+/// labelled `label`.
+fn show_leaves(
+    ui: &mut Ui,
+    label: &str,
+    key: &str,
+    node: &TraceTree<'_>,
+    selection: &mut Selection<'_>,
+) {
     if let Some(trace) = node.trace {
-        show_trace(ui, label, trace, selection);
+        show_trace(ui, label, key, trace, selection);
+    }
+    if let Some(path) = node.record.filter(|_| selection.picks.records) {
+        show_record(ui, label, key, path, selection);
     }
     if let Some(path) = node.action {
-        show_action(ui, label, path, node.unannounced, selection);
+        show_action(ui, label, key, path, node.unannounced, selection);
     }
 }
 
@@ -273,34 +422,35 @@ fn leaf_row(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
     });
 }
 
-/// Shows the children of `node` as collapsible branches, traces and actions.
+/// Shows the children of `node` with the key `prefix` as collapsible branches, traces,
+/// records and actions.
 fn show_trace_tree(ui: &mut Ui, node: &TraceTree<'_>, prefix: &str, selection: &mut Selection<'_>) {
     for (segment, child) in &node.children {
-        let child_prefix = format!("{prefix}/{segment}");
+        let key = format!("{prefix}/{segment}");
         let label = segment.strip_prefix('.').unwrap_or(segment);
         if child.children.is_empty() {
-            show_leaves(ui, label, child, selection);
+            show_leaves(ui, label, &key, child, selection);
         } else {
             let icon = child.is_record().then_some(BRACKETS_CURLY);
             // while searching, branches keep a separate open state, open by default
-            let id = ui.make_persistent_id(("trace_tree", &child_prefix, selection.searching));
+            let id = ui.make_persistent_id(("trace_tree", &key, selection.searching));
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
                 .show_header(ui, |ui| {
-                    if selection.view_type.shows_one_trace() {
+                    if selection.picks.view_type.shows_one_trace() {
                         // a branch cannot be selected as one trace
                         match icon {
                             Some(icon) => ui.label(format!("{label} {icon}")),
                             None => ui.label(label),
                         };
                     } else {
-                        let paths = child.paths(selection.view_type);
-                        show_checkbox(ui, label, icon, &paths, selection);
+                        let paths = child.paths(selection.picks);
+                        show_checkbox(ui, label, icon, &paths, &key, true, selection);
                     }
                 })
                 .body(|ui| {
                     // a trace or an action can also be the prefix of other paths
-                    show_leaves(ui, label, child, selection);
-                    show_trace_tree(ui, child, &child_prefix, selection);
+                    show_leaves(ui, label, &key, child, selection);
+                    show_trace_tree(ui, child, &key, selection);
                 });
         }
     }
@@ -366,20 +516,18 @@ pub fn search_ui(ui: &mut Ui, search: &mut String, compatible_only: &mut bool, f
 }
 
 /// Shows the traces and the announced actions of `model` whose path matches `search`
-/// as a tree with checkboxes for the traces or actions selected for a view of the given
-/// type, disabled if there is no selection to edit. If `compatible_only`, only those the
-/// view can show are in the tree, or all without a view.
+/// as a tree with checkboxes for what is picked for a view, disabled if there is no
+/// selection to edit. If `compatible_only`, only what the view can show is in the tree,
+/// or all without a view.
 pub fn show(
     ui: &mut Ui,
     model: &Model,
     search: &str,
     compatible_only: bool,
-    selection: Option<(&mut BTreeSet<String>, ViewType)>,
+    selection: Option<ViewSelection<'_>>,
 ) {
-    let filter = selection
-        .as_ref()
-        .map(|(_, view_type)| *view_type)
-        .filter(|_| compatible_only);
+    let picks = selection.as_ref().map(|selection| selection.picks);
+    let filter = picks.filter(|_| compatible_only);
     let mut tree = TraceTree::build(
         model
             .traces
@@ -389,7 +537,8 @@ pub fn show(
     tree.add_actions(model.actions.paths().filter(|path| matches(path, search)));
     // shown actions no outpost announces, copied apart from the selection edited below
     let unannounced: Vec<String> = match &selection {
-        Some((paths, view_type)) if view_type.shows_actions() => paths
+        Some(selection) if selection.picks.view_type.shows_actions() => selection
+            .paths
             .iter()
             .filter(|path| model.actions.announcers(path).next().is_none())
             .filter(|path| matches(path, search))
@@ -398,8 +547,11 @@ pub fn show(
         _ => vec![],
     };
     tree.add_unannounced_actions(unannounced.iter().map(String::as_str));
-    if let Some(view_type) = filter {
-        tree.retain_selectable(view_type);
+    if picks.is_some_and(|picks| picks.records) {
+        tree.fold_records();
+    }
+    if let Some(picks) = filter {
+        tree.retain_selectable(picks);
     }
     let searching = !search.trim().is_empty();
     if tree.children.is_empty() {
@@ -413,12 +565,17 @@ pub fn show(
         });
         return;
     }
-    let mut unselectable = BTreeSet::new();
     let enabled = selection.is_some();
-    let (paths, view_type) = selection.unwrap_or((&mut unselectable, ViewType::Plot));
+    let (mut no_paths, mut no_wildcards) = (BTreeSet::new(), BTreeSet::new());
+    let view = selection.unwrap_or(ViewSelection {
+        paths: &mut no_paths,
+        wildcards: &mut no_wildcards,
+        picks: ViewType::Plot.into(),
+    });
     let mut selection = Selection {
-        paths,
-        view_type,
+        paths: view.paths,
+        wildcards: view.wildcards,
+        picks: view.picks,
         searching,
     };
     ui.add_enabled_ui(enabled, |ui| {
@@ -429,6 +586,16 @@ pub fn show(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What is picked for a view of `view_type` as `paths`, without wildcards.
+    fn selection(paths: &mut BTreeSet<String>, view_type: ViewType) -> ViewSelection<'_> {
+        // a wildcard is never set by these tests, so leaking an empty set is fine
+        ViewSelection {
+            paths,
+            wildcards: Box::leak(Box::default()),
+            picks: view_type.into(),
+        }
+    }
 
     #[test]
     fn trace_tree_branches_at_slashes() {
@@ -499,7 +666,7 @@ mod tests {
         ];
         let tree = TraceTree::build(traces.iter());
         assert_eq!(
-            tree.children["imu"].paths(ViewType::Plot),
+            tree.children["imu"].paths(ViewType::Plot.into()),
             ["imu.acc[0]", "imu.acc[1]", "imu.ok"]
         );
     }
@@ -526,7 +693,7 @@ mod tests {
         ];
         let mut tree = TraceTree::build(traces.iter());
         tree.add_actions(["reboot"].into_iter());
-        tree.retain_selectable(ViewType::Plot);
+        tree.retain_selectable(ViewType::Plot.into());
         assert_eq!(
             tree.children.keys().copied().collect::<Vec<_>>(),
             ["imu", "motor"]
@@ -550,7 +717,7 @@ mod tests {
 
         let mut tree = TraceTree::build(traces.iter());
         tree.add_actions(["motor/rpm", "reboot"].into_iter());
-        tree.retain_selectable(ViewType::Actions);
+        tree.retain_selectable(ViewType::Actions.into());
         assert_eq!(
             tree.children.keys().copied().collect::<Vec<_>>(),
             ["motor", "reboot"]
@@ -586,7 +753,13 @@ mod tests {
             .build_ui_state(
                 move |ui, (search, paths): &mut (String, BTreeSet<String>)| {
                     search_ui(ui, search, &mut false, true);
-                    show(ui, &model, search, false, Some((paths, ViewType::Plot)));
+                    show(
+                        ui,
+                        &model,
+                        search,
+                        false,
+                        Some(selection(paths, ViewType::Plot)),
+                    );
                 },
                 (String::new(), BTreeSet::new()),
             );
@@ -631,10 +804,10 @@ mod tests {
         assert_eq!(tree.children["reboot"].action, Some("reboot"));
         // only actions views show actions, and no traces
         assert_eq!(
-            motor.paths(ViewType::Actions),
+            motor.paths(ViewType::Actions.into()),
             ["motor/speed", "motor/stop"]
         );
-        assert_eq!(motor.paths(ViewType::Table), ["motor/speed"]);
+        assert_eq!(motor.paths(ViewType::Table.into()), ["motor/speed"]);
     }
 
     /// A harness showing the tree of the trace "motor/rpm" and the action
@@ -664,7 +837,7 @@ mod tests {
             .build_ui_state(
                 move |ui, (search, paths): &mut (String, BTreeSet<String>)| {
                     search_ui(ui, search, &mut false, true);
-                    show(ui, &model, search, false, Some((paths, view_type)));
+                    show(ui, &model, search, false, Some(selection(paths, view_type)));
                 },
                 (String::new(), BTreeSet::new()),
             );
@@ -777,7 +950,7 @@ mod tests {
                 move |ui, (search, filter, view_type): &mut (String, bool, Option<ViewType>)| {
                     search_ui(ui, search, filter, view_type.is_some());
                     let mut paths = BTreeSet::new();
-                    let selection = view_type.map(|view_type| (&mut paths, view_type));
+                    let selection = view_type.map(|view_type| selection(&mut paths, view_type));
                     show(ui, &model, search, *filter, selection);
                 },
                 (String::new(), false, Some(ViewType::Plot)),
@@ -868,6 +1041,165 @@ mod tests {
             });
             assert!(before_filter < filter.left() && filter.right() <= width);
         }
+    }
+
+    /// Adds a record with the fields "temp" and "volt" at `path` to `model`.
+    fn add_record(model: &mut Model, path: &str) {
+        model.traces.append(&proto::Value {
+            timestamp: 0,
+            path: path.to_owned(),
+            value: proto::Data::Record(vec![
+                ("temp".to_owned(), proto::Data::Float(1.0)),
+                ("volt".to_owned(), proto::Data::Uint(3)),
+            ]),
+        });
+    }
+
+    fn add_trace(model: &mut Model, path: &str) {
+        model.traces.append(&proto::Value {
+            timestamp: 0,
+            path: path.to_owned(),
+            value: proto::Data::Uint(1),
+        });
+    }
+
+    type PickState = (Model, BTreeSet<String>, BTreeSet<String>, String);
+
+    /// A harness showing the search field and the tree of `model` for a view picking
+    /// `picks`, with the picked paths and the wildcards, which are expanded in each
+    /// frame.
+    fn pick_harness(model: Model, picks: Picks) -> egui_kittest::Harness<'static, PickState> {
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(300.0, 400.0))
+            .build_ui_state(
+                move |ui, (model, paths, wildcards, search): &mut PickState| {
+                    search_ui(ui, search, &mut false, true);
+                    let selection = ViewSelection {
+                        paths,
+                        wildcards,
+                        picks,
+                    };
+                    expand_wildcards(model, selection);
+                    let selection = ViewSelection {
+                        paths,
+                        wildcards,
+                        picks,
+                    };
+                    show(ui, model, search, false, Some(selection));
+                },
+                (model, BTreeSet::new(), BTreeSet::new(), String::new()),
+            );
+        harness.run();
+        harness
+    }
+
+    fn set(paths: &[&str]) -> BTreeSet<String> {
+        paths.iter().map(|path| path.to_string()).collect()
+    }
+
+    #[test]
+    fn checking_a_branch_also_picks_what_is_added_to_it_later() {
+        use egui_kittest::kittest::Queryable;
+
+        let mut model = Model::default();
+        for path in ["motor/a", "motor/b", "cpu"] {
+            add_trace(&mut model, path);
+        }
+        let mut harness = pick_harness(model, ViewType::Plot.into());
+        let click = |harness: &mut egui_kittest::Harness<'_, PickState>, label: &str| {
+            harness.get_by_label(label).click();
+            harness.run();
+        };
+        click(&mut harness, "motor");
+        assert_eq!(harness.state().1, set(&["motor/a", "motor/b"]));
+        assert_eq!(harness.state().2, set(&["/motor"]));
+        add_trace(&mut harness.state_mut().0, "motor/c");
+        add_trace(&mut harness.state_mut().0, "other/d");
+        harness.run();
+        assert_eq!(harness.state().1, set(&["motor/a", "motor/b", "motor/c"]));
+
+        // unchecking a trace below the wildcard ends the wildcard
+        click(&mut harness, &format!("a {HASH}"));
+        assert_eq!(harness.state().1, set(&["motor/b", "motor/c"]));
+        assert!(harness.state().2.is_empty());
+
+        // checking the branch again picks all, unchecking it none
+        click(&mut harness, "motor");
+        assert_eq!(harness.state().2, set(&["/motor"]));
+        click(&mut harness, "motor");
+        assert!(harness.state().1.is_empty());
+        assert!(harness.state().2.is_empty());
+
+        // while searching, a branch picks only what matches, without a wildcard
+        harness
+            .get_by_role(egui::accesskit::Role::TextInput)
+            .focus();
+        harness
+            .get_by_role(egui::accesskit::Role::TextInput)
+            .type_text("b");
+        harness.run();
+        click(&mut harness, "motor");
+        assert_eq!(harness.state().1, set(&["motor/b"]));
+        assert!(harness.state().2.is_empty());
+    }
+
+    #[test]
+    fn tables_of_records_pick_records_and_folders_of_records() {
+        let mut model = Model::default();
+        add_record(&mut model, "devices/x");
+        add_record(&mut model, "devices/y");
+        add_trace(&mut model, "cpu");
+        let picks = Picks {
+            view_type: ViewType::Table,
+            records: true,
+        };
+        let mut tree = TraceTree::build(model.traces.iter());
+        tree.fold_records();
+        let devices = &tree.children["devices"];
+        assert!(devices.children["x"].children.is_empty());
+        assert_eq!(devices.paths(picks), ["devices/x", "devices/y"]);
+        assert!(tree.children["cpu"].paths(picks).is_empty());
+        tree.retain_selectable(picks);
+        assert_eq!(
+            tree.children.keys().copied().collect::<Vec<_>>(),
+            ["devices"]
+        );
+
+        // a wildcard picks the records added later, not their fields
+        let (mut paths, mut wildcards) = (set(&["devices/x"]), set(&["/devices"]));
+        add_record(&mut model, "devices/z");
+        add_record(&mut model, "elsewhere/w");
+        let selection = ViewSelection {
+            paths: &mut paths,
+            wildcards: &mut wildcards,
+            picks,
+        };
+        expand_wildcards(&model, selection);
+        assert_eq!(paths, set(&["devices/x", "devices/y", "devices/z"]));
+    }
+
+    #[test]
+    fn records_are_checked_as_a_whole_in_tables_of_records() {
+        use egui_kittest::kittest::{NodeT, Queryable};
+
+        let mut model = Model::default();
+        add_record(&mut model, "devices/x");
+        add_trace(&mut model, "cpu");
+        let picks = Picks {
+            view_type: ViewType::Table,
+            records: true,
+        };
+        let mut harness = pick_harness(model, picks);
+        assert!(harness.query_by_label_contains("temp").is_none());
+        assert!(
+            harness
+                .get_by_label_contains("cpu")
+                .accesskit_node()
+                .is_disabled()
+        );
+        harness.get_by_label_contains("x").click();
+        harness.run();
+        assert_eq!(harness.state().1, set(&["devices/x"]));
     }
 
     #[test]

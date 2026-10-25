@@ -1223,7 +1223,7 @@ mod tests {
         use crate::app::view::{View, ViewType};
 
         let mut view = View::new(ViewType::Actions, "actions".to_owned());
-        let (shown, _) = view.selection_mut().unwrap();
+        let shown = view.selection_mut().unwrap().paths;
         assert!(shown.is_empty());
         shown.insert("a".to_owned());
         match &view.kind {
