@@ -10,9 +10,6 @@ const DEFAULT_ADDRESS: &str = "ws://127.0.0.1:3000/ws/outpost";
 
 /// Why the connections are disabled while recording.
 const RECORDING_HINT: &str = "Stop recording to change the connections";
-/// Why connecting asks first while a recording is not saved.
-const UNSAVED_WARNING: &str = "Connecting starts afresh and drops the recording, which \
-    was not saved. Save it first with File > Save recording.";
 
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
@@ -34,10 +31,6 @@ pub struct Connections {
     /// again while recording if they break, `None` while not recording.
     #[serde(skip)]
     recorded: Option<HashSet<String>>,
-    /// The index of the connection to connect once the user confirms that the unsaved
-    /// recording is dropped.
-    #[serde(skip)]
-    confirm: Option<usize>,
 }
 
 impl Default for Connections {
@@ -52,7 +45,6 @@ impl Default for Connections {
             errors: vec![],
             editing: None,
             recorded: None,
-            confirm: None,
         }
     }
 }
@@ -126,20 +118,16 @@ impl Status {
 }
 
 /// What the row of the connection at `index` allows: none of the changes while
-/// `recording`, and to `ask` before connecting.
+/// `recording`.
 #[derive(Clone, Copy)]
 struct Row {
     index: usize,
     recording: bool,
-    ask: bool,
 }
 
 /// A change of the connections, applied after the panel is shown.
 enum Action {
     Connect(usize),
-    /// Connect after the user confirmed that the unsaved recording is dropped.
-    AskToConnect(usize),
-    CancelConnect,
     Disconnect(usize),
     StartEdit(Edited, Field),
     FinishEdit,
@@ -307,9 +295,8 @@ impl Connections {
 
     /// Shows the connections to connect, disconnect and edit them, unless `recording`:
     /// a recording keeps the connections it started with, so they are disabled but for
-    /// connecting again those that broke, and an edit is dropped. While the recorded
-    /// data is `unsaved`, the first connection, which starts afresh, asks first.
-    pub fn ui(&mut self, ui: &mut egui::Ui, recording: bool, unsaved: bool) {
+    /// connecting again those that broke, and an edit is dropped.
+    pub fn ui(&mut self, ui: &mut egui::Ui, recording: bool) {
         if !recording {
             self.recorded = None;
         } else if self.recorded.is_none() {
@@ -320,7 +307,6 @@ impl Connections {
             let active = addresses.filter(|address| self.status(address).is_active());
             self.recorded = Some(active.cloned().collect());
         }
-        let ask = unsaved && !recording && !self.is_connected();
         let mut actions = vec![];
         theme::section_header(ui, "Connections", |ui| {
             if ui
@@ -349,11 +335,7 @@ impl Connections {
                                 edit_ui(ui, editing, &mut actions);
                             }
                             _ => {
-                                let row = Row {
-                                    index,
-                                    recording,
-                                    ask,
-                                };
+                                let row = Row { index, recording };
                                 self.row_ui(ui, connection, row, &mut actions);
                             }
                         }
@@ -373,33 +355,10 @@ impl Connections {
                 }
             });
         self.editing = editing;
-        self.confirm_ui(ui, &mut actions);
 
         for action in actions {
             self.apply(action, ui.ctx());
         }
-    }
-
-    /// Asks to confirm connecting, which drops the unsaved recording, if asked to.
-    fn confirm_ui(&self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-        let Some(index) = self.confirm else {
-            return;
-        };
-        let mut decided = None;
-        egui::Modal::new(egui::Id::new("confirm connecting")).show(ui.ctx(), |ui| {
-            ui.set_max_width(320.0);
-            ui.label(UNSAVED_WARNING);
-            ui.add_space(8.0);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                if ui.button("Connect").clicked() {
-                    decided = Some(Action::Connect(index));
-                }
-                if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                    decided = Some(Action::CancelConnect);
-                }
-            });
-        });
-        actions.extend(decided);
     }
 
     /// The row of a connection, clicking it connects or disconnects it, see [`Row`].
@@ -410,11 +369,7 @@ impl Connections {
         row: Row,
         actions: &mut Vec<Action>,
     ) {
-        let Row {
-            index,
-            recording,
-            ask,
-        } = row;
+        let Row { index, recording } = row;
         let active = self.status(&connection.address).is_active();
         let reconnect = recording
             && !active
@@ -473,8 +428,6 @@ impl Connections {
         let toggle = || {
             if active {
                 Action::Disconnect(index)
-            } else if ask {
-                Action::AskToConnect(index)
             } else {
                 Action::Connect(index)
             }
@@ -520,12 +473,7 @@ impl Connections {
 
     fn apply(&mut self, action: Action, ctx: &egui::Context) {
         match action {
-            Action::Connect(index) => {
-                self.confirm = None;
-                self.connect(index, ctx.clone());
-            }
-            Action::AskToConnect(index) => self.confirm = Some(index),
-            Action::CancelConnect => self.confirm = None,
+            Action::Connect(index) => self.connect(index, ctx.clone()),
             Action::Disconnect(index) => {
                 let address = self.connections[index].address.clone();
                 self.disconnect(&address);
@@ -599,7 +547,6 @@ impl Connections {
         self.forget(index);
         self.connections.remove(index);
         self.editing = None;
-        self.confirm = None;
     }
 
     /// Disconnects the connection at `index` and drops why it failed.
@@ -810,7 +757,7 @@ mod tests {
         let mut harness = Harness::builder()
             .with_size(egui::vec2(300.0, 300.0))
             .build_ui_state(
-                |ui, connections: &mut Connections| connections.ui(ui, false, false),
+                |ui, connections: &mut Connections| connections.ui(ui, false),
                 connections(&[]),
             );
         harness.run();
@@ -837,7 +784,7 @@ mod tests {
             .with_size(egui::vec2(300.0, 300.0))
             .build_ui_state(
                 |ui, (connections, recording): &mut (Connections, bool)| {
-                    connections.ui(ui, *recording, false);
+                    connections.ui(ui, *recording);
                 },
                 (connections(&["ws://127.0.0.1:1/a"]), true),
             );
@@ -867,7 +814,7 @@ mod tests {
             .with_size(egui::vec2(300.0, 300.0))
             .build_ui_state(
                 |ui, (connections, recording): &mut (Connections, bool)| {
-                    connections.ui(ui, *recording, false);
+                    connections.ui(ui, *recording);
                 },
                 (connections(&[a, b]), false),
             );
@@ -886,31 +833,6 @@ mod tests {
     }
 
     #[test]
-    fn connecting_asks_first_while_a_recording_is_not_saved() {
-        let a = "ws://127.0.0.1:1/a";
-        let mut harness = Harness::builder()
-            .with_size(egui::vec2(300.0, 300.0))
-            .build_ui_state(
-                |ui, connections: &mut Connections| connections.ui(ui, false, true),
-                connections(&[a]),
-            );
-        harness.run();
-        harness.get_by_label_contains(a).click();
-        harness.run();
-        assert!(harness.state().sockets.is_empty());
-        harness.get_by_label_contains("drops the recording");
-        harness.get_by_label("Cancel").click();
-        harness.run();
-        assert!(harness.state().confirm.is_none() && harness.state().sockets.is_empty());
-
-        harness.get_by_label_contains(a).click();
-        harness.run();
-        harness.get_by_label("Connect").click();
-        harness.run_steps(2);
-        assert!(harness.state().status(a).is_active());
-    }
-
-    #[test]
     fn a_connected_row_is_not_highlighted() {
         use egui::accesskit::Toggled;
         use egui_kittest::kittest::NodeT;
@@ -918,7 +840,7 @@ mod tests {
         let mut harness = Harness::builder()
             .with_size(egui::vec2(300.0, 300.0))
             .build_ui_state(
-                |ui, connections: &mut Connections| connections.ui(ui, false, false),
+                |ui, connections: &mut Connections| connections.ui(ui, false),
                 connections(&["ws://127.0.0.1:1/a"]),
             );
         harness.run();

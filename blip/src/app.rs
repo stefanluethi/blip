@@ -26,10 +26,6 @@ pub struct State {
     #[serde(skip)]
     recording: bool,
 
-    /// Whether the data recorded since the recording started was not saved yet.
-    #[serde(skip)]
-    unsaved: bool,
-
     #[serde(skip)]
     model: model::Model,
 
@@ -71,12 +67,6 @@ impl State {
     fn clear_data(&mut self) {
         self.model.clear();
         self.invoker.forget_readback_marks();
-        self.unsaved = false;
-    }
-
-    /// Whether there is recorded data that was not saved, which starting afresh drops.
-    fn has_unsaved_data(&self) -> bool {
-        self.unsaved && self.model.has_samples()
     }
 
     /// Starts afresh with `model`, e.g. of an opened recording: drops all data, also the
@@ -84,7 +74,6 @@ impl State {
     /// forgets the invocations.
     fn start_fresh(&mut self, model: model::Model) {
         self.recording = false;
-        self.unsaved = false;
         self.invoker.reset();
         self.model = model;
     }
@@ -98,7 +87,6 @@ impl State {
             }
             self.clear_data();
             self.time.go_live();
-            self.unsaved = true;
         }
         self.recording = recording;
     }
@@ -341,10 +329,8 @@ impl App {
     fn save_recording(&mut self) {
         let name = format!("{}.blip", chrono::Local::now().format("%Y-%m-%d-%H%M%S"));
         let file = self.state.model.recording.to_file();
-        match files::save(files::Kind::Recording, &name, &file) {
-            // a recording going on is saved only up to now
-            Ok(saved) => self.state.unsaved &= !saved || self.state.recording,
-            Err(error) => self.toasts.error(error),
+        if let Err(error) = files::save(files::Kind::Recording, &name, &file) {
+            self.toasts.error(error);
         }
     }
 
@@ -505,8 +491,7 @@ impl eframe::App for App {
                     .default_size(160.0)
                     .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(0, 4)))
                     .show(ui, |ui| {
-                        let unsaved = self.state.has_unsaved_data();
-                        self.connections.ui(ui, self.state.recording, unsaved);
+                        self.connections.ui(ui, self.state.recording);
                     });
                 ui.add_space(4.0);
                 let context = view::PropertiesContext {
@@ -817,24 +802,6 @@ mod tests {
         // a recording starts with the unit of the new connection only, not the old one
         state.set_recording(true, true);
         assert_eq!(state.model.recording.messages(), 1);
-    }
-
-    #[test]
-    fn recorded_data_is_unsaved_until_saved_or_dropped() {
-        let mut state = State::default();
-        state.set_recording(true, true);
-        assert!(!state.has_unsaved_data());
-        state.receive("a", &value(1), 0.0);
-        state.set_recording(false, true);
-        assert!(state.has_unsaved_data());
-        state.clear_data();
-        assert!(!state.has_unsaved_data());
-
-        state.set_recording(true, true);
-        state.receive("a", &value(2), 0.0);
-        state.set_recording(false, true);
-        assert!(state.apply(Received::FirstOpened, 0.0));
-        assert!(!state.has_unsaved_data());
     }
 
     #[test]
