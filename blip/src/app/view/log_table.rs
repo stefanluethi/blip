@@ -233,11 +233,12 @@ impl LogTable {
         ui.horizontal(|ui| {
             // smaller than the other buttons, to leave the room to the entries
             let icon = egui::RichText::new(regular::ARROW_LINE_DOWN).size(12.0);
-            let auto_scroll = egui::Button::new(icon)
-                .small()
-                .frame_when_inactive(false)
-                .min_size(egui::vec2(18.0, 18.0))
-                .selected(self.filter.auto_scroll);
+            let auto_scroll = theme::hover_frame(
+                egui::Button::new(icon)
+                    .small()
+                    .min_size(egui::vec2(18.0, 18.0))
+                    .selected(self.filter.auto_scroll),
+            );
             if ui
                 .add(auto_scroll)
                 .on_hover_text("Follow the newest entries")
@@ -405,7 +406,7 @@ fn filter_header(
     let text = egui::RichText::new(format!("{title} {icon}"))
         .strong()
         .color(color);
-    let button = egui::Button::new(text).small().frame_when_inactive(false);
+    let button = theme::hover_frame(egui::Button::new(text).small());
     let response = ui.add(button);
     egui::Popup::menu(&response)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)

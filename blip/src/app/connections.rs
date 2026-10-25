@@ -453,10 +453,11 @@ impl Connections {
                 );
         }
         // not highlighted while connected, the status dot shows it
-        let button = egui::Button::new(text)
-            .frame_when_inactive(false)
-            .wrap_mode(egui::TextWrapMode::Extend)
-            .min_size(egui::vec2(width, 0.0));
+        let button = theme::hover_frame(
+            egui::Button::new(text)
+                .wrap_mode(egui::TextWrapMode::Extend)
+                .min_size(egui::vec2(width, 0.0)),
+        );
         let response = ui
             .add_enabled(!recording || reconnect, button)
             .on_hover_text(if reconnect {

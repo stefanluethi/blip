@@ -249,9 +249,11 @@ fn input_ui(ui: &mut egui::Ui, path: &str, param: &Param, value: &mut Data, fiel
             if options.len() <= MAX_BUTTON_OPTIONS {
                 ui.horizontal(|ui| {
                     for option in options {
-                        changed |= ui
-                            .selectable_value(&mut selected, option.clone(), option)
-                            .changed();
+                        let chosen = selected == *option;
+                        if ui.add(theme::selectable(chosen, option)).clicked() && !chosen {
+                            selected.clone_from(option);
+                            changed = true;
+                        }
                     }
                 });
             } else {

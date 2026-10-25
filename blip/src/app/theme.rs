@@ -312,13 +312,13 @@ pub fn segmented<T: PartialEq + Copy>(
                     let chosen = *value == option;
                     let color = if chosen { t.text } else { t.text_weak };
                     let text = egui::RichText::new(name).size(12.0).color(color);
-                    let mut button =
-                        egui::Button::selectable(chosen, text).corner_radius(CONTROL_RADIUS - 1);
+                    let mut button = egui::Button::new(text).corner_radius(CONTROL_RADIUS - 1);
                     if chosen {
                         button = button
                             .fill(t.control)
                             .stroke(Stroke::new(1.0, t.border_strong));
                     }
+                    let button = hover_frame(button).selected(chosen);
                     let response = ui
                         .allocate_ui_with_layout(
                             egui::vec2(width, height),
@@ -348,8 +348,67 @@ pub fn section_header(ui: &mut egui::Ui, text: &str, add: impl FnOnce(&mut egui:
 
 /// A button with only `icon`, framed only while hovered, like the add buttons of the
 /// panels.
-pub fn icon_button(icon: &str) -> egui::Button<'_> {
-    egui::Button::new(icon).frame_when_inactive(false)
+pub fn icon_button(icon: &str) -> HoverFrame<'_> {
+    hover_frame(egui::Button::new(icon))
+}
+
+/// `button` framed only while hovered or pressed.
+pub fn hover_frame(button: egui::Button<'_>) -> HoverFrame<'_> {
+    HoverFrame {
+        button,
+        framed_at_rest: false,
+    }
+}
+
+/// A button framed while `selected`, hovered or pressed, in place of egui's
+/// [`egui::Button::selectable`].
+pub fn selectable<'a>(selected: bool, atoms: impl egui::IntoAtoms<'a>) -> HoverFrame<'a> {
+    hover_frame(egui::Button::new(atoms)).selected(selected)
+}
+
+/// A button framed only while hovered or pressed, which keeps its content in place.
+///
+/// egui leaves out the room of the stroke along with the frame of a resting button
+/// without one ([`egui::Button::frame_when_inactive`]), so its content moves by the
+/// width of the stroke when it is hovered. This one keeps the frame, but invisible.
+pub struct HoverFrame<'a> {
+    button: egui::Button<'a>,
+    framed_at_rest: bool,
+}
+
+impl<'a> HoverFrame<'a> {
+    /// Also framed, in the colours of the selection, while `selected`.
+    pub fn selected(self, selected: bool) -> Self {
+        Self {
+            button: self.button.selected(selected),
+            framed_at_rest: selected,
+        }
+    }
+
+    /// The button to add to `ui` next, e.g. for a [`egui::containers::menu::MenuButton`].
+    pub fn button(self, ui: &egui::Ui) -> egui::Button<'a> {
+        // the state egui paints the button in, from the previous frame
+        let resting = ui
+            .ctx()
+            .read_response(ui.next_auto_id())
+            .is_none_or(|r| r.widget_state() == egui::widget_style::WidgetState::Inactive);
+        let button = self.button.frame(true).frame_when_inactive(true);
+        if resting && !self.framed_at_rest {
+            let width = ui.visuals().widgets.inactive.bg_stroke.width;
+            button
+                .fill(Color32::TRANSPARENT)
+                .stroke(Stroke::new(width, Color32::TRANSPARENT))
+        } else {
+            button
+        }
+    }
+}
+
+impl egui::Widget for HoverFrame<'_> {
+    fn ui(self, ui: &mut egui::Ui) -> egui::Response {
+        let button = self.button(ui);
+        ui.add(button)
+    }
 }
 
 /// The room above and below the text of a table row.
@@ -446,5 +505,48 @@ mod tests {
         let visuals = Visuals::light();
         assert_eq!(palette_color(&visuals, 5), LIGHT.traces[0]);
         assert!((0..5).all(|i| palette_color(&visuals, i) != palette_grey(&visuals)));
+    }
+
+    /// The rects of the widget `add` adds while resting, hovered and pressed.
+    fn rects_by_state(add: impl Fn(&mut egui::Ui) -> egui::Response) -> [egui::Rect; 3] {
+        let ctx = egui::Context::default();
+        install(&ctx);
+        let frame = |events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                events,
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(400.0, 300.0),
+                )),
+                ..Default::default()
+            };
+            let mut rect = egui::Rect::NOTHING;
+            let mut output = ctx.run_ui(input, |ui| rect = add(ui).rect);
+            output.textures_delta.clear();
+            rect
+        };
+        frame(vec![]);
+        let resting = frame(vec![]);
+        let pos = resting.center();
+        frame(vec![egui::Event::PointerMoved(pos)]);
+        let hovered = frame(vec![]);
+        frame(vec![egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        }]);
+        let pressed = frame(vec![]);
+        [resting, hovered, pressed]
+    }
+
+    #[test]
+    fn buttons_framed_only_while_hovered_keep_their_size() {
+        let [resting, hovered, pressed] = rects_by_state(|ui| ui.add(icon_button("+")));
+        assert_eq!(resting, hovered);
+        assert_eq!(resting, pressed);
+        let [resting, hovered, pressed] = rects_by_state(|ui| ui.add(selectable(false, "Choice")));
+        assert_eq!(resting, hovered);
+        assert_eq!(resting, pressed);
     }
 }

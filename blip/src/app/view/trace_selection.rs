@@ -351,9 +351,11 @@ pub fn search_ui(ui: &mut Ui, search: &mut String, compatible_only: &mut bool, f
         } else {
             "Click to show only the traces and actions the selected view can show"
         };
-        let filter = egui::Button::selectable(*compatible_only && filterable, FUNNEL);
+        let selected = *compatible_only && filterable;
+        let filter = theme::hover_frame(egui::Button::new(FUNNEL).min_size(square));
+        let filter = filter.selected(selected);
         if ui
-            .add_enabled(filterable, filter.min_size(square))
+            .add_enabled(filterable, filter)
             .on_hover_text(hint)
             .on_disabled_hover_text("Select a view that shows traces or actions to filter by it")
             .clicked()

@@ -39,7 +39,7 @@ impl Layout {
 
         theme::section_header(ui, "Layout", |ui| {
             let add = theme::icon_button(egui_phosphor::regular::PLUS);
-            egui::containers::menu::MenuButton::from_button(add)
+            egui::containers::menu::MenuButton::from_button(add.button(ui))
                 .ui(ui, |ui| {
                     for view_type in ViewType::ALL {
                         if ui
@@ -178,8 +178,9 @@ impl Layout {
         }
 
         let selected = self.selected == Some(tile_id);
-        let label = egui::Button::selectable(selected, format!("{icon} {}", self.name(tile_id)))
+        let label = egui::Button::new(format!("{icon} {}", self.name(tile_id)))
             .sense(egui::Sense::click_and_drag());
+        let label = theme::hover_frame(label).selected(selected);
         let response = ui.add(label);
         response.dnd_set_drag_payload(tile_id);
         if let Some(dragged) = rows.dragged {
