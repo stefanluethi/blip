@@ -121,7 +121,8 @@ The model
 * ``Traces``: a table for each path values are sent to, with a column per leaf
   of its values, its traces, sorted by path so the fields of a record follow
   each other. The columns of a table share its ascending timestamps, so the
-  fields of a record are kept together; a field missing from a value is null.
+  fields of a record are kept together; a field missing from a value keeps its
+  value, and each trace counts the samples it received.
   A column holds ``Samples``: ``Numbers``, ``Strings`` (each different text
   kept once), or ``Arrays`` with a shape and their elements in rows of a
   ``Numbers``. ``Numbers`` keeps one ``f64`` per value for plotting, nulls as a

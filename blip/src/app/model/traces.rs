@@ -108,6 +108,24 @@ impl Samples {
         }
     }
 
+    /// Appends the value of the last sample again, null if there is none, for a
+    /// record that lacks the field of these samples, which keeps its value.
+    fn push_previous(&mut self) {
+        match self {
+            Self::Empty(count) => *count += 1,
+            Self::Numbers(numbers)
+            | Self::Arrays {
+                elements: numbers, ..
+            } => {
+                numbers.repeat_last_row();
+            }
+            Self::Strings(strings) => {
+                let id = strings.ids.last().copied().unwrap_or(NULL_TEXT);
+                strings.ids.push(id);
+            }
+        }
+    }
+
     /// Appends `leaf` of `flat` decoded from `frame`, unless its kind does not match.
     fn push(&mut self, leaf: &Leaf, flat: &Flat, frame: &[u8]) -> Result<(), String> {
         if let (Self::Empty(count), leaf) = (&*self, leaf) {
@@ -270,6 +288,9 @@ pub struct Trace<'a> {
     /// For a field of a record, the index of the `.` in `path` before the first field
     /// name, e.g. 3 for `imu.acc.z`.
     pub fields_start: Option<usize>,
+    /// How many samples were received, without the samples of records that lacked
+    /// the field, which keep the value before.
+    pub received: usize,
 }
 
 impl<'a> Trace<'a> {
@@ -303,6 +324,7 @@ impl Trace<'static> {
             timestamps: &[],
             samples: Box::leak(Box::new(samples)),
             fields_start,
+            received: 0,
         }
     }
 }
@@ -373,6 +395,8 @@ struct Column {
     fields_start: Option<usize>,
     table: usize,
     samples: Samples,
+    /// See [`Trace::received`].
+    received: usize,
     warned: bool,
     /// Whether the column was removed, as it only held nulls of what turned out to be a
     /// record.
@@ -426,6 +450,7 @@ impl Traces {
             timestamps: &self.tables[column.table].timestamps[..],
             samples: &column.samples,
             fields_start: column.fields_start,
+            received: column.received,
         }
     }
 
@@ -551,6 +576,7 @@ impl Traces {
             fields_start: (!field.is_empty()).then_some(table_path_len),
             table,
             samples: Samples::Empty(self.tables[table].timestamps.len()),
+            received: 0,
             warned: false,
             removed: false,
         });
@@ -669,7 +695,13 @@ impl Traces {
                 .any(|&id| self.columns[id].fields_start.is_some());
             match (record, leaf) {
                 // a missing record leaves a gap in all its fields
-                (true, Leaf::Null) => {}
+                (true, Leaf::Null) => {
+                    for &id in &self.tables[table].columns {
+                        let column = &mut self.columns[id];
+                        column.samples.push_null();
+                        column.received += 1;
+                    }
+                }
                 (true, leaf) => {
                     let problem = format!("a record cannot become {}", leaf_kind(leaf));
                     self.tables[table].warn(&problem);
@@ -690,14 +722,15 @@ impl Traces {
                         self.tables[table].warn(&problem);
                         return None;
                     }
+                    self.columns[id].received += 1;
                 }
             }
         }
-        // the traces without a leaf in the value
+        // the fields the record lacks keep their values
         for &id in &self.tables[table].columns {
             let samples = &mut self.columns[id].samples;
             if samples.len() == rows {
-                samples.push_null();
+                samples.push_previous();
             }
         }
         Some(table)
@@ -764,7 +797,10 @@ impl Traces {
                 continue;
             }
             match column.samples.push(leaf, flat, frame) {
-                Ok(()) => kept = true,
+                Ok(()) => {
+                    kept = true;
+                    column.received += 1;
+                }
                 Err(problem) if !column.warned => {
                     column.warned = true;
                     log::warn!(
@@ -1014,6 +1050,28 @@ mod tests {
     }
 
     #[test]
+    fn fields_a_record_lacks_keep_their_values() {
+        let traces = traces(&[
+            (
+                "m",
+                record(&[("speed", Data::Float(1.0)), ("state", Data::from("on"))]),
+            ),
+            ("m", record(&[("state", Data::from("off"))])),
+            ("m", record(&[("speed", Data::Float(3.0))])),
+            ("m", Data::Null),
+        ]);
+        assert_values(values(&traces, "m.speed"), &[1.0, 1.0, 3.0, f64::NAN]);
+        let state = traces.get("m.state").unwrap();
+        let texts: Vec<String> = (0..4)
+            .map(|index| state.samples.format(index, 8, None, DisplayFormat::Default))
+            .collect();
+        assert_eq!(texts, ["on", "off", "off", "null"]);
+        // a missing record is received as a gap in each field
+        assert_eq!(traces.get("m.speed").unwrap().received, 3);
+        assert_eq!(state.received, 3);
+    }
+
+    #[test]
     fn values_far_older_than_the_newest_are_dropped() {
         let mut traces = Traces::default();
         let mut append = |timestamp: u64| {
@@ -1196,11 +1254,14 @@ mod tests {
         assert_eq!(traces.get("x.y").unwrap().timestamps, [1]);
         assert_eq!(traces.tables().count(), 2);
         assert_eq!(traces.time_span(), Some((0, 1)));
-        // a value of which a field fits is kept, the other field is null
+        // a value of which a field fits is kept, the other field keeps its value
         let both = record(&[("y", Data::from("text")), ("z", Data::Float(2.0))]);
         append(&mut traces, 12, "x", both);
-        assert_values(values(&traces, "x.y"), &[1.0, f64::NAN]);
+        assert_values(values(&traces, "x.y"), &[1.0, 1.0]);
         assert_values(values(&traces, "x.z"), &[f64::NAN, 2.0]);
+        // only the samples received count
+        assert_eq!(traces.get("x.y").unwrap().received, 1);
+        assert_eq!(traces.get("x.z").unwrap().received, 1);
     }
 
     #[test]

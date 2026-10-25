@@ -177,11 +177,12 @@ impl Model {
         self.samples_version
     }
 
-    /// The number of samples of the readback trace at `readback`, 0 if there is none.
+    /// The number of samples received of the readback trace at `readback`, 0 if there
+    /// is none.
     pub fn readback_samples(&self, readback: Option<&str>) -> usize {
         readback
             .and_then(|readback| self.traces.get(readback))
-            .map_or(0, |trace| trace.timestamps.len())
+            .map_or(0, |trace| trace.received)
     }
 
     /// Whether values or log records were received, to save or clear them.
