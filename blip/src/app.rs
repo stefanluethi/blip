@@ -503,10 +503,14 @@ impl eframe::App for App {
 
         let central = egui::CentralPanel::default()
             .frame(
-                // the views are cards on the canvas, with a gap around them
+                // the views are cards on the canvas, with a gap around them, the tab bar
+                // on top brings its own room above the tabs
                 egui::Frame::central_panel(ui.style())
                     .fill(theme::tokens(ui.visuals()).canvas)
-                    .inner_margin(egui::Margin::same(theme::GAP as i8)),
+                    .inner_margin(egui::Margin {
+                        top: 2,
+                        ..egui::Margin::same(theme::GAP as i8)
+                    }),
             )
             .show(ui, |ui| {
                 let mut context = ViewContext {

@@ -442,6 +442,8 @@ impl Layout {
             .filter(|&dragged| self.tree.tiles.get(dragged).is_some());
         let mut behavior = Behavior {
             context,
+            root: self.root(),
+            add_tab_clicked: false,
             group_names: &self.group_names,
             selected: &mut self.selected,
             panes_in_tabs,
@@ -455,6 +457,7 @@ impl Layout {
             tab_buttons: Vec::new(),
         };
         self.tree.ui(&mut behavior, ui);
+        let add_tab_clicked = behavior.add_tab_clicked;
         let shown = drag::Shown {
             cards: std::mem::take(&mut behavior.cards),
             tab_buttons: std::mem::take(&mut behavior.tab_buttons),
@@ -466,6 +469,9 @@ impl Layout {
             }
             Some(RenameEnd::Cancel) => self.renaming_title = None,
             None => {}
+        }
+        if add_tab_clicked {
+            self.add_tab();
         }
         if let Some(dragged) = dragged {
             self.center_drop_ui(ui, dragged, &shown);
@@ -483,6 +489,10 @@ enum RenameEnd {
 /// Shows the views of the layout in the center pane.
 struct Behavior<'a, 'b> {
     context: &'a mut ViewContext<'b>,
+    /// The tab group at the top level, whose tab bar has a button to add a tab.
+    root: TileId,
+    /// Set when the button to add a tab is clicked.
+    add_tab_clicked: bool,
     group_names: &'a HashMap<TileId, String>,
     selected: &'a mut Option<TileId>,
     /// Views shown as a tab, they get no title bar.
@@ -505,6 +515,9 @@ struct Behavior<'a, 'b> {
     /// The tab buttons shown, to drop on.
     tab_buttons: Vec<(TileId, egui::Rect)>,
 }
+
+/// Height of a tab bar, the line under it at its bottom.
+const TAB_BAR_HEIGHT: f32 = 28.0;
 
 /// Height of the title bar of a view not shown as a tab, which moves it by drag and drop.
 const TITLE_BAR_HEIGHT: f32 = 28.0;
@@ -728,7 +741,42 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
     }
 
     fn tab_bar_height(&self, _style: &egui::Style) -> f32 {
-        30.0
+        TAB_BAR_HEIGHT
+    }
+
+    fn top_bar_right_ui(
+        &mut self,
+        _tiles: &egui_tiles::Tiles<View>,
+        ui: &mut egui::Ui,
+        _tile_id: TileId,
+        _tabs: &egui_tiles::Tabs,
+        _scroll_offset: &mut f32,
+    ) {
+        // the line under the tabs, painted before them so that the underline of the open
+        // tab lies on it
+        let bar = ui.max_rect();
+        let line = bar.with_min_y(bar.bottom() - 1.0);
+        ui.painter()
+            .rect_filled(line, 0.0, theme::tokens(ui.visuals()).border);
+    }
+
+    fn tab_bar_trailing_ui(
+        &mut self,
+        _tiles: &egui_tiles::Tiles<View>,
+        ui: &mut egui::Ui,
+        tile_id: TileId,
+        _tabs: &egui_tiles::Tabs,
+    ) {
+        if tile_id != self.root {
+            return;
+        }
+        ui.add_space(4.0);
+        let add = ui
+            .add(theme::icon_button(egui_phosphor::regular::PLUS))
+            .on_hover_text("Add a tab");
+        if add.clicked() {
+            self.add_tab_clicked = true;
+        }
     }
 
     fn tab_bar_color(&self, visuals: &egui::Visuals) -> egui::Color32 {
@@ -1042,6 +1090,23 @@ mod tests {
 
         let layout = layout.borrow();
         assert_eq!(children(&layout, layout.root()), [second, tab]);
+    }
+
+    #[test]
+    fn the_plus_after_the_tabs_adds_a_tab_and_opens_it() {
+        let (layout, tab, _, _) = default_layout();
+        let layout = Rc::new(RefCell::new(layout));
+        let mut harness = center_harness(layout.clone());
+        harness.run();
+        harness.get_by_label(egui_phosphor::regular::PLUS).click();
+        harness.run();
+
+        let layout = layout.borrow();
+        let tabs = children(&layout, layout.root());
+        assert_eq!(tabs.len(), 2);
+        assert_eq!(tabs[0], tab);
+        assert_eq!(layout.name(tabs[1]), "Tab 2");
+        assert_eq!(layout.selected, Some(tabs[1]));
     }
 
     #[test]
