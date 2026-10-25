@@ -452,9 +452,11 @@ impl Connections {
                     egui::Align::Min,
                 );
         }
-        // not highlighted while connected, the status dot shows it
+        // not highlighted while connected, the status dot shows it, the
+        // growing atom after the text fills the rest of the width so the
+        // text stays left
         let button = theme::hover_frame(
-            egui::Button::new(text)
+            egui::Button::new((text, egui::Atom::grow()))
                 .wrap_mode(egui::TextWrapMode::Extend)
                 .min_size(egui::vec2(width, 0.0)),
         );
