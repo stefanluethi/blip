@@ -4,10 +4,11 @@
 //! all data, or a part of it when zoomed in with the mouse wheel.
 
 use super::{
-    MAX_WINDOW, MIN_WINDOW, TimeBase, TimeRange, ZOOM_SPEED, paint_cursor, timestamp_to_seconds,
+    MAX_WINDOW, MIN_WINDOW, TimeBase, TimeRange, ZOOM_SPEED, paint_cursor, seconds_to_timestamp,
+    timeline_wheel, timestamp_to_seconds,
 };
 use crate::app::model::logs::LogLevel;
-use crate::app::model::{Activity, Model};
+use crate::app::model::{Activity, Model, Version};
 use crate::app::theme;
 use egui_phosphor::regular;
 use std::ops::Range;
@@ -117,18 +118,27 @@ fn fit_duration(span: f64) -> f64 {
 }
 
 /// Zooms the timeline of `time` shown at `scale` by `factor` around `x`, back to all
-/// data once it would show as much.
+/// data once it would show as much. Showing all data, it zooms from the duration of
+/// the data rather than of the timeline, which [`fit_duration`] rounds up, so that
+/// zooming in a little at a time gets anywhere.
 fn zoom(time: &mut TimeRange, scale: &Scale, x: f32, factor: f64) {
     let Some((first, latest)) = time.span else {
         return;
     };
-    let duration = (scale.duration * factor).max(MIN_WINDOW);
+    let (from_start, from_duration) = match time.overview {
+        None => (first, latest - first),
+        Some(_) => (scale.start, scale.duration),
+    };
+    let duration = (from_duration * factor).max(MIN_WINDOW);
     if duration >= latest - first {
         time.overview = None;
         return;
     }
-    let t = scale.t_at(x);
-    let start = (t - (t - scale.start) * factor).clamp(first, latest - duration);
+    let t = scale.t_at(x).clamp(first, latest);
+    // not `clamp`, which panics if rounding puts the end before the start
+    let start = (t - (t - from_start) * factor)
+        .min(latest - duration)
+        .max(first);
     time.overview = Some(Overview {
         start,
         duration,
@@ -142,7 +152,9 @@ fn pan(time: &mut TimeRange, scale: &Scale, delta: f64) {
     let (Some((first, latest)), Some(_)) = (time.span, time.overview) else {
         return;
     };
-    let start = (scale.start + delta).clamp(first, (latest - scale.duration).max(first));
+    let start = (scale.start + delta)
+        .min(latest - scale.duration)
+        .max(first);
     time.overview = Some(Overview {
         start,
         duration: scale.duration,
@@ -186,13 +198,13 @@ pub(super) fn show(time: &mut TimeRange, ui: &mut egui::Ui, model: &Model) {
     }
 
     if let Some(pos) = ruler.hover_pos().or(track.hover_pos()) {
-        let scroll = ui.input(|i| i.smooth_scroll_delta);
-        if scroll.y != 0.0 {
+        let wheel = timeline_wheel(ui);
+        if wheel.y != 0.0 {
             // scrolling up zooms in
-            zoom(time, &scale, pos.x, f64::from(-scroll.y * ZOOM_SPEED).exp());
+            zoom(time, &scale, pos.x, f64::from(-wheel.y * ZOOM_SPEED).exp());
         }
-        if scroll.x != 0.0 {
-            pan(time, &scale, -f64::from(scroll.x) * scale.resolution());
+        if wheel.x != 0.0 {
+            pan(time, &scale, -f64::from(wheel.x) * scale.resolution());
         }
     }
 
@@ -202,7 +214,7 @@ pub(super) fn show(time: &mut TimeRange, ui: &mut egui::Ui, model: &Model) {
         time.set_cursor(scale.t_at(pos.x));
     }
 
-    let bins = Bins::of(model, &scale);
+    let bins = Bins::cached(ui, id, model, time.span, &scale);
     let hovered_logs = track
         .hover_pos()
         .filter(|pos| pos.y >= track_rect.bottom() - track_rect.height() * LOG_BAR_SHARE)
@@ -210,7 +222,9 @@ pub(super) fn show(time: &mut TimeRange, ui: &mut egui::Ui, model: &Model) {
     let log_time = hovered_logs.as_ref().map(|logs| logs.most_severe);
     track_input(time, ui, &track, &scale, log_time);
 
-    bins.paint(ui, id, &painter, track_rect);
+    // a new recording starts with its own scale, not animated from the last one's
+    let scale_id = id.with(seconds_to_timestamp(time.origin()));
+    bins.paint(ui, scale_id, &painter, track_rect);
     if let Some(range) = time.range() {
         let thumb = thumb_rect(range, track_rect, &scale);
         let active = track.dragged() || track.hovered();
@@ -361,7 +375,7 @@ fn track_input(
 /// The thumb showing the window `[start, end]` seconds on the track in `rect`, at
 /// least [`MIN_THUMB_WIDTH`] wide, and at its edge if the window is outside.
 fn thumb_rect((start, end): (f64, f64), rect: egui::Rect, scale: &Scale) -> egui::Rect {
-    let x_at = |t: f64| scale.x_at(t).clamp(rect.left(), rect.right());
+    let x_at = |t: f64| scale.x_at(t).min(rect.right()).max(rect.left());
     let x = x_at(start)..=x_at(end);
     let thumb = egui::Rect::from_x_y_ranges(x, rect.y_range());
     thumb.expand2(egui::vec2(
@@ -385,11 +399,6 @@ fn grab_at(thumb: egui::Rect, pos: egui::Pos2) -> Grab {
     }
 }
 
-/// Converts `seconds` to a timestamp in nanoseconds.
-fn seconds_to_timestamp(seconds: f64) -> u64 {
-    (seconds * 1.0e9).round().max(0.0) as u64
-}
-
 /// The log records hovered in a bin.
 struct HoveredLogs {
     /// The indices of the records in the bin.
@@ -410,22 +419,69 @@ struct Bins {
     span: (f64, f64),
 }
 
+/// The activity counted for a timeline under its id, kept until the bins or the
+/// samples change.
+#[derive(Clone)]
+struct CachedActivity {
+    key: (u64, u64, usize, Version),
+    activity: Vec<Activity>,
+}
+
 impl Bins {
-    fn of(model: &Model, scale: &Scale) -> Self {
+    /// The bins over `scale` of the data of `model`, whose first and newest data
+    /// are at the times `span` in seconds.
+    #[cfg(test)]
+    fn of(model: &Model, span: Option<(f64, f64)>, scale: &Scale) -> Self {
+        Self::counted(span, scale, |start, step, count| {
+            model.activity(start, step, count)
+        })
+    }
+
+    /// Like [`Self::of`], but counted anew under `id` only once the bins or the data
+    /// changed.
+    fn cached(
+        ui: &egui::Ui,
+        id: egui::Id,
+        model: &Model,
+        span: Option<(f64, f64)>,
+        scale: &Scale,
+    ) -> Self {
+        Self::counted(span, scale, |start, step, count| {
+            let key = (start, step, count, model.samples_version());
+            let cache_id = id.with("activity");
+            match ui.data(|data| data.get_temp::<CachedActivity>(cache_id)) {
+                Some(cached) if cached.key == key => cached.activity,
+                _ => {
+                    let activity = model.activity(start, step, count);
+                    let cached = CachedActivity {
+                        key,
+                        activity: activity.clone(),
+                    };
+                    ui.data_mut(|data| data.insert_temp(cache_id, cached));
+                    activity
+                }
+            }
+        })
+    }
+
+    /// The bins over `scale` in round steps of time, with what `activity` counts in
+    /// the bins from a start, of a step, in nanoseconds, and of a count.
+    fn counted(
+        span: Option<(f64, f64)>,
+        scale: &Scale,
+        activity: impl FnOnce(u64, u64, usize) -> Vec<Activity>,
+    ) -> Self {
         let min_step = scale.resolution() * f64::from(MIN_BIN_WIDTH);
         let step = seconds_to_timestamp(label_step(min_step)).max(1);
         let start = seconds_to_timestamp(scale.start) / step * step;
         let end = seconds_to_timestamp(scale.end());
         let count = ((end.saturating_sub(start)) / step + 1) as usize;
-        let span = model.time_span().map_or((0.0, 0.0), |(first, latest)| {
-            (timestamp_to_seconds(first), timestamp_to_seconds(latest))
-        });
         Self {
             scale: *scale,
             start,
             step,
-            activity: model.activity(start, step, count),
-            span,
+            activity: activity(start, step, count),
+            span: span.unwrap_or_default(),
         }
     }
 
@@ -571,10 +627,11 @@ impl Bins {
         }
 
         // gaps only within the data, not in the bins it covers in part
-        let within: Vec<usize> = (0..self.activity.len())
-            .filter(|&bin| self.covered(bin) >= 1.0)
-            .collect();
-        let (Some(&first), Some(&last)) = (within.first(), within.last()) else {
+        let complete = |bin: &usize| self.covered(*bin) >= 1.0;
+        let (Some(first), Some(last)) = (
+            (0..self.activity.len()).find(complete),
+            (0..self.activity.len()).rfind(complete),
+        ) else {
             return;
         };
         let counts: Vec<u32> = self.activity[first..=last]
@@ -697,7 +754,7 @@ fn paint_ruler(
     let step = label_step(scale.resolution() * f64::from(LABEL_SPACING));
     let decimals = decimals_for(step);
     let font = egui::TextStyle::Body.resolve(ui.style());
-    let mut t = (scale.start / step).ceil() * step;
+    let mut t = first_tick(scale.start, step, base.display_offset(scale.start));
     while t <= scale.end() {
         let x = scale.x_at(t);
         painter.vline(
@@ -714,6 +771,13 @@ fn paint_ruler(
         }
         t += step;
     }
+}
+
+/// The time of the first tick of the ruler at or after `start` seconds: a multiple of
+/// `step` seconds of the shown time, which is `offset` seconds ahead, e.g. a whole
+/// local hour.
+fn first_tick(start: f64, step: f64, offset: f64) -> f64 {
+    ((start + offset) / step).ceil() * step - offset
 }
 
 /// Paints `text` in a small pill beside `x` on the ruler in `rect`, e.g. the time at
@@ -751,11 +815,16 @@ mod tests {
     /// A harness showing the timeline over values from 0 to 100 seconds and an error at
     /// 30 seconds, with a live window of 20 seconds.
     fn harness() -> Harness<'static, State> {
+        harness_until(100)
+    }
+
+    /// Like [`harness`], with values until `last` seconds.
+    fn harness_until(last: u64) -> Harness<'static, State> {
         let mut model = Model::default();
         let mut receive = |message: proto::Message| {
             model.receive("", &serde_cbor_2::to_vec(&message).unwrap());
         };
-        for second in 0..=100 {
+        for second in 0..=last {
             receive(proto::Message::Value(proto::Value {
                 timestamp: second * 1_000_000_000,
                 path: "a".to_owned(),
@@ -795,17 +864,20 @@ mod tests {
         (x, ruler, track, logs)
     }
 
-    /// Scrolls horizontally by `delta` points at `pos`.
-    fn scroll_sideways(harness: &mut Harness<'_, State>, pos: egui::Pos2, delta: f32) {
+    /// Scrolls the mouse wheel by `delta` points at `pos`, passed through
+    /// [`take_wheel`](super::super::take_wheel) as by the app.
+    fn wheel(harness: &mut Harness<'_, State>, pos: egui::Pos2, delta: egui::Vec2) {
         harness.hover_at(pos);
         harness.run();
-        harness.input_mut().events.push(egui::Event::MouseWheel {
+        let ctx = harness.ctx.clone();
+        let input = harness.input_mut();
+        input.events.push(egui::Event::MouseWheel {
             unit: egui::MouseWheelUnit::Point,
-            delta: egui::vec2(delta, 0.0),
+            delta,
             phase: egui::TouchPhase::Move,
             modifiers: egui::Modifiers::NONE,
         });
-        harness.run_steps(60);
+        super::super::take_wheel(&ctx, input);
         harness.run();
     }
 
@@ -900,7 +972,7 @@ mod tests {
     fn scrolling_zooms_the_timeline_and_not_the_window() {
         let mut harness = harness();
         let (x, _, y, _) = at(&harness, 50.0);
-        crate::app::view::scroll_wheel(&mut harness, egui::pos2(x, y), 100.0);
+        wheel(&mut harness, egui::pos2(x, y), egui::vec2(0.0, 100.0));
         let time = &harness.state().0;
         assert_eq!(time.range(), Some((80.0, 100.0)));
         let (start, end) = view(time).unwrap();
@@ -910,15 +982,61 @@ mod tests {
         assert!(!time.overview.unwrap().follows);
 
         // scrolling sideways moves it within the data, at the end following it
-        scroll_sideways(&mut harness, egui::pos2(x, y), -2000.0);
+        wheel(&mut harness, egui::pos2(x, y), egui::vec2(-2000.0, 0.0));
         let time = &harness.state().0;
         assert_eq!(view(time).unwrap().1, 100.0);
         assert!(time.overview.unwrap().follows);
 
         // zooming out as far as all data shows all of it again
-        crate::app::view::scroll_wheel(&mut harness, egui::pos2(x, y), -400.0);
+        wheel(&mut harness, egui::pos2(x, y), egui::vec2(0.0, -400.0));
         assert_eq!(harness.state().0.overview, None);
         assert_eq!(view(&harness.state().0), Some((0.0, 100.0)));
+    }
+
+    #[test]
+    fn scrolling_a_little_at_a_time_zooms_in_from_all_data() {
+        // 101 seconds of data, shown as 120
+        let mut harness = harness_until(101);
+        assert_eq!(view(&harness.state().0), Some((0.0, 120.0)));
+        let (x, _, y, _) = at(&harness, 50.0);
+        for _ in 0..10 {
+            wheel(&mut harness, egui::pos2(x, y), egui::vec2(0.0, 5.0));
+        }
+        let (start, end) = view(&harness.state().0).unwrap();
+        assert!(end - start < 101.0 * 0.85, "{start} {end}");
+    }
+
+    #[test]
+    fn zooming_into_the_shortest_span_does_not_panic() {
+        // Unix times are too coarse to tell apart the ends of a window of 1 ms exactly
+        let first = 1.7e9;
+        for extra in [0.0, 1.0e-8, 1.0e-7, 2.0e-7, 5.0e-7, 1.0e-6] {
+            let latest = first + MIN_WINDOW + extra;
+            let mut time = TimeRange {
+                span: Some((first, latest)),
+                ..TimeRange::default()
+            };
+            let scale = Scale {
+                x: egui::Rangef::new(0.0, 100.0),
+                start: first,
+                duration: latest - first,
+            };
+            for x in [0.0, 50.0, 100.0] {
+                zoom(&mut time, &scale, x, 0.5);
+                if let Some((start, end)) = view(&time) {
+                    assert!(start >= first && end <= latest + 1.0e-6, "{start} {end}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ruler_ticks_are_round_in_the_shown_time() {
+        // at whole hours since boot
+        assert_eq!(first_tick(100.0, 3600.0, 0.0), 3600.0);
+        // at whole local hours half an hour ahead of UTC
+        assert_eq!(first_tick(100.0, 3600.0, 1800.0), 1800.0);
+        assert_eq!(first_tick(1800.0, 3600.0, 1800.0), 1800.0);
     }
 
     #[test]
@@ -970,7 +1088,7 @@ mod tests {
             start: 0.0,
             duration: 11.0,
         };
-        let bins = Bins::of(&model, &scale);
+        let bins = Bins::of(&model, Some((0.0, 9.9)), &scale);
         assert_eq!(bins.step, 1_000_000_000);
         assert_eq!(bins.newest_bin(), Some(9));
         assert_eq!(bins.scale_max(), (10.0, 0));
@@ -979,7 +1097,7 @@ mod tests {
         for thousandth in 0..30 {
             model.receive("", &value(10.0 + f64::from(thousandth) / 1000.0));
         }
-        let bins = Bins::of(&model, &scale);
+        let bins = Bins::of(&model, Some((0.0, 10.029)), &scale);
         assert_eq!(bins.newest_bin(), Some(10));
         assert_eq!(bins.scale_max(), (10.0, 0));
         assert_eq!(bins.rate(10), 30.0);

@@ -11,7 +11,7 @@ pub mod xy;
 use crate::app::model::actions::Invoker;
 use crate::app::model::numbers::{DisplayFormat, NumberKind};
 use crate::app::model::traces::{Samples, Trace};
-use crate::app::model::{Model, PathsVersion};
+use crate::app::model::{Model, Version};
 use crate::app::theme;
 use crate::app::time::TimeRange;
 use std::borrow::Cow;
@@ -78,7 +78,7 @@ pub struct View {
     /// The paths of the model and what the view picked when the wildcards were last
     /// expanded, to expand them only when either changes.
     #[serde(skip)]
-    expanded: Option<(PathsVersion, Picks)>,
+    expanded: Option<(Version, Picks)>,
 }
 
 #[derive(serde::Deserialize, serde::Serialize, Clone)]

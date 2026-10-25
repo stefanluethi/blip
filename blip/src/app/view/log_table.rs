@@ -472,7 +472,6 @@ enum Role {
     Message,
 }
 
-/// The color of the badges and names of `level`.
 #[cfg(test)]
 mod tests {
     use super::*;

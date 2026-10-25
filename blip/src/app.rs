@@ -436,6 +436,7 @@ impl App {
 impl eframe::App for App {
     fn raw_input_hook(&mut self, ctx: &Context, raw_input: &mut egui::RawInput) {
         view::zoom_with_wheel(ctx, raw_input);
+        time::take_wheel(ctx, raw_input);
     }
 
     fn logic(&mut self, ctx: &Context, _frame: &mut Frame) {

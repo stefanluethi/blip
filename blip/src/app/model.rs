@@ -10,12 +10,12 @@ use crate::app::model::recording::Recording;
 use crate::app::model::traces::Traces;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Identifies the paths of the traces and actions of a model: it changes whenever a
-/// trace or an announcement of actions arrives, and no two models share one.
+/// Identifies a state of a part of a model, e.g. the paths of its traces: a new one
+/// is unlike all before, also of other models.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct PathsVersion(u64);
+pub struct Version(u64);
 
-impl Default for PathsVersion {
+impl Default for Version {
     fn default() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         Self(NEXT.fetch_add(1, Ordering::Relaxed))
@@ -33,7 +33,10 @@ pub struct Model {
     /// The latest frames the targets describe themselves with, which they send only
     /// once or seldom, in the order they first arrived.
     descriptions: Vec<Description>,
-    paths_version: PathsVersion,
+    /// Changes whenever a trace or an announcement of actions arrives.
+    paths_version: Version,
+    /// Changes whenever a value or log record arrives.
+    samples_version: Version,
 }
 
 /// The latest frame of `source` with its actions or the unit of a path.
@@ -115,8 +118,9 @@ impl Model {
                 let count = self.traces.count();
                 self.traces.append(&value);
                 if self.traces.count() != count {
-                    self.paths_version = PathsVersion::default();
+                    self.paths_version = Version::default();
                 }
+                self.samples_version = Version::default();
             }
             Ok(proto::Message::ValueMetadata(metadata)) => {
                 self.describe(source, Some(&metadata.path), frame);
@@ -127,11 +131,12 @@ impl Model {
                 // the time domain of the device
                 let now = self.time_span().map(|(_, newest)| newest);
                 self.logs.push(LogEntry::from_proto(&record, now));
+                self.samples_version = Version::default();
             }
             Ok(proto::Message::Actions(actions)) => {
                 self.describe(source, None, frame);
                 self.actions.set(source, actions);
-                self.paths_version = PathsVersion::default();
+                self.paths_version = Version::default();
             }
             Ok(proto::Message::ActionResult(result)) => return Some(result),
             Err(error) => log::warn!("error parsing message: {error}"),
@@ -140,8 +145,13 @@ impl Model {
     }
 
     /// Changes whenever a trace or an announcement of actions arrives.
-    pub fn paths_version(&self) -> PathsVersion {
+    pub fn paths_version(&self) -> Version {
         self.paths_version
+    }
+
+    /// Changes whenever a value or log record arrives.
+    pub fn samples_version(&self) -> Version {
+        self.samples_version
     }
 
     /// The number of samples of the readback trace at `readback`, 0 if there is none.
@@ -167,38 +177,47 @@ impl Model {
     }
 
     /// What arrived in each of `bins` bins of `step` nanoseconds from `start`
-    /// nanoseconds on: the values, with the fields of a record counted once as they
-    /// arrive together, and the log records by level.
+    /// nanoseconds on: the values and the log records by level. A record counts once,
+    /// as its fields arrive together: as many times as its field with the most values
+    /// in the bin, so also when some of its messages lack fields.
     pub fn activity(&self, start: u64, step: u64, bins: usize) -> Vec<Activity> {
         let mut activity = vec![Activity::default(); bins];
         let step = step.max(1);
         let edge = |bin: usize| start.saturating_add(step.saturating_mul(bin as u64));
+        // the counts of the record whose fields follow each other, or of a trace
+        let mut counts = vec![0; bins];
         let mut record = None;
+        let mut add = |counts: &mut Vec<u32>| {
+            for (activity, count) in activity.iter_mut().zip(counts.iter_mut()) {
+                activity.values += std::mem::take(count);
+            }
+        };
         for trace in self.traces.iter() {
             let path = trace.fields_start.map(|at| &trace.path[..at]);
-            if path.is_some() && path == record {
-                continue;
+            if path.is_none() || path != record {
+                add(&mut counts);
             }
             record = path;
             let timestamps = &trace.timestamps;
             let mut from = timestamps.partition_point(|&t| t < start);
-            for (bin, activity) in activity.iter_mut().enumerate() {
+            for (bin, count) in counts.iter_mut().enumerate() {
                 let edge = edge(bin + 1);
                 let to = from + timestamps[from..].partition_point(|&t| t < edge);
-                activity.values += (to - from) as u32;
+                *count = (*count).max((to - from) as u32);
                 from = to;
             }
         }
-        for entry in &self.logs.entries {
-            let Some(after) = entry.time.checked_sub(start) else {
-                continue;
-            };
-            if let Some(activity) = usize::try_from(after / step)
+        add(&mut counts);
+        let entries = &self.logs.entries;
+        let first = entries.partition_point(|entry| entry.time < start);
+        for entry in entries.range(first..) {
+            let Some(activity) = usize::try_from((entry.time - start) / step)
                 .ok()
                 .and_then(|bin| activity.get_mut(bin))
-            {
-                activity.logs[entry.level.as_index()] += 1;
-            }
+            else {
+                break;
+            };
+            activity.logs[entry.level.as_index()] += 1;
         }
         activity
     }
@@ -321,6 +340,15 @@ mod tests {
         assert_eq!(values(model.activity(0, 10, 4)), [1, 2, 2, 2]);
         assert_eq!(values(model.activity(10, 10, 1)), [2]);
         assert!(model.activity(0, 10, 0).is_empty());
+
+        // a record without its first field still counts
+        let partial = proto::Data::Record(
+            [("y".to_owned(), proto::Data::Float(3.0))]
+                .into_iter()
+                .collect(),
+        );
+        model.receive("", &value(45, "imu", partial));
+        assert_eq!(values(model.activity(40, 10, 1)), [2]);
     }
 
     #[test]

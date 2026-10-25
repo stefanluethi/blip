@@ -22,6 +22,11 @@ pub fn timestamp_to_seconds(timestamp: u64) -> f64 {
     timestamp as f64 / NANOS_PER_SECOND
 }
 
+/// Converts `seconds` to a timestamp in nanoseconds, 0 before the epoch.
+pub fn seconds_to_timestamp(seconds: f64) -> u64 {
+    (seconds * NANOS_PER_SECOND).round().max(0.0) as u64
+}
+
 /// Timestamps after this many seconds are taken as Unix time (after 2001-09-09), earlier
 /// ones as time since the device booted.
 const UNIX_TIME_THRESHOLD: f64 = 1.0e9;
@@ -41,6 +46,20 @@ impl TimeBase {
             TimeBase::Unix
         } else {
             TimeBase::SinceBoot
+        }
+    }
+
+    /// How many seconds the times that [`Self::format`] shows for `seconds` are
+    /// ahead of them: the offset of the local time zone from UTC for Unix time, else 0.
+    pub fn display_offset(self, seconds: f64) -> f64 {
+        match self {
+            TimeBase::Unix => {
+                chrono::DateTime::from_timestamp(seconds as i64, 0).map_or(0.0, |utc| {
+                    let local: chrono::DateTime<chrono::Local> = utc.into();
+                    f64::from(local.offset().local_minus_utc())
+                })
+            }
+            TimeBase::SinceBoot => 0.0,
         }
     }
 
@@ -409,6 +428,71 @@ fn parse_duration(text: &str) -> Option<f64> {
     Some(value * scale)
 }
 
+/// Id of the flag that the timeline contained the pointer in the last pass.
+fn timeline_hovered_id() -> egui::Id {
+    egui::Id::new("timeline hovered")
+}
+
+/// Id of the mouse wheel scrolled over the timeline in points, see [`take_wheel`].
+fn timeline_wheel_id() -> egui::Id {
+    egui::Id::new("timeline wheel")
+}
+
+/// Takes the mouse wheel events of `raw_input` without modifiers or with Shift for
+/// the timeline, if it contained the pointer in the last pass, before egui smooths
+/// them: so that what the pointer moves on to does not scroll with the rest of a
+/// notch. Shift scrolls sideways. The timeline takes them with [`timeline_wheel`].
+pub fn take_wheel(ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+    let hovered = ctx.data_mut(|data| data.remove_temp::<bool>(timeline_hovered_id()));
+    if hovered != Some(true) {
+        return;
+    }
+    let line = ctx.options(|options| options.input_options.line_scroll_speed);
+    let page = raw_input.screen_rect.map_or(500.0, |rect| rect.height());
+    let mut wheel = egui::Vec2::ZERO;
+    raw_input.events.retain(|event| {
+        let egui::Event::MouseWheel {
+            unit,
+            delta,
+            modifiers,
+            ..
+        } = event
+        else {
+            return true;
+        };
+        let shift = *modifiers == egui::Modifiers::SHIFT;
+        if !modifiers.is_none() && !shift {
+            return true;
+        }
+        let delta = match unit {
+            egui::MouseWheelUnit::Point => *delta,
+            egui::MouseWheelUnit::Line => *delta * line,
+            egui::MouseWheelUnit::Page => *delta * page,
+        };
+        wheel += if shift {
+            egui::vec2(delta.x + delta.y, 0.0)
+        } else {
+            delta
+        };
+        false
+    });
+    if wheel != egui::Vec2::ZERO {
+        ctx.data_mut(|data| {
+            *data.get_temp_mut_or_default::<egui::Vec2>(timeline_wheel_id()) += wheel;
+        });
+    }
+}
+
+/// Marks that the timeline contains the pointer, for [`take_wheel`] to take the
+/// wheel for it, and returns what it took since the last call.
+fn timeline_wheel(ui: &egui::Ui) -> egui::Vec2 {
+    ui.data_mut(|data| {
+        data.insert_temp(timeline_hovered_id(), true);
+        data.remove_temp::<egui::Vec2>(timeline_wheel_id())
+            .unwrap_or_default()
+    })
+}
+
 /// Where the cursor line of a time plot or the timeline was shown, to grab it.
 #[derive(Clone, Copy)]
 struct CursorLine {
@@ -630,6 +714,41 @@ mod tests {
             let read = parse_duration(&format_duration(seconds)).unwrap();
             assert!((read - seconds).abs() < seconds * 1.0e-9, "{seconds}");
         }
+    }
+
+    #[test]
+    fn the_wheel_is_taken_for_the_timeline_only_while_it_is_hovered() {
+        let wheel = |modifiers| egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, 1.0),
+            phase: egui::TouchPhase::Move,
+            modifiers,
+        };
+        let ctx = egui::Context::default();
+        let line = ctx.options(|options| options.input_options.line_scroll_speed);
+        let mut input = egui::RawInput {
+            events: vec![wheel(egui::Modifiers::NONE)],
+            ..Default::default()
+        };
+        take_wheel(&ctx, &mut input);
+        assert_eq!(input.events.len(), 1);
+
+        // taken in whole, with Shift sideways, but not with Ctrl, which zooms the UI
+        ctx.data_mut(|data| data.insert_temp(timeline_hovered_id(), true));
+        input.events = vec![
+            wheel(egui::Modifiers::NONE),
+            wheel(egui::Modifiers::SHIFT),
+            wheel(egui::Modifiers::CTRL),
+        ];
+        take_wheel(&ctx, &mut input);
+        assert_eq!(input.events, vec![wheel(egui::Modifiers::CTRL)]);
+        let taken = ctx.data_mut(|data| data.remove_temp::<egui::Vec2>(timeline_wheel_id()));
+        assert_eq!(taken, Some(egui::vec2(line, line)));
+        // until hovered again
+        ctx.data_mut(|data| data.insert_temp(timeline_hovered_id(), false));
+        input.events = vec![wheel(egui::Modifiers::NONE)];
+        take_wheel(&ctx, &mut input);
+        assert_eq!(input.events.len(), 1);
     }
 
     #[test]
