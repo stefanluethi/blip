@@ -128,8 +128,9 @@ The model
 * ``Logs``: all log records in the order of their times.
 * ``Actions``: the latest list of actions of each source.
 * ``Recording``: the received messages, with the source names written in
-  between where the source changes, compressed as they arrive into a gzip
-  member per MiB -- the members one after another are the recording file.
+  between where the source changes, compressed fast as they arrive, a gzip
+  member per MiB, and again at gzip's default level into the recording file
+  when it is saved.
 * The **descriptions**: the latest units and actions frame of each source,
   re-applied by ``Model::clear``.
 

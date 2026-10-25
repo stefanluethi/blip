@@ -9,9 +9,9 @@
 //! messages after it were received from, the source. Messages before the first name
 //! have no source, as all messages of version 1, which are those of one connection.
 //!
-//! While recording, the messages are compressed as they arrive, a gzip member for
-//! each [`CHUNK`] bytes of them, so a recording takes a fraction of the memory of the
-//! messages. The members one after another are the file.
+//! While recording, the messages are compressed as they arrive, fast, a gzip member
+//! for each [`CHUNK`] bytes of them, so a recording takes a fraction of the memory of
+//! the messages. Saving compresses them again, smaller, into one member.
 
 use flate2::{Compression, read::MultiGzDecoder, write::GzEncoder};
 use std::io::{Read, Write};
@@ -59,9 +59,9 @@ impl Default for Recording {
     }
 }
 
-/// `bytes` as one gzip member, compressed fast, as messages arrive all the time.
-fn compress(bytes: &[u8]) -> Vec<u8> {
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
+/// `bytes` as one gzip member compressed at `level`.
+fn compress(bytes: &[u8], level: Compression) -> Vec<u8> {
+    let mut encoder = GzEncoder::new(Vec::new(), level);
     encoder
         .write_all(bytes)
         .and_then(|()| encoder.finish())
@@ -86,7 +86,9 @@ impl Recording {
         self.pending.extend_from_slice(frame);
         self.len += 1;
         if self.pending.len() >= CHUNK {
-            self.members.extend(compress(&self.pending));
+            // fast, as messages arrive all the time
+            self.members
+                .extend(compress(&self.pending, Compression::fast()));
             self.pending.clear();
         }
     }
@@ -96,13 +98,17 @@ impl Recording {
         self.len
     }
 
-    /// The contents of a recording file of the frames.
+    /// The contents of a recording file of the frames, compressed smaller than while
+    /// recording.
     pub fn to_file(&self) -> Vec<u8> {
-        let mut file = self.members.clone();
-        if !self.pending.is_empty() {
-            file.extend(compress(&self.pending));
+        let mut bytes = Vec::new();
+        if !self.members.is_empty() {
+            MultiGzDecoder::new(&self.members[..])
+                .read_to_end(&mut bytes)
+                .expect("the members were compressed here");
         }
-        file
+        bytes.extend_from_slice(&self.pending);
+        compress(&bytes, Compression::default())
     }
 }
 
