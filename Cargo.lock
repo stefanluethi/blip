@@ -226,6 +226,7 @@ dependencies = [
  "ewebsock",
  "flate2",
  "hex-string",
+ "image",
  "js-sys",
  "log",
  "proto",

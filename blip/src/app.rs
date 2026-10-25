@@ -547,26 +547,30 @@ impl eframe::App for App {
     }
 }
 
-/// The mark of blip: a blip on a line, on the accent.
+/// Shows the app icon at the start of the menu bar.
 fn logo_ui(ui: &mut egui::Ui) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
-    let tokens = theme::tokens(ui.visuals());
-    let painter = ui.painter();
-    painter.rect_filled(rect, 5.0, tokens.accent);
-    let at = |x: f32, y: f32| rect.min + egui::vec2(x, y);
-    let line = [
-        (3.5, 11.0),
-        (6.5, 11.0),
-        (8.1, 6.5),
-        (10.7, 14.0),
-        (12.3, 11.0),
-        (16.5, 11.0),
-    ];
-    let points = line.iter().map(|&(x, y)| at(x, y)).collect();
-    painter.add(egui::Shape::line(
-        points,
-        egui::Stroke::new(1.7, tokens.on_accent),
-    ));
+    let texture = logo_texture(ui.ctx());
+    ui.add(egui::Image::new(&texture).fit_to_exact_size(egui::vec2(20.0, 20.0)));
+}
+
+/// The app icon as a texture, decoded on first use and then kept in the memory of
+/// `ctx`.
+fn logo_texture(ctx: &egui::Context) -> egui::TextureHandle {
+    let id = egui::Id::new("logo_texture");
+    if let Some(texture) = ctx.data(|data| data.get_temp::<egui::TextureHandle>(id)) {
+        return texture;
+    }
+    let png = include_bytes!("../assets/icon-64.png");
+    let image = image::load_from_memory(png)
+        .expect("the icon is a valid PNG")
+        .into_rgba8();
+    let size = [image.width() as usize, image.height() as usize];
+    let image = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
+    // mipmaps keep it smooth when shrunk at low pixel densities
+    let options = egui::TextureOptions::LINEAR.with_mipmap_mode(Some(egui::TextureFilter::Linear));
+    let texture = ctx.load_texture("logo", image, options);
+    ctx.data_mut(|data| data.insert_temp(id, texture.clone()));
+    texture
 }
 
 /// A chip with the status of the connections: a green dot and the name of the open

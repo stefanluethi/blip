@@ -6,8 +6,8 @@ the trace palette (blue, violet, magenta, orange, amber).
 
     python3 gen.py
 
-writes the SVGs next to this script and exports the PNGs, the favicon and
-icon.svg into blip/assets. It needs rsvg-convert (librsvg) and ImageMagick.
+writes the SVGs next to this script and exports the PNGs (including the one in
+the menu bar of the app), the favicon and icon.svg into blip/assets. It needs rsvg-convert (librsvg) and ImageMagick.
 """
 
 import math
@@ -110,6 +110,7 @@ def main():
     render(HERE / "blip-standard.svg", 256, ASSETS / "icon-256.png")
     render(HERE / "blip-ios.svg", 192, ASSETS / "icon_ios_touch_192.png")
     render(HERE / "blip-maskable.svg", 512, ASSETS / "maskable_icon_x512.png")
+    render(HERE / "blip-small.svg", 64, ASSETS / "icon-64.png")  # menu bar
     with tempfile.TemporaryDirectory() as tmp:
         sizes = [Path(tmp) / f"{s}.png" for s in (16, 32, 48)]
         for s, path in zip((16, 32, 48), sizes):
