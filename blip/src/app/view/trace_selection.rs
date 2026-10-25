@@ -493,7 +493,13 @@ fn row_ui(ui: &mut Ui, row: &Row<'_, '_>, selection: &mut Selection<'_>) {
             _ => None,
         };
         match toggle {
-            Some((id, default_open)) => toggle_ui(ui, id, default_open),
+            Some((id, default_open)) => {
+                // the toggle takes the indent without a gap, as in egui's headers
+                let item_spacing = ui.spacing().item_spacing;
+                ui.spacing_mut().item_spacing.x = 0.0;
+                toggle_ui(ui, id, default_open);
+                ui.spacing_mut().item_spacing = item_spacing;
+            }
             // lined up with the checkboxes of the branches next to it
             None => ui.add_space(indent),
         }
