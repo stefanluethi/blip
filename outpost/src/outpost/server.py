@@ -58,14 +58,18 @@ class _Client:
         as are queued, up to `MAX_BATCH_BYTES`, a larger message in a frame of its own."""
         held: Optional[bytes] = None
         while True:
-            frame = held if held is not None else await self.queue.get()
+            batch = [held if held is not None else await self.queue.get()]
             held = None
+            size = len(batch[0])
             while not self.queue.empty():
                 message = self.queue.get_nowait()
-                if len(frame) + len(message) > MAX_BATCH_BYTES:
+                if size + len(message) > MAX_BATCH_BYTES:
                     held = message
                     break
-                frame += message
+                batch.append(message)
+                size += len(message)
+            # joined once, as adding to bytes copies all before each time
+            frame = b"".join(batch)
             if self.dropped:
                 logger.warning(f"Dropped {self.dropped} messages for client {self.websocket.remote_address}")
                 self.dropped = 0
