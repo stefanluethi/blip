@@ -2,10 +2,10 @@ Views
 =====
 
 A view shows the traces checked for it in the traces panel (see
-:doc:`traces`), or the logs, or a form of actions. Add views in an empty tab
-or by right-clicking the title of a view, see :doc:`layout`; the settings of
-the selected view are in the properties panel on the right and are saved with
-the layout.
+:doc:`traces`), or the logs, or a form of actions. Add views in an empty tab,
+with **⋯** on the title of a view or with **View › Add view**, see
+:doc:`layout`; the settings of the selected view are in the properties panel
+on the right and are saved with the layout.
 
 .. list-table::
    :header-rows: 1

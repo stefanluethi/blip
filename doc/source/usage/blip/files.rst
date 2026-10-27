@@ -39,7 +39,10 @@ and the outpost replays them. Their format is described in
 View menu
 ---------
 
-Zooms the whole UI in and out, also with :kbd:`Ctrl` and :kbd:`+`, :kbd:`-`
+**Add view** adds a view of the chosen type after the selected view, see
+:doc:`layout`.
+
+The zoom buttons zoom the whole UI in and out, also with :kbd:`Ctrl` and :kbd:`+`, :kbd:`-`
 and :kbd:`0` in the native app. In the browser, these keys zoom the page. The
 zoom is kept across restarts.
 

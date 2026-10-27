@@ -88,8 +88,10 @@ Center
      - rename (:kbd:`Enter` keeps, :kbd:`Escape` drops)
    * - click the open tab
      - select and rename it
-   * - right-click a title or tab
+   * - **⋯** on a title, right-click a title or tab
      - add a view right or below, rename, delete
+   * - **View › Add view**
+     - add a view after the selected one
    * - click a view type in an empty tab
      - add a view of that type
    * - **+** after the tabs

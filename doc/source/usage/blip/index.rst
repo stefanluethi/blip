@@ -43,8 +43,8 @@ The window
    :doc:`connecting`.
 
 ⑤ Views
-   The plots, tables, logs and other views, in tabs. Right-click the title of
-   a view to add a view next to it or to delete it. See :doc:`layout`.
+   The plots, tables, logs and other views, in tabs. **⋯** on the title of a
+   view adds a view next to it or deletes it. See :doc:`layout`.
    Errors and warnings, e.g. when connecting fails, show as notices in the
    bottom right corner of this area.
 

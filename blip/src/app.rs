@@ -309,6 +309,15 @@ impl App {
                 }
             });
             ui.menu_button("View", |ui| {
+                ui.menu_button("Add view", |ui| {
+                    for view_type in view::ViewType::ALL {
+                        let text = format!("{} {}", view_type.icon(), view_type.name());
+                        if ui.button(text).clicked() {
+                            self.layout.add_view(view_type);
+                        }
+                    }
+                });
+                ui.separator();
                 egui::gui_zoom::zoom_menu_buttons(ui);
                 ui.weak(format!("Zoom {:.0} %", ui.ctx().zoom_factor() * 100.0));
             });

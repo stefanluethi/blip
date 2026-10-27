@@ -271,6 +271,34 @@ impl Layout {
         view
     }
 
+    /// Adds a new view of `view_type` and selects it: after the selected view in its
+    /// group, or into the selected group, if they are shown, else into the open tab, or
+    /// into a new tab if there is none.
+    pub fn add_view(&mut self, view_type: ViewType) {
+        let shown = self.tree.active_tiles();
+        let open_tab = match self.container(self.root()) {
+            Some(Container::Tabs(tabs)) => tabs.active,
+            _ => None,
+        };
+        let anchor = (self.selected)
+            .filter(|selected| shown.contains(selected))
+            .or(open_tab.filter(|tab| self.tree.tiles.get(*tab).is_some()));
+        match anchor {
+            Some(group) if self.container(group).is_some() => {
+                self.add_view_into(group, view_type);
+            }
+            Some(view) => {
+                let new = self.new_view(view_type);
+                self.move_next_to(new, view, true);
+                self.select(new);
+            }
+            None => {
+                let tab = self.add_tab();
+                self.add_view_into(tab, view_type);
+            }
+        }
+    }
+
     /// Adds a new view of `view_type` at `side` of `target` and selects it, as if it was
     /// dropped there. Returns its id, or `None` if `target` is not in a group.
     fn add_view_beside(
@@ -708,6 +736,12 @@ const TAB_BAR_HEIGHT: f32 = 28.0;
 /// Height of the title bar of a view not shown as a tab, which moves it by drag and drop.
 const TITLE_BAR_HEIGHT: f32 = 28.0;
 
+/// Size of the menu button at the right end of the title bar of a view.
+const MENU_BUTTON_SIZE: f32 = 22.0;
+
+/// Width of the dots of the menu button, which line up with the content of the view.
+const MENU_DOTS_WIDTH: f32 = 12.0;
+
 /// The card of a view in `rect`, leaving a gap to a tab bar right above it.
 fn card_rect(rect: egui::Rect, below_tab_bar: bool) -> egui::Rect {
     if below_tab_bar {
@@ -781,38 +815,62 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
                 )
                 .on_hover_cursor(egui::CursorIcon::Grab);
             bar.dnd_set_drag_payload(tile_id);
+            // the icon, the title and the menu button in a row, centred on the bar; the
+            // button's frame reaches into the margin, so that its dots line up with the
+            // content below
+            let inset = ((MENU_BUTTON_SIZE - MENU_DOTS_WIDTH) / 2.0) as i8;
             let title = egui::Frame::NONE
                 .inner_margin(egui::Margin {
                     left: 10,
-                    right: 10,
-                    top: 6,
+                    right: 10 - inset,
+                    top: ((TITLE_BAR_HEIGHT - MENU_BUTTON_SIZE) / 2.0) as i8,
                     bottom: 0,
                 })
                 .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new(view.view_type().icon())
-                                .color(ui.visuals().weak_text_color()),
-                        );
-                        let field_size = egui::vec2(ui.available_width(), 0.0);
-                        if self.rename_ui(ui, tile_id, field_size) {
-                            return None;
-                        }
-                        let title = egui::Label::new(egui::RichText::new(&view.name).strong())
-                            .sense(egui::Sense::click_and_drag());
-                        let title = ui
-                            .add(title)
-                            .on_hover_cursor(egui::CursorIcon::Text)
-                            .on_hover_text("Click to rename, drag to move, right-click for more");
-                        title.dnd_set_drag_payload(tile_id);
-                        if title.clicked() {
-                            *self.renaming = Some(Renaming {
-                                tile_id,
-                                name: view.name.clone(),
-                            });
-                        }
-                        ui.allocate_space(ui.available_size());
-                        Some(title)
+                    let row = egui::vec2(ui.available_width(), MENU_BUTTON_SIZE);
+                    let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
+                    ui.allocate_ui_with_layout(row, right_to_left, |ui| {
+                        // little padding, so that the dots are centred in the button
+                        ui.spacing_mut().button_padding = egui::vec2(4.0, 2.0);
+                        let icon =
+                            egui::RichText::new(egui_phosphor::regular::DOTS_THREE).size(16.0);
+                        let button =
+                            egui::Button::new(icon).min_size(egui::Vec2::splat(MENU_BUTTON_SIZE));
+                        let button = theme::hover_frame(button).button(ui);
+                        egui::containers::menu::MenuButton::from_button(button)
+                            .ui(ui, |ui| tile_menu(ui, tile_id, true, &mut self.actions))
+                            .0
+                            .on_hover_text("Add a view next to this one, rename or delete it");
+                        let left_to_right = egui::Layout::left_to_right(egui::Align::Center);
+                        let rest = egui::vec2(ui.available_width(), MENU_BUTTON_SIZE);
+                        ui.allocate_ui_with_layout(rest, left_to_right, |ui| {
+                            ui.label(
+                                egui::RichText::new(view.view_type().icon())
+                                    .color(ui.visuals().weak_text_color()),
+                            );
+                            let field_size = egui::vec2(ui.available_width(), 0.0);
+                            if self.rename_ui(ui, tile_id, field_size) {
+                                return None;
+                            }
+                            let title = egui::Label::new(egui::RichText::new(&view.name).strong())
+                                .truncate()
+                                .sense(egui::Sense::click_and_drag());
+                            let title = ui
+                                .add(title)
+                                .on_hover_cursor(egui::CursorIcon::Text)
+                                .on_hover_text(
+                                    "Click to rename, drag to move, right-click for more",
+                                );
+                            title.dnd_set_drag_payload(tile_id);
+                            if title.clicked() {
+                                *self.renaming = Some(Renaming {
+                                    tile_id,
+                                    name: view.name.clone(),
+                                });
+                            }
+                            Some(title)
+                        })
+                        .inner
                     })
                     .inner
                 })
@@ -1459,6 +1517,56 @@ mod tests {
         harness.get_by_label("Tab 1").click();
         harness.run();
         assert_eq!(layout.borrow().selected, Some(tab));
+    }
+
+    #[test]
+    fn a_view_from_the_menu_bar_goes_after_the_selected_view() {
+        let (mut layout, tab, plot, logs) = default_layout();
+        layout.select(plot);
+        layout.add_view(ViewType::Table);
+        let table = children(&layout, tab)[1];
+        assert_eq!(children(&layout, tab), [plot, table, logs]);
+        assert_eq!(layout.selected, Some(table));
+    }
+
+    #[test]
+    fn a_view_from_the_menu_bar_goes_into_the_open_tab_if_the_selection_is_hidden() {
+        let (mut layout, _, plot, _) = default_layout();
+        layout.select(plot);
+        let second = layout.add_tab();
+        layout.selected = Some(plot);
+        layout.add_view(ViewType::States);
+        assert_eq!(children(&layout, second).len(), 1);
+    }
+
+    #[test]
+    fn a_view_from_the_menu_bar_without_tabs_goes_into_a_new_tab() {
+        let (mut layout, tab, _, _) = default_layout();
+        layout.remove_tile(tab);
+        layout.add_view(ViewType::Plot);
+        let tabs = children(&layout, layout.root());
+        assert_eq!(tabs.len(), 1);
+        assert_eq!(children(&layout, tabs[0]).len(), 1);
+    }
+
+    #[test]
+    fn the_menu_button_of_a_title_opens_its_menu() {
+        let (layout, tab, plot, logs) = default_layout();
+        let layout = Rc::new(RefCell::new(layout));
+        let mut harness = center_harness(layout.clone());
+        harness.run();
+        let buttons: Vec<_> = harness
+            .get_all_by_label(egui_phosphor::regular::DOTS_THREE)
+            .collect();
+        assert_eq!(buttons.len(), 2);
+        buttons[1].click();
+        harness.run();
+        harness.get_by_label_contains("Delete").click();
+        harness.run();
+
+        let layout = layout.borrow();
+        assert_eq!(children(&layout, tab), [plot]);
+        assert!(layout.view(logs).is_none());
     }
 
     #[test]

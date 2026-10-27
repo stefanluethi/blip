@@ -12,9 +12,13 @@ Adding views and tabs
 Click **+** after the tabs to add a tab. An empty tab shows the view types
 (see :doc:`views`); click one to add a view of that type.
 
-To add a view next to another, right-click the title of that view (or its tab,
-if it is shown as a tab) and choose **Add right** or **Add below** and the view
-type. The new view goes there as if it was dragged to that side, see below.
+To add a view next to another, click **⋯** at the right of the title of that
+view, or right-click the title (or its tab, if it is shown as a tab), and
+choose **Add right** or **Add below** and the view type. The new view goes
+there as if it was dragged to that side, see below.
+
+**View › Add view** adds a view after the selected view, or into the open tab
+if the selected view is in another tab.
 
 Selecting
 ---------
@@ -45,7 +49,8 @@ Renaming and deleting
 Click the title of a view, or the open tab, to rename it, or edit the **Name**
 in the properties. :kbd:`Enter` keeps the new name, :kbd:`Escape` drops it.
 
-Right-click the title of a view, or a tab, to **Rename** or **Delete** it.
+The same menu, from **⋯** or a right click on the title of a view, or a right
+click on a tab, has **Rename** and **Delete**.
 Deleting a tab deletes the views in it. Deleting the last view of a tab keeps
 the tab, to add other views to it.
 
