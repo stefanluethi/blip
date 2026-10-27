@@ -47,8 +47,8 @@ Structure
      - The ``TimeRange`` shared by all views, its controls and the timeline
        with the activity bars.
    * - ``app/layout``
-     - The ``Layout``: an ``egui_tiles`` tree of views, the layout panel
-       (``panel.rs``), the properties panel (``properties.rs``), dragging in
+     - The ``Layout``: an ``egui_tiles`` tree of views, the menus to add and
+       delete them in the center, the properties panel (``properties.rs``), dragging in
        the center (``drag.rs``) and the saved form (``file.rs``).
    * - ``app/view``
      - The views and what they share: the ``Viewable`` trait, the
@@ -175,9 +175,9 @@ Layout and views
 The ``Layout`` wraps an ``egui_tiles::Tree<View>``: containers are the groups
 (tabs, vertical, horizontal; group names are kept beside the tree), panes are
 the views. blip draws the tree with its own ``Behavior`` (cards, tab bars,
-titles) and does its own drag and drop: the layout panel and the center share
-the dragged ``TileId`` as payload, and ``drag.rs`` finds the side of the view
-under the pointer.
+titles) and does its own drag and drop with the dragged ``TileId`` as payload;
+``drag.rs`` finds the side of the view under the pointer. Adding a view at a
+side from the menu of a view goes through the same drop.
 
 A ``View`` has a name, a ``ViewKind`` with the state of its type, the number
 ``Formats`` of its traces and the ``wildcards`` (branch keys checked in the

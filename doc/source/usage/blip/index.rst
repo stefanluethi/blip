@@ -11,14 +11,14 @@ The window
 .. figure:: /screenshots/window.png
    :target: ../../_images/window.png
    :class: screenshot
-   :alt: blip connected to an outpost, recording: plots of the acceleration and the motor speed, the states of the motor, the log, the traces tree, the layout and the properties of the selected plot, and the timeline.
+   :alt: blip connected to an outpost, recording: plots of the acceleration and the motor speed, the states of the motor, the log, the traces tree and the properties of the selected plot, and the timeline.
 
    blip with the demo recording and layout.
 
 .. figure:: /diagrams/blip-window.svg
    :target: ../../_images/blip-window.svg
    :class: diagram
-   :alt: The blip window: menu on top, traces and layout on the left,
+   :alt: The blip window: menu on top, traces on the left,
          properties and connections on the right, views in the center, record
          button, time controls and timeline at the bottom.
 
@@ -34,29 +34,25 @@ The window
    The traces and actions received, as a tree, with a checkbox for each to
    choose what the selected view shows. See :doc:`traces`.
 
-③ Layout
-   The views as a tree of tabs and groups, to add, arrange, rename and delete
-   them. See :doc:`layout`.
-
-④ Properties
+③ Properties
    The settings of the selected view or group. See :doc:`layout` and, for the
    settings of each view type, :doc:`views`.
 
-⑤ Connections
+④ Connections
    The WebSocket addresses of outposts and targets, to connect to them. See
    :doc:`connecting`.
 
-⑥ Views
-   The plots, tables, logs and other views, laid out as in the layout panel.
+⑤ Views
+   The plots, tables, logs and other views, in tabs. Right-click the title of
+   a view to add a view next to it or to delete it. See :doc:`layout`.
    Errors and warnings, e.g. when connecting fails, show as notices in the
    bottom right corner of this area.
 
-⑦ Time range
+⑥ Time range
    **Record**, play and pause, **Live**, the length of the window and the
    timeline of all collected data. See :doc:`time`.
 
-Drag the border between the traces and the layout, or between the properties
-and the connections, to resize them. Dragging the inner edge of a side panel
+Drag the border between the properties and the connections to resize them. Dragging the inner edge of a side panel
 past its smallest width hides it, as does its button in the menu bar.
 
 The usual workflow

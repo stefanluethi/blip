@@ -157,7 +157,7 @@ impl Layout {
                 Side::Top => rect.split_top_bottom_at_fraction(0.5).0,
                 Side::Bottom => rect.split_top_bottom_at_fraction(0.5).1,
             }),
-            Drop::Into | Drop::Group => area(rect),
+            Drop::Into => area(rect),
         }
     }
 }

@@ -3,7 +3,7 @@ Traces & actions
 
 The **Traces & actions** panel at the top left lists everything the targets
 announced or sent, as a tree, and chooses what the **selected view** shows.
-Select a view by clicking it in the center or its row in the layout panel.
+Select a view by clicking it.
 
 .. figure:: /screenshots/panel-traces.png
    :target: ../../_images/panel-traces.png

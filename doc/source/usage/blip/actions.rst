@@ -20,9 +20,9 @@ startup or when it connects again.
 Choosing the actions
 --------------------
 
-Add an actions view with **+** › **Actions** in the layout panel and select
-it. The traces panel then offers the announced actions, marked with a
-lightning; check those the view shows. A new actions view shows none.
+Add an actions view (see :doc:`layout`) and select it. The traces panel then
+offers the announced actions, marked with a lightning; check those the view
+shows. A new actions view shows none.
 
 Each action is a row: its name (hover it for the description, the path and
 the outpost it is sent to), its input, the current value of its readback

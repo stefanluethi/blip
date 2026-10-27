@@ -73,8 +73,8 @@ Timeline
    * - click the log records of a bar
      - put the cursor at the most severe one
 
-Layout panel and center
------------------------
+Center
+------
 
 .. list-table::
    :header-rows: 1
@@ -82,13 +82,19 @@ Layout panel and center
 
    * - Input
      - Does
-   * - click a view or row
+   * - click a view
      - select it
-   * - double-click a row, click a title or open tab
+   * - click a title
      - rename (:kbd:`Enter` keeps, :kbd:`Escape` drops)
-   * - right-click a row
-     - rename, delete, change the type of a group
-   * - drag a row, a view title or a tab
+   * - click the open tab
+     - select and rename it
+   * - right-click a title or tab
+     - add a view right or below, rename, delete
+   * - click a view type in an empty tab
+     - add a view of that type
+   * - **+** after the tabs
+     - add a tab
+   * - drag a view title or a tab
      - move it, see :doc:`layout`
 
 Connections panel

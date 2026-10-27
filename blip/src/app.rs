@@ -445,10 +445,8 @@ impl App {
         if let Some(hint) = hint {
             ui.weak(hint);
         }
-        // a view without traces or actions, like the logs, has nothing to choose; the
-        // panel keeps its height, so that the layout panel below stays where it is
+        // a view without traces or actions, like the logs, has nothing to choose
         if view.as_ref().is_some_and(|view| !view.has_selection()) {
-            ui.allocate_space(ui.available_size());
             return;
         }
         let filterable = view.as_ref().is_some_and(|view| view.has_selection());
@@ -524,14 +522,7 @@ impl eframe::App for App {
             .default_size(220.0)
             .frame(side_frame)
             .show_collapsible(ui, &mut left_open, |ui| {
-                // the traces on top, resizable by dragging the border to the layout
-                egui::Panel::top("traces panel")
-                    .resizable(true)
-                    .default_size(250.0)
-                    .frame(section_frame)
-                    .show(ui, |ui| self.traces_panel_ui(ui));
-                ui.add_space(4.0);
-                rest_frame.show(ui, |ui| self.layout.panel_ui(ui));
+                section_frame.show(ui, |ui| self.traces_panel_ui(ui));
             });
         // dragging its edge past the smallest size collapses a panel too
         self.left_collapsed = !left_open;

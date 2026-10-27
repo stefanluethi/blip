@@ -1,40 +1,31 @@
 Layout and properties
 =====================
 
-The views are arranged as a **tree of groups**, shown in the **Layout** panel
-at the bottom left and laid out in the center. The groups at the top level are
-**tabs**. A group below shows its children as tabs, stacked vertically or side
-by side. blip starts with one tab holding a plot and a log view; **File ›
-Reset layout** returns to that.
+The views are arranged in **tabs** in the center. A tab holds its views in
+**groups**, stacked vertically or side by side, or shown as tabs again. blip
+starts with one tab holding a plot and a log view; **File › Reset layout**
+returns to that.
 
-Adding views and groups
------------------------
+Adding views and tabs
+---------------------
 
-Click **+** in the layout panel and choose a view type (see :doc:`views`), a
-**Tab**, or a **Tabs**, **Vertical** or **Horizontal group**. A view or group is
-added next to the selected view or into the selected group. A new group stays
-while it is empty, to add views to it.
+Click **+** after the tabs to add a tab. An empty tab shows the view types
+(see :doc:`views`); click one to add a view of that type.
+
+To add a view next to another, right-click the title of that view (or its tab,
+if it is shown as a tab) and choose **Add right** or **Add below** and the view
+type. The new view goes there as if it was dragged to that side, see below.
 
 Selecting
 ---------
 
-Click a view in the center, or a row in the layout panel, to select it. The
-traces panel then chooses what the view shows and the properties panel shows
-its settings. Selecting a group shows the settings of the group.
+Click a view to select it. The traces panel then chooses what the view shows
+and the properties panel shows its settings. Switching tabs keeps the selected
+view; clicking the open tab selects it, and the properties panel shows the
+settings of its group.
 
-Arranging in the layout panel
------------------------------
-
-Drag a row
-
-* onto the top or bottom edge of another row to move it before or after that
-  row,
-* onto a group to move it into the group,
-* onto a view to put both into a new group. A new group stacks its children
-  across the direction of its parent group.
-
-Arranging in the center
------------------------
+Arranging
+---------
 
 Drag a view by its title, or a view or group shown as a tab by its tab, onto
 the side of another view:
@@ -43,18 +34,20 @@ the side of another view:
   its children across that side.
 * A **highlighted half** shows a new group of both, stacked across that side; a
   group of just the two turns instead.
-* Dropping onto a tab moves before or after it, and onto an empty group into
+* Dropping onto a tab moves before or after it, and onto an empty tab into
   it. Hovering a tab while dragging opens it.
 
-Views can also be dragged between the center and the layout panel.
+Moving the last view out of a tab removes the tab.
 
 Renaming and deleting
 ---------------------
 
-Right-click a row to rename or delete it, or to change the type of a group.
-Double-clicking a row also renames it, as does clicking the title of a view or
-the open tab in the center, or editing the **Name** in the properties.
-:kbd:`Enter` keeps the new name, :kbd:`Escape` drops it.
+Click the title of a view, or the open tab, to rename it, or edit the **Name**
+in the properties. :kbd:`Enter` keeps the new name, :kbd:`Escape` drops it.
+
+Right-click the title of a view, or a tab, to **Rename** or **Delete** it.
+Deleting a tab deletes the views in it. Deleting the last view of a tab keeps
+the tab, to add other views to it.
 
 Properties
 ----------
