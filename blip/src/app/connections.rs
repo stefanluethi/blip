@@ -11,6 +11,9 @@ const DEFAULT_ADDRESS: &str = "ws://127.0.0.1:3000/ws/outpost";
 /// Why the connections are disabled while recording.
 const RECORDING_HINT: &str = "Stop recording to change the connections";
 
+/// The height of the list of connections from which it scrolls.
+const MAX_LIST_HEIGHT: f32 = 320.0;
+
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct Connections {
@@ -290,6 +293,11 @@ impl Connections {
         }
     }
 
+    /// Whether the address or the name of a connection is being edited.
+    pub fn is_editing(&self) -> bool {
+        self.editing.is_some()
+    }
+
     /// Shows the connections to connect, disconnect and edit them, unless `recording`:
     /// a recording keeps the connections it started with, so they are disabled but for
     /// connecting again those that broke, and an edit is dropped.
@@ -322,7 +330,8 @@ impl Connections {
         let mut editing = self.editing.take();
         egui::ScrollArea::vertical()
             .id_salt("connections")
-            .auto_shrink([false, false])
+            .auto_shrink([false, true])
+            .max_height(MAX_LIST_HEIGHT)
             .show(ui, |ui| {
                 for (index, connection) in self.connections.iter().enumerate() {
                     ui.horizontal(|ui| {

@@ -99,8 +99,8 @@ Center
    * - drag a view title or a tab
      - move it, see :doc:`layout`
 
-Connections panel
------------------
+Connections
+-----------
 
 .. list-table::
    :header-rows: 1
@@ -108,6 +108,10 @@ Connections panel
 
    * - Input
      - Does
+   * - click the connection chip in the menu bar
+     - open or close the connections
+   * - click elsewhere in the window, :kbd:`Escape`
+     - close the connections
    * - click a connection
      - connect or disconnect
    * - right-click a connection

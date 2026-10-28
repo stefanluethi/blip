@@ -7,7 +7,7 @@ view of the same ideas is in :doc:`/usage/concepts`.
 Sources, messages and frames
 ----------------------------
 
-* A **source** is one connection of blip, named in the connections panel. Each
+* A **source** is one connection of blip, named in the connections. Each
   message blip receives is applied together with the name of its source.
 * A **frame** is one binary WebSocket message. It holds one ``Message`` or
   several as a CBOR sequence (RFC 8742), e.g. a batch of sonde passed through

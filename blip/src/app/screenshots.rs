@@ -148,8 +148,12 @@ fn screenshots_window() {
     .expect("connections");
     harness.run_steps(2);
 
-    // connect as the user does, then record
+    // connect as the user does, from the list of the connection chip, then record
+    harness.get_by_label("Connections").click();
+    harness.run_steps(2);
     harness.get_by_label_contains("ws://127.0.0.1:").click();
+    harness.run_steps(2);
+    harness.key_press(egui::Key::Escape);
     // no pointer left over the panel in the screenshots
     harness.event(egui::Event::PointerGone);
     step_until(&mut harness, "the connection", |app| {

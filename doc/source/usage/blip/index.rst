@@ -18,15 +18,16 @@ The window
 .. figure:: /diagrams/blip-window.svg
    :target: ../../_images/blip-window.svg
    :class: diagram
-   :alt: The blip window: menu on top, traces on the left,
-         properties and connections on the right, views in the center, record
+   :alt: The blip window: menu with the connection chip on top, traces on the
+         left, properties on the right, views in the center, record
          button, time controls and timeline at the bottom.
 
    The parts of the window.
 
 ① Menu bar
    The **File**, **View** and **Help** menus (see :doc:`files`), a chip with
-   the open connections and the messages received per second, buttons to hide
+   the open connections and the messages received per second, which opens the
+   connections to the outposts and targets (see :doc:`connecting`), buttons to hide
    or show the side panels, and the theme button, which switches between the
    light, dark and system theme.
 
@@ -38,22 +39,18 @@ The window
    The settings of the selected view or group. See :doc:`layout` and, for the
    settings of each view type, :doc:`views`.
 
-④ Connections
-   The WebSocket addresses of outposts and targets, to connect to them. See
-   :doc:`connecting`.
-
-⑤ Views
+④ Views
    The plots, tables, logs and other views, in tabs. **⋯** on the title of a
    view adds a view next to it or deletes it. See :doc:`layout`.
    Errors and warnings, e.g. when connecting fails, show as notices in the
    bottom right corner of this area.
 
-⑥ Time range
+⑤ Time range
    **Record**, play and pause, **Live**, the length of the window and the
    timeline of all collected data. See :doc:`time`.
 
-Drag the border between the properties and the connections to resize them. Dragging the inner edge of a side panel
-past its smallest width hides it, as does its button in the menu bar.
+Dragging the inner edge of a side panel past its smallest width hides it, as
+does its button in the menu bar.
 
 The usual workflow
 ------------------

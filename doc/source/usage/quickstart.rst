@@ -59,8 +59,9 @@ center and the time range at the bottom.
 3. Connect and record
 ---------------------
 
-#. In **Connections** at the bottom right, click **outpost**. Its dot turns
-   green, and the menu bar shows how many messages arrive per second.
+#. Click the chip *Not connected* at the right of the menu bar, then
+   **outpost** in the connections that open. Its dot turns green, and the
+   chip shows how many messages arrive per second.
 #. The **Traces & actions** tree on the left fills with what the simulator
    sends, e.g. ``imu``, ``motor``, ``robot/pose`` and ``sysinfo/cpu``.
 #. Click **Record** in the bottom panel. blip keeps the values and log records

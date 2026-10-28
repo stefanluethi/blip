@@ -1,8 +1,10 @@
 Connecting
 ==========
 
-The **Connections** panel at the bottom right lists the outposts and targets
-by their name and WebSocket address. It starts with
+The **connections** list the outposts and targets by their name and WebSocket
+address. Click the connection chip at the right of the menu bar to open them;
+they stay open while you connect, add or edit, and close on a click elsewhere
+in the window or on :kbd:`Escape`. It starts with
 ``ws://127.0.0.1:3000/ws/outpost``, named ``outpost``, where an outpost started
 with its defaults listens. Several connections can be open at once.
 
@@ -58,7 +60,8 @@ The dot before each connection shows its state:
 
 The reason is also shown as a notice in the bottom right of the views, as is a
 connection closed by its outpost or target. The chip in the menu bar shows the
-open connection (or their number) and the messages received per second.
+open connection (or their number) and the messages received per second, or
+*Not connected*.
 
 Several outposts
 ----------------

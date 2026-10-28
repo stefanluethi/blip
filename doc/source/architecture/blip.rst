@@ -35,7 +35,8 @@ Structure
        while connected and clears the data; the first connection to open
        starts afresh).
    * - ``app/connections.rs``
-     - The connections panel and one ``ewebsock`` socket per open address.
+     - The list of connections, opened from the status chip in the menu bar,
+       and one ``ewebsock`` socket per open address.
        Splits frames into messages and passes them on with the name of their
        connection; sends requests.
    * - ``app/model``

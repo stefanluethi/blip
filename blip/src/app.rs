@@ -208,7 +208,7 @@ pub struct App {
     traces_generation: u64,
     /// Whether the left panel, with the traces and the layout, is collapsed.
     left_collapsed: bool,
-    /// Whether the right panel, with the properties and the connections, is collapsed.
+    /// Whether the right panel, with the properties, is collapsed.
     right_collapsed: bool,
     #[serde(skip)]
     files: files::Files,
@@ -218,6 +218,9 @@ pub struct App {
     /// How many messages the connections receive, shown in the title bar.
     #[serde(skip)]
     rate: MessageRate,
+    /// Whether the list of connections is open below the status chip.
+    #[serde(skip)]
+    connections_shown: bool,
 }
 
 /// The number of messages received per second, measured second by second.
@@ -332,10 +335,54 @@ impl App {
                 panel_button(ui, PanelSide::Left, &mut self.left_collapsed);
                 ui.add_space(4.0);
                 let open = self.connections.open_names();
-                status_chip(ui, &open, self.rate.per_second);
+                let chip = status_chip(ui, &open, self.rate.per_second);
+                if chip.clicked() {
+                    self.connections_shown = !self.connections_shown;
+                }
+                if self.connections_shown {
+                    self.connections_ui(ui, &chip);
+                }
                 egui::warn_if_debug_build(ui);
             });
         });
+    }
+
+    /// Shows the list of connections below the status `chip`. It stays open to connect
+    /// several or to type an address, also while the menu of a connection is used, and
+    /// closes on a click into the window or on Escape.
+    fn connections_ui(&mut self, ui: &egui::Ui, chip: &egui::Response) {
+        // Escape first ends editing an address
+        let editing = self.connections.is_editing();
+        let area = egui::Area::new(egui::Id::new("connections list"))
+            .order(egui::Order::Foreground)
+            .pivot(egui::Align2::RIGHT_TOP)
+            .fixed_pos(chip.rect.right_bottom() + egui::vec2(0.0, 4.0))
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_width(CONNECTIONS_WIDTH);
+                    self.connections.ui(ui, self.state.recording);
+                });
+            });
+        let pressed = ui.input(|input| {
+            input
+                .pointer
+                .any_pressed()
+                .then(|| input.pointer.press_origin())
+                .flatten()
+        });
+        // menus opened from the list are popups in front, like the list
+        let into_window = pressed.is_some_and(|pos| {
+            !area.response.rect.contains(pos)
+                && !chip.rect.contains(pos)
+                && ui
+                    .ctx()
+                    .layer_id_at(pos)
+                    .is_none_or(|layer| layer.order < egui::Order::Foreground)
+        });
+        let escape = !editing && ui.input(|input| input.key_pressed(egui::Key::Escape));
+        if into_window || escape {
+            self.connections_shown = false;
+        }
     }
 
     /// Handles the shortcuts of the menu.
@@ -544,14 +591,6 @@ impl eframe::App for App {
             .default_size(264.0)
             .frame(side_frame)
             .show_collapsible(ui, &mut right_open, |ui| {
-                // the connections below, resizable by dragging the border to the properties
-                egui::Panel::bottom("connections panel")
-                    .resizable(true)
-                    .default_size(160.0)
-                    .frame(section_frame)
-                    .show(ui, |ui| {
-                        self.connections.ui(ui, self.state.recording);
-                    });
                 ui.add_space(4.0);
                 let context = view::PropertiesContext {
                     model: &self.state.model,
@@ -623,18 +662,34 @@ fn logo_texture(ctx: &egui::Context) -> egui::TextureHandle {
     texture
 }
 
+/// Width of the list of connections that opens from the [`status_chip`].
+const CONNECTIONS_WIDTH: f32 = 300.0;
+
 /// A chip with the status of the connections: a green dot and the name of the open
-/// connection or their number, and the messages received per second, `rate`.
-fn status_chip(ui: &mut egui::Ui, open: &HashSet<String>, rate: Option<f64>) {
+/// connection or their number, and the messages received per second, `rate`. It is a
+/// button that opens the list of connections.
+fn status_chip(ui: &mut egui::Ui, open: &HashSet<String>, rate: Option<f64>) -> egui::Response {
     let tokens = theme::tokens(ui.visuals());
+    let id = ui.id().with("status chip");
+    // the frame shows the state of the previous frame, as it is drawn before the click
+    // is sensed on it
+    let hovered = ui
+        .ctx()
+        .read_response(id)
+        .is_some_and(|chip| chip.hovered());
     let text = match open.len() {
         0 => "Not connected".to_owned(),
         1 => open.iter().next().cloned().unwrap_or_default(),
         count => format!("{count} connections"),
     };
+    let (fill, stroke) = if hovered {
+        (tokens.hover, tokens.border_strong)
+    } else {
+        (tokens.control, tokens.border)
+    };
     let frame = egui::Frame::NONE
-        .fill(tokens.control)
-        .stroke(egui::Stroke::new(1.0, tokens.border))
+        .fill(fill)
+        .stroke(egui::Stroke::new(1.0, stroke))
         .corner_radius(theme::CONTROL_RADIUS)
         .inner_margin(egui::Margin::symmetric(8, 3));
     let response = frame
@@ -642,6 +697,7 @@ fn status_chip(ui: &mut egui::Ui, open: &HashSet<String>, rate: Option<f64>) {
             // from the right, as it sits at the right end of the menu bar
             let layout = egui::Layout::right_to_left(egui::Align::Center);
             ui.with_layout(layout, |ui| {
+                ui.weak(egui_phosphor::regular::CARET_DOWN);
                 if let Some(rate) = rate.filter(|_| !open.is_empty()) {
                     let rate = format!("{} msg/s", group_thousands(rate.round() as u64));
                     ui.label(egui::RichText::new(rate).monospace().weak());
@@ -657,12 +713,20 @@ fn status_chip(ui: &mut egui::Ui, open: &HashSet<String>, rate: Option<f64>) {
             });
         })
         .response;
+    let response = ui
+        .interact(response.rect, id, egui::Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Connections"));
+    let mut hint = String::new();
     if open.len() > 1 {
         let mut names: Vec<&String> = open.iter().collect();
         names.sort();
         let names: Vec<&str> = names.into_iter().map(String::as_str).collect();
-        response.on_hover_text(names.join("\n"));
+        hint = names.join("\n") + "\n\n";
     }
+    hint.push_str("Click to show the connections");
+    response.on_hover_text(hint)
 }
 
 /// `number` with its digits in groups of three, split by narrow spaces.
@@ -966,6 +1030,41 @@ mod tests {
         harness.state_mut().reset_traces_panel();
         harness.run();
         assert!(harness.query_by_label_contains("rpm").is_some());
+    }
+
+    #[test]
+    fn the_connections_open_from_the_chip_and_stay_open_in_their_menus() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 500.0))
+            .build_ui_state(|ui, app: &mut App| app.menu_ui(ui), App::default());
+        harness.run();
+        assert!(harness.query_by_label_contains("ws://").is_none());
+
+        harness.get_by_label("Connections").click();
+        harness.run();
+        assert!(harness.query_by_label_contains("ws://").is_some());
+
+        // the menu of a connection is part of the list, using it keeps the list open
+        harness.get_by_label_contains("ws://").click_secondary();
+        harness.run();
+        harness.get_by_label_contains("Edit address").click();
+        harness.run();
+        assert!(
+            harness
+                .query_by_role(egui::accesskit::Role::TextInput)
+                .is_some()
+        );
+
+        // a click elsewhere closes it
+        let elsewhere = egui::pos2(20.0, 400.0);
+        harness.hover_at(elsewhere);
+        harness.drag_at(elsewhere);
+        harness.drop_at(elsewhere);
+        harness.run();
+        assert!(harness.query_by_label_contains("ws://").is_none());
     }
 
     #[test]
