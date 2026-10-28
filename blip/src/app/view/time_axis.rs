@@ -161,7 +161,11 @@ pub fn show<'a>(
         }
     }
     let cursor_x = time.cursor().map(|t| transform.position_from_point_x(t));
-    time::show_cursor(ui, cursor_id, *transform.frame(), cursor_x, cursor_grabbed);
+    let line = time::CursorLook {
+        grabbed: cursor_grabbed,
+        set: time.cursor_is_set(),
+    };
+    time::show_cursor(ui, cursor_id, *transform.frame(), cursor_x, line);
 
     TimePlotResponse {
         hovered: response.inner.map(|point| point.x),

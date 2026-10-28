@@ -87,8 +87,9 @@ The time cursor is a vertical line with a handle on top, shown in all plots
 over time and on the timeline. The table, the heatmap at the cursor and the
 markers of the XY view show the values at its time.
 
-It stays at the end of the range until it is set: click a plot to put it
-there, drag it in a plot, or press or drag on the ruler of the timeline.
+It stays at the end of the range until it is set, drawn faint in the plots
+there: click a plot to put it there, drag it in a plot, or press or drag on
+the ruler of the timeline.
 Setting it pauses, and it stays set until **Live** is pressed, which returns
 the cursor to the end of the range.
 

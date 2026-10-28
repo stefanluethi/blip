@@ -197,6 +197,12 @@ impl TimeRange {
         self.cursor.or_else(|| self.range().map(|(_, end)| end))
     }
 
+    /// Whether the user put the cursor somewhere, instead of it following the end of the
+    /// window.
+    pub fn cursor_is_set(&self) -> bool {
+        self.cursor.is_some()
+    }
+
     /// Puts the cursor at `t` seconds within the collected data. This pauses, so the
     /// cursor stays in the window.
     pub fn set_cursor(&mut self, t: f64) {
@@ -563,9 +569,26 @@ pub fn cursor_grabbed(ui: &egui::Ui, id: egui::Id) -> bool {
     line.grabbed
 }
 
+/// How the cursor line of a view is drawn.
+#[derive(Clone, Copy)]
+pub struct CursorLook {
+    /// Whether it is being dragged.
+    pub grabbed: bool,
+    /// Whether the user put it somewhere, see [`TimeRange::cursor_is_set`]. At the end
+    /// of the window it is faint, as it only marks the time of the shown values.
+    pub set: bool,
+}
+
 /// Draws the cursor line at `x` in `rect` with a handle on top, and remembers it under
 /// `id` for [`cursor_grabbed`].
-pub fn show_cursor(ui: &egui::Ui, id: egui::Id, rect: egui::Rect, x: Option<f32>, grabbed: bool) {
+pub fn show_cursor(
+    ui: &egui::Ui,
+    id: egui::Id,
+    rect: egui::Rect,
+    x: Option<f32>,
+    look: CursorLook,
+) {
+    let grabbed = look.grabbed;
     let x = x.filter(|x| rect.x_range().contains(*x));
     let line = CursorLine { rect, x, grabbed };
     ui.data_mut(|data| data.insert_temp(id, line));
@@ -581,7 +604,14 @@ pub fn show_cursor(ui: &egui::Ui, id: egui::Id, rect: egui::Rect, x: Option<f32>
     }
 
     let width = if grabbed || hovered { 2.0 } else { 1.5 };
-    paint_cursor(&ui.painter_at(rect), x, rect.y_range(), width, ui.visuals());
+    let opacity = if look.set || grabbed || hovered {
+        1.0
+    } else {
+        0.35
+    };
+    let mut painter = ui.painter_at(rect);
+    painter.multiply_opacity(opacity);
+    paint_cursor(&painter, x, rect.y_range(), width, ui.visuals());
 }
 
 /// Paints the cursor line at `x` over `y` with `width` and a handle on top.
