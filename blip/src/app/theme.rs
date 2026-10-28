@@ -155,8 +155,8 @@ pub fn install(ctx: &egui::Context) {
     });
 }
 
-/// Fira Sans Light for text and Fira Code for values, both subset (see `assets/fonts`), then
-/// the Phosphor icons and egui's default fonts for the glyphs they lack.
+/// Fira Sans Book for text, with digits of equal width so that changing values keep their
+/// place, and Fira Code for values, both subset (see `assets/fonts`), then the Phosphor icons and egui's default fonts for the glyphs they lack.
 fn fonts() -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
     let mut add = |name: &str, bytes: &'static [u8]| {
@@ -165,7 +165,7 @@ fn fonts() -> FontDefinitions {
     };
     add(
         "Fira Sans",
-        include_bytes!("../../assets/fonts/FiraSans-Light.ttf"),
+        include_bytes!("../../assets/fonts/FiraSans-Book.ttf"),
     );
     add(
         "Fira Code",
