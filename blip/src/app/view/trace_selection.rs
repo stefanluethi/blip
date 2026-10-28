@@ -222,8 +222,9 @@ struct Selection<'a> {
     picks: Picks,
     /// Whether only the traces matching a search are shown.
     searching: bool,
-    /// The colours of the traces the view draws in them, by their paths.
-    colors: &'a BTreeMap<String, egui::Color32>,
+    /// The paths of the traces the view draws in the colours of the traces, in their
+    /// order, see [`theme::trace_color`].
+    colored: &'a [String],
 }
 
 /// Shows a checkbox labelled `label` for picking all `paths` of the node with `key`, and
@@ -251,11 +252,11 @@ fn show_checkbox(
     let mut response = ui.add_enabled(!paths.is_empty(), checkbox);
     if let [path] = paths
         && all
-        && let Some(&color) = selection.colors.get(path)
+        && let Some(index) = selection.colored.iter().position(|colored| colored == path)
     {
-        paint_colored_check(ui, &response, color);
+        paint_colored_check(ui, &response, theme::trace_color(ui.visuals(), index));
     }
-    type_icon_ui(ui, icon);
+    let icon = type_icon_ui(ui, icon);
     let wildcard = branch && !selection.searching;
     if wildcard {
         response = response.on_hover_text("Checking it also picks what is added to it later");
@@ -293,7 +294,11 @@ fn show_checkbox(
             }
         }
     }
-    response
+    // the icon at the end of the row shows the hover text of the row too
+    match icon {
+        Some(icon) => response | icon,
+        None => response,
+    }
 }
 
 /// Paints the box of the checked `checkbox` filled with `color`, with a dark check mark
@@ -313,14 +318,15 @@ fn paint_colored_check(ui: &Ui, checkbox: &egui::Response, color: egui::Color32)
 
 /// Shows the `icon` of the type of a row, if any, faint at the right end of the row, so
 /// that the names line up and read first.
-fn type_icon_ui(ui: &mut Ui, icon: Option<&str>) {
-    if let Some(icon) = icon {
-        let color = theme::tokens(ui.visuals()).text_faint;
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.add_space(4.0);
-            ui.label(RichText::new(icon).color(color));
-        });
-    }
+fn type_icon_ui(ui: &mut Ui, icon: Option<&str>) -> Option<egui::Response> {
+    let icon = icon?;
+    let color = theme::tokens(ui.visuals()).text_faint;
+    let layout = egui::Layout::right_to_left(egui::Align::Center);
+    let response = ui.with_layout(layout, |ui| {
+        ui.add_space(4.0);
+        ui.label(RichText::new(icon).color(color))
+    });
+    Some(response.inner)
 }
 
 /// The indices of the element at `flat_index` of an array of `shape`, in row-major
@@ -814,9 +820,6 @@ pub fn show(
         return;
     }
     let enabled = selection.is_some();
-    let colors: BTreeMap<String, egui::Color32> = (colored.iter().enumerate())
-        .map(|(index, path)| (path.clone(), theme::trace_color(ui.visuals(), index)))
-        .collect();
     let (mut no_paths, mut no_wildcards) = (BTreeSet::new(), BTreeSet::new());
     let view = selection.unwrap_or(ViewSelection {
         paths: &mut no_paths,
@@ -829,7 +832,7 @@ pub fn show(
         wildcards: view.wildcards,
         picks: view.picks,
         searching: !search.trim().is_empty(),
-        colors: &colors,
+        colored,
     };
     let row_height = ui.spacing().interact_size.y;
     ui.add_enabled_ui(enabled, |ui| {
@@ -1156,6 +1159,16 @@ mod tests {
             );
         harness.run();
         harness
+    }
+
+    #[test]
+    fn the_type_icon_at_the_end_of_a_row_shows_the_hover_text_of_the_row() {
+        use egui_kittest::kittest::Queryable;
+
+        let mut harness = tree_harness(ViewType::Plot);
+        harness.get_by_label(HASH).hover();
+        harness.run();
+        assert!(harness.query_by_label_contains("motor/rpm").is_some());
     }
 
     #[test]
