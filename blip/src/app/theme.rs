@@ -58,7 +58,8 @@ pub struct Tokens {
     /// The colours of the traces, in order: the IBM colour-blind-safe palette ordered
     /// so that neighbours differ most, and a grey as the sixth.
     traces: [Color32; 6],
-    /// How much of a colour tints the card, e.g. for the bands of states.
+    /// How much of a colour tints the card, e.g. for the bands of states, little so
+    /// that the bands stay quiet under their edges in the full colour.
     pub tint: f32,
 }
 
@@ -91,7 +92,7 @@ pub const LIGHT: Tokens = Tokens {
         Color32::from_rgb(0x78, 0x5e, 0xf0),
         Color32::from_rgb(0x6b, 0x72, 0x80),
     ],
-    tint: 0.3,
+    tint: 0.14,
 };
 
 pub const DARK: Tokens = Tokens {
@@ -123,7 +124,7 @@ pub const DARK: Tokens = Tokens {
         Color32::from_rgb(0x78, 0x5e, 0xf0),
         Color32::from_rgb(0x9a, 0xa0, 0xa6),
     ],
-    tint: 0.42,
+    tint: 0.16,
 };
 
 /// The colours of the theme of `visuals`.

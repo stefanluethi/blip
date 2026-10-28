@@ -3,10 +3,9 @@
 
 use super::Selectable;
 use super::time_axis::{self, index_at, visible_range};
-use super::{
-    Formats, PropertiesContext, ViewContext, Viewable, short_names, text_color_on, with_unit,
-};
+use super::{Formats, PropertiesContext, ViewContext, Viewable, short_names, with_unit};
 use crate::app::model::Model;
+use crate::app::model::logs::LogLevel;
 use crate::app::model::numbers::{DisplayFormat, NumberKind, SHOWN_DIGITS};
 use crate::app::model::traces::{Samples, Series, Strings, Trace};
 use crate::app::theme;
@@ -17,6 +16,9 @@ use std::collections::BTreeSet;
 /// Runs narrower than this many points next to each other are drawn as one band that
 /// shows that the value changes too often to tell.
 const MIN_RUN_WIDTH: f64 = 3.0;
+
+/// The height in points of the edge in the full color on top of a band.
+const BAND_EDGE: f64 = 2.0;
 /// Approximate width of a character of a band label in points, to only label bands
 /// wide enough for it.
 const LABEL_CHAR_WIDTH: f64 = 8.0;
@@ -188,17 +190,24 @@ fn merge_narrow(runs: Vec<Run>, min_width: f64) -> Vec<Run> {
     merged
 }
 
-/// The fill color of a band with the value `label`: a tint of a color of the trace
-/// palette.
-fn state_color(label: &str, is_bool: bool, visuals: &egui::Visuals) -> Color32 {
+/// The color of a band with the value `label`, a color of the trace palette, or `None`
+/// for a false bool, whose band stays empty so that true reads as on. Log levels take
+/// the colors they have in log views.
+fn state_color(label: &str, is_bool: bool, visuals: &egui::Visuals) -> Option<Color32> {
+    if let Some(level) = LogLevel::ALL
+        .into_iter()
+        .find(|level| level.as_str().eq_ignore_ascii_case(label))
+    {
+        return Some(theme::level_color(visuals, level));
+    }
     let color = match label.parse::<i64>() {
-        _ if is_bool && label == "false" => theme::palette_grey(visuals),
+        _ if is_bool && label == "false" => return None,
         _ if is_bool => theme::palette_color(visuals, 0),
         // consecutive integers, like the states of a state machine, get distinct colors
         Ok(number) => theme::palette_color(visuals, number.rem_euclid(1 << 16) as usize),
         Err(_) => theme::palette_color(visuals, (fnv1a(label) % (1 << 16)) as usize),
     };
-    theme::tint(visuals, color)
+    Some(color)
 }
 
 /// A hash of `text` that stays the same across runs, so values keep their colors.
@@ -220,24 +229,40 @@ impl States {
         plot_ui: &mut egui_plot::PlotUi<'_>,
     ) {
         let visuals = plot_ui.ctx().global_style().visuals.clone();
-        let seconds_per_point = plot_ui.transform().dvalue_dpos()[0].abs();
+        let [seconds_per_point, values_per_point] = plot_ui.transform().dvalue_dpos();
+        let seconds_per_point = seconds_per_point.abs();
+        // the edge in the full color on top of the quiet fill of a band
+        let edge = BAND_EDGE * values_per_point.abs();
         let (top, bottom) = (y + self.band_height / 2.0, y - self.band_height / 2.0);
         let min_width = MIN_RUN_WIDTH * seconds_per_point;
         for run in runs(samples, range, latest, min_width, origin) {
             let start = run.start.max(range.0);
             let end = run.end.min(range.1);
             let label = run.index.map(|index| samples.label(index));
-            let fill = match &label {
+            // runs too short to tell apart are grey
+            let color = match &label {
                 Some(label) => state_color(label, samples.is_bool(), &visuals),
-                None => visuals.weak_text_color(),
+                None => Some(theme::palette_grey(&visuals)),
             };
-            let corners = vec![[start, bottom], [end, bottom], [end, top], [start, top]];
-            plot_ui.polygon(
+            let rect = |bottom: f64, top: f64, fill: Color32| {
+                let corners = vec![[start, bottom], [end, bottom], [end, top], [start, top]];
                 egui_plot::Polygon::new("", corners)
                     .fill_color(fill)
                     .stroke(egui::Stroke::NONE)
-                    .allow_hover(false),
-            );
+                    .allow_hover(false)
+            };
+            let text_color = match color {
+                Some(color) => {
+                    plot_ui.polygon(rect(bottom, top, theme::tint(&visuals, color)));
+                    plot_ui.polygon(rect(top - edge, top, color));
+                    visuals.text_color()
+                }
+                None => {
+                    let line = theme::tokens(&visuals).border_strong;
+                    plot_ui.polygon(rect(top - edge / 2.0, top, line));
+                    visuals.weak_text_color()
+                }
+            };
             if self.show_values
                 && let Some(label) = run.index.map(|index| samples.text(index))
                 && (end - start) / seconds_per_point
@@ -246,7 +271,7 @@ impl States {
                 let center = egui_plot::PlotPoint::new((start + end) / 2.0, y);
                 plot_ui.text(
                     egui_plot::Text::new("", center, label)
-                        .color(text_color_on(fill))
+                        .color(text_color)
                         .allow_hover(false),
                 );
             }
@@ -478,12 +503,25 @@ mod tests {
     #[test]
     fn integer_states_get_distinct_colors() {
         let colors: BTreeSet<[u8; 4]> = (0..4)
-            .map(|state| state_color(&state.to_string(), false, &egui::Visuals::light()).to_array())
+            .map(|state| {
+                let color = state_color(&state.to_string(), false, &egui::Visuals::light());
+                color.unwrap().to_array()
+            })
             .collect();
         assert_eq!(colors.len(), 4);
         assert_eq!(
             state_color("idle", false, &egui::Visuals::dark()),
             state_color("idle", false, &egui::Visuals::dark())
         );
+    }
+
+    #[test]
+    fn false_bools_are_empty_and_log_levels_take_their_colors() {
+        let visuals = egui::Visuals::dark();
+        assert_eq!(state_color("false", true, &visuals), None);
+        assert!(state_color("true", true, &visuals).is_some());
+        let debug = theme::level_color(&visuals, LogLevel::Debug);
+        assert_eq!(state_color("DEBUG", false, &visuals), Some(debug));
+        assert_eq!(state_color("debug", false, &visuals), Some(debug));
     }
 }

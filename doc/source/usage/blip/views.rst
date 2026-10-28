@@ -100,6 +100,10 @@ state machine. Runs too short to tell apart are drawn as one band showing
 that the value changes too often. Hover a band for its value and time; click
 to put the time cursor there.
 
+Each value keeps its colour: a light band under an edge in the full colour.
+A ``false`` bool leaves its band empty, so ``true`` reads as on, and log
+levels such as ``DEBUG`` or ``ERROR`` take the colours of the log view.
+
 Floats cannot be shown as states; plot them instead.
 
 Properties: **Bands** -- **Height** of a band as a fraction of its row, and
