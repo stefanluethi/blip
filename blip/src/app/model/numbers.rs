@@ -92,7 +92,15 @@ impl Number {
     /// [`Number::format`] writes it by default.
     pub fn format_fixed(self, decimals: usize) -> String {
         match self {
-            Self::Float(value) if value.is_finite() => format!("{value:.decimals$}"),
+            Self::Float(value) if value.is_finite() => {
+                let text = format!("{value:.decimals$}");
+                // a small negative value rounded to zero is written as zero, so that
+                // noise around zero does not make a sign blink
+                match text.strip_prefix('-') {
+                    Some(zero) if zero.chars().all(|c| c == '0' || c == '.') => zero.to_owned(),
+                    _ => text,
+                }
+            }
             _ => self.format(None, DisplayFormat::Default),
         }
     }
@@ -539,6 +547,8 @@ mod tests {
         assert_eq!(Number::Float(0.08026).format_fixed(3), "0.080");
         assert_eq!(Number::Float(-0.14).format_fixed(3), "-0.140");
         assert_eq!(Number::Int(-3).format_fixed(3), "-3");
+        assert_eq!(Number::Float(-0.00003).format_fixed(4), "0.0000");
+        assert_eq!(Number::Float(-0.00006).format_fixed(4), "-0.0001");
     }
 
     fn numbers(values: &[Number]) -> Result<Numbers, String> {

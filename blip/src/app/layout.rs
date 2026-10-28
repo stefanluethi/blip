@@ -345,6 +345,12 @@ impl Layout {
         {
             self.selected = None;
         }
+        // a view or group removed while its name was edited is no longer renamed
+        if (self.renaming.as_ref())
+            .is_some_and(|renaming| self.tree.tiles.get(renaming.tile_id).is_none())
+        {
+            self.renaming = None;
+        }
     }
 
     /// Removes `group` if a move or removal left it without children, and its parent if
@@ -742,6 +748,9 @@ const MENU_BUTTON_SIZE: f32 = 22.0;
 /// Width of the dots of the menu button, which line up with the content of the view.
 const MENU_DOTS_WIDTH: f32 = 12.0;
 
+/// The least width left in a title row for what the view adds to it, like a legend.
+const MIN_TITLE_EXTRA_WIDTH: f32 = 24.0;
+
 /// The card of a view in `rect`, leaving a gap to a tab bar right above it.
 fn card_rect(rect: egui::Rect, below_tab_bar: bool) -> egui::Rect {
     if below_tab_bar {
@@ -879,16 +888,19 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
                                     name: view.name.clone(),
                                 });
                             }
-                            // what the view adds, like a legend, cut off at the menu button
+                            // what the view adds, like a legend, cut off at the menu button,
+                            // unless a long title leaves no room for it
                             let rest = ui
                                 .available_rect_before_wrap()
                                 .shrink2(egui::vec2(4.0, 0.0));
-                            ui.scope_builder(egui::UiBuilder::new().max_rect(rest), |ui| {
-                                ui.set_clip_rect(rest.intersect(ui.clip_rect()));
-                                ui.spacing_mut().item_spacing.x = 4.0;
-                                let context = &*self.context;
-                                view.title_ui(ui, context.model, context.time, context.formats);
-                            });
+                            if rest.width() >= MIN_TITLE_EXTRA_WIDTH {
+                                ui.scope_builder(egui::UiBuilder::new().max_rect(rest), |ui| {
+                                    ui.set_clip_rect(rest.intersect(ui.clip_rect()));
+                                    ui.spacing_mut().item_spacing.x = 4.0;
+                                    self.context.titled = true;
+                                    view.title_ui(ui, self.context);
+                                });
+                            }
                             Some(title)
                         })
                         .inner
@@ -1455,6 +1467,14 @@ mod tests {
         assert_eq!(views.len(), 3);
         assert_eq!((views[0], views[2]), (plot, logs));
         assert_eq!(layout.view(views[1]).unwrap().view_type(), ViewType::Xy);
+    }
+
+    #[test]
+    fn deleting_a_view_while_renaming_it_ends_the_renaming() {
+        let (mut layout, _, plot, _) = default_layout();
+        layout.start_rename(plot);
+        layout.remove(plot);
+        assert!(layout.renaming.is_none());
     }
 
     #[test]

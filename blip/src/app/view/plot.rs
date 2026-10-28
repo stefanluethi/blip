@@ -7,7 +7,7 @@ use crate::app::model::numbers::{
 use crate::app::model::traces::{Samples, Trace};
 use crate::app::model::{Model, traces::Series};
 use crate::app::theme;
-use crate::app::time::{TimeRange, seconds_since};
+use crate::app::time::seconds_since;
 use std::collections::{BTreeMap, BTreeSet};
 
 const Y_MARGIN_FRACTION: f64 = 0.05;
@@ -542,9 +542,14 @@ impl super::ViewInfo for Plot {
 }
 
 /// Shows `value` of the trace at `path` in the legend of the title row, right-aligned
-/// in a slot as wide as `widest` and as the widest value it showed, so that its digits
-/// keep their place while it changes.
-fn legend_value(ui: &mut egui::Ui, path: &str, value: Option<&str>, widest: Option<&str>) {
+/// in a slot as wide as `widest` and as the widest value it showed since `widest` or
+/// its `format` last changed, so that its digits keep their place while it changes.
+fn legend_value(
+    ui: &mut egui::Ui,
+    path: &str,
+    value: Option<&str>,
+    (widest, format): (Option<&str>, DisplayFormat),
+) {
     let font = egui::TextStyle::Body.resolve(ui.style());
     let width_of = |text: &str| {
         ui.ctx().fonts_mut(|fonts| {
@@ -556,9 +561,15 @@ fn legend_value(ui: &mut egui::Ui, path: &str, value: Option<&str>, widest: Opti
     let needed = value
         .map_or(0.0, width_of)
         .max(widest.map_or(0.0, width_of));
+    // a new range or format, e.g. of another recording, starts the slot anew
+    let slot = format!("{format:?} {widest:?}");
     let id = ui.id().with(("legend value width", path));
     let width = ui.data_mut(|data| {
-        let width = data.get_temp_mut_or_default::<f32>(id);
+        let (last_slot, width) = data.get_temp_mut_or_default::<(String, f32)>(id);
+        if *last_slot != slot {
+            *last_slot = slot;
+            *width = 0.0;
+        }
         *width = width.max(needed);
         *width
     });
@@ -571,11 +582,30 @@ fn legend_value(ui: &mut egui::Ui, path: &str, value: Option<&str>, widest: Opti
     });
 }
 
+/// How the values of `series` written in `format` are kept in place in the legend: the
+/// decimals of floats, if fixed, and the widest text of a value, if known. Floats get the
+/// decimals of their largest magnitude, integers are written whole, bools as words.
+fn legend_slot(series: &Series<'_>, format: DisplayFormat) -> (Option<usize>, Option<String>) {
+    if format != DisplayFormat::Default {
+        return (None, None);
+    }
+    match (series.kind, series.range) {
+        (NumberKind::Float, Some(range)) => match fixed_decimals(range, SHOWN_DIGITS) {
+            Some(decimals) => (Some(decimals), Some(widest_fixed(range, decimals))),
+            None => (None, None),
+        },
+        (NumberKind::Integer, Some(range)) => (None, Some(widest_fixed(range, 0))),
+        (NumberKind::Bool, _) => (None, Some("false".to_owned())),
+        _ => (None, None),
+    }
+}
+
 impl Viewable for Plot {
-    fn title_ui(&self, ui: &mut egui::Ui, model: &Model, time: &TimeRange, formats: &Formats) {
+    fn title_ui(&self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         if self.legend != LegendPlacement::Title {
             return;
         }
+        let (model, time, formats) = (context.model, &*context.time, context.formats);
         let t = time.cursor().map(|t| time.timestamp(t));
         // one unit shared by all traces is written once, at the end
         let unit = super::common_unit(model, self.traces.iter().map(String::as_str));
@@ -592,24 +622,18 @@ impl Viewable for Plot {
                 continue;
             };
             let format = formats.of(path);
-            // floats keep the same decimals while they change, see `fixed_decimals`
-            let decimals = (series.range)
-                .filter(|_| format == DisplayFormat::Default)
-                .and_then(|range| fixed_decimals(range, SHOWN_DIGITS));
+            let own_unit = model.traces.unit(path).filter(|_| unit.is_none());
+            let (decimals, widest) = legend_slot(&series, format);
             let value = t.and_then(|t| {
                 let value = series.number(index_at(series.timestamps, t)?);
                 let text = match decimals {
                     Some(decimals) => value.format_fixed(decimals),
                     None => value.format(Some(SHOWN_DIGITS), format),
                 };
-                let own_unit = model.traces.unit(path).filter(|_| unit.is_none());
                 Some(with_unit(text, own_unit.filter(|_| !value.is_null())))
             });
-            let widest = series.range.zip(decimals).map(|(range, decimals)| {
-                let own_unit = model.traces.unit(path).filter(|_| unit.is_none());
-                with_unit(widest_fixed(range, decimals), own_unit)
-            });
-            legend_value(ui, path, value.as_deref(), widest.as_deref());
+            let widest = widest.map(|widest| with_unit(widest, own_unit));
+            legend_value(ui, path, value.as_deref(), (widest.as_deref(), format));
         }
         if let Some(unit) = unit {
             ui.add_space(4.0);
@@ -805,6 +829,27 @@ mod tests {
     }
 
     #[test]
+    fn legend_slots_fit_the_kind_of_the_values() {
+        let mut model = Model::default();
+        for (second, (int, bool)) in [(-3, true), (120, false)].into_iter().enumerate() {
+            let timestamp = second as u64 * 1_000_000_000;
+            for (path, value) in [("i", proto::Data::Int(int)), ("b", proto::Data::Bool(bool))] {
+                model.traces.append(&proto::Value {
+                    timestamp,
+                    path: path.to_owned(),
+                    value,
+                });
+            }
+        }
+        let slot = |path| legend_slot(&model.traces.series(path).unwrap(), DisplayFormat::Default);
+        // integers are written whole, as wide as the largest with its sign
+        assert_eq!(slot("i"), (None, Some("-888".to_owned())));
+        assert_eq!(slot("b"), (None, Some("false".to_owned())));
+        let hex = legend_slot(&model.traces.series("i").unwrap(), DisplayFormat::Hex);
+        assert_eq!(hex, (None, None));
+    }
+
+    #[test]
     fn values_in_the_title_legend_keep_their_place() {
         use egui_kittest::kittest::Queryable;
 
@@ -832,12 +877,14 @@ mod tests {
             .build_ui_state(
                 |ui, state: &mut State| {
                     state.time.update(&state.model, 0.0);
-                    ui.horizontal(|ui| {
-                        let (model, time) = (&state.model, &state.time);
-                        state
-                            .plot
-                            .title_ui(ui, model, time, &super::super::NO_FORMATS);
-                    });
+                    let mut context = ViewContext {
+                        model: &state.model,
+                        time: &mut state.time,
+                        invoker: &mut state.invoker,
+                        formats: &super::super::NO_FORMATS,
+                        titled: true,
+                    };
+                    ui.horizontal(|ui| state.plot.title_ui(ui, &mut context));
                 },
                 state,
             );

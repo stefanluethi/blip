@@ -79,8 +79,8 @@ pub trait Viewable {
     }
 
     /// Shows what the view adds to its title row after its name, like a legend, within
-    /// the width `ui` has left, with the display `formats` of its traces.
-    fn title_ui(&self, _ui: &mut egui::Ui, _model: &Model, _time: &TimeRange, _formats: &Formats) {}
+    /// the width `ui` has left.
+    fn title_ui(&self, _ui: &mut egui::Ui, _context: &mut ViewContext<'_>) {}
 }
 
 /// A view in the layout, shown as a pane in the center.
@@ -484,8 +484,15 @@ impl Viewable for View {
         self.kind.viewable_ref().colored_paths(model)
     }
 
-    fn title_ui(&self, ui: &mut egui::Ui, model: &Model, time: &TimeRange, _formats: &Formats) {
-        (self.kind.viewable_ref()).title_ui(ui, model, time, &self.formats);
+    fn title_ui(&self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
+        let context = &mut ViewContext {
+            model: context.model,
+            time: context.time,
+            invoker: context.invoker,
+            formats: &self.formats,
+            titled: context.titled,
+        };
+        self.kind.viewable_ref().title_ui(ui, context);
     }
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, context: &PropertiesContext<'_>) {
