@@ -578,6 +578,7 @@ impl eframe::App for App {
                     time: &mut self.state.time,
                     invoker: &mut self.state.invoker,
                     formats: &view::NO_FORMATS,
+                    titled: false,
                 };
                 self.layout.ui(ui, &mut context);
             });

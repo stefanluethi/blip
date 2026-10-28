@@ -230,6 +230,7 @@ fn view_shot(name: &str, json: &str) {
                             time: &mut shot.time,
                             invoker: &mut shot.invoker,
                             formats: &NO_FORMATS,
+                            titled: false,
                         };
                         shot.view.view(ui, &mut context);
                     });

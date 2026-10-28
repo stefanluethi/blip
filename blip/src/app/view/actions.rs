@@ -1066,6 +1066,7 @@ mod tests {
                     time: &mut state.time,
                     invoker: &mut state.invoker,
                     formats: &super::super::NO_FORMATS,
+                    titled: false,
                 };
                 state.view.view(ui, &mut context);
             },

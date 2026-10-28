@@ -1,11 +1,11 @@
 use super::Selectable;
-use super::time_axis::{self, TimeAxis, closest_index, visible_range};
+use super::time_axis::{self, TimeAxis, closest_index, index_at, visible_range};
 use super::{Formats, PropertiesContext, ViewContext, Viewable, short_names, with_unit};
 use crate::app::model::numbers::{NumberKind, SHOWN_DIGITS};
 use crate::app::model::traces::{Samples, Trace};
 use crate::app::model::{Model, traces::Series};
 use crate::app::theme;
-use crate::app::time::seconds_since;
+use crate::app::time::{TimeRange, seconds_since};
 use std::collections::{BTreeMap, BTreeSet};
 
 const Y_MARGIN_FRACTION: f64 = 0.05;
@@ -204,19 +204,21 @@ named_enum! {
     /// Where the legend is shown.
     #[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
     pub enum LegendPlacement {
-        Hidden => "Hidden",
-        TopLeft => "Top left",
+        /// In the title row of the view, with the values at the cursor.
         #[default]
+        Title => "Title",
+        TopLeft => "Top left",
         TopRight => "Top right",
         BottomLeft => "Bottom left",
         BottomRight => "Bottom right",
+        Hidden => "Hidden",
     }
 }
 
 impl LegendPlacement {
     fn corner(self) -> Option<egui_plot::Corner> {
         match self {
-            LegendPlacement::Hidden => None,
+            LegendPlacement::Hidden | LegendPlacement::Title => None,
             LegendPlacement::TopLeft => Some(egui_plot::Corner::LeftTop),
             LegendPlacement::TopRight => Some(egui_plot::Corner::RightTop),
             LegendPlacement::BottomLeft => Some(egui_plot::Corner::LeftBottom),
@@ -407,7 +409,12 @@ impl Plot {
             y_axis = y_axis.label(label);
         }
         let mut plot = time_axis::plot(id, time, ui.visuals()).custom_y_axes(vec![y_axis]);
-        if let Some(corner) = self.legend.corner() {
+        // without a title row, the legend of the title row goes to a corner
+        let legend = match self.legend {
+            LegendPlacement::Title if !context.titled => LegendPlacement::TopRight,
+            legend => legend,
+        };
+        if let Some(corner) = legend.corner() {
             plot = plot.legend(egui_plot::Legend::default().position(corner));
         }
 
@@ -533,6 +540,39 @@ impl super::ViewInfo for Plot {
 }
 
 impl Viewable for Plot {
+    fn title_ui(&self, ui: &mut egui::Ui, model: &Model, time: &TimeRange, formats: &Formats) {
+        if self.legend != LegendPlacement::Title {
+            return;
+        }
+        let t = time.cursor().map(|t| time.timestamp(t));
+        // one unit shared by all traces is written once, at the end
+        let unit = super::common_unit(model, self.traces.iter().map(String::as_str));
+        let weak = ui.visuals().weak_text_color();
+        ui.add_space(8.0);
+        for (path, name, index) in self.selected_path_iter() {
+            ui.add_space(6.0);
+            let (dot, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+            let color = theme::trace_color(ui.visuals(), index);
+            ui.painter().circle_filled(dot.center(), 4.0, color);
+            ui.label(egui::RichText::new(name).color(weak))
+                .on_hover_text(path);
+            let value = t.and_then(|t| {
+                let series = model.traces.series(path)?;
+                let value = series.number(index_at(series.timestamps, t)?);
+                let text = value.format(Some(SHOWN_DIGITS), formats.of(path));
+                let own_unit = model.traces.unit(path).filter(|_| unit.is_none());
+                Some(with_unit(text, own_unit.filter(|_| !value.is_null())))
+            });
+            if let Some(value) = value {
+                ui.label(egui::RichText::new(value).strong());
+            }
+        }
+        if let Some(unit) = unit {
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new(unit).color(weak));
+        }
+    }
+
     fn colored_paths(&self, _model: &Model) -> Vec<String> {
         self.selected_path_iter()
             .map(|(path, _, _)| path.to_owned())
@@ -712,6 +752,7 @@ mod tests {
                         time: &mut state.time,
                         invoker: &mut state.invoker,
                         formats: &super::super::NO_FORMATS,
+                        titled: false,
                     };
                     state.plot.view(ui, &mut context);
                 },

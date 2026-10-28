@@ -80,7 +80,9 @@ Properties:
        *Always* or *Never*. **Nulls**: leave a *Gap* or *Connect* across
        them.
    * - **Legend**
-     - **Placement**: hidden or in a corner.
+     - **Placement**: *Title*, in the title row with the value of each trace
+       at the time cursor, in a corner, or hidden. A plot alone in a tab has
+       no title row and shows the title legend at the top right.
    * - **Line styles**
      - Per trace *Solid*, *Dashed*, *Dotted* or *None* (points only).
 

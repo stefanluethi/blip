@@ -26,6 +26,8 @@ pub struct ViewContext<'a> {
     pub invoker: &'a mut Invoker,
     /// The display formats of the traces of the shown view.
     pub formats: &'a Formats,
+    /// Whether the shown view has a title row, see [`Viewable::title_ui`].
+    pub titled: bool,
 }
 
 /// The display formats of the traces of a view by their paths, the default format for
@@ -75,6 +77,10 @@ pub trait Viewable {
     fn colored_paths(&self, _model: &Model) -> Vec<String> {
         vec![]
     }
+
+    /// Shows what the view adds to its title row after its name, like a legend, within
+    /// the width `ui` has left, with the display `formats` of its traces.
+    fn title_ui(&self, _ui: &mut egui::Ui, _model: &Model, _time: &TimeRange, _formats: &Formats) {}
 }
 
 /// A view in the layout, shown as a pane in the center.
@@ -469,12 +475,17 @@ impl Viewable for View {
             time: context.time,
             invoker: context.invoker,
             formats: &self.formats,
+            titled: context.titled,
         };
         self.kind.viewable().view(ui, context);
     }
 
     fn colored_paths(&self, model: &Model) -> Vec<String> {
         self.kind.viewable_ref().colored_paths(model)
+    }
+
+    fn title_ui(&self, ui: &mut egui::Ui, model: &Model, time: &TimeRange, _formats: &Formats) {
+        (self.kind.viewable_ref()).title_ui(ui, model, time, &self.formats);
     }
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, context: &PropertiesContext<'_>) {

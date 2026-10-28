@@ -879,6 +879,16 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
                                     name: view.name.clone(),
                                 });
                             }
+                            // what the view adds, like a legend, cut off at the menu button
+                            let rest = ui
+                                .available_rect_before_wrap()
+                                .shrink2(egui::vec2(4.0, 0.0));
+                            ui.scope_builder(egui::UiBuilder::new().max_rect(rest), |ui| {
+                                ui.set_clip_rect(rest.intersect(ui.clip_rect()));
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                let context = &*self.context;
+                                view.title_ui(ui, context.model, context.time, context.formats);
+                            });
                             Some(title)
                         })
                         .inner
@@ -903,6 +913,7 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
                 bottom: 10,
             })
             .show(ui, |ui| {
+                self.context.titled = titled;
                 ui.push_id(tile_id, |ui| view.view(ui, self.context));
             });
 
@@ -1289,6 +1300,7 @@ mod tests {
                 time: &mut time,
                 invoker: &mut invoker,
                 formats: &crate::app::view::NO_FORMATS,
+                titled: false,
             };
             layout.ui(ui, &mut context);
             *renamed.borrow_mut() = layout.renaming.as_ref().map(|renaming| renaming.tile_id);
@@ -1316,6 +1328,7 @@ mod tests {
                     time: &mut time,
                     invoker: &mut invoker,
                     formats: &crate::app::view::NO_FORMATS,
+                    titled: false,
                 };
                 layout.borrow_mut().ui(ui, &mut context);
             })
