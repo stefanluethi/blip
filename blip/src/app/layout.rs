@@ -807,6 +807,17 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
             // the title bar moves the view by drag and drop, it is registered before the
             // title so that clicks on the title still rename the view
             let bar = card.with_max_y(card.top() + TITLE_BAR_HEIGHT);
+            // the title bar of the selected view is raised, so that the selection does not
+            // take the blue of the accent and the first trace
+            if *self.selected == Some(tile_id) {
+                let radius = egui::CornerRadius {
+                    nw: theme::CARD_RADIUS,
+                    ne: theme::CARD_RADIUS,
+                    sw: 0,
+                    se: 0,
+                };
+                ui.painter().rect_filled(bar, radius, tokens.hover);
+            }
             let bar = ui
                 .interact(
                     bar,
@@ -976,7 +987,7 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
             painter.rect_filled(rect, theme::CARD_RADIUS, veil);
         }
         if *self.selected == Some(tile_id) {
-            let stroke = egui::Stroke::new(1.0, theme::tokens(&style.visuals).accent);
+            let stroke = egui::Stroke::new(1.0, theme::tokens(&style.visuals).text_faint);
             let rect = card_rect(rect, self.below_tab_bar.contains(&tile_id));
             painter.rect_stroke(rect, theme::CARD_RADIUS, stroke, egui::StrokeKind::Inside);
         }

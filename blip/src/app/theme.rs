@@ -32,7 +32,7 @@ pub struct Tokens {
     /// Buttons, checkboxes and other controls.
     pub control: Color32,
     /// A control under the pointer.
-    hover: Color32,
+    pub hover: Color32,
     /// Menus, popups and tooltips.
     popup: Color32,
     pub border: Color32,
