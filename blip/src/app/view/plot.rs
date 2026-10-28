@@ -1,7 +1,9 @@
 use super::Selectable;
 use super::time_axis::{self, TimeAxis, closest_index, index_at, visible_range};
 use super::{Formats, PropertiesContext, ViewContext, Viewable, short_names, with_unit};
-use crate::app::model::numbers::{NumberKind, SHOWN_DIGITS};
+use crate::app::model::numbers::{
+    DisplayFormat, NumberKind, SHOWN_DIGITS, fixed_decimals, widest_fixed,
+};
 use crate::app::model::traces::{Samples, Trace};
 use crate::app::model::{Model, traces::Series};
 use crate::app::theme;
@@ -539,6 +541,36 @@ impl super::ViewInfo for Plot {
     }
 }
 
+/// Shows `value` of the trace at `path` in the legend of the title row, right-aligned
+/// in a slot as wide as `widest` and as the widest value it showed, so that its digits
+/// keep their place while it changes.
+fn legend_value(ui: &mut egui::Ui, path: &str, value: Option<&str>, widest: Option<&str>) {
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let width_of = |text: &str| {
+        ui.ctx().fonts_mut(|fonts| {
+            let galley =
+                fonts.layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::PLACEHOLDER);
+            galley.size().x
+        })
+    };
+    let needed = value
+        .map_or(0.0, width_of)
+        .max(widest.map_or(0.0, width_of));
+    let id = ui.id().with(("legend value width", path));
+    let width = ui.data_mut(|data| {
+        let width = data.get_temp_mut_or_default::<f32>(id);
+        *width = width.max(needed);
+        *width
+    });
+    let size = egui::vec2(width, ui.spacing().interact_size.y);
+    let layout = egui::Layout::right_to_left(egui::Align::Center);
+    ui.allocate_ui_with_layout(size, layout, |ui| {
+        if let Some(value) = value {
+            ui.label(egui::RichText::new(value).strong());
+        }
+    });
+}
+
 impl Viewable for Plot {
     fn title_ui(&self, ui: &mut egui::Ui, model: &Model, time: &TimeRange, formats: &Formats) {
         if self.legend != LegendPlacement::Title {
@@ -556,16 +588,28 @@ impl Viewable for Plot {
             ui.painter().circle_filled(dot.center(), 4.0, color);
             ui.label(egui::RichText::new(name).color(weak))
                 .on_hover_text(path);
+            let Some(series) = model.traces.series(path) else {
+                continue;
+            };
+            let format = formats.of(path);
+            // floats keep the same decimals while they change, see `fixed_decimals`
+            let decimals = (series.range)
+                .filter(|_| format == DisplayFormat::Default)
+                .and_then(|range| fixed_decimals(range, SHOWN_DIGITS));
             let value = t.and_then(|t| {
-                let series = model.traces.series(path)?;
                 let value = series.number(index_at(series.timestamps, t)?);
-                let text = value.format(Some(SHOWN_DIGITS), formats.of(path));
+                let text = match decimals {
+                    Some(decimals) => value.format_fixed(decimals),
+                    None => value.format(Some(SHOWN_DIGITS), format),
+                };
                 let own_unit = model.traces.unit(path).filter(|_| unit.is_none());
                 Some(with_unit(text, own_unit.filter(|_| !value.is_null())))
             });
-            if let Some(value) = value {
-                ui.label(egui::RichText::new(value).strong());
-            }
+            let widest = series.range.zip(decimals).map(|(range, decimals)| {
+                let own_unit = model.traces.unit(path).filter(|_| unit.is_none());
+                with_unit(widest_fixed(range, decimals), own_unit)
+            });
+            legend_value(ui, path, value.as_deref(), widest.as_deref());
         }
         if let Some(unit) = unit {
             ui.add_space(4.0);
@@ -758,6 +802,62 @@ mod tests {
                 },
                 state,
             )
+    }
+
+    #[test]
+    fn values_in_the_title_legend_keep_their_place() {
+        use egui_kittest::kittest::Queryable;
+
+        // the sign and the number of digits change, the decimals are fixed
+        let values = [-0.14, 0.08026, 9.836, 1.5, -3.2];
+        let texts = ["-0.140", "0.080", "9.836", "1.500", "-3.200"];
+        let mut model = Model::default();
+        for (second, value) in values.into_iter().enumerate() {
+            model.traces.append(&proto::Value {
+                timestamp: second as u64 * 1_000_000_000,
+                path: "v".to_owned(),
+                value: proto::Data::Float(value),
+            });
+        }
+        let mut plot = Plot::default();
+        plot.traces.insert("v".to_owned());
+        let state = State {
+            plot,
+            model,
+            time: Default::default(),
+            invoker: Default::default(),
+        };
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(400.0, 40.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    state.time.update(&state.model, 0.0);
+                    ui.horizontal(|ui| {
+                        let (model, time) = (&state.model, &state.time);
+                        state
+                            .plot
+                            .title_ui(ui, model, time, &super::super::NO_FORMATS);
+                    });
+                },
+                state,
+            );
+        let mut right_edges = vec![];
+        for (second, text) in texts.into_iter().enumerate() {
+            let state = harness.state_mut();
+            state.time.update(&state.model, 0.0);
+            let latest = state.time.latest().unwrap();
+            state
+                .time
+                .set_cursor(latest - (values.len() - 1 - second) as f64);
+            harness.run();
+            right_edges.push(harness.get_by_label(text).rect().max.x);
+        }
+        assert!(
+            right_edges
+                .windows(2)
+                .all(|pair| (pair[0] - pair[1]).abs() < 0.01),
+            "{right_edges:?}"
+        );
     }
 
     /// The y range of `plot`, the panned or zoomed one or else the fitted one.

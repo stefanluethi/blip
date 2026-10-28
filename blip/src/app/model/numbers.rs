@@ -88,6 +88,15 @@ impl Number {
         }
     }
 
+    /// The number written with `decimals` decimals if it is a float, else as
+    /// [`Number::format`] writes it by default.
+    pub fn format_fixed(self, decimals: usize) -> String {
+        match self {
+            Self::Float(value) if value.is_finite() => format!("{value:.decimals$}"),
+            _ => self.format(None, DisplayFormat::Default),
+        }
+    }
+
     /// The number written in `format`, a float with at most `digits` significant
     /// digits or all of them if `digits` is `None`. The format does not apply to bools
     /// and nulls, and hex and binary not to floats that are not whole numbers.
@@ -165,6 +174,43 @@ pub fn format_significant(value: f64, digits: usize) -> String {
     }
     let decimals = (digits as i32 - 1 - magnitude).max(0) as usize;
     trim_zeros(&format!("{value:.decimals$}")).to_owned()
+}
+
+/// The decimals that write the values of `range` with `digits` significant digits of
+/// its largest magnitude, so that all of them have the same decimals and keep their
+/// place while they change, or `None` for magnitudes written with an exponent.
+pub fn fixed_decimals((low, high): (f64, f64), digits: usize) -> Option<usize> {
+    let largest = low.abs().max(high.abs());
+    if !largest.is_finite() {
+        return None;
+    }
+    let digits = digits.max(1);
+    if largest == 0.0 {
+        return Some(0);
+    }
+    let magnitude = largest.log10().floor() as i32;
+    if magnitude >= digits.max(6) as i32 || magnitude < -4 {
+        return None;
+    }
+    Some((digits as i32 - 1 - magnitude).max(0) as usize)
+}
+
+/// The widest text of a value of `range` written with `decimals` decimals, made of
+/// the widest digit, with a sign if the range has negative values, to reserve room
+/// for any of them.
+pub fn widest_fixed((low, high): (f64, f64), decimals: usize) -> String {
+    let largest = low.abs().max(high.abs());
+    let integer_digits = format!("{largest:.decimals$}")
+        .split('.')
+        .next()
+        .map_or(1, str::len);
+    let sign = if low < 0.0 { "-" } else { "" };
+    let fraction = if decimals > 0 {
+        format!(".{}", "8".repeat(decimals))
+    } else {
+        String::new()
+    };
+    format!("{sign}{}{fraction}", "8".repeat(integer_digits))
 }
 
 /// `number` without trailing zeros after its decimal point.
@@ -480,6 +526,20 @@ impl Numbers {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn values_of_a_range_get_the_same_decimals_and_room() {
+        assert_eq!(fixed_decimals((-0.2, 9.9), 4), Some(3));
+        assert_eq!(fixed_decimals((0.0, 2400.0), 4), Some(0));
+        assert_eq!(fixed_decimals((0.0, 0.0), 4), Some(0));
+        assert_eq!(fixed_decimals((0.0, 1.0e9), 4), None);
+        assert_eq!(fixed_decimals((0.0, 1.0e-6), 4), None);
+        assert_eq!(widest_fixed((-0.2, 9.9), 3), "-8.888");
+        assert_eq!(widest_fixed((0.0, 2400.0), 0), "8888");
+        assert_eq!(Number::Float(0.08026).format_fixed(3), "0.080");
+        assert_eq!(Number::Float(-0.14).format_fixed(3), "-0.140");
+        assert_eq!(Number::Int(-3).format_fixed(3), "-3");
+    }
 
     fn numbers(values: &[Number]) -> Result<Numbers, String> {
         let mut numbers = Numbers::default();
