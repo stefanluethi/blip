@@ -222,11 +222,14 @@ struct Selection<'a> {
     picks: Picks,
     /// Whether only the traces matching a search are shown.
     searching: bool,
+    /// The colours of the traces the view draws in them, by their paths.
+    colors: &'a BTreeMap<String, egui::Color32>,
 }
 
-/// Shows a checkbox labelled `label` with a weak `icon` after it for picking all
-/// `paths` of the node with `key`: indeterminate if only some are picked, and disabled
-/// if there are none. Checking a `branch` also picks what is added below it later,
+/// Shows a checkbox labelled `label` for picking all `paths` of the node with `key`, and
+/// a faint `icon` at the right end of the row: indeterminate if only some are picked,
+/// and disabled if there are none. A checked trace the view draws in a colour fills its
+/// box with the colour, so that the tree also shows which line is which. Checking a `branch` also picks what is added below it later,
 /// unless only the traces matching a search are shown.
 fn show_checkbox(
     ui: &mut Ui,
@@ -243,12 +246,16 @@ fn show_checkbox(
         .count();
     let all = !paths.is_empty() && picked_count == paths.len();
     let mut checked = all;
-    let checkbox = match icon {
-        Some(icon) => egui::Checkbox::new(&mut checked, (label, RichText::new(icon).weak())),
-        None => egui::Checkbox::new(&mut checked, label),
-    };
-    let checkbox = checkbox.indeterminate(picked_count > 0 && picked_count < paths.len());
+    let checkbox = egui::Checkbox::new(&mut checked, label)
+        .indeterminate(picked_count > 0 && picked_count < paths.len());
     let mut response = ui.add_enabled(!paths.is_empty(), checkbox);
+    if let [path] = paths
+        && all
+        && let Some(&color) = selection.colors.get(path)
+    {
+        paint_colored_check(ui, &response, color);
+    }
+    type_icon_ui(ui, icon);
     let wildcard = branch && !selection.searching;
     if wildcard {
         response = response.on_hover_text("Checking it also picks what is added to it later");
@@ -287,6 +294,33 @@ fn show_checkbox(
         }
     }
     response
+}
+
+/// Paints the box of the checked `checkbox` filled with `color`, with a dark check mark
+/// that reads on all the colours of the traces.
+fn paint_colored_check(ui: &Ui, checkbox: &egui::Response, color: egui::Color32) {
+    let (small, big) = ui.spacing().icon_rectangles(checkbox.rect);
+    let painter = ui.painter();
+    painter.rect_filled(big, theme::CONTROL_RADIUS, color);
+    let check = vec![
+        egui::pos2(small.left(), small.center().y),
+        egui::pos2(small.center().x, small.bottom()),
+        egui::pos2(small.right(), small.top()),
+    ];
+    let mark = egui::Color32::from_rgb(0x12, 0x13, 0x18);
+    painter.add(egui::Shape::line(check, egui::Stroke::new(1.5, mark)));
+}
+
+/// Shows the `icon` of the type of a row, if any, faint at the right end of the row, so
+/// that the names line up and read first.
+fn type_icon_ui(ui: &mut Ui, icon: Option<&str>) {
+    if let Some(icon) = icon {
+        let color = theme::tokens(ui.visuals()).text_faint;
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_space(4.0);
+            ui.label(RichText::new(icon).color(color));
+        });
+    }
 }
 
 /// The indices of the element at `flat_index` of an array of `shape`, in row-major
@@ -486,10 +520,7 @@ fn toggle_ui(ui: &mut Ui, id: egui::Id, default_open: bool) {
         id,
         default_open,
     );
-    if state
-        .show_toggle_button(ui, egui::collapsing_header::paint_default_icon)
-        .clicked()
-    {
+    if state.show_toggle_button(ui, theme::paint_caret).clicked() {
         ui.data_mut(|data| *data.get_temp_mut_or_default::<u64>(toggles_id()) += 1);
     }
     state.store(ui.ctx());
@@ -526,10 +557,8 @@ fn row_ui(ui: &mut Ui, model: &Model, row: &Row, selection: &mut Selection<'_>) 
                 let icon = record.then_some(BRACKETS_CURLY);
                 if picks.view_type.shows_one_trace() {
                     // a branch cannot be selected as one trace
-                    match icon {
-                        Some(icon) => ui.label(format!("{label} {icon}")),
-                        None => ui.label(label),
-                    };
+                    ui.label(label);
+                    type_icon_ui(ui, icon);
                 } else {
                     show_checkbox(ui, label, icon, paths, key, true, selection);
                 }
@@ -747,7 +776,7 @@ fn rows(ui: &Ui, model: &Model, key: RowsKey) -> Rows {
 
 /// Shows the traces and the announced actions of `model` whose path matches `search`
 /// in a scroll area as a tree with checkboxes for what is picked for a view, disabled
-/// if there is no selection to edit. If `compatible_only`, only what the view can show
+/// if there is no selection to edit, filled with the colours of the `colored` traces. If `compatible_only`, only what the view can show
 /// is in the tree, or all without a view. The rows are made anew only when what they
 /// show changed, and only the rows in sight are laid out.
 pub fn show(
@@ -756,6 +785,7 @@ pub fn show(
     search: &str,
     compatible_only: bool,
     selection: Option<ViewSelection<'_>>,
+    colored: &[String],
 ) {
     let picks = selection.as_ref().map(|selection| selection.picks);
     // shown actions no outpost announces, copied apart from the selection edited below
@@ -784,6 +814,9 @@ pub fn show(
         return;
     }
     let enabled = selection.is_some();
+    let colors: BTreeMap<String, egui::Color32> = (colored.iter().enumerate())
+        .map(|(index, path)| (path.clone(), theme::trace_color(ui.visuals(), index)))
+        .collect();
     let (mut no_paths, mut no_wildcards) = (BTreeSet::new(), BTreeSet::new());
     let view = selection.unwrap_or(ViewSelection {
         paths: &mut no_paths,
@@ -796,6 +829,7 @@ pub fn show(
         wildcards: view.wildcards,
         picks: view.picks,
         searching: !search.trim().is_empty(),
+        colors: &colors,
     };
     let row_height = ui.spacing().interact_size.y;
     ui.add_enabled_ui(enabled, |ui| {
@@ -983,6 +1017,7 @@ mod tests {
                         search,
                         false,
                         Some(selection(paths, ViewType::Plot)),
+                        &[],
                     );
                 },
                 (String::new(), BTreeSet::new()),
@@ -1053,7 +1088,14 @@ mod tests {
             .build_ui_state(
                 move |ui, paths: &mut BTreeSet<String>| {
                     let start = std::time::Instant::now();
-                    show(ui, &model, "", true, Some(selection(paths, ViewType::Plot)));
+                    show(
+                        ui,
+                        &model,
+                        "",
+                        true,
+                        Some(selection(paths, ViewType::Plot)),
+                        &[],
+                    );
                     ui.data_mut(|data| {
                         *data.get_temp_mut_or_default::<f64>(egui::Id::new("spent")) +=
                             start.elapsed().as_secs_f64();
@@ -1101,7 +1143,14 @@ mod tests {
             .build_ui_state(
                 move |ui, (search, paths): &mut (String, BTreeSet<String>)| {
                     search_ui(ui, search, &mut false, true);
-                    show(ui, &model, search, false, Some(selection(paths, view_type)));
+                    show(
+                        ui,
+                        &model,
+                        search,
+                        false,
+                        Some(selection(paths, view_type)),
+                        &[],
+                    );
                 },
                 (String::new(), BTreeSet::new()),
             );
@@ -1120,15 +1169,9 @@ mod tests {
                 .accesskit_node()
                 .is_disabled()
         );
-        let speed = harness.get_by_label_contains("speed");
-        assert!(
-            speed
-                .accesskit_node()
-                .label()
-                .unwrap()
-                .contains(ACTION_ICON)
-        );
-        speed.click();
+        // the action is marked by its icon at the end of its row
+        assert!(harness.query_by_label(ACTION_ICON).is_some());
+        harness.get_by_label_contains("speed").click();
         harness.run();
         assert_eq!(
             harness.state().1,
@@ -1215,7 +1258,7 @@ mod tests {
                     search_ui(ui, search, filter, view_type.is_some());
                     let mut paths = BTreeSet::new();
                     let selection = view_type.map(|view_type| selection(&mut paths, view_type));
-                    show(ui, &model, search, *filter, selection);
+                    show(ui, &model, search, *filter, selection, &[]);
                 },
                 (String::new(), false, Some(ViewType::Plot)),
             );
@@ -1349,7 +1392,7 @@ mod tests {
                         wildcards,
                         picks,
                     };
-                    show(ui, model, search, false, Some(selection));
+                    show(ui, model, search, false, Some(selection), &[]);
                 },
                 (model, BTreeSet::new(), BTreeSet::new(), String::new()),
             );
@@ -1383,7 +1426,7 @@ mod tests {
         assert_eq!(harness.state().1, set(&["motor/a", "motor/b", "motor/c"]));
 
         // unchecking a trace below the wildcard ends the wildcard
-        click(&mut harness, &format!("a {HASH}"));
+        click(&mut harness, "a");
         assert_eq!(harness.state().1, set(&["motor/b", "motor/c"]));
         assert!(harness.state().2.is_empty());
 
@@ -1449,8 +1492,8 @@ mod tests {
             harness.get_by_label(label).click();
             harness.run();
         };
-        let array = |name: &str| format!("{name} {BRACKETS_SQUARE}");
-        click(&mut harness, &format!("rpm {HASH}"));
+        let array = |name: &str| name.to_owned();
+        click(&mut harness, "rpm");
         assert_eq!(harness.state().1, set(&["sensors/rpm"]));
         click(&mut harness, &array("adc"));
         assert_eq!(harness.state().1, set(&["sensors/adc"]));

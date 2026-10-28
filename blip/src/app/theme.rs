@@ -359,6 +359,24 @@ pub fn section_header(ui: &mut egui::Ui, text: &str, add: impl FnOnce(&mut egui:
     });
 }
 
+/// The caret of a part that can be shown or hidden, like Phosphor's caret: pointing
+/// right while closed and turning down as it opens, as an icon of egui's
+/// [`egui::collapsing_header::CollapsingState`].
+pub fn paint_caret(ui: &mut egui::Ui, openness: f32, response: &egui::Response) {
+    let color = ui.style().interact(response).fg_stroke.color;
+    let center = response.rect.center();
+    let turn = egui::emath::Rot2::from_angle(openness * std::f32::consts::FRAC_PI_2);
+    let points = [
+        egui::vec2(-1.75, -3.5),
+        egui::vec2(1.75, 0.0),
+        egui::vec2(-1.75, 3.5),
+    ]
+    .map(|point| center + turn * point)
+    .to_vec();
+    ui.painter()
+        .add(egui::Shape::line(points, Stroke::new(1.25, color)));
+}
+
 /// A button with only `icon`, framed only while hovered, like the add buttons of the
 /// panels.
 pub fn icon_button(icon: &str) -> HoverFrame<'_> {

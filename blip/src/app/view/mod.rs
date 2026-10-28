@@ -69,6 +69,12 @@ pub trait Viewable {
     fn selection(&mut self) -> Option<(&mut BTreeSet<String>, bool)> {
         None
     }
+
+    /// The paths of the traces the view draws in the colours of the traces, in the order
+    /// of their colours, see [`theme::trace_color`].
+    fn colored_paths(&self, _model: &Model) -> Vec<String> {
+        vec![]
+    }
 }
 
 /// A view in the layout, shown as a pane in the center.
@@ -196,6 +202,10 @@ macro_rules! views {
             fn viewable(&mut self) -> &mut dyn Viewable {
                 match self { $(Self::$kind(view) => view),* }
             }
+
+            fn viewable_ref(&self) -> &dyn Viewable {
+                match self { $(Self::$kind(view) => view),* }
+            }
         }
     };
 }
@@ -308,6 +318,7 @@ pub fn properties_section(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut 
         .hline(ui.max_rect().x_range(), ui.cursor().top(), line);
     ui.add_space(4.0);
     egui::CollapsingHeader::new(theme::title(ui.visuals(), title))
+        .icon(theme::paint_caret)
         .id_salt(("properties", title))
         .default_open(true)
         .show_unindented(ui, |ui| {
@@ -460,6 +471,10 @@ impl Viewable for View {
             formats: &self.formats,
         };
         self.kind.viewable().view(ui, context);
+    }
+
+    fn colored_paths(&self, model: &Model) -> Vec<String> {
+        self.kind.viewable_ref().colored_paths(model)
     }
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, context: &PropertiesContext<'_>) {

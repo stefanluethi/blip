@@ -43,7 +43,7 @@ use connections::Received;
 use eframe::Frame;
 use egui::{Context, Key, KeyboardShortcut, Modifiers};
 use std::collections::HashSet;
-use view::ViewContext;
+use view::{ViewContext, Viewable};
 
 const OPEN_RECORDING: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
 const SAVE_RECORDING: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
@@ -466,6 +466,7 @@ impl App {
             filterable,
         );
         let model = &self.state.model;
+        let colored = (view.as_ref()).map_or_else(Vec::new, |view| view.colored_paths(model));
         let selection = view.and_then(|view| view.selection_mut());
         view::trace_selection::show(
             ui,
@@ -473,6 +474,7 @@ impl App {
             &self.trace_search,
             self.compatible_only,
             selection,
+            &colored,
         );
     }
 }

@@ -16,9 +16,9 @@ Select a view by clicking it.
 The tree
 --------
 
-* The tree branches at each ``/`` of a path. Each trace shows its type, e.g.
-  ``float``, ``int[8×8]`` or ``string``, and each announced action a
-  lightning.
+* The tree branches at each ``/`` of a path. Each trace shows the icon of its
+  type at the end of its row, and the type itself on hover, e.g. ``float``,
+  ``int[8×8]`` or ``string``; each announced action shows a lightning.
 * The fields of a record are separate traces joined to its path with ``.``,
   e.g. ``imu.acc``, listed below the record as ``.acc``.
 * Arrays list their elements, e.g. ``imu.acc[0]``, if they have at most 16;
@@ -35,6 +35,8 @@ Checking traces
 
 * The checkboxes choose the traces a view shows, or the actions of an actions
   view.
+* In a plot or an XY view, the box of a checked trace takes the colour of its
+  line, so the tree also tells the lines apart.
 * **Checking a branch also checks what is added below it later**, e.g. a trace
   that arrives after it was checked. Unchecking anything below it ends that.
 * A table in the **Records** layout checks records as a whole instead of their

@@ -494,6 +494,16 @@ impl super::ViewInfo for Xy {
 }
 
 impl Viewable for Xy {
+    fn colored_paths(&self, model: &Model) -> Vec<String> {
+        let arrays = self.array_paths(model);
+        let paths = if arrays.is_empty() {
+            self.y_paths().collect()
+        } else {
+            arrays
+        };
+        paths.into_iter().map(str::to_owned).collect()
+    }
+
     fn selection(&mut self) -> Option<(&mut BTreeSet<String>, bool)> {
         let records = false;
         Some((&mut self.traces, records))

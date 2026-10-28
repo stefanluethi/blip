@@ -533,6 +533,12 @@ impl super::ViewInfo for Plot {
 }
 
 impl Viewable for Plot {
+    fn colored_paths(&self, _model: &Model) -> Vec<String> {
+        self.selected_path_iter()
+            .map(|(path, _, _)| path.to_owned())
+            .collect()
+    }
+
     fn selection(&mut self) -> Option<(&mut BTreeSet<String>, bool)> {
         let records = false;
         Some((&mut self.traces, records))
