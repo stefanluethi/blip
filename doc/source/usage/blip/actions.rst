@@ -44,14 +44,16 @@ Inputs
     dragged (at most ten times a second, and the final value on release),
   * a number field otherwise, sent when dragged like a slider, or once a
     typed number is entered with :kbd:`Enter` or by leaving the field,
-  * a text field for a string, sent with :kbd:`Enter`.
+  * a text field for a string, sent with :kbd:`Enter`. Until then a dot by
+    the name and the hint *Enter to send* show that the text was not sent.
 
   Clicking a field to type in it sends nothing. Integers are typed in a text
   field and kept exact, also beyond 2\ :sup:`53`.
 * An action with several parameters lists them below its row and is sent with
   its **Send** button, or, if chosen under **Sending** in the properties, each
   time one of its inputs changes (at most ten times a second, the latest
-  change sent once the time is up).
+  change sent once the time is up). With a Send button, a dot by a parameter
+  shows that its input changed since the action was last sent.
 * An action that asks for confirmation is sent after confirming it in a
   dialog.
 
@@ -59,6 +61,12 @@ The inputs start from the readback, the default of the parameter or its lowest
 value. Checkboxes and choices with a readback follow it, so they show the
 state of the target. After a change they keep the new value until a readback
 sample arrives that is newer than the target's answer.
+
+When the target rejects a value, the input goes back to the value it accepted
+last, or else to the value it started from, so it never shows a value the
+target refused. A dragged slider goes back once you let go. Text fields keep
+the text, and the inputs of an action with several parameters keep theirs, to
+correct them and send again.
 
 Outcome
 -------
@@ -70,15 +78,20 @@ The last column shows what became of the latest invocation:
 
    * - spinner
      - the target has not answered yet
+   * - dot
+     - sending while you drag; the outcome of the last value shows once you
+       let go
    * - check mark
      - carried out (shown for a moment)
    * - warning
-     - rejected; hover it for the reason
+     - rejected; the reason shows below the action until it is sent again
    * - clock
-     - no answer within five seconds
+     - no answer within five seconds; the seconds count on below the action,
+       and an answer that comes later still counts
 
 Whether the action had the desired effect shows in the traces, e.g. the
-readback.
+readback. While the connection of its outpost is not connected, the readback
+is greyed out: it is the last value received.
 
 When actions are disabled
 -------------------------

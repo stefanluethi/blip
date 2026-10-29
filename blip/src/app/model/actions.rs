@@ -4,7 +4,8 @@ use super::Model;
 use proto::{ActionDescriptor, ActionResult, Data, Invocation, Request};
 use std::collections::{HashMap, HashSet};
 
-/// Seconds after which an invocation without an answer counts as unanswered.
+/// Seconds after which an invocation without an answer shows as unanswered. A later
+/// answer still counts, as the outpost answers only once the action returns.
 pub const ANSWER_TIMEOUT: f64 = 5.0;
 /// Seconds an accepted invocation is shown as accepted.
 pub const SHOW_ACCEPTED: f64 = 1.5;
@@ -109,8 +110,18 @@ pub enum Outcome {
     Accepted(f64),
     /// Rejected by the target for the reason.
     Rejected(String),
-    /// Not answered within [`ANSWER_TIMEOUT`].
+    /// Not answered within [`ANSWER_TIMEOUT`], still waiting for the answer.
     Unanswered,
+}
+
+/// The latest invocation of an action.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Latest {
+    id: u32,
+    pub outcome: Outcome,
+    /// When it was sent.
+    pub sent_at: f64,
+    pub args: Args,
 }
 
 /// What was sent of an action while its input is dragged.
@@ -143,8 +154,13 @@ pub struct Invoker {
     next_id: u32,
     /// The invocations without answer, by id.
     pending: HashMap<u32, Pending>,
-    /// The id of the latest invocation of each action and its outcome.
-    latest: HashMap<ActionId, (u32, Outcome)>,
+    /// The latest invocation of each action.
+    latest: HashMap<ActionId, Latest>,
+    /// The arguments of the latest accepted invocation of each action.
+    accepted: HashMap<ActionId, Args>,
+    /// The actions whose latest invocation was rejected since the view last took it
+    /// with [`Self::take_rejected`].
+    rejected: HashSet<ActionId>,
     /// The number of samples the readback trace of each action had when the outpost
     /// accepted its latest invocation. Samples up to then may show the state before
     /// the action.
@@ -218,7 +234,7 @@ impl Invoker {
         let invocation = Invocation {
             id,
             path: action.path.clone(),
-            args: Data::Record(args),
+            args: Data::Record(args.clone()),
         };
         self.outbox
             .push((action.source.clone(), Request::Invoke(invocation)));
@@ -228,7 +244,20 @@ impl Invoker {
             sent_at: now,
         };
         self.pending.insert(id, pending);
-        self.latest.insert(action.clone(), (id, Outcome::Pending));
+        let latest = Latest {
+            id,
+            outcome: Outcome::Pending,
+            sent_at: now,
+            args,
+        };
+        self.latest.insert(action.clone(), latest);
+        self.rejected.remove(action);
+    }
+
+    /// Whether the input of `action` is dragged, from its first value sent while
+    /// dragged until it is let go.
+    pub fn is_dragging(&self, action: &ActionId) -> bool {
+        self.dragged.contains_key(action)
     }
 
     /// Whether `action` can be invoked, as the connection of its outpost is open.
@@ -236,9 +265,9 @@ impl Invoker {
         self.connected.contains(&action.source)
     }
 
-    /// Takes the answer to an invocation received from the connection `source`.
-    /// Answers from another connection than the one the invocation was sent to are
-    /// ignored.
+    /// Takes the answer to an invocation received from the connection `source`, also
+    /// after [`ANSWER_TIMEOUT`]. Answers from another connection than the one the
+    /// invocation was sent to are ignored.
     pub fn receive(&mut self, source: &str, result: &ActionResult, now: f64, model: &Model) {
         let from_outpost = self
             .pending
@@ -249,16 +278,23 @@ impl Invoker {
         }
         let pending = self.pending.remove(&result.id).expect("pending");
         // only the latest invocation of an action shows
-        if let Some((id, outcome)) = self.latest.get_mut(&pending.action)
-            && *id == result.id
-        {
-            *outcome = match &result.result {
-                Ok(()) => Outcome::Accepted(now),
-                Err(reason) => Outcome::Rejected(reason.clone()),
-            };
-            if result.result.is_ok() {
+        let Some(latest) = self.latest.get_mut(&pending.action) else {
+            return;
+        };
+        if latest.id != result.id {
+            return;
+        }
+        match &result.result {
+            Ok(()) => {
+                latest.outcome = Outcome::Accepted(now);
+                self.accepted
+                    .insert(pending.action.clone(), latest.args.clone());
                 let samples = model.readback_samples(pending.readback.as_deref());
                 self.readback_marks.insert(pending.action, samples);
+            }
+            Err(reason) => {
+                latest.outcome = Outcome::Rejected(reason.clone());
+                self.rejected.insert(pending.action);
             }
         }
     }
@@ -268,9 +304,9 @@ impl Invoker {
     /// was accepted only from a sample that arrived after the answer, as earlier ones
     /// may show the state before.
     pub fn follows_readback(&self, action: &ActionId, readback_samples: usize) -> bool {
-        match self.latest.get(action) {
-            Some((_, Outcome::Pending)) => false,
-            Some((_, Outcome::Accepted(_))) => self
+        match self.latest.get(action).map(|latest| &latest.outcome) {
+            Some(Outcome::Pending) => false,
+            Some(Outcome::Accepted(_)) => self
                 .readback_marks
                 .get(action)
                 .is_none_or(|&mark| readback_samples > mark),
@@ -294,6 +330,8 @@ impl Invoker {
             self.send_dragged(&action, readback.as_deref(), args, now);
         }
 
+        // the latest invocation of each action keeps waiting for a late answer, the
+        // answers of earlier ones would change nothing
         let expired: Vec<u32> = self
             .pending
             .iter()
@@ -301,11 +339,12 @@ impl Invoker {
             .map(|(&id, _)| id)
             .collect();
         for id in expired {
-            let pending = self.pending.remove(&id).expect("listed as pending");
-            if let Some((latest, outcome)) = self.latest.get_mut(&pending.action)
-                && *latest == id
-            {
-                *outcome = Outcome::Unanswered;
+            let action = &self.pending[&id].action;
+            match self.latest.get_mut(action) {
+                Some(latest) if latest.id == id => latest.outcome = Outcome::Unanswered,
+                _ => {
+                    self.pending.remove(&id);
+                }
             }
         }
     }
@@ -313,21 +352,46 @@ impl Invoker {
     /// The outcome of the latest invocation of `action` to show, none once an accepted
     /// one was shown for [`SHOW_ACCEPTED`].
     pub fn outcome(&self, action: &ActionId, now: f64) -> Option<&Outcome> {
-        let (_, outcome) = self.latest.get(action)?;
-        match outcome {
+        match &self.latest.get(action)?.outcome {
             Outcome::Accepted(at) if now - at > SHOW_ACCEPTED => None,
             outcome => Some(outcome),
         }
     }
 
-    /// Whether the outcomes shown change in time without new messages, so blip
-    /// repaints.
-    pub fn is_waiting(&self, now: f64) -> bool {
-        !self.pending.is_empty()
-            || self.dragged.values().any(|dragged| dragged.held.is_some())
-            || self.latest.values().any(
-                |(_, outcome)| matches!(outcome, Outcome::Accepted(at) if now - at <= SHOW_ACCEPTED),
-            )
+    /// The latest invocation of `action`, if it was invoked.
+    pub fn latest(&self, action: &ActionId) -> Option<&Latest> {
+        self.latest.get(action)
+    }
+
+    /// The arguments of the latest accepted invocation of `action`.
+    pub fn accepted(&self, action: &ActionId) -> Option<&Args> {
+        self.accepted.get(action)
+    }
+
+    /// Whether the latest invocation of `action` was rejected since the last call, so
+    /// that its inputs go back to what the target accepted.
+    pub fn take_rejected(&mut self, action: &ActionId) -> bool {
+        self.rejected.remove(action)
+    }
+
+    /// The seconds after which blip repaints because the outcomes shown change in time
+    /// without new messages, if they do: often while an answer is due, a held back
+    /// value is to be sent or an accepted invocation shows, else each second to count
+    /// the seconds without an answer.
+    pub fn repaint_after(&self, now: f64) -> Option<f64> {
+        let outcomes = || self.latest.values().map(|latest| &latest.outcome);
+        let soon = outcomes().any(|outcome| match outcome {
+            Outcome::Pending => true,
+            Outcome::Accepted(at) => now - at <= SHOW_ACCEPTED,
+            _ => false,
+        }) || self.dragged.values().any(|dragged| dragged.held.is_some());
+        if soon {
+            Some(DRAG_INTERVAL)
+        } else if outcomes().any(|outcome| *outcome == Outcome::Unanswered) {
+            Some(1.0)
+        } else {
+            None
+        }
     }
 
     /// The requests to send, each with the name of the connection to send it to.
@@ -527,18 +591,56 @@ mod tests {
     }
 
     #[test]
-    fn unanswered_invocations_time_out() {
+    fn unanswered_invocations_time_out_and_still_take_a_late_answer() {
         let mut invoker = Invoker::default();
         let speed = unnamed("speed");
         invoker.invoke(&speed, None, args(1), 0.0);
+        assert_eq!(invoker.repaint_after(0.0), Some(DRAG_INTERVAL));
         invoker.update(ANSWER_TIMEOUT);
         assert_eq!(invoker.outcome(&speed, 0.0), Some(&Outcome::Pending));
         invoker.update(ANSWER_TIMEOUT + 0.1);
         assert_eq!(invoker.outcome(&speed, 0.0), Some(&Outcome::Unanswered));
-        assert!(!invoker.is_waiting(ANSWER_TIMEOUT + 0.1));
-        // a late answer changes nothing
-        invoker.receive("", &answer(0, Ok(())), 6.0, &model(0));
-        assert_eq!(invoker.outcome(&speed, 6.0), Some(&Outcome::Unanswered));
+        // the seconds without an answer are counted
+        assert_eq!(invoker.repaint_after(ANSWER_TIMEOUT + 0.1), Some(1.0));
+        // a late answer counts, as the outpost answers once the action returns
+        invoker.receive("", &answer(0, Ok(())), 8.0, &model(0));
+        assert_eq!(invoker.outcome(&speed, 8.0), Some(&Outcome::Accepted(8.0)));
+        assert_eq!(invoker.accepted(&speed), Some(&args(1)));
+        assert_eq!(invoker.repaint_after(8.0 + SHOW_ACCEPTED + 0.1), None);
+    }
+
+    #[test]
+    fn only_the_latest_invocation_waits_for_a_late_answer() {
+        let mut invoker = Invoker::default();
+        let speed = unnamed("speed");
+        invoker.invoke(&speed, None, args(1), 0.0);
+        invoker.invoke(&speed, None, args(2), 0.0);
+        invoker.update(ANSWER_TIMEOUT + 0.1);
+        assert_eq!(invoker.pending.len(), 1);
+        invoker.receive("", &answer(1, Err("no")), 9.0, &model(0));
+        assert_eq!(
+            invoker.outcome(&speed, 9.0),
+            Some(&Outcome::Rejected("no".to_owned()))
+        );
+    }
+
+    #[test]
+    fn rejections_are_taken_once_and_accepted_arguments_kept() {
+        let mut invoker = Invoker::default();
+        let speed = unnamed("speed");
+        invoker.invoke(&speed, None, args(1), 0.0);
+        invoker.receive("", &answer(0, Ok(())), 0.1, &model(0));
+        invoker.invoke(&speed, None, args(2), 1.0);
+        invoker.receive("", &answer(1, Err("too fast")), 1.1, &model(0));
+        assert_eq!(invoker.latest(&speed).unwrap().args, args(2));
+        assert_eq!(invoker.accepted(&speed), Some(&args(1)));
+        assert!(invoker.take_rejected(&speed));
+        assert!(!invoker.take_rejected(&speed));
+        // a new invocation drops a rejection not taken yet
+        invoker.invoke(&speed, None, args(3), 2.0);
+        invoker.receive("", &answer(2, Err("too fast")), 2.1, &model(0));
+        invoker.invoke(&speed, None, args(4), 3.0);
+        assert!(!invoker.take_rejected(&speed));
     }
 
     #[test]
@@ -553,7 +655,7 @@ mod tests {
             sent.into_iter().map(|(_, _, _, args)| args).collect()
         };
         assert_eq!(values(sent(&mut invoker)), [Data::Record(args(1))]);
-        assert!(invoker.is_waiting(0.08));
+        assert_eq!(invoker.repaint_after(0.08), Some(DRAG_INTERVAL));
         // the held back value is sent once the interval passed
         invoker.update(0.1);
         assert_eq!(values(sent(&mut invoker)), [Data::Record(args(3))]);

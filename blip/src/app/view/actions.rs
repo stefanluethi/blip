@@ -94,6 +94,8 @@ fn outpost_name(source: &str) -> &str {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Change {
     None,
+    /// The input is held without changing it while dragged, send nothing.
+    Held,
     /// The input is dragged, send at most every [`DRAG_INTERVAL`](crate::app::model::actions::DRAG_INTERVAL).
     Dragging,
     /// The input was released after dragging, send its value unless sent already.
@@ -332,13 +334,16 @@ fn input_ui(ui: &mut egui::Ui, path: &str, param: &Param, value: &mut Data, fiel
 }
 
 /// How a slider or number field whose number `changed` changed: dragging while
-/// dragged, released when let go without a change, done when typed in, changed with
+/// dragged, held while pressed or dragged without a change, released when let go
+/// without a change, done when typed in, changed with
 /// the keys or by the frame that lets go. A click counts as a short drag. The response
 /// of a field being typed in reports each key as a change, so whether the number
 /// changed is told apart.
 fn change_of(response: &egui::Response, changed: bool) -> Change {
     if response.drag_stopped() && !changed {
         Change::Released
+    } else if !changed && response.dragged() {
+        Change::Held
     } else if !changed {
         Change::None
     } else if response.dragged() && !response.drag_stopped() {
@@ -435,8 +440,23 @@ fn decimals(step: f64) -> usize {
     decimals
 }
 
-/// Shows the outcome of the latest invocation of `action`.
-fn outcome_ui(ui: &mut egui::Ui, invoker: &Invoker, action: &ActionId, now: f64) {
+/// The whole seconds since the latest invocation of `action` was sent.
+fn seconds_waiting(invoker: &Invoker, action: &ActionId, now: f64) -> u64 {
+    invoker
+        .latest(action)
+        .map_or(0, |latest| (now - latest.sent_at).max(0.0) as u64)
+}
+
+/// Shows the outcome of the latest invocation of `action`, or a steady dot while its
+/// input is `held` and dragged, instead of the outcome of each value sent meanwhile.
+fn outcome_ui(ui: &mut egui::Ui, invoker: &Invoker, action: &ActionId, held: bool, now: f64) {
+    if held {
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+        let color = ui.visuals().weak_text_color();
+        ui.painter().circle_filled(rect.center(), 3.0, color);
+        response.on_hover_text("Sending while you drag");
+        return;
+    }
     match invoker.outcome(action, now) {
         None => {
             ui.label("");
@@ -455,9 +475,109 @@ fn outcome_ui(ui: &mut egui::Ui, invoker: &Invoker, action: &ActionId, now: f64)
         }
         Some(Outcome::Unanswered) => {
             ui.colored_label(ui.visuals().warn_fg_color, CLOCK_COUNTDOWN)
-                .on_hover_text("The target did not answer");
+                .on_hover_text("No answer yet, a late answer still counts");
         }
     }
+}
+
+/// What to say below the rows of `action` about its latest invocation, with its
+/// colour: why it was rejected, or how long the answer is overdue.
+fn note(
+    ui: &egui::Ui,
+    invoker: &Invoker,
+    action: &ActionId,
+    descriptor: &ActionDescriptor,
+    now: f64,
+) -> Option<(String, egui::Color32)> {
+    let latest = invoker.latest(action)?;
+    match &latest.outcome {
+        Outcome::Rejected(reason) => {
+            let value = match (descriptor.params.as_slice(), latest.args.as_slice()) {
+                ([param], [(_, value)]) if param.kind != ParamKind::Bool => {
+                    Some(value_text(value, &param.unit))
+                }
+                _ => None,
+            };
+            let text = match value {
+                Some(value) => format!("{value} rejected: {reason}"),
+                None => format!("Rejected: {reason}"),
+            };
+            Some((text, ui.visuals().error_fg_color))
+        }
+        Outcome::Unanswered => {
+            let seconds = seconds_waiting(invoker, action, now);
+            let text = format!("No answer for {seconds} s, a late answer still counts");
+            Some((text, ui.visuals().warn_fg_color))
+        }
+        _ => None,
+    }
+}
+
+/// An argument as text with the unit of its parameter.
+fn value_text(value: &Data, unit: &str) -> String {
+    let text = match value {
+        Data::Uint(value) => value.to_string(),
+        Data::Int(value) => value.to_string(),
+        Data::Float(value) => value.to_string(),
+        Data::String(text) => text.clone(),
+        other => format!("{other:?}"),
+    };
+    if unit.is_empty() {
+        text
+    } else {
+        format!("{text} {unit}")
+    }
+}
+
+/// Whether each input of `action`, with `values`, differs from what was sent last, or
+/// from the value it started from if the action was not sent yet.
+fn unsent(
+    invoker: &Invoker,
+    action: &ActionId,
+    descriptor: &ActionDescriptor,
+    values: &[Data],
+    readback: Option<&Data>,
+) -> Vec<bool> {
+    let sent = invoker.latest(action).map(|latest| &latest.args);
+    let single = descriptor.params.len() == 1;
+    descriptor
+        .params
+        .iter()
+        .zip(values)
+        .map(|(param, value)| {
+            let before = sent
+                .and_then(|args| args.iter().find(|(name, _)| *name == param.name))
+                .and_then(|(_, data)| fit(param, data))
+                .unwrap_or_else(|| initial(param, readback.filter(|_| single).cloned()));
+            *value != before
+        })
+        .collect()
+}
+
+/// Shows a dot by an input changed since it was sent.
+fn unsent_dot(ui: &mut egui::Ui) {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+    ui.painter()
+        .circle_filled(rect.center(), 3.0, ui.visuals().text_color());
+    response
+        .on_hover_text("Changed since it was sent")
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Changed"));
+}
+
+/// The width in points up to which a note wraps.
+const NOTE_WIDTH: f32 = 420.0;
+
+/// Shows `text` in the input column of a row of its own, overflowing into the columns
+/// to its right without widening the input column.
+fn note_ui(ui: &mut egui::Ui, (text, color): (String, egui::Color32)) {
+    ui.label("");
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let galley = ui.painter().layout(text.clone(), font, color, NOTE_WIDTH);
+    let size = egui::vec2(0.0, galley.size().y);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+    ui.painter().galley(rect.min, galley, color);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &text));
+    ui.end_row();
 }
 
 /// An action asked to be confirmed before it is sent.
@@ -605,8 +725,19 @@ impl Actions {
 
         let listed = lists_params(action);
         let on_change = self.sends_on_change(action);
+        let unsent = unsent(invoker, id, action, &values, readback_value.as_ref());
+        // inputs that send only when told show what was not sent yet: those of a form
+        // with a Send button, and a text field until Enter
+        let single_text =
+            !listed && action.params.first().map(|param| &param.kind) == Some(&ParamKind::String);
+        let marks_unsent = (listed && !on_change) || single_text;
         let mut change = Change::None;
-        ui.label(*name).on_hover_text(&hover);
+        ui.horizontal(|ui| {
+            ui.label(*name).on_hover_text(&hover);
+            if single_text && unsent[0] {
+                unsent_dot(ui);
+            }
+        });
         ui.add_enabled_ui(disabled.is_none(), |ui| {
             let input = if action.params.is_empty() {
                 let button = ui.button(format!("{PLAY} Run"));
@@ -618,6 +749,9 @@ impl Actions {
                 let field = self.uses_field(&action.path, &action.params[0].name);
                 ui.horizontal(|ui| {
                     change = input_ui(ui, &action.path, &action.params[0], &mut values[0], field);
+                    if single_text && unsent[0] {
+                        ui.weak("Enter to send");
+                    }
                 })
                 .response
             } else {
@@ -627,18 +761,33 @@ impl Actions {
                 input.on_disabled_hover_text(reason);
             }
         });
+        // a readback of an outpost not connected is the last value received, dimmed
         match readback {
-            Some((path, text)) => ui.label(text).on_hover_text(format!("Readback of {path}")),
+            Some((path, text)) if invoker.is_connected(id) => {
+                ui.label(text).on_hover_text(format!("Readback of {path}"))
+            }
+            Some((path, text)) => ui.weak(text).on_hover_text(format!(
+                "Readback of {path}, the last value received before the connection closed"
+            )),
             None => ui.label(""),
         };
-        outcome_ui(ui, invoker, id, now);
+        // whether an input sending while dragged is held, as of the frame before for
+        // inputs listed below this row
+        let sends_dragged = !listed || on_change;
+        let held_id = ui.id().with(("held", &id.source, &id.path));
+        let held_before = ui.data(|data| data.get_temp::<bool>(held_id)) == Some(true);
+        let held_now = sends_dragged && matches!(change, Change::Held | Change::Dragging);
+        outcome_ui(ui, invoker, id, held_before || held_now, now);
         ui.end_row();
 
         if listed {
-            for (param, value) in action.params.iter().zip(&mut values) {
+            for ((param, value), unsent) in action.params.iter().zip(&mut values).zip(&unsent) {
                 ui.horizontal(|ui| {
                     ui.add_space(12.0);
                     ui.weak(&param.name);
+                    if marks_unsent && *unsent {
+                        unsent_dot(ui);
+                    }
                 });
                 ui.add_enabled_ui(disabled.is_none(), |ui| {
                     let field = self.uses_field(&action.path, &param.name);
@@ -666,12 +815,39 @@ impl Actions {
             }
         }
 
+        let held = sends_dragged && matches!(change, Change::Held | Change::Dragging);
+        ui.data_mut(|data| data.insert_temp(held_id, held));
+        if !held
+            && !held_before
+            && let Some(note) = note(ui, invoker, id, action, now)
+        {
+            note_ui(ui, note);
+        }
+
+        // when the target rejects a value, an input that sends at once goes back to
+        // the value it accepted last, as it shows what the target holds, once let go
+        // if dragged; a text field keeps the text to correct it, and inputs listed
+        // below the row keep theirs as a draft to send again
+        let let_go = !held && !invoker.is_dragging(id);
+        if let_go && !listed && change == Change::None && invoker.take_rejected(id) {
+            let accepted = invoker.accepted(id);
+            for (param, value) in action.params.iter().zip(&mut values) {
+                if param.kind == ParamKind::String {
+                    continue;
+                }
+                *value = accepted
+                    .and_then(|args| args.iter().find(|(name, _)| *name == param.name))
+                    .and_then(|(_, data)| fit(param, data))
+                    .unwrap_or_else(|| initial(param, readback_value.clone()));
+            }
+        }
+
         for (param, value) in action.params.iter().zip(&values) {
             invoker
                 .inputs
                 .insert((id.clone(), param.name.clone()), value.clone());
         }
-        if disabled.is_some() || change == Change::None {
+        if disabled.is_some() || matches!(change, Change::None | Change::Held) {
             return;
         }
         let args: Args = action
@@ -1630,6 +1806,229 @@ mod tests {
             sent[0].1,
             Data::Record(vec![("p".to_owned(), Data::Uint(0))])
         );
+    }
+
+    /// Types `text` into the only text field and enters it.
+    fn enter_text(harness: &mut egui_kittest::Harness<'_, State>, text: &str) {
+        let field = || egui::accesskit::Role::TextInput;
+        harness.get_by_role(field()).focus();
+        harness.run_steps(2);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.get_by_role(field()).type_text(text);
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(2);
+    }
+
+    /// Answers the invocation `id` sent to the connection without a name.
+    fn answer(harness: &mut egui_kittest::Harness<'_, State>, id: u32, result: Result<(), &str>) {
+        let result = proto::ActionResult {
+            id,
+            result: result.map_err(str::to_owned),
+        };
+        let state = harness.state_mut();
+        state.invoker.receive("", &result, 0.0, &state.model);
+        harness.run_steps(2);
+    }
+
+    fn field_text(harness: &egui_kittest::Harness<'_, State>) -> String {
+        let field = harness.get_by_role(egui::accesskit::Role::TextInput);
+        field.value().unwrap_or_default()
+    }
+
+    #[test]
+    fn rejected_values_go_back_to_the_accepted_one_with_the_reason() {
+        let register = ParamKind::Int {
+            min: None,
+            max: None,
+        };
+        let mut harness = harness(vec![action("poke", vec![named("v", register)])]);
+        enter_text(&mut harness, "5");
+        answer(&mut harness, 0, Ok(()));
+        enter_text(&mut harness, "7");
+        assert_eq!(sent(&mut harness).len(), 2);
+        answer(&mut harness, 1, Err("too big"));
+        assert_eq!(field_text(&harness), "5");
+        harness.get_by_label("7 rejected: too big");
+        // the reason stays until the next invocation
+        enter_text(&mut harness, "6");
+        assert!(harness.query_by_label("7 rejected: too big").is_none());
+    }
+
+    #[test]
+    fn a_dragged_slider_goes_back_only_once_let_go() {
+        let percent = ParamKind::Int {
+            min: Some(0),
+            max: Some(100),
+        };
+        let mut harness = harness(vec![action("level", vec![named("p", percent)])]);
+        let input = |harness: &egui_kittest::Harness<'_, State>| {
+            let key = (ActionId::new("", "level"), "p".to_owned());
+            harness.state().invoker.inputs[&key].clone()
+        };
+        let rect = harness.get_by_role(egui::accesskit::Role::Slider).rect();
+        let press = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        harness.event(egui::Event::PointerMoved(rect.left_center()));
+        harness.event(press(rect.left_center(), true));
+        harness.run_steps(1);
+        harness.event(egui::Event::PointerMoved(rect.center()));
+        harness.run_steps(2);
+        let dragged = input(&harness);
+        assert_ne!(dragged, Data::Uint(0));
+        assert_eq!(sent(&mut harness).len(), 1);
+        // rejected while still held: the slider stays and says nothing yet
+        answer(&mut harness, 0, Err("too high"));
+        assert_eq!(input(&harness), dragged);
+        assert!(harness.query_by_label_contains("rejected").is_none());
+        harness.event(press(rect.center(), false));
+        harness.run_steps(3);
+        assert_eq!(input(&harness), Data::Uint(0));
+        assert!(sent(&mut harness).is_empty());
+        harness.get_by_label_contains("rejected: too high");
+    }
+
+    #[test]
+    fn rejected_text_is_kept_to_correct_it() {
+        let mut harness = harness(vec![action("say", vec![named("text", ParamKind::String)])]);
+        enter_text(&mut harness, "helo");
+        answer(&mut harness, 0, Err("misspelt"));
+        assert_eq!(field_text(&harness), "helo");
+        harness.get_by_label("helo rejected: misspelt");
+    }
+
+    #[test]
+    fn rejected_values_without_an_accepted_one_go_back_to_the_default() {
+        let mut ratio = named(
+            "r",
+            ParamKind::Int {
+                min: None,
+                max: None,
+            },
+        );
+        ratio.default = Some(Data::Uint(3));
+        let mut harness = harness(vec![action("ratio", vec![ratio])]);
+        enter_text(&mut harness, "9");
+        answer(&mut harness, 0, Err("no"));
+        assert_eq!(field_text(&harness), "3");
+    }
+
+    #[test]
+    fn forms_keep_their_inputs_when_rejected() {
+        let mut harness = harness(vec![action(
+            "message",
+            vec![
+                named(
+                    "level",
+                    ParamKind::Enum(vec!["info".to_owned(), "warn".to_owned()]),
+                ),
+                named("text", ParamKind::String),
+            ],
+        )]);
+        enter_text(&mut harness, "pump stalled");
+        harness.get_by_label("warn").click();
+        harness.get_by_label("Send").click();
+        harness.run_steps(2);
+        answer(&mut harness, 0, Err("busy"));
+        assert_eq!(field_text(&harness), "pump stalled");
+        harness.get_by_label("Rejected: busy");
+    }
+
+    #[test]
+    fn changed_inputs_of_a_form_are_marked_until_sent() {
+        let mut harness = harness(vec![action(
+            "message",
+            vec![
+                named(
+                    "level",
+                    ParamKind::Enum(vec!["info".to_owned(), "warn".to_owned()]),
+                ),
+                named("far", ParamKind::Bool),
+            ],
+        )]);
+        assert!(harness.query_by_label("Changed").is_none());
+        harness.get_by_label("warn").click();
+        harness.run_steps(2);
+        assert_eq!(harness.query_all_by_label("Changed").count(), 1);
+        harness.get_by_role(egui::accesskit::Role::CheckBox).click();
+        harness.run_steps(2);
+        assert_eq!(harness.query_all_by_label("Changed").count(), 2);
+        harness.get_by_label("Send").click();
+        harness.run_steps(2);
+        assert_eq!(sent(&mut harness).len(), 1);
+        assert!(harness.query_by_label("Changed").is_none());
+        // changing back to what was sent is no change
+        harness.get_by_label("info").click();
+        harness.run_steps(2);
+        harness.get_by_label("warn").click();
+        harness.run_steps(2);
+        assert!(harness.query_by_label("Changed").is_none());
+    }
+
+    #[test]
+    fn forms_sent_on_change_and_inputs_sent_at_once_are_not_marked() {
+        let mut harness = harness(vec![
+            action("enable", vec![named("on", ParamKind::Bool)]),
+            action(
+                "move",
+                vec![
+                    named(
+                        "mode",
+                        ParamKind::Enum(vec!["slow".to_owned(), "fast".to_owned()]),
+                    ),
+                    named("far", ParamKind::Bool),
+                ],
+            ),
+        ]);
+        harness.state_mut().view.on_change.insert("move".to_owned());
+        harness.run();
+        harness.get_by_label("fast").click();
+        harness.run_steps(2);
+        harness
+            .get_all_by_role(egui::accesskit::Role::CheckBox)
+            .next()
+            .unwrap()
+            .click();
+        harness.run_steps(2);
+        assert!(harness.query_by_label("Changed").is_none());
+    }
+
+    #[test]
+    fn text_fields_hint_at_enter_until_sent() {
+        let mut harness = harness(vec![action("say", vec![named("text", ParamKind::String)])]);
+        let field = || egui::accesskit::Role::TextInput;
+        harness.get_by_role(field()).focus();
+        harness.run_steps(2);
+        harness.get_by_role(field()).type_text("hello");
+        harness.run_steps(2);
+        harness.get_by_label("Enter to send");
+        harness.get_by_label("Changed");
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(2);
+        assert_eq!(sent(&mut harness).len(), 1);
+        assert!(harness.query_by_label("Enter to send").is_none());
+        assert!(harness.query_by_label("Changed").is_none());
+    }
+
+    #[test]
+    fn unanswered_invocations_say_how_long_they_wait() {
+        let mut harness = harness(vec![action("reset", vec![])]);
+        harness.get_by_label(&format!("{PLAY} Run")).click();
+        harness.run_steps(2);
+        assert_eq!(sent(&mut harness).len(), 1);
+        // six seconds in frames of a quarter
+        for _ in 0..24 {
+            let now = harness.ctx.input(|input| input.time);
+            harness.state_mut().invoker.update(now);
+            harness.run_steps(1);
+        }
+        harness.get_by_label_contains("s, a late answer still counts");
+        // a late answer still counts
+        answer(&mut harness, 0, Err("busy"));
+        harness.get_by_label("Rejected: busy");
     }
 
     #[test]

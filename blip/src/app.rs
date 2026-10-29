@@ -668,9 +668,8 @@ impl eframe::App for App {
                 self.layout.ui(ui, &mut context);
             });
         self.send_invocations();
-        if self.state.invoker.is_waiting(now) {
-            ui.ctx()
-                .request_repaint_after_secs(model::actions::DRAG_INTERVAL as f32);
+        if let Some(seconds) = self.state.invoker.repaint_after(now) {
+            ui.ctx().request_repaint_after_secs(seconds as f32);
         }
 
         let progress = self.opening.as_ref().map(|opening| toasts::Progress {
