@@ -11,7 +11,7 @@ import pytest
 import websockets
 from websockets.asyncio.server import ServerConnection
 
-from blip_outpost import ActionError, Actions, LogLevel, Outpost, Range, Unit, action
+from blip_outpost import ActionError, Actions, Outpost, Range, Unit, action
 
 from blip_client import receive as receive_message
 
@@ -245,22 +245,15 @@ async def test_clients_get_the_actions_when_connecting():
             assert [a["path"] for a in actions] == ["motor/speed", "motor/enable", "reboot", "slow"]
 
 
-async def test_invocations_are_answered_and_logged():
+async def test_invocations_are_answered():
     target = Target()
     async with serve(target, 3988):
         async with websockets.connect("ws://127.0.0.1:3988/ws/test") as ws:
             await ws.send(invoke(1, "motor/speed", {"rpm": 1500}))
             assert await receive(ws, "ActionResult") == {"id": 1, "result": {"Ok": None}}
-            log = await receive(ws, "Log")
-            assert log["component"] == "actions"
-            assert log["level"] == LogLevel.DEBUG
-            assert log["message"] == "motor/speed(rpm=1500): ok"
 
             await ws.send(invoke(2, "motor/speed", {"rpm": 13}))
             assert await receive(ws, "ActionResult") == {"id": 2, "result": {"Err": "unlucky speed"}}
-            log = await receive(ws, "Log")
-            assert log["level"] == LogLevel.WARN
-            assert log["message"] == "motor/speed(rpm=13) rejected: unlucky speed"
 
             await ws.send(invoke(3, "motor/speed", {"rpm": 4000}))
             result = await receive(ws, "ActionResult")
@@ -357,8 +350,8 @@ async def test_results_go_to_the_invoking_client_only():
                 websockets.connect("ws://127.0.0.1:3985/ws/test") as second:
             await first.send(invoke(1, "motor/enable", {}))
             assert (await receive(first, "ActionResult"))["id"] == 1
-            # the other client sees the log record, but no result
-            message = cbor2.loads(await receive_message(second, 2.0))
-            while "Log" not in message:
-                assert "ActionResult" not in message
-                message = cbor2.loads(await receive_message(second, 2.0))
+            # the other client sees neither the result nor a log record of it
+            with pytest.raises(TimeoutError):
+                while True:
+                    message = cbor2.loads(await receive_message(second, 0.3))
+                    assert "ActionResult" not in message and "Log" not in message

@@ -12,8 +12,7 @@ startup or when it connects again.
    :alt: Sequence: the outpost announces the actions; the user changes an
          input; blip sends Invoke; the outpost checks the arguments and calls
          the action, which talks to the target; the outpost answers with an
-         ActionResult and logs the invocation; the readback trace shows the
-         new state.
+         ActionResult; the readback trace shows the new state.
 
    An invocation from start to end.
 
@@ -78,9 +77,8 @@ The last column shows what became of the latest invocation:
    * - clock
      - no answer within five seconds
 
-Each invocation also shows as a log record of the component ``actions`` in the
-log views, rejected ones as warnings. Whether the action had the desired
-effect shows in the traces, e.g. the readback.
+Whether the action had the desired effect shows in the traces, e.g. the
+readback.
 
 When actions are disabled
 -------------------------

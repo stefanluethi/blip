@@ -194,8 +194,8 @@ Control
    The target shall answer each invocation to the client that sent it with
    whether it carried it out or the reason it rejected it. blip shall show
    whether the latest invocation of an action is pending, accepted, rejected
-   with the reason, or unanswered after a timeout. The outpost shall log each
-   invocation and its outcome to all clients.
+   with the reason, or unanswered after a timeout. The outpost shall not
+   send log records about invocations.
 
 .. req:: Actions view
    :id: REQ_CTRL_VIEW

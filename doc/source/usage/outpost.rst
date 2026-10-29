@@ -185,8 +185,9 @@ different actions run concurrently. A plain function runs in a thread of its
 own, so it may block, e.g. waiting for the target to answer; an ``async``
 function runs in the event loop of the outpost. An invocation is accepted when
 the action returns and rejected when it raises: ``ActionError`` with the
-reason blip shows, any other exception with its type and message. The outpost
-logs each invocation to all blips with the component ``actions``.
+reason blip shows, any other exception with its type and message. Only the
+blip that invoked the action gets the answer; the outpost sends no log records
+about invocations.
 
 Actions can be added, removed, enabled and disabled at any time through the
 ``actions`` of the outpost; blip gets the new list right away:

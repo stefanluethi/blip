@@ -15,16 +15,12 @@ from blip_outpost.proto import (
     ACTION_RESULT_PREFIX,
     ACTIONS_PREFIX,
     METADATA_PREFIX,
-    LogLevel,
     Message,
     decode_request,
 )
 from blip_outpost.recording import RecordingWriter
 
 logger = logging.getLogger(__name__)
-
-# The component of the log records about invocations
-ACTIONS_COMPONENT = "actions"
 
 # The messages queued for a client are sent together in one WebSocket frame, as a CBOR
 # sequence, up to this many bytes, so that a busy target does not cost a frame per
@@ -34,7 +30,7 @@ MAX_BATCH_BYTES = 64 * 1024
 
 
 def describe(path: str, args: Any) -> str:
-    """An invocation as shown in log records, e.g. ``motor/speed(rpm=1500)``."""
+    """An invocation as shown in the console log, e.g. ``motor/speed(rpm=1500)``."""
     if isinstance(args, dict):
         arguments = ", ".join(f"{name}={value!r}" for name, value in args.items())
     else:
@@ -252,15 +248,8 @@ class OutpostServer:
         # in the client's queue, so it stays in order with the broadcast messages
         if client in self.connected_clients:
             client.enqueue(Message.create_action_result(id, error).encode_cbor())
-        # to all clients and the recording, so they see what was invoked
-        if error is None:
-            log = Message.create_log(LogLevel.DEBUG, f"{describe(path, args)}: ok", component=ACTIONS_COMPONENT)
-        else:
+        if error is not None:
             logger.info(f"Rejected {describe(path, args)}: {error}")
-            log = Message.create_log(
-                LogLevel.WARN, f"{describe(path, args)} rejected: {error}", component=ACTIONS_COMPONENT
-            )
-        self.broadcast(log.encode_cbor())
 
     async def start(
         self,

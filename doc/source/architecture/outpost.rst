@@ -122,8 +122,8 @@ in a task of its own, so a slow action does not hold up the others:
    lock -- the invocations of one action run one after another, in order.
 #. The answer, ``ActionResult`` with ``Ok`` or ``Err`` and the reason, goes into
    the queue of the invoking client, in order with the broadcast messages.
-#. A log record of the component ``actions`` (``DEBUG`` if accepted, ``WARN``
-   if rejected) is broadcast to all clients and the recording.
+   Nothing about the invocation is broadcast or recorded; a rejection only
+   goes to the console log of the outpost.
 
 The passthrough sets ``on_invoke`` to forward an ``Invoke`` request with an id
 of its own to the target and accept once it is sent; the replay rejects every
