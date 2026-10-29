@@ -25,7 +25,7 @@ shows. A new actions view shows none.
 
 Each action is a row: its name (hover it for the description, the path and
 the outpost it is sent to), its input, the current value of its readback
-trace if it has one, and what became of its latest invocation.
+trace if it has one, in blue, and what became of its latest invocation.
 
 Inputs
 ------
@@ -33,7 +33,7 @@ Inputs
 .. figure:: /screenshots/view-actions.png
    :target: ../../_images/view-actions.png
    :class: screenshot
-   :alt: An actions view: a checkbox, two sliders with their readbacks, a choice, an action with two parameters and a Send button, and a Run button.
+   :alt: An actions view: a checkbox, a slider whose readback line sits in its handle and a slider without readback, a choice, an action with two parameters and a Send button, and a Run… button of an action that asks for confirmation.
 
 * An action without parameters is a **Run** button.
 * An action with one parameter is sent as soon as its input changes:
@@ -54,13 +54,21 @@ Inputs
   time one of its inputs changes (at most ten times a second, the latest
   change sent once the time is up). With a Send button, a dot by a parameter
   shows that its input changed since the action was last sent.
-* An action that asks for confirmation is sent after confirming it in a
-  dialog.
+* An action that asks for confirmation has a **Run…** or **Send…** button,
+  which selects it: Cancel takes its place, next to a button that carries it
+  out, e.g. **Run calibrate**, with the description of the action below. The
+  selection lapses after six seconds, with :kbd:`Esc`, when an input of the
+  action changes or once it cannot be carried out.
 
 The inputs start from the readback, the default of the parameter or its lowest
 value. Checkboxes and choices with a readback follow it, so they show the
 state of the target. After a change they keep the new value until a readback
-sample arrives that is newer than the target's answer.
+sample arrives that is newer than the target's answer; meanwhile the readback
+column says what the target reports, e.g. *reads off*.
+
+A slider shows its readback as a blue line on it, with the gap to the handle
+shaded: the handle is the value you asked for, the line the one the target
+reports.
 
 When the target rejects a value, the input goes back to the value it accepted
 last, or else to the value it started from, so it never shows a value the

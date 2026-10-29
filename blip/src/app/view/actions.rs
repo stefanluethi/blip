@@ -5,7 +5,12 @@
 //! every [`DRAG_INTERVAL`](crate::app::model::actions::DRAG_INTERVAL)), a number or text field on Enter. An action with several
 //! parameters, or one that asks for confirmation, is sent with its Send button, or one
 //! with several parameters, if chosen in the properties, when one of its inputs changes,
-//! at most every [`DRAG_INTERVAL`](crate::app::model::actions::DRAG_INTERVAL).
+//! at most every [`DRAG_INTERVAL`](crate::app::model::actions::DRAG_INTERVAL). An action that
+//! asks for confirmation is selected with its button and carried out with a second
+//! one in its row, within [`ARM_SECONDS`].
+//!
+//! The readback of a slider is a needle on it, and the readback of a toggle or choice
+//! shows in the input itself, its text only while it differs.
 //!
 //! An action is known by its path, which several outposts may announce. The actions
 //! are sent to the outpost chosen in the properties, by default each to the first
@@ -234,9 +239,24 @@ fn initial(param: &Param, readback: Option<Data>) -> Data {
     }
 }
 
+/// The readback of a number drawn onto its slider.
+#[derive(Clone, Copy)]
+struct Needle {
+    value: f64,
+    /// Whether the outpost is connected, so the value is current.
+    live: bool,
+}
+
 /// Shows an input for `value` of `param` of the action at `path`. Numbers with both
-/// bounds get a slider unless `field`.
-fn input_ui(ui: &mut egui::Ui, path: &str, param: &Param, value: &mut Data, field: bool) -> Change {
+/// bounds get a slider unless `field`, with the readback as a needle on it if any.
+fn input_ui(
+    ui: &mut egui::Ui,
+    path: &str,
+    param: &Param,
+    value: &mut Data,
+    field: bool,
+    needle: Option<Needle>,
+) -> Change {
     let unit_suffix = if param.unit.is_empty() {
         String::new()
     } else {
@@ -291,7 +311,15 @@ fn input_ui(ui: &mut egui::Ui, path: &str, param: &Param, value: &mut Data, fiel
             let before = as_f64(value).unwrap_or(0.0);
             let mut number = before;
             let bounds = (Some(*low as f64), Some(*high as f64));
-            let response = number_ui(ui, &mut number, bounds, Some(1.0), false, &unit_suffix);
+            let response = number_ui(
+                ui,
+                &mut number,
+                bounds,
+                Some(1.0),
+                false,
+                &unit_suffix,
+                needle,
+            );
             let changed = number != before;
             // the value itself stays exact unless the slider moves
             if changed {
@@ -310,7 +338,15 @@ fn input_ui(ui: &mut egui::Ui, path: &str, param: &Param, value: &mut Data, fiel
         ParamKind::Float { min, max, step } => {
             let before = as_f64(value).unwrap_or(0.0);
             let mut number = before;
-            let response = number_ui(ui, &mut number, (*min, *max), *step, field, &unit_suffix);
+            let response = number_ui(
+                ui,
+                &mut number,
+                (*min, *max),
+                *step,
+                field,
+                &unit_suffix,
+                needle,
+            );
             *value = Data::Float(number);
             change_of(&response, number != before)
         }
@@ -360,6 +396,7 @@ fn number_ui(
     step: Option<f64>,
     field: bool,
     suffix: &str,
+    needle: Option<Needle>,
 ) -> egui::Response {
     match (min, max) {
         (Some(min), Some(max)) if !field => {
@@ -368,7 +405,11 @@ fn number_ui(
             if let Some(step) = step {
                 slider = slider.step_by(step);
             }
-            ui.add(slider)
+            let response = ui.add(slider);
+            if let Some(needle) = needle {
+                needle_ui(ui, &response, (min, max), *number, needle);
+            }
+            response
         }
         _ => {
             let speed = match (min, max) {
@@ -387,6 +428,61 @@ fn number_ui(
             ui.add(drag)
         }
     }
+}
+
+/// Draws the readback `needle` onto the slider of `response`, whose handle is at
+/// `number` within `min` and `max`: a line where the readback is and the gap to the
+/// handle shaded, as the setpoint and process value of a controller. Grey while the
+/// outpost is not connected.
+fn needle_ui(
+    ui: &egui::Ui,
+    response: &egui::Response,
+    (min, max): (f64, f64),
+    number: f64,
+    needle: Needle,
+) {
+    let tokens = theme::tokens(ui.visuals());
+    let color = if needle.live {
+        tokens.accent_text
+    } else {
+        tokens.text_faint
+    };
+    // the geometry of egui's slider: the rail is as wide as the slider, the centre of
+    // the handle moves within it inset by half the handle's width
+    let height = response.rect.height();
+    let slider = egui::Rect::from_min_size(
+        response.rect.min,
+        egui::vec2(ui.spacing().slider_width, height),
+    );
+    let half_handle = match ui.visuals().handle_shape {
+        egui::style::HandleShape::Circle => height / 2.5,
+        egui::style::HandleShape::Rect { aspect_ratio } => height / 2.5 * aspect_ratio,
+    };
+    let positions = slider.x_range().shrink(half_handle);
+    let x = |value: f64| {
+        let fraction = if max > min {
+            ((value - min) / (max - min)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        egui::lerp(positions, fraction as f32)
+    };
+    let (handle, readback) = (x(number), x(needle.value));
+    let rail = ui.spacing().slider_rail_height / 2.0;
+    let y = slider.center().y;
+    // on the rail, which egui paints over anything below it, up to the handle's edge
+    let gap = if readback > handle {
+        handle + half_handle..=readback
+    } else {
+        readback..=handle - half_handle
+    };
+    if gap.start() < gap.end() {
+        let shaded = egui::Rect::from_x_y_ranges(gap, y - rail..=y + rail);
+        ui.painter()
+            .rect_filled(shaded, rail, color.gamma_multiply(0.35));
+    }
+    let line = egui::Rect::from_center_size(egui::pos2(readback, y), egui::vec2(2.0, height * 0.8));
+    ui.painter().rect_filled(line, 1.0, color);
 }
 
 /// Shows a field to type an integer for `value`, exact also beyond the integers a
@@ -564,6 +660,31 @@ fn unsent_dot(ui: &mut egui::Ui) {
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Changed"));
 }
 
+/// Shows the readback text in the colour of live data after a bar like the needle on
+/// sliders, greyed out as the last value received while the outpost of the action is
+/// not `connected`.
+fn readback_ui(ui: &mut egui::Ui, readback: Option<(&str, String)>, connected: bool) {
+    let Some((path, text)) = readback else {
+        ui.label("");
+        return;
+    };
+    let tokens = theme::tokens(ui.visuals());
+    let (color, hover) = if connected {
+        (tokens.accent_text, format!("Readback of {path}"))
+    } else {
+        let hover =
+            format!("Readback of {path}, the last value received before the connection closed");
+        (tokens.text_faint, hover)
+    };
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(2.0, 12.0), egui::Sense::hover());
+        ui.painter().rect_filled(rect, 1.0, color);
+        ui.colored_label(color, text)
+    })
+    .response
+    .on_hover_text(hover);
+}
+
 /// The width in points up to which a note wraps.
 const NOTE_WIDTH: f32 = 420.0;
 
@@ -580,13 +701,40 @@ fn note_ui(ui: &mut egui::Ui, (text, color): (String, egui::Color32)) {
     ui.end_row();
 }
 
-/// An action asked to be confirmed before it is sent.
-#[derive(Clone)]
-struct Confirmation {
-    id: ActionId,
-    /// The path of its readback trace.
-    readback: Option<String>,
-    args: Args,
+/// Seconds an action that asks for confirmation stays selected to be carried out.
+const ARM_SECONDS: f64 = 6.0;
+
+/// What became of an action selected to be carried out, in a frame.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Armed {
+    Waiting,
+    Cancelled,
+    Confirmed,
+}
+
+/// Shows the buttons of an action selected to be carried out: Cancel in the place of
+/// the button that selected it, so that a double click cancels, then the button named
+/// `label` that carries it out, and below them a line that shortens to nothing as the
+/// selection lapses, the fraction `left` of it still to go.
+fn armed_ui(ui: &mut egui::Ui, label: &str, left: f32) -> egui::InnerResponse<Armed> {
+    ui.vertical(|ui| {
+        let mut armed = Armed::Waiting;
+        ui.horizontal(|ui| {
+            if ui.button("Cancel").clicked() {
+                armed = Armed::Cancelled;
+            }
+            if ui.button(label).clicked() {
+                armed = Armed::Confirmed;
+            }
+        });
+        let width = ui.min_rect().width();
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 2.0), egui::Sense::hover());
+        let to_go = egui::Rect::from_min_size(rect.min, egui::vec2(width * left, 2.0));
+        let painter = ui.painter();
+        painter.rect_filled(rect, 1.0, theme::tokens(ui.visuals()).border);
+        painter.rect_filled(to_go, 1.0, ui.visuals().weak_text_color());
+        armed
+    })
 }
 
 impl Actions {
@@ -680,7 +828,6 @@ impl Actions {
         context: &mut ViewContext<'_>,
         shown: &Shown<'_>,
         now: f64,
-        confirm: &mut Option<Confirmation>,
     ) {
         let Shown {
             id,
@@ -690,7 +837,7 @@ impl Actions {
         } = shown;
         let invoker = &mut *context.invoker;
         let disabled = disabled_reason(invoker, id, action);
-        let readback =
+        let mut readback =
             readback_path.and_then(|path| Some((path, latest_text(context.model, path)?)));
         let mut hover = format!("{} on {}", action.path, outpost_name(&id.source));
         if !action.description.is_empty() {
@@ -722,6 +869,22 @@ impl Actions {
                     .unwrap_or_else(|| initial(param, readback))
             })
             .collect();
+        // a checkbox or choice shows the readback itself: the text only says when the
+        // target reports another value, e.g. right after a change
+        if let ([param], Some(value)) = (action.params.as_slice(), &readback_value)
+            && matches!(param.kind, ParamKind::Bool | ParamKind::Enum(_))
+            && let Some(value) = fit(param, value)
+        {
+            readback = readback.filter(|_| value != values[0]).map(|(path, _)| {
+                let text = match value {
+                    Data::Bool(true) => "reads on".to_owned(),
+                    Data::Bool(false) => "reads off".to_owned(),
+                    Data::String(text) => format!("reads {text}"),
+                    other => format!("reads {other:?}"),
+                };
+                (path, text)
+            });
+        }
 
         let listed = lists_params(action);
         let on_change = self.sends_on_change(action);
@@ -731,6 +894,23 @@ impl Actions {
         let single_text =
             !listed && action.params.first().map(|param| &param.kind) == Some(&ParamKind::String);
         let marks_unsent = (listed && !on_change) || single_text;
+        // an action that asks for confirmation is selected with its button, then carried
+        // out with another within ARM_SECONDS; the selection lapses with Escape, once
+        // the action cannot be carried out or when an input of it changes
+        let armed_id = ui.id().with(("armed", &id.source, &id.path));
+        let mut armed_at = ui
+            .data(|data| data.get_temp::<f64>(armed_id))
+            .filter(|at| now - at < ARM_SECONDS && disabled.is_none())
+            .filter(|_| !ui.input(|input| input.key_pressed(egui::Key::Escape)));
+        let confirm = |ui: &mut egui::Ui, armed_at: &mut Option<f64>, verb: &str| {
+            let at = (*armed_at)?;
+            let left = (1.0 - (now - at) / ARM_SECONDS) as f32;
+            let armed = armed_ui(ui, &format!("{verb} {name}"), left);
+            if armed.inner != Armed::Waiting {
+                *armed_at = None;
+            }
+            Some((armed.inner == Armed::Confirmed, armed.response))
+        };
         let mut change = Change::None;
         ui.horizontal(|ui| {
             ui.label(*name).on_hover_text(&hover);
@@ -740,15 +920,35 @@ impl Actions {
         });
         ui.add_enabled_ui(disabled.is_none(), |ui| {
             let input = if action.params.is_empty() {
-                let button = ui.button(format!("{PLAY} Run"));
-                if button.clicked() {
-                    change = Change::Done;
+                if let Some((confirmed, response)) = confirm(ui, &mut armed_at, "Run") {
+                    if confirmed {
+                        change = Change::Done;
+                    }
+                    response
+                } else {
+                    let ellipsis = if action.confirm { "…" } else { "" };
+                    let button = ui.button(format!("{PLAY} Run{ellipsis}"));
+                    if button.clicked() {
+                        if action.confirm {
+                            armed_at = Some(now);
+                        } else {
+                            change = Change::Done;
+                        }
+                    }
+                    button
                 }
-                button
             } else if !listed {
                 let field = self.uses_field(&action.path, &action.params[0].name);
                 ui.horizontal(|ui| {
-                    change = input_ui(ui, &action.path, &action.params[0], &mut values[0], field);
+                    let needle = readback_value
+                        .as_ref()
+                        .and_then(as_f64)
+                        .map(|value| Needle {
+                            value,
+                            live: invoker.is_connected(id),
+                        });
+                    let param = &action.params[0];
+                    change = input_ui(ui, &action.path, param, &mut values[0], field, needle);
                     if single_text && unsent[0] {
                         ui.weak("Enter to send");
                     }
@@ -761,16 +961,7 @@ impl Actions {
                 input.on_disabled_hover_text(reason);
             }
         });
-        // a readback of an outpost not connected is the last value received, dimmed
-        match readback {
-            Some((path, text)) if invoker.is_connected(id) => {
-                ui.label(text).on_hover_text(format!("Readback of {path}"))
-            }
-            Some((path, text)) => ui.weak(text).on_hover_text(format!(
-                "Readback of {path}, the last value received before the connection closed"
-            )),
-            None => ui.label(""),
-        };
+        readback_ui(ui, readback, invoker.is_connected(id));
         // whether an input sending while dragged is held, as of the frame before for
         // inputs listed below this row
         let sends_dragged = !listed || on_change;
@@ -792,10 +983,13 @@ impl Actions {
                 ui.add_enabled_ui(disabled.is_none(), |ui| {
                     let field = self.uses_field(&action.path, &param.name);
                     let changed = ui
-                        .horizontal(|ui| input_ui(ui, &action.path, param, value, field))
+                        .horizontal(|ui| input_ui(ui, &action.path, param, value, field, None))
                         .inner;
                     if on_change && changed != Change::None {
                         change = changed;
+                    }
+                    if !matches!(changed, Change::None | Change::Held) {
+                        armed_at = None;
                     }
                 });
                 ui.label("");
@@ -805,7 +999,15 @@ impl Actions {
             if !on_change {
                 ui.label("");
                 ui.add_enabled_ui(disabled.is_none(), |ui| {
-                    if ui.button("Send").clicked() {
+                    if let Some((confirmed, _)) = confirm(ui, &mut armed_at, "Send") {
+                        if confirmed {
+                            change = Change::Done;
+                        }
+                    } else if action.confirm {
+                        if ui.button("Send…").clicked() {
+                            armed_at = Some(now);
+                        }
+                    } else if ui.button("Send").clicked() {
                         change = Change::Done;
                     }
                 });
@@ -817,6 +1019,19 @@ impl Actions {
 
         let held = sends_dragged && matches!(change, Change::Held | Change::Dragging);
         ui.data_mut(|data| data.insert_temp(held_id, held));
+        match armed_at {
+            Some(at) => {
+                ui.data_mut(|data| data.insert_temp(armed_id, at));
+                ui.ctx().request_repaint_after_secs(0.05);
+                if !action.description.is_empty() {
+                    note_ui(
+                        ui,
+                        (action.description.clone(), ui.visuals().weak_text_color()),
+                    );
+                }
+            }
+            None => ui.data_mut(|data| data.remove::<f64>(armed_id)),
+        }
         if !held
             && !held_before
             && let Some(note) = note(ui, invoker, id, action, now)
@@ -856,13 +1071,7 @@ impl Actions {
             .map(|param| param.name.clone())
             .zip(values)
             .collect();
-        if action.confirm {
-            *confirm = Some(Confirmation {
-                id: id.clone(),
-                readback: readback_path.map(str::to_owned),
-                args,
-            });
-        } else if on_change {
+        if on_change {
             // each change at most every DRAG_INTERVAL, the latest held back until due
             match change {
                 Change::Released => invoker.finish_dragging(id, *readback_path, args, now),
@@ -886,50 +1095,6 @@ impl Actions {
             None => ui.weak("not announced by any outpost"),
         };
         ui.end_row();
-    }
-
-    /// Asks to confirm the action held in `confirm`, invoking it if confirmed. Run is
-    /// disabled while the action cannot be carried out, e.g. once the connection
-    /// ended or the outpost disabled the action while the dialog was open.
-    fn confirm_ui(ui: &mut egui::Ui, context: &mut ViewContext<'_>, id: egui::Id, now: f64) {
-        let Some(confirmation) = ui.data(|data| data.get_temp::<Confirmation>(id)) else {
-            return;
-        };
-        let invoker = &mut *context.invoker;
-        let action = &confirmation.id;
-        let disabled = match context
-            .model
-            .actions
-            .announced(&action.source, &action.path)
-        {
-            Some(descriptor) => disabled_reason(invoker, action, descriptor),
-            None => Some("The outpost no longer announces the action"),
-        };
-        let mut decided = false;
-        egui::Modal::new(id.with("modal")).show(ui.ctx(), |ui| {
-            ui.set_max_width(320.0);
-            ui.label(format!("Carry out {}?", action.path));
-            if let Some(reason) = disabled {
-                ui.weak(reason);
-            }
-            ui.add_space(8.0);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                if ui
-                    .add_enabled(disabled.is_none(), egui::Button::new("Run"))
-                    .clicked()
-                {
-                    let args = confirmation.args.clone();
-                    invoker.invoke(action, confirmation.readback.as_deref(), args, now);
-                    decided = true;
-                }
-                if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                    decided = true;
-                }
-            });
-        });
-        if decided {
-            ui.data_mut(|data| data.remove::<Confirmation>(id));
-        }
     }
 
     /// Shows a dropdown to choose the outpost the actions are sent to among those that
@@ -1112,8 +1277,6 @@ impl Viewable for Actions {
             return;
         }
         let names = short_names(rows.iter().map(|row| row.path));
-        let confirm_id = ui.id().with("confirm");
-        let mut confirm = None;
         egui::ScrollArea::both()
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -1134,15 +1297,11 @@ impl Viewable for Actions {
                                     readback: self.readback(action),
                                     name,
                                 };
-                                self.action_ui(ui, context, &shown, now, &mut confirm);
+                                self.action_ui(ui, context, &shown, now);
                             }
                         });
                 });
             });
-        if let Some(confirmation) = confirm {
-            ui.data_mut(|data| data.insert_temp(confirm_id, confirmation));
-        }
-        Self::confirm_ui(ui, context, confirm_id, now);
     }
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, context: &PropertiesContext<'_>) {
@@ -1449,46 +1608,97 @@ mod tests {
         let mut harness = harness(vec![confirmed]);
         harness.state_mut().view.on_change.insert("move".to_owned());
         harness.run();
-        harness.get_by_label("Send");
+        harness.get_by_label("Send…");
+    }
+
+    fn reboot() -> ActionDescriptor {
+        ActionDescriptor {
+            confirm: true,
+            description: "Restarts the device".to_owned(),
+            ..action("reboot", vec![])
+        }
     }
 
     #[test]
-    fn confirmed_actions_are_sent_after_confirming() {
-        let reboot = ActionDescriptor {
-            confirm: true,
-            ..action("reboot", vec![])
-        };
-        let mut harness = harness(vec![reboot]);
-        harness.get_by_label(&format!("{PLAY} Run")).click();
+    fn confirmed_actions_are_selected_then_carried_out_in_their_row() {
+        let mut harness = harness(vec![reboot()]);
+        harness.get_by_label(&format!("{PLAY} Run…")).click();
         harness.run_steps(2);
         assert!(sent(&mut harness).is_empty());
-        harness.get_by_label("Run").click();
+        // the description says what it does
+        harness.get_by_label("Restarts the device");
+        harness.get_by_label("Run reboot").click();
         harness.run_steps(2);
         assert_eq!(sent(&mut harness).len(), 1);
-        // the dialog is gone
-        assert!(harness.query_by_label("Run").is_none());
+        assert!(harness.query_by_label("Run reboot").is_none());
+        assert!(harness.query_by_label("Restarts the device").is_none());
     }
 
     #[test]
-    fn confirming_is_refused_once_the_action_is_disabled() {
-        let reboot = ActionDescriptor {
-            confirm: true,
-            ..action("reboot", vec![])
-        };
-        let mut harness = harness(vec![reboot.clone()]);
-        harness.get_by_label(&format!("{PLAY} Run")).click();
+    fn selected_actions_are_cancelled_or_lapse() {
+        let mut harness = harness(vec![reboot()]);
+        let run = format!("{PLAY} Run…");
+        harness.get_by_label(&run).click();
         harness.run_steps(2);
-        // the target disables the action while the dialog is open
+        harness.get_by_label("Cancel").click();
+        harness.run_steps(2);
+        assert!(harness.query_by_label("Run reboot").is_none());
+
+        harness.get_by_label(&run).click();
+        harness.run_steps(2);
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(2);
+        assert!(harness.query_by_label("Run reboot").is_none());
+
+        harness.get_by_label(&run).click();
+        harness.run_steps(2);
+        // frames of a quarter of a second
+        harness.run_steps((ARM_SECONDS * 4.0) as usize - 4);
+        harness.get_by_label("Run reboot");
+        harness.run_steps(5);
+        assert!(harness.query_by_label("Run reboot").is_none());
+        assert!(sent(&mut harness).is_empty());
+    }
+
+    #[test]
+    fn selected_actions_lapse_once_disabled() {
+        let mut harness = harness(vec![reboot()]);
+        harness.get_by_label(&format!("{PLAY} Run…")).click();
+        harness.run_steps(2);
+        // the target disables the action while it is selected
         let disabled = ActionDescriptor {
             enabled: false,
-            ..reboot
+            ..reboot()
         };
         harness.state_mut().model.actions.set("", vec![disabled]);
         harness.run_steps(2);
-        harness.get_by_label("Run").click();
+        assert!(harness.query_by_label("Run reboot").is_none());
+        // and enables it again: it is not selected any more
+        harness.state_mut().model.actions.set("", vec![reboot()]);
         harness.run_steps(2);
+        assert!(harness.query_by_label("Run reboot").is_none());
         assert!(sent(&mut harness).is_empty());
-        harness.get_by_label("The outpost cannot carry out the action now");
+    }
+
+    #[test]
+    fn confirmed_forms_send_their_values_and_lapse_when_changed() {
+        let move_to = ActionDescriptor {
+            confirm: true,
+            ..action("move", vec![named("far", ParamKind::Bool)])
+        };
+        let mut harness = harness(vec![move_to]);
+        harness.get_by_label("Send…").click();
+        harness.run_steps(2);
+        harness.get_by_label("Send move");
+        harness.get_by_role(egui::accesskit::Role::CheckBox).click();
+        harness.run_steps(2);
+        assert!(harness.query_by_label("Send move").is_none());
+        harness.get_by_label("Send…").click();
+        harness.run_steps(2);
+        harness.get_by_label("Send move").click();
+        harness.run_steps(2);
+        let args = Data::Record(vec![("far".to_owned(), Data::Bool(true))]);
+        assert_eq!(sent(&mut harness), [("move".to_owned(), args)]);
     }
 
     #[test]
@@ -1639,8 +1849,13 @@ mod tests {
             checkbox.accesskit_node().toggled() == Some(egui::accesskit::Toggled::True)
         };
         harness.run_steps(2);
-        harness.get_by_label("true");
         assert!(checked(&harness));
+        // the checkbox shows the readback, the text only while they differ
+        assert!(harness.query_by_label_contains("reads").is_none());
+        harness.get_by_role(egui::accesskit::Role::CheckBox).click();
+        harness.run_steps(2);
+        assert!(!checked(&harness));
+        harness.get_by_label("reads on");
 
         // the readback turned off
         harness.state_mut().invoker.inputs.clear();
@@ -1650,7 +1865,7 @@ mod tests {
             .readbacks_off
             .insert("enable".to_owned());
         harness.run_steps(2);
-        assert!(harness.query_by_label("true").is_none());
+        assert!(harness.query_by_label_contains("reads").is_none());
         assert!(!checked(&harness));
     }
 
