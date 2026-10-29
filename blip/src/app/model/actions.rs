@@ -168,6 +168,9 @@ struct Pending {
 pub struct Invoker {
     /// The names of the open connections, whose actions can be invoked.
     pub connected: HashSet<String>,
+    /// Whether blip is recording: actions are invoked only then, so that the recording
+    /// shows what they did.
+    pub recording: bool,
     next_id: u32,
     /// The invocations without answer, by id.
     pending: HashMap<u32, Pending>,

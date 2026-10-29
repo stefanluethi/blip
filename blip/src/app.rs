@@ -582,6 +582,7 @@ impl eframe::App for App {
         self.receive(now);
         let state = &mut self.state;
         state.invoker.connected = self.connections.open_names();
+        state.invoker.recording = state.recording;
         state.invoker.update(now);
         for error in self.connections.take_errors() {
             self.toasts.error(error);

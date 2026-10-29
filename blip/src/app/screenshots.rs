@@ -203,6 +203,7 @@ fn view_shot(name: &str, json: &str) {
     let mut invoker = model::actions::Invoker::default();
     // the actions of the recording, which has no connection names, are connected
     invoker.connected.insert(String::new());
+    invoker.recording = true;
     let view = serde_json::from_str(json).expect("a view");
     let shot = ViewShot {
         model,

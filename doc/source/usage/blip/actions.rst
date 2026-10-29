@@ -4,7 +4,8 @@ Actions
 Targets announce the actions they can carry out, e.g. set a motor setpoint,
 change a log level or start a calibration. An **actions view** is a form to
 carry them out. blip only sends an action when you do: never on its own, at
-startup or when it connects again.
+startup or when it connects again. And only while recording, so that the
+recording shows what the action did.
 
 .. figure:: /diagrams/action-sequence.svg
    :target: ../../_images/action-sequence.svg
@@ -107,8 +108,9 @@ When actions are disabled
 -------------------------
 
 An action is disabled while the connection of its outpost is not connected,
-e.g. while a recording is open, and while its target cannot carry it out, e.g.
-during a calibration. If the target says why, the reason shows below the action,
+e.g. while a recording is open, while blip is not recording (the view then
+says *Start recording to carry out actions*), and while its target cannot
+carry it out, e.g. during a calibration. If the target says why, the reason shows below the action,
 e.g. *calibrating, keep the device still*. Checked actions that no outpost announces, or that the
 chosen outpost does not announce, are listed greyed out; the traces panel lists
 them too, to uncheck them.

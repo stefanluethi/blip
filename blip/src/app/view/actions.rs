@@ -111,8 +111,12 @@ enum Change {
     Done,
 }
 
+/// Why actions cannot be carried out while not recording.
+const START_RECORDING: &str = "Start recording to carry out actions";
+
 /// Why `action`, announced as `descriptor` by the outpost it is sent to, cannot be
-/// invoked now, if it cannot.
+/// invoked now, if it cannot: not while its outpost is not connected, nor while not
+/// recording, so that the recording shows what it did.
 fn disabled_reason(
     invoker: &Invoker,
     action: &ActionId,
@@ -120,6 +124,8 @@ fn disabled_reason(
 ) -> Option<String> {
     if !invoker.is_connected(action) {
         Some("Not connected to its outpost".to_owned())
+    } else if !invoker.recording {
+        Some(START_RECORDING.to_owned())
     } else if !descriptor.enabled {
         Some(match target_reason(descriptor) {
             Some(reason) => format!("The outpost cannot carry out the action now: {reason}"),
@@ -1340,10 +1346,20 @@ impl Viewable for Actions {
             return;
         }
         let names = short_names(rows.iter().map(|row| row.path));
+        // why the connected actions are disabled, said once rather than in each hover
+        let connected = rows
+            .iter()
+            .filter_map(|row| row.outpost)
+            .any(|outpost| context.invoker.connected.contains(outpost));
+        let hint = connected && !context.invoker.recording;
         egui::ScrollArea::both()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 egui::Frame::NONE.inner_margin(8.0).show(ui, |ui| {
+                    if hint {
+                        ui.weak(START_RECORDING);
+                        ui.add_space(4.0);
+                    }
                     egui::Grid::new(ui.id().with("actions"))
                         .num_columns(4)
                         .spacing([12.0, 8.0])
@@ -1528,6 +1544,7 @@ mod tests {
         model.actions.set("", actions);
         let mut invoker = Invoker::default();
         invoker.connected.insert(String::new());
+        invoker.recording = true;
         let state = State {
             view,
             model,
@@ -1787,6 +1804,30 @@ mod tests {
         harness.state_mut().model.actions.set("", vec![enabled]);
         harness.run_steps(2);
         assert!(harness.query_by_label("calibrating").is_none());
+    }
+
+    #[test]
+    fn actions_are_carried_out_only_while_recording() {
+        let mut harness = harness(vec![action("reset", vec![])]);
+        let run = format!("{PLAY} Run");
+        assert!(harness.query_by_label(START_RECORDING).is_none());
+        harness.state_mut().invoker.recording = false;
+        harness.run_steps(2);
+        harness.get_by_label(START_RECORDING);
+        assert!(harness.get_by_label(&run).accesskit_node().is_disabled());
+        harness.get_by_label(&run).click();
+        harness.run_steps(2);
+        assert!(sent(&mut harness).is_empty());
+        // while disconnected that is the reason, not recording
+        harness.state_mut().invoker.connected.clear();
+        harness.run_steps(2);
+        assert!(harness.query_by_label(START_RECORDING).is_none());
+        harness.state_mut().invoker.connected.insert(String::new());
+        harness.state_mut().invoker.recording = true;
+        harness.run_steps(2);
+        harness.get_by_label(&run).click();
+        harness.run_steps(2);
+        assert_eq!(sent(&mut harness).len(), 1);
     }
 
     #[test]
