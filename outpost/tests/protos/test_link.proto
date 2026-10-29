@@ -23,6 +23,7 @@ message Item {
     Result result = 6;
     Unannotated raw = 7;
     Axes axes = 8;
+    Maps maps = 9;
   }
 }
 
@@ -97,6 +98,19 @@ message Result {
   option (blip.message).kind = KIND_ACTION_RESULT;
   uint32 id = 1 [(blip.field).role = ROLE_ACTION_ID];
   string error = 2 [(blip.field).role = ROLE_ERROR];
+}
+
+// a map of values is a record of its keys, a map of messages a path level per key
+message Maps {
+  option (blip.message) = {path: "maps"};
+  uint64 t_ns = 1 [(blip.field).role = ROLE_TIMESTAMP];
+  map<string, uint32> temps_dc = 2 [(blip.field) = {name: "temps", unit: "C", scale: 0.1}];
+  map<uint32, Wheel> wheels = 3;
+  map<string, State> states = 4;
+}
+
+message Wheel {
+  uint32 rpm = 1;
 }
 
 // no timestamp: the estimated time of the target

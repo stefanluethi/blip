@@ -143,6 +143,24 @@ def test_a_path_template_takes_field_values_and_units_go_once_per_path(schema):
     assert len([m for m in sent if "ValueMetadata" in m]) == 2
 
 
+def test_a_map_of_values_is_a_record_and_a_map_of_messages_a_level_per_key(schema):
+    t, sent = translator(schema)
+    maps = schema.message_class("test.link.Maps")(t_ns=4)
+    maps.temps_dc.update({"motor": 415, "board": 300})
+    maps.states["charger"] = 1
+    maps.wheels[2].rpm = 20
+    maps.wheels[1].rpm = 10
+    t.feed(up(schema, maps=maps))
+    assert values(sent) == [
+        ("maps/temps", {"board": pytest.approx(30.0), "motor": pytest.approx(41.5)}, 4),
+        ("maps/states", {"charger": "Charging"}, 4),
+        ("maps/wheels/1/rpm", 10, 4),
+        ("maps/wheels/2/rpm", 20, 4),
+    ]
+    assert units(sent) == {"maps/temps": "C"}
+    assert t.counters["decode_errors"] == 0
+
+
 def test_log_records_take_level_component_and_text(schema):
     t, sent = translator(schema)
     log = schema.message_class("test.link.Log")
@@ -213,6 +231,41 @@ def test_a_period_without_a_timestamp_is_an_error(tmp_path):
     )
     with pytest.raises(SchemaError, match="needs a timestamp"):
         Schema.load([proto]).plan("bad.M")
+
+
+@pytest.mark.parametrize("field, needs", [
+    ("string t = 1 [(blip.field).role = ROLE_TIMESTAMP];", "timestamp needs a single number"),
+    ("repeated uint64 t = 1 [(blip.field).role = ROLE_TIMESTAMP];", "timestamp needs a single number"),
+    ("Sub t = 1 [(blip.field).role = ROLE_TIMESTAMP];", "timestamp needs a single number"),
+    ("float s = 1 [(blip.field).role = ROLE_SEQUENCE];", "sequence needs a single integer"),
+    ("string l = 1 [(blip.field).role = ROLE_LEVEL];", "level needs a single integer or enum"),
+    ("uint32 m = 1 [(blip.field).role = ROLE_MESSAGE];", "message needs a single string"),
+])
+def test_a_role_on_a_field_of_the_wrong_type_is_an_error(tmp_path, field, needs):
+    proto = tmp_path / "bad.proto"
+    proto.write_text(
+        'syntax = "proto3"; package bad; import "blip/options.proto";\n'
+        f"message M {{ {field} }}\nmessage Sub {{ uint64 ns = 1; }}\n"
+    )
+    with pytest.raises(SchemaError, match=needs):
+        Schema.load([proto]).plan("bad.M")
+
+
+def test_a_series_leaves_out_fields_without_a_path(tmp_path):
+    proto = tmp_path / "series.proto"
+    proto.write_text(
+        'syntax = "proto3"; package series; import "blip/options.proto";\n'
+        "message M { uint64 t = 1 [(blip.field).role = ROLE_TIMESTAMP];\n"
+        "  uint32 p = 2 [(blip.field).role = ROLE_PERIOD];\n"
+        '  repeated int32 v = 3 [(blip.field).name = ""];\n'
+        '  uint32 c = 4 [(blip.field).name = ""];\n'
+        "  repeated int32 w = 5; }\n"
+    )
+    schema = Schema.load([proto])
+    outpost, sent = capture()
+    t = Translator(schema, "series.M", outpost)
+    t.feed(schema.message_class("series.M")(t=100, p=10, v=[1, 2], c=3, w=[4, 5]).SerializeToString())
+    assert values(sent) == [("w", 4, 100), ("w", 5, 110)]
 
 
 def test_a_template_naming_a_missing_field_is_an_error(tmp_path):
@@ -296,7 +349,8 @@ async def test_an_invocation_sends_a_downlink_message_and_waits_for_the_answer(s
     assert down.seq == 0
     assert down.invoke.id == 1
     assert down.invoke.WhichOneof("args") == "mode"
-    assert (down.invoke.mode.state, down.invoke.mode.label, down.invoke.mode.on) == (1, "x", False)
+    # `on` was left out: its default
+    assert (down.invoke.mode.state, down.invoke.mode.label, down.invoke.mode.on) == (1, "x", True)
 
     answering = asyncio.create_task(answer("not now"))
     with pytest.raises(ActionError, match="not now"):
@@ -304,8 +358,42 @@ async def test_an_invocation_sends_a_downlink_message_and_waits_for_the_answer(s
     await answering
     down = schema.message_class("test.link.Down").FromString(payloads[1])
     assert (down.seq, down.invoke.id) == (1, 2)
-    # a member with only defaults is still set
+    # a member with only zeros and defaults is still set
     assert down.invoke.WhichOneof("args") == "speed"
+    assert (down.invoke.speed.rpm, down.invoke.speed.gain) == (0, 1.5)
+
+
+def test_a_rejected_argument_uses_up_no_sequence_number_or_id(schema):
+    inv = invoker(schema, [])
+    speed = next(action for action in inv.actions if action.path == "motor/speed")
+    # in the range of the parameter, which has no max, but not of the uint32 field
+    with pytest.raises(ActionError, match="rpm"):
+        inv.encode(speed, {"rpm": 2**40})
+    id, payload = inv.encode(speed, {"rpm": 1})
+    down = schema.message_class("test.link.Down").FromString(payload)
+    assert (down.seq, down.invoke.id, id) == (0, 1, 1)
+
+
+@pytest.mark.parametrize("path, error", [
+    ('""', "an action needs a path"),
+    ('"motor/{id}"', "the path of an action names no fields"),
+])
+def test_an_action_path_must_be_a_plain_path(tmp_path, path, error):
+    proto = tmp_path / "bad.proto"
+    proto.write_text(
+        'syntax = "proto3"; package bad; import "blip/options.proto";\n'
+        "message Down { Invoke invoke = 1; }\n"
+        "message Invoke { option (blip.message).kind = KIND_INVOKE;\n"
+        "  uint32 id = 1 [(blip.field).role = ROLE_ACTION_ID];\n"
+        f"  oneof args {{ Stop stop = 2 [(blip.field).path = {path}]; }} }}\n"
+        "message Stop {}\n"
+    )
+
+    async def send(payload: bytes) -> None:
+        pass
+
+    with pytest.raises(SchemaError, match=error):
+        Invoker(Schema.load([proto]), "bad.Down", send)
 
 
 async def test_an_invocation_without_an_answer_times_out(schema):

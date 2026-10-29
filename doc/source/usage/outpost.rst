@@ -394,7 +394,9 @@ The rules:
   field a whole path of its own. ``{field}`` in a path is replaced by the value
   of that field of the message, which is then no value of its own.
 * **Values.** Each scalar field is a trace: a single value, or a list for a
-  repeated field (nested with ``shape``, e.g. ``[24, 8]``). ``scale``
+  repeated field (nested with ``shape``, e.g. ``[24, 8]``). A map of values
+  is a record of its keys; in a map of messages each message is at the path
+  of the map joined with its key. ``scale``
   multiplies the values (sent as floats), ``null_below`` sends values below it
   as ``null``, ``unit`` is shown in blip, ``skip`` leaves a field out. An enum
   is sent by its name: its ``(blip.value).name``, else the name of the value

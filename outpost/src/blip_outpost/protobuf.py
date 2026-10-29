@@ -176,6 +176,11 @@ class Translator:
                 continue
             child_path = self._field_path(child, message, path)
             child_plan = self.schema.plan(child.message_name)
+            if child.is_map:
+                # each value at the path of the map and its key
+                for key, item in sorted(items.items(), key=lambda entry: entry[0]):
+                    self._walk(item, child_plan, join(child_path, str(key)), t)
+                continue
             for item in items:
                 self._walk(item, child_plan, child_path, t)
 
@@ -210,6 +215,9 @@ class Translator:
     def _convert(self, f: FieldPlan, raw: Any) -> Any:
         if not f.repeated:
             return self._scalar(f, raw)
+        if f.is_map:
+            # a record of the keys
+            return {str(key): self._scalar(f, value) for key, value in sorted(raw.items(), key=lambda e: e[0])}
         values = [self._scalar(f, v) for v in raw]
         if f.shape:
             return self._reshape(f, values)
@@ -261,8 +269,11 @@ class Translator:
         raw_period = getattr(message, period_field.name)
         period = raw_period * period_field.scale if period_field.scale is not None else raw_period
         fields = self._present(message, plan)
-        columns = [(f, [self._scalar(f, v) for v in getattr(message, f.name)]) for f in fields if f.repeated]
-        constants = [(f, self._convert(f, getattr(message, f.name))) for f in fields if not f.repeated]
+        # a map is one value, not samples
+        columns = [(f, [self._scalar(f, v) for v in getattr(message, f.name)])
+                   for f in fields if f.repeated and not f.is_map]
+        constants = [(f, self._convert(f, getattr(message, f.name)))
+                     for f in fields if not f.repeated or f.is_map]
         n = max((len(values) for _, values in columns), default=0)
         if n == 0:
             return
@@ -282,10 +293,14 @@ class Translator:
         else:
             for f, value in constants:
                 field_path = self._field_path(f, message, path)
+                if not field_path:
+                    continue
                 self._unit(field_path, f.unit)
                 send(field_path, value, t)
             for f, values in columns:
                 field_path = self._field_path(f, message, path)
+                if not field_path:
+                    continue
                 self._unit(field_path, f.unit)
                 for i, value in enumerate(values):
                     send(field_path, value, t + int(round(i * period)))
@@ -393,7 +408,13 @@ class Invoker:
         return None
 
     def _action(self, member: FieldPlan) -> Optional[ActionPlan]:
-        path = "".join(literal for literal, _ in member.path) if member.path is not None else member.name
+        path = member.name
+        if member.path is not None:
+            if any(name is not None for _, name in member.path):
+                raise SchemaError(f"{member.desc.full_name}: the path of an action names no fields")
+            path = join("".join(literal for literal, _ in member.path))
+            if not path:
+                raise SchemaError(f"{member.desc.full_name}: an action needs a path")
         params = []
         enum_numbers = {}
         plan = self.schema.plan(member.message_name)
@@ -458,19 +479,15 @@ class Invoker:
     def encode(self, action: ActionPlan, args: Dict[str, Any]) -> Tuple[int, bytes]:
         """The id and the bytes of the downlink message invoking `action` with `args`."""
         message = self._class()
-        if self._sequence is not None:
-            setattr(message, self._sequence.name, self._seq)
-            self._seq = (self._seq + 1) % wrap(self._sequence)
         target = message
         for name in self._chain:
             target = getattr(target, name)
-        id = self._next_id
-        if self._id_field is not None:
-            self._next_id = id % (wrap(self._id_field) - 1) + 1
-            setattr(target, self._id_field.name, id)
         member = getattr(target, action.member.name)
         member.SetInParent()
-        for name, value in args.items():
+        # a parameter left out has its default, not protobuf's zero
+        values = {param.name: param.default for param in action.params if param.default is not None}
+        values.update(args)
+        for name, value in values.items():
             numbers = action.enum_numbers.get(name)
             if numbers is not None:
                 value = numbers[value]
@@ -478,6 +495,14 @@ class Invoker:
                 setattr(member, name, value)
             except (TypeError, ValueError) as e:
                 raise ActionError(f"{name}: {e}") from None
+        # numbered once the arguments fit, so a rejected invocation leaves no gap
+        if self._sequence is not None:
+            setattr(message, self._sequence.name, self._seq)
+            self._seq = (self._seq + 1) % wrap(self._sequence)
+        id = self._next_id
+        if self._id_field is not None:
+            self._next_id = id % (wrap(self._id_field) - 1) + 1
+            setattr(target, self._id_field.name, id)
         return id, message.SerializeToString()
 
     async def invoke(self, action: ActionPlan, args: Dict[str, Any]) -> None:

@@ -49,6 +49,18 @@ BITS_64 = {
     FD.TYPE_INT64, FD.TYPE_UINT64, FD.TYPE_SINT64, FD.TYPE_FIXED64, FD.TYPE_SFIXED64,
 }
 
+# Each role: the attribute of MessagePlan, and the types of field it takes, by name
+ROLES = {
+    ROLE_TIMESTAMP: ("timestamp", INTEGER_TYPES | FLOAT_TYPES, "number"),
+    ROLE_PERIOD: ("period", INTEGER_TYPES | FLOAT_TYPES, "number"),
+    ROLE_SEQUENCE: ("sequence", INTEGER_TYPES, "integer"),
+    ROLE_ACTION_ID: ("action_id", INTEGER_TYPES, "integer"),
+    ROLE_ERROR: ("error", {FD.TYPE_STRING}, "string"),
+    ROLE_LEVEL: ("level", INTEGER_TYPES | {FD.TYPE_ENUM}, "integer or enum"),
+    ROLE_COMPONENT: ("component", INTEGER_TYPES | {FD.TYPE_ENUM, FD.TYPE_STRING}, "integer, enum or string"),
+    ROLE_MESSAGE: ("message", {FD.TYPE_STRING}, "string"),
+}
+
 PathLike = Union[str, Path]
 
 
@@ -127,10 +139,13 @@ class FieldPlan:
     shape: Tuple[int, ...]
     skip: bool
     repeated: bool
+    # a map, which is also `repeated`: its values are what the other attributes describe
+    is_map: bool
+    # whether the values are messages
     is_message: bool
     # whether a value is only there when set: a member of a oneof, or `optional`
     has_presence: bool
-    # an enum field: the blip name of each number
+    # values of an enum: the blip name of each number
     enum_names: Optional[Dict[int, str]]
     # actions and their parameters
     description: str = ""
@@ -143,14 +158,16 @@ class FieldPlan:
 
     @property
     def message_type(self) -> Optional[descriptor.Descriptor]:
-        return self.desc.message_type
+        """The message type of the values, of a message field or a map of messages."""
+        return value_field(self.desc).message_type
 
     @property
     def message_name(self) -> str:
-        """The full name of the message type of a message field."""
-        if self.desc.message_type is None:
+        """The full name of the message type of the values."""
+        message_type = self.message_type
+        if message_type is None:
             raise SchemaError(f"{self.desc.full_name} holds no message")
-        return self.desc.message_type.full_name
+        return message_type.full_name
 
 
 @dataclass
@@ -294,22 +311,16 @@ class Schema:
         )
         in_template = {name for _, name in template or [] if name is not None}
 
-        roles = {
-            ROLE_TIMESTAMP: "timestamp",
-            ROLE_PERIOD: "period",
-            ROLE_SEQUENCE: "sequence",
-            ROLE_ACTION_ID: "action_id",
-            ROLE_ERROR: "error",
-            ROLE_LEVEL: "level",
-            ROLE_COMPONENT: "component",
-            ROLE_MESSAGE: "message",
-        }
         for f in sorted(desc.fields, key=lambda f: f.number):
             field_plan = self._field_plan(desc, f)
             if field_plan.role != ROLE_VALUE:
-                attribute = roles.get(field_plan.role)
-                if attribute is None:
+                role = ROLES.get(field_plan.role)
+                if role is None:
                     raise SchemaError(f"{desc.full_name}.{f.name}: unknown role {field_plan.role}")
+                attribute, types, type_names = role
+                # checked now, as a mismatch would fail every message
+                if field_plan.repeated or f.type not in types:
+                    raise SchemaError(f"{desc.full_name}.{f.name}: the role {attribute} needs a single {type_names}")
                 if getattr(plan, attribute) is not None:
                     raise SchemaError(f"{desc.full_name}: two fields of the role {attribute}")
                 setattr(plan, attribute, field_plan)
@@ -318,7 +329,7 @@ class Schema:
                 continue
             if field_plan.is_message:
                 plan.children.append(field_plan)
-            elif f.type != FD.TYPE_BYTES:
+            elif value_field(f).type != FD.TYPE_BYTES:
                 plan.values.append(field_plan)
         if plan.period is not None and plan.timestamp is None:
             raise SchemaError(f"{desc.full_name}: a period needs a timestamp")
@@ -327,8 +338,10 @@ class Schema:
     def _field_plan(self, desc: descriptor.Descriptor, f: descriptor.FieldDescriptor) -> FieldPlan:
         options = self.options("field", desc.full_name, f.name)
         repeated = is_repeated(f)
+        value = value_field(f)
+        is_map = value is not f
         shape = tuple(options.shape)
-        if shape and not repeated:
+        if shape and (not repeated or is_map):
             raise SchemaError(f"{desc.full_name}.{f.name}: only a repeated field has a shape")
         return FieldPlan(
             desc=f,
@@ -342,9 +355,10 @@ class Schema:
             shape=shape,
             skip=options.skip,
             repeated=repeated,
-            is_message=f.type == FD.TYPE_MESSAGE,
+            is_map=is_map,
+            is_message=value.type == FD.TYPE_MESSAGE,
             has_presence=f.has_presence and not repeated,
-            enum_names=self.enum_names(f.enum_type) if f.type == FD.TYPE_ENUM else None,
+            enum_names=self.enum_names(value.enum_type) if value.type == FD.TYPE_ENUM else None,
             description=options.description,
             confirm=options.confirm,
             readback=options.readback,
@@ -367,6 +381,14 @@ class Schema:
             yield plan
             for child in plan.children:
                 todo.append(child.message_name)
+
+
+def value_field(f: descriptor.FieldDescriptor) -> descriptor.FieldDescriptor:
+    """The field of the values of `f`: its `value` field for a map, else `f`."""
+    entry = f.message_type
+    if entry is not None and entry.GetOptions().map_entry:
+        return entry.fields_by_name["value"]
+    return f
 
 
 def parse_template(path: str, desc: descriptor.Descriptor) -> List[Tuple[str, Optional[str]]]:
