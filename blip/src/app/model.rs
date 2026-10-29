@@ -343,6 +343,7 @@ mod tests {
             readback: Some("motor/rpm".to_owned()),
             confirm: false,
             enabled: true,
+            disabled_reason: None,
         }]));
         let result = proto::ActionResult {
             id: 3,
@@ -500,6 +501,7 @@ mod tests {
             readback: None,
             confirm: false,
             enabled: true,
+            disabled_reason: None,
         }]));
         let mut model = Model::default();
         model.receive("a", &unit("rpm"));

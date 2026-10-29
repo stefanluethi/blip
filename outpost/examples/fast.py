@@ -198,7 +198,7 @@ class Fast:
     async def start(self) -> None:
         """Sends the history, then the data as it is due; record in blip first"""
         self._started.set()
-        self.outpost.actions.set_enabled(False, "fast/start")
+        self.outpost.actions.set_enabled(False, "fast/start", reason="started already")
 
     async def wait_for_start(self) -> None:
         """Waits for a blip, or with history for the action fast/start."""

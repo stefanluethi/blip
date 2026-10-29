@@ -25,6 +25,10 @@ pub struct ActionDescriptor {
     /// device is down.
     #[serde(default = "enabled")]
     pub enabled: bool,
+    /// Why the target cannot carry out the action now, if it says, shown while it is
+    /// not `enabled`, e.g. "calibrating, keep the device still".
+    #[serde(default)]
+    pub disabled_reason: Option<String>,
 }
 
 fn enabled() -> bool {
@@ -209,6 +213,7 @@ mod tests {
             readback: None,
             confirm: false,
             enabled: true,
+            disabled_reason: None,
         }]);
         assert_eq!(
             serde_cbor_2::from_slice::<Message>(&bytes).unwrap(),

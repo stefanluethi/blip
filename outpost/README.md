@@ -79,8 +79,9 @@ carried out one after another, in the order blip sent them.
 
 Methods become actions of the objects passed to `outpost.register(obj)`, so they share
 the state of the object. Actions can be added, removed, enabled and disabled at any time
-through `outpost.get_outpost().actions`, e.g. `set_enabled(False)` while the link to the
-target is down; blip gets the new list right away.
+through `outpost.get_outpost().actions`, e.g. `set_enabled(False, reason="the link is
+down")` while the link to the target is down; blip gets the new list right away and shows
+the reason below the actions.
 
 A script that only offers actions calls `outpost.wait()` after `start`, which blocks
 until Ctrl+C.

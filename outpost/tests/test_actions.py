@@ -70,6 +70,7 @@ def test_parameters_are_taken_from_the_signature():
         "readback": "motor/speed_rpm",
         "confirm": False,
         "enabled": True,
+        "disabled_reason": None,
     }
     assert descriptors["motor/enable"]["params"] == [
         {"name": "enabled", "kind": "Bool", "unit": "", "default": True}
@@ -168,6 +169,30 @@ async def test_disabled_actions_are_rejected():
     actions.set_enabled(True)
     await actions.invoke("motor/enable", {})
     assert target.calls == [("enable", True)]
+
+
+async def test_disabled_actions_say_why():
+    actions = registered(Target()).actions
+    actions.set_enabled(False, "motor/enable", reason="the link is down")
+    descriptor = next(d for d in actions.descriptors() if d["path"] == "motor/enable")
+    assert descriptor["enabled"] is False
+    assert descriptor["disabled_reason"] == "the link is down"
+    with pytest.raises(ActionError, match="disabled: the link is down"):
+        await actions.invoke("motor/enable", {})
+    # enabling forgets the reason
+    actions.set_enabled(True, "motor/enable")
+    descriptor = next(d for d in actions.descriptors() if d["path"] == "motor/enable")
+    assert descriptor["disabled_reason"] is None
+
+
+def test_a_new_reason_notifies():
+    changes = []
+    actions = Actions(on_change=lambda: changes.append(1))
+    actions.add("a", lambda: None)
+    actions.set_enabled(False, reason="busy")
+    actions.set_enabled(False, reason="busy")  # no change
+    actions.set_enabled(False, reason="calibrating")
+    assert len(changes) == 3
 
 
 async def test_exceptions_of_actions_reject_them():

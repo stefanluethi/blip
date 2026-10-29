@@ -38,6 +38,7 @@ def disable_actions(frame: bytes) -> bytes:
         message = cbor2.loads(frame)
         for descriptor in message["Actions"]:
             descriptor["enabled"] = False
+            descriptor["disabled_reason"] = "a replay carries out no actions"
         return cbor2.dumps(message)
     except Exception:
         return frame

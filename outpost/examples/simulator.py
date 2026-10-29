@@ -301,7 +301,9 @@ class Simulator:
     @action("imu/calibrate", confirm=True)
     async def calibrate_imu(self) -> None:
         """Removes the bias of the gyroscope, takes a moment"""
-        self.outpost.actions.set_enabled(False, "imu/calibrate")
+        self.outpost.actions.set_enabled(
+            False, "imu/calibrate", reason="calibrating, keep the device still"
+        )
         try:
             self._send_log(INFO, "imu", "calibration started, keep the device still")
             await asyncio.sleep(CALIBRATION_SEC)

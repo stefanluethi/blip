@@ -145,6 +145,9 @@ client that connects and to all clients whenever it changes.
    * - ``enabled: bool``
      - Optional (default ``true``), whether the target can carry out the
        action now, e.g. not while the link to the device is down.
+   * - ``disabled_reason: Option<String>``
+     - Optional, why the target cannot carry out the action now, which blip
+       shows while it is not ``enabled``, e.g. ``"calibrating"``.
 
 A ``Param`` has a ``name: String``, a ``kind: ParamKind``, a ``unit: String``
 (optional) and a ``default: Option<Data>`` (optional). The kinds:

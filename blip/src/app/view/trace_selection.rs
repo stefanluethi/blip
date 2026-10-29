@@ -1139,6 +1139,7 @@ mod tests {
                 readback: None,
                 confirm: false,
                 enabled: true,
+                disabled_reason: None,
             }],
         );
         let mut harness = egui_kittest::Harness::builder()
@@ -1262,6 +1263,7 @@ mod tests {
                 readback: None,
                 confirm: false,
                 enabled: true,
+                disabled_reason: None,
             }],
         );
         let mut harness = Harness::builder()

@@ -71,8 +71,8 @@ shaded: the handle is the value you asked for, the line the one the target
 reports.
 
 When the target rejects a value, the input goes back to the value it accepted
-last, or else to the value it started from, so it never shows a value the
-target refused. A dragged slider goes back once you let go. Text fields keep
+last, or else to the value it showed before it was first sent, so it never
+shows a value the target refused. A dragged slider goes back once you let go. Text fields keep
 the text, and the inputs of an action with several parameters keep theirs, to
 correct them and send again.
 
@@ -106,7 +106,8 @@ When actions are disabled
 
 An action is disabled while the connection of its outpost is not connected,
 e.g. while a recording is open, and while its target cannot carry it out, e.g.
-during a calibration. Checked actions that no outpost announces, or that the
+during a calibration. If the target says why, the reason shows below the action,
+e.g. *calibrating, keep the device still*. Checked actions that no outpost announces, or that the
 chosen outpost does not announce, are listed greyed out; the traces panel lists
 them too, to uncheck them.
 

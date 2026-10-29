@@ -156,7 +156,8 @@ pub struct Invoker {
     pending: HashMap<u32, Pending>,
     /// The latest invocation of each action.
     latest: HashMap<ActionId, Latest>,
-    /// The arguments of the latest accepted invocation of each action.
+    /// The arguments of the latest accepted invocation of each action, or until one is,
+    /// those its inputs had before it was first invoked.
     accepted: HashMap<ActionId, Args>,
     /// The actions whose latest invocation was rejected since the view last took it
     /// with [`Self::take_rejected`].
@@ -363,9 +364,17 @@ impl Invoker {
         self.latest.get(action)
     }
 
-    /// The arguments of the latest accepted invocation of `action`.
+    /// The arguments of the latest accepted invocation of `action`, or those its inputs
+    /// had before it was first invoked, see [`Self::assume_accepted`].
     pub fn accepted(&self, action: &ActionId) -> Option<&Args> {
         self.accepted.get(action)
+    }
+
+    /// Takes `args`, what the inputs of `action` showed before they changed, as what
+    /// the target holds until an invocation of it is accepted, so that a rejected value
+    /// goes back to them and not, e.g., to a readback that is still settling.
+    pub fn assume_accepted(&mut self, action: &ActionId, args: Args) {
+        self.accepted.entry(action.clone()).or_insert(args);
     }
 
     /// Whether the latest invocation of `action` was rejected since the last call, so
@@ -451,6 +460,7 @@ mod tests {
             readback: readback.map(str::to_owned),
             confirm: false,
             enabled: true,
+            disabled_reason: None,
         }
     }
 

@@ -132,7 +132,8 @@ class ProtobufLink:
         """The actions of the target can be invoked only while it is connected."""
         paths = [action.path for action in self.invoker.actions] if self.invoker is not None else []
         if paths:
-            self.outpost.actions.set_enabled(enabled, *paths)
+            reason = None if enabled else "the target is not connected"
+            self.outpost.actions.set_enabled(enabled, *paths, reason=reason)
 
     def _receive(self, frame: Any) -> None:
         if isinstance(frame, bytes):

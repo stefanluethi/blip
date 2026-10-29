@@ -216,6 +216,8 @@ class _Action:
     readback: Optional[str]
     confirm: bool
     enabled: bool = True
+    # why the action is disabled, shown in blip
+    disabled_reason: Optional[str] = None
     # invocations of an action run one after another, in the order they arrived
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -227,6 +229,7 @@ class _Action:
             "readback": self.readback,
             "confirm": self.confirm,
             "enabled": self.enabled,
+            "disabled_reason": None if self.enabled else self.disabled_reason,
         }
 
 
@@ -305,16 +308,20 @@ class Actions:
         if had_actions:
             self._changed()
 
-    def set_enabled(self, enabled: bool, *paths: str) -> None:
-        """Enables or disables the actions at `paths`, all actions if none are given."""
+    def set_enabled(self, enabled: bool, *paths: str, reason: Optional[str] = None) -> None:
+        """Enables or disables the actions at `paths`, all actions if none are given.
+        `reason` says why they are disabled, e.g. "calibrating, keep the device still",
+        which blip shows below them; enabling forgets it."""
+        reason = None if enabled else reason
         changed = False
         with self._lock:
             for path in paths or list(self._actions):
                 action = self._actions.get(path)
                 if action is None:
                     raise KeyError(f"no action '{path}'")
-                changed |= action.enabled != enabled
+                changed |= action.enabled != enabled or action.disabled_reason != reason
                 action.enabled = enabled
+                action.disabled_reason = reason
         if changed:
             self._changed()
 
@@ -341,7 +348,8 @@ class Actions:
         if action is None:
             raise ActionError(f"unknown action '{path}'")
         if not action.enabled:
-            raise ActionError(f"'{path}' is disabled")
+            reason = f": {action.disabled_reason}" if action.disabled_reason else ""
+            raise ActionError(f"'{path}' is disabled{reason}")
         if not isinstance(args, dict):
             raise ActionError("the arguments are not a record")
         unknown = set(args) - {param.name for param in action.params}

@@ -197,6 +197,7 @@ Actions can be added, removed, enabled and disabled at any time through the
    actions = outpost.get_outpost().actions
    actions.set_enabled(False)                    # all, e.g. while the link is down
    actions.set_enabled(True, "motor/speed")      # some
+   actions.set_enabled(False, "imu/calibrate", reason="calibrating")  # shown in blip
    actions.add("pump/run", run_pump, description="Runs the pump")
    actions.remove("pump/run")
 
