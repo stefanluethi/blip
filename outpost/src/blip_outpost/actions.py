@@ -275,15 +275,19 @@ class Actions:
         readback: Optional[str] = None,
         confirm: bool = False,
         enabled: bool = True,
+        params: Optional[List[Param]] = None,
     ) -> None:
         """Adds an action carried out by `function`, sync or async, replacing an action
-        of the same path. Raises TypeError if the parameters of `function` are not
-        supported."""
+        of the same path. Its parameters are those of `function`, or `params` if given,
+        which `function` then takes as keyword arguments. Raises TypeError if the
+        parameters of `function` are not supported."""
         if not path:
             raise ValueError("an action needs a path")
         if not description:
             description = (inspect.getdoc(function) or "").split("\n", 1)[0]
-        added = _Action(path, function, _params(function), description, readback, confirm, enabled)
+        if params is None:
+            params = _params(function)
+        added = _Action(path, function, list(params), description, readback, confirm, enabled)
         with self._lock:
             self._actions[path] = added
         self._changed()

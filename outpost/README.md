@@ -98,13 +98,34 @@ until Ctrl+C.
 ## Command line
 
 Targets that speak the blip protocol themselves, e.g. firmware with the C++ library
-sonde, and recordings need no script:
+sonde, targets that send protobuf messages of an annotated schema, and recordings need no
+script:
 
 ```bash
 blip-outpost tcp 192.168.1.70 9000          # or --listen to wait for the target
 blip-outpost udp 0.0.0.0 9000 --listen
+blip-outpost protobuf ws://192.168.1.70/ws/robby --proto link.proto --uplink my.Uplink --downlink my.Downlink
 blip-outpost replay recording.blip --speed 2
 ```
+
+`protobuf` loads the schema at run time with `protoc` (no generated code) and connects to
+the target's WebSocket: a binary frame holds one serialized message, a text frame JSON
+values of the target. Annotations from `blip/options.proto` (it comes with the package)
+say which trace, unit and scale each field becomes, and which oneof members of the
+downlink message are actions:
+
+```protobuf
+import "blip/options.proto";
+
+message Battery {
+  option (blip.message) = {path: "battery"};
+  uint64 t_ns = 1 [(blip.field).role = ROLE_TIMESTAMP];
+  uint32 voltage_mv = 2 [(blip.field) = {name: "voltage", unit: "V", scale: 0.001}];
+}
+```
+
+See the [user guide](https://stefanluethi.github.io/blip/docs/usage/outpost.html) for all
+rules.
 
 The target sends CBOR messages, several at once as a CBOR sequence (RFC 8742): a UDP
 datagram holds complete messages, over TCP they may be split anywhere. Invocations of

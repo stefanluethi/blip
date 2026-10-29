@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 authors = [{ name = "Stefan Lüthi" }]
 requires-python = ">=3.10"
-keywords = ["blip", "telemetry", "tracing", "embedded", "websocket", "cbor"]
+keywords = ["blip", "telemetry", "tracing", "embedded", "websocket", "cbor", "protobuf"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Framework :: AsyncIO",
@@ -24,6 +24,8 @@ dependencies = [
     "websockets>=13.0",
     "cbor2>=5.6.0",
     "click>=8.1.0",
+    # the schemas of `blip-outpost protobuf`, loaded at run time
+    "protobuf>=5.28",
 ]
 
 [project.urls]

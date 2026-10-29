@@ -13,7 +13,9 @@ import click
 
 from blip_outpost.outpost import Outpost
 from blip_outpost.passthrough import SocketPassthrough
+from blip_outpost.protolink import ProtobufLink
 from blip_outpost.replay import Replay
+from blip_outpost.schema import Schema, SchemaError
 
 logger = logging.getLogger(__name__)
 
@@ -89,8 +91,9 @@ def create_outpost(ws_host: str, ws_port: int, ws_path: str, record: Optional[st
 
 @click.group()
 def main() -> None:
-    """Serves blip the messages of a target that speaks the blip protocol itself, or of
-    a recording. To connect a target of your own, use blip_outpost in a script."""
+    """Serves blip the messages of a target that speaks the blip protocol itself or
+    protobuf, or of a recording. To connect a target of your own, use blip_outpost in a
+    script."""
 
 
 @main.command()
@@ -113,6 +116,50 @@ def udp(host: str, port: int, listen: bool, **options: Any) -> None:
     """Passes through the messages of a target at HOST:PORT over UDP."""
     outpost = create_outpost(**options)
     serve(outpost, SocketPassthrough(outpost, "udp", host, port, listen).run)
+
+
+@main.command()
+@click.argument("url")
+@click.option("--proto", "protos", multiple=True, required=True,
+              type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              help="The schema, a .proto file; may be given several times.")
+@click.option("-I", "--include", "includes", multiple=True,
+              type=click.Path(exists=True, file_okay=False, path_type=Path),
+              help="Directory to look for imports in (protoc -I); may be given several times.")
+@click.option("--uplink", required=True,
+              help="Full name of the message type the target sends, e.g. robby.link.Uplink.")
+@click.option("--downlink",
+              help="Full name of the message type the target receives; its actions are offered to blip.")
+@click.option("--timeout", default=1.0, show_default=True,
+              help="Seconds to wait for the answer of the target to an action.")
+@click.option("--protoc", default="protoc", show_default=True, help="The protoc to compile the schema with.")
+@click.option("--idle-timeout", default=5.0, show_default=True,
+              help="Seconds without a message after which the target counts as lost and the "
+                   "outpost connects again; 0 waits forever.")
+@outpost_options
+def protobuf(
+    url: str,
+    protos: tuple,
+    includes: tuple,
+    uplink: str,
+    downlink: Optional[str],
+    timeout: float,
+    protoc: str,
+    idle_timeout: float,
+    **options: Any,
+) -> None:
+    """Translates the protobuf messages of a target at the WebSocket URL to blip.
+
+    The schema is loaded at run time; its annotations (blip/options.proto) say which
+    trace, unit and scale each field becomes, and which actions the target offers."""
+    outpost = create_outpost(**options)
+    try:
+        schema = Schema.load(protos, includes, protoc)
+        link = ProtobufLink(outpost, schema, url, uplink, downlink, timeout=timeout, idle_timeout=idle_timeout)
+    except SchemaError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    serve(outpost, link.run)
 
 
 @main.command()
