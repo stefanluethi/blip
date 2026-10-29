@@ -50,8 +50,8 @@ Inputs
 
   Clicking a field to type in it sends nothing. Integers are typed in a text
   field and kept exact, also beyond 2\ :sup:`53`.
-* An action with several parameters lists them below its row and is sent with
-  its **Send** button, or, if chosen under **Sending** in the properties, each
+* An action with several parameters lists them below its name, joined by a
+  line from the first one to its **Send** button, and is sent with that button, or, if chosen under **Sending** in the properties, each
   time one of its inputs changes (at most ten times a second, the latest
   change sent once the time is up). With a Send button, a dot by a parameter
   shows that its input changed since the action was last sent.

@@ -718,9 +718,15 @@ fn readback_ui(ui: &mut egui::Ui, readback: Option<(&str, String)>, connected: b
 
 /// The width in points up to which a note wraps.
 const NOTE_WIDTH: f32 = 420.0;
-/// The points a note is raised into the spacing above its row, so that it stays close
-/// to the action it is about.
-const NOTE_RAISE: f32 = 4.0;
+/// The width in points of the rule along the parameters of an action listing them.
+const RULE_WIDTH: f32 = 2.0;
+/// The points from the rule's left edge to the names of the parameters beside it.
+const RULE_INDENT: f32 = 12.0;
+/// The points between the rows of one action.
+const ROW_GAP: f32 = 4.0;
+/// The points added between actions to the gap between rows, so that the rows of an
+/// action read as one.
+const ACTION_GAP: f32 = 16.0 - 2.0 * ROW_GAP;
 
 /// Shows `text` in the input column of a row of its own, overflowing into the columns
 /// to its right without widening the input column.
@@ -728,12 +734,9 @@ fn note_ui(ui: &mut egui::Ui, (text, color): (String, egui::Color32)) {
     ui.label("");
     let font = egui::TextStyle::Body.resolve(ui.style());
     let galley = ui.painter().layout(text.clone(), font, color, NOTE_WIDTH);
-    let size = egui::vec2(0.0, galley.size().y - NOTE_RAISE);
-    // the top of the row, before the cell aligns what it allocates
-    let top = ui.cursor().top() - NOTE_RAISE;
+    let size = egui::vec2(0.0, galley.size().y);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
-    ui.painter()
-        .galley(egui::pos2(rect.left(), top), galley, color);
+    ui.painter().galley(rect.min, galley, color);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &text));
     ui.end_row();
 }
@@ -1031,16 +1034,28 @@ impl Actions {
         ui.end_row();
 
         if listed {
+            // a rule in the column of the names, from the first parameter to Send, holds
+            // the rows of the action together; its inputs stay in the column of inputs
+            let mut rule: Option<(f32, egui::Rangef)> = None;
+            let extend = |rule: &mut Option<(f32, egui::Rangef)>, x: f32, rows: egui::Rangef| {
+                *rule = Some(match *rule {
+                    Some((x, span)) => (
+                        x,
+                        egui::Rangef::new(span.min.min(rows.min), span.max.max(rows.max)),
+                    ),
+                    None => (x, rows),
+                });
+            };
             let inputs = action.params.iter().zip(&mut values).zip(&mut typing_now);
             for (index, ((param, value), typing)) in inputs.enumerate() {
-                ui.horizontal(|ui| {
-                    ui.add_space(12.0);
+                let label = ui.horizontal(|ui| {
+                    ui.add_space(RULE_INDENT);
                     ui.weak(&param.name);
                     if marks_unsent && (unsent[index] || typing_before[index]) {
                         unsent_dot(ui);
                     }
                 });
-                ui.add_enabled_ui(disabled.is_none(), |ui| {
+                let input = ui.add_enabled_ui(disabled.is_none(), |ui| {
                     let field = self.uses_field(&action.path, &param.name);
                     let changed = ui
                         .horizontal(|ui| input_ui(ui, &action.path, param, value, field, None))
@@ -1053,13 +1068,15 @@ impl Actions {
                         armed_at = None;
                     }
                 });
+                let rows = input.response.rect.y_range();
+                extend(&mut rule, label.response.rect.left(), rows);
                 ui.label("");
                 ui.label("");
                 ui.end_row();
             }
             if !on_change {
                 ui.label("");
-                ui.add_enabled_ui(disabled.is_none(), |ui| {
+                let send = ui.add_enabled_ui(disabled.is_none(), |ui| {
                     if let Some((confirmed, _)) = confirm(ui, &mut armed_at, "Send") {
                         if confirmed {
                             change = Change::Done;
@@ -1072,9 +1089,17 @@ impl Actions {
                         change = Change::Done;
                     }
                 });
+                if let Some((x, _)) = rule {
+                    extend(&mut rule, x, send.response.rect.y_range());
+                }
                 ui.label("");
                 ui.label("");
                 ui.end_row();
+            }
+            if let Some((x, span)) = rule {
+                let stroke =
+                    egui::Stroke::new(RULE_WIDTH, theme::tokens(ui.visuals()).border_strong);
+                ui.painter().vline(x + RULE_WIDTH / 2.0, span, stroke);
             }
         }
 
@@ -1158,7 +1183,10 @@ impl Actions {
     /// Shows the row of a shown action that the outpost it is sent to does not
     /// announce.
     fn missing_ui(ui: &mut egui::Ui, row: &Row<'_>, name: &str) {
-        ui.weak(name).on_hover_text(row.path);
+        ui.horizontal(|ui| {
+            ui.set_min_height(theme::CONTROL_HEIGHT);
+            ui.weak(name).on_hover_text(row.path);
+        });
         match row.outpost {
             Some(outpost) => ui.weak(format!("not announced by {}", outpost_name(outpost))),
             None => ui.weak("not announced by any outpost"),
@@ -1360,11 +1388,19 @@ impl Viewable for Actions {
                         ui.weak(START_RECORDING);
                         ui.add_space(4.0);
                     }
+                    // rows only as high as their content, the actions apart by a row of
+                    // their own
                     egui::Grid::new(ui.id().with("actions"))
                         .num_columns(4)
-                        .spacing([12.0, 8.0])
+                        .spacing([12.0, ROW_GAP])
+                        .min_row_height(0.0)
                         .show(ui, |ui| {
-                            for (row, name) in rows.iter().zip(&names) {
+                            for (index, (row, name)) in rows.iter().zip(&names).enumerate() {
+                                if index > 0 {
+                                    let gap = egui::vec2(0.0, ACTION_GAP);
+                                    ui.allocate_exact_size(gap, egui::Sense::hover());
+                                    ui.end_row();
+                                }
                                 let (Some(outpost), Some(action)) = (row.outpost, row.action)
                                 else {
                                     Self::missing_ui(ui, row, name);
