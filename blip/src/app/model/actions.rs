@@ -79,6 +79,23 @@ impl Actions {
     pub fn is_empty(&self) -> bool {
         self.list.is_empty()
     }
+
+    /// Whether the value at `path` holds the readback trace of an announced action:
+    /// is it, or a record or array it is a field or element of.
+    pub fn holds_readback(&self, path: &str) -> bool {
+        self.list
+            .iter()
+            .filter_map(|action| action.descriptor.readback.as_deref())
+            .any(|readback| holds(path, readback))
+    }
+}
+
+/// Whether the value at `path` holds the trace at `trace`: is it, or a record or array
+/// it is a field or element of, e.g. `motor` holds `motor.speed` and `adc` `adc[1]`.
+pub fn holds(path: &str, trace: &str) -> bool {
+    trace
+        .strip_prefix(path)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(['.', '[']))
 }
 
 /// An action of the outpost of a connection, to which its invocations are sent.
@@ -408,12 +425,6 @@ impl Invoker {
         std::mem::take(&mut self.outbox)
     }
 
-    /// Forgets how many samples the readback traces had, when the data is cleared and
-    /// the traces start again from none.
-    pub fn forget_readback_marks(&mut self) {
-        self.readback_marks.clear();
-    }
-
     /// Forgets the invocations, e.g. when a recording replaces the data. The inputs and
     /// the open connections are kept.
     pub fn reset(&mut self) {
@@ -469,15 +480,20 @@ mod tests {
         ActionId::new("", path)
     }
 
-    /// A model with `samples` samples of the trace "on", the readback of "enable".
+    /// A model that received `samples` values of the trace "on", the readback of
+    /// "enable", while not recording.
     fn model(samples: u64) -> Model {
         let mut model = Model::default();
+        model
+            .actions
+            .set("", vec![descriptor("enable", Some("on"))]);
         for timestamp in 0..samples {
-            model.traces.append(&proto::Value {
+            let value = proto::Message::Value(proto::Value {
                 timestamp,
                 path: "on".to_owned(),
                 value: Data::Bool(true),
             });
+            model.receive_unrecorded("", &serde_cbor_2::to_vec(&value).unwrap());
         }
         model
     }
@@ -551,9 +567,6 @@ mod tests {
         invoker.receive("", &answer(0, Ok(())), 0.1, &model(10));
         assert!(!invoker.follows_readback(&enable, 10));
         assert!(invoker.follows_readback(&enable, 11));
-        // after clearing the data, the readback starts again from no samples
-        invoker.forget_readback_marks();
-        assert!(invoker.follows_readback(&enable, 1));
         // a rejected invocation changed nothing, the readback is right
         invoker.invoke(&enable, Some("on"), vec![], 1.0);
         invoker.receive("", &answer(1, Err("no")), 1.1, &model(20));

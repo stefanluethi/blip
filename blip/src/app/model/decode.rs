@@ -244,6 +244,25 @@ pub fn is_sample(frame: &[u8]) -> bool {
     reader.head() == Ok(Head::Map(Some(1))) && matches!(reader.str(), Ok("Value" | "Log"))
 }
 
+/// The path of the value in `frame` if it is a [`Message::Value`], read without
+/// decoding the value.
+pub fn value_path(frame: &[u8]) -> Option<&str> {
+    let mut reader = Reader::new(frame);
+    if reader.head().ok()? != Head::Map(Some(1)) || reader.str().ok()? != "Value" {
+        return None;
+    }
+    let Head::Map(Some(len)) = reader.head().ok()? else {
+        return None;
+    };
+    for _ in 0..len {
+        match reader.str().ok()? {
+            "path" => return reader.str().ok(),
+            _ => reader.skip().ok()?,
+        }
+    }
+    None
+}
+
 /// Decodes the message `frame`, the value of a [`Message::Value`] into `flat`.
 pub fn decode<'b>(frame: &'b [u8], flat: &mut Flat) -> Result<Message<'b>, String> {
     let mut reader = Reader::new(frame);

@@ -98,8 +98,10 @@ The last column shows what became of the latest invocation:
        and an answer that comes later still counts
 
 Whether the action had the desired effect shows in the traces, e.g. the
-readback. While the connection of its outpost is not connected, the readback
-is greyed out: it is the last value received.
+readback. Readbacks show also while not recording: blip keeps the latest value
+of each readback trace, also when the data is cleared. While the connection of
+its outpost is not connected, the readback is greyed out: it is the last value
+received.
 
 When actions are disabled
 -------------------------

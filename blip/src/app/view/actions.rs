@@ -150,9 +150,9 @@ fn can_send_on_change(action: &ActionDescriptor) -> bool {
     action.params.len() > 1 && !action.confirm
 }
 
-/// The latest value of the trace at `path`, if it is a number, bool or string.
+/// The latest value of the readback trace at `path`, if it is a number, bool or string.
 fn latest_value(model: &Model, path: &str) -> Option<Data> {
-    let trace = model.traces.get(path)?;
+    let trace = model.readback(path)?;
     let last = trace.timestamps.len().checked_sub(1)?;
     match &trace.samples {
         Samples::Numbers(numbers) => match numbers.get(last) {
@@ -167,9 +167,9 @@ fn latest_value(model: &Model, path: &str) -> Option<Data> {
     }
 }
 
-/// The latest value of the trace at `path` as text with its unit.
+/// The latest value of the readback trace at `path` as text with its unit.
 fn latest_text(model: &Model, path: &str) -> Option<String> {
-    let trace = model.traces.get(path)?;
+    let trace = model.readback(path)?;
     let last = trace.timestamps.len().checked_sub(1)?;
     let value = trace
         .samples
@@ -1927,11 +1927,7 @@ mod tests {
             ..action("enable", vec![named("on", ParamKind::Bool)])
         };
         let mut harness = harness(vec![enable]);
-        harness.state_mut().model.traces.append(&proto::Value {
-            timestamp: 0,
-            path: "on".to_owned(),
-            value: Data::Bool(true),
-        });
+        receive(&mut harness, "on", 0, Data::Bool(true));
         let checked = |harness: &egui_kittest::Harness<'_, State>| {
             let checkbox = harness.get_by_role(egui::accesskit::Role::CheckBox);
             checkbox.accesskit_node().toggled() == Some(egui::accesskit::Toggled::True)
@@ -2111,6 +2107,23 @@ mod tests {
         );
     }
 
+    /// Receives the value at `path` from the connection without a name, while not
+    /// recording.
+    fn receive(
+        harness: &mut egui_kittest::Harness<'_, State>,
+        path: &str,
+        timestamp: u64,
+        value: Data,
+    ) {
+        let message = proto::Message::Value(proto::Value {
+            timestamp,
+            path: path.to_owned(),
+            value,
+        });
+        let frame = serde_cbor_2::to_vec(&message).unwrap();
+        harness.state_mut().model.receive_unrecorded("", &frame);
+    }
+
     /// Types `text` into the only text field and enters it.
     fn enter_text(harness: &mut egui_kittest::Harness<'_, State>, text: &str) {
         let field = || egui::accesskit::Role::TextInput;
@@ -2206,11 +2219,7 @@ mod tests {
         };
         let mut harness = harness(vec![poke]);
         let sample = |harness: &mut egui_kittest::Harness<'_, State>, timestamp, value| {
-            harness.state_mut().model.traces.append(&proto::Value {
-                timestamp,
-                path: "rb".to_owned(),
-                value: Data::Uint(value),
-            });
+            receive(harness, "rb", timestamp, Data::Uint(value));
             harness.run_steps(2);
         };
         sample(&mut harness, 0, 10);

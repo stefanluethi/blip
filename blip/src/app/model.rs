@@ -11,6 +11,7 @@ use crate::app::model::actions::Actions;
 use crate::app::model::logs::{LogEntry, Logs};
 use crate::app::model::recording::Recording;
 use crate::app::model::traces::Traces;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Identifies a state of a part of a model, e.g. the paths of its traces: a new one
@@ -44,6 +45,20 @@ pub struct Model {
     flat: decode::Flat,
     /// The timestamp of the first value or log record, from which times count.
     origin: Option<u64>,
+    /// The latest value of each path, also while not recording, so that actions show
+    /// their readbacks without recording. Kept when the data is cleared, as the target
+    /// is as it was.
+    latest: HashMap<Box<str>, Latest>,
+}
+
+/// The latest value of a path.
+struct Latest {
+    frame: Vec<u8>,
+    /// The values received at the path.
+    count: usize,
+    /// The traces of the value, with only its latest sample, if it holds the readback
+    /// of an announced action.
+    traces: Option<Traces>,
 }
 
 /// The latest frame of `source` with its actions or the unit of a path.
@@ -59,10 +74,12 @@ impl Model {
     /// actions, with which the recording starts again.
     pub fn clear(&mut self) {
         let descriptions = std::mem::take(&mut self.descriptions);
+        let latest = std::mem::take(&mut self.latest);
         *self = Model::default();
         for description in &descriptions {
             self.receive(&description.source, &description.frame);
         }
+        self.latest = latest;
     }
 
     /// Keeps `frame` from `source` as its latest description of the unit of `path`, or
@@ -109,7 +126,11 @@ impl Model {
         frame: &[u8],
         recording: bool,
     ) -> Option<proto::ActionResult> {
-        // samples are dropped while not recording, without decoding them
+        // samples are dropped while not recording, without decoding them, except that
+        // the latest value of each path is kept, decoded if it holds a readback
+        if let Some(path) = decode::value_path(frame) {
+            self.keep_latest(path, frame);
+        }
         if !recording && decode::is_sample(frame) {
             return None;
         }
@@ -153,6 +174,20 @@ impl Model {
                 self.describe(source, None, frame);
                 self.actions.set(source, actions);
                 self.paths_version = Version::default();
+                // values that arrived before they became readbacks
+                let Model {
+                    latest,
+                    actions,
+                    flat,
+                    ..
+                } = self;
+                for (path, latest) in latest {
+                    match (actions.holds_readback(path), &latest.traces) {
+                        (true, None) => latest.traces = latest_traces(&latest.frame, flat),
+                        (false, Some(_)) => latest.traces = None,
+                        _ => {}
+                    }
+                }
             }
             Ok(decode::Message::Other(proto::Message::ActionResult(result))) => {
                 return Some(result);
@@ -181,11 +216,53 @@ impl Model {
         self.samples_version
     }
 
-    /// The number of samples of the readback trace at `readback`, 0 if there is none.
+    /// Keeps `frame` as the latest value at `path`, decoded if it holds a readback.
+    fn keep_latest(&mut self, path: &str, frame: &[u8]) {
+        let latest = match self.latest.get_mut(path) {
+            Some(latest) => {
+                frame.clone_into(&mut latest.frame);
+                latest
+            }
+            None => self.latest.entry(path.into()).or_insert(Latest {
+                frame: frame.to_vec(),
+                count: 0,
+                traces: None,
+            }),
+        };
+        latest.count += 1;
+        latest.traces = if self.actions.holds_readback(path) {
+            latest_traces(frame, &mut self.flat)
+        } else {
+            None
+        };
+    }
+
+    /// The latest value at the path that holds the trace at `readback`, the longest if
+    /// several do.
+    fn latest_holding(&self, readback: &str) -> Option<&Latest> {
+        self.latest
+            .iter()
+            .filter(|(path, _)| actions::holds(path, readback))
+            .max_by_key(|(path, _)| path.len())
+            .map(|(_, latest)| latest)
+    }
+
+    /// The readback trace at `readback` with only its latest sample, also while not
+    /// recording, if its value arrived since it is the readback of an announced action.
+    pub fn readback(&self, readback: &str) -> Option<traces::Trace<'_>> {
+        self.latest_holding(readback)?
+            .traces
+            .as_ref()?
+            .get(readback)
+    }
+
+    /// The number of values received at the path holding the readback trace at
+    /// `readback`, also while not recording, 0 if there is none. It only grows, also
+    /// when the data is cleared.
     pub fn readback_samples(&self, readback: Option<&str>) -> usize {
         readback
-            .and_then(|readback| self.traces.get(readback))
-            .map_or(0, |trace| trace.timestamps.len())
+            .and_then(|readback| self.latest_holding(readback))
+            .map_or(0, |latest| latest.count)
     }
 
     /// Whether values or log records were received, to save or clear them.
@@ -245,6 +322,16 @@ impl Activity {
     pub fn log_count(&self) -> u32 {
         self.logs.iter().sum()
     }
+}
+
+/// The traces of the value in `frame`, with only that sample.
+fn latest_traces(frame: &[u8], flat: &mut decode::Flat) -> Option<Traces> {
+    let decode::Message::Value { timestamp, path } = decode::decode(frame, flat).ok()? else {
+        return None;
+    };
+    let mut traces = Traces::default();
+    traces.insert(path, timestamp, flat, frame);
+    Some(traces)
 }
 
 #[cfg(test)]
@@ -437,6 +524,87 @@ mod tests {
         );
         model.receive("a", &log(7_000_000_000));
         assert_eq!(model.origin(), Some(5_000_000_000));
+    }
+
+    fn value(timestamp: u64, path: &str, value: proto::Data) -> Vec<u8> {
+        frame(&proto::Message::Value(proto::Value {
+            timestamp,
+            path: path.to_owned(),
+            value,
+        }))
+    }
+
+    fn announce(readback: &str) -> Vec<u8> {
+        frame(&proto::Message::Actions(vec![proto::ActionDescriptor {
+            path: "set".to_owned(),
+            description: String::new(),
+            params: vec![],
+            readback: Some(readback.to_owned()),
+            confirm: false,
+            enabled: true,
+            disabled_reason: None,
+        }]))
+    }
+
+    fn readback_value(model: &Model, path: &str) -> Option<String> {
+        let trace = model.readback(path)?;
+        let last = trace.timestamps.len().checked_sub(1)?;
+        Some(
+            trace
+                .samples
+                .format(last, 4, None, numbers::DisplayFormat::Default),
+        )
+    }
+
+    #[test]
+    fn readbacks_are_kept_also_while_not_recording() {
+        let motor = |timestamp, speed| {
+            let fields = vec![
+                ("speed".to_owned(), proto::Data::Uint(speed)),
+                ("state".to_owned(), proto::Data::from("run")),
+            ];
+            value(timestamp, "motor", proto::Data::Record(fields))
+        };
+        let mut model = Model::default();
+        model.receive_unrecorded("b", &announce("motor.speed"));
+        model.receive_unrecorded("b", &motor(1, 10));
+        model.receive_unrecorded("b", &motor(2, 12));
+        model.receive_unrecorded("b", &value(2, "rpm", proto::Data::Uint(3)));
+        // only the latest value of the readback, the samples are dropped
+        assert_eq!(readback_value(&model, "motor.speed").as_deref(), Some("12"));
+        assert_eq!(model.readback("motor.speed").unwrap().timestamps.len(), 1);
+        assert_eq!(model.readback_samples(Some("motor.speed")), 2);
+        assert!(model.readback("rpm").is_none());
+        assert_eq!(model.time_span(), None);
+
+        // clearing the data keeps them and their counts
+        model.clear();
+        assert_eq!(readback_value(&model, "motor.speed").as_deref(), Some("12"));
+        model.receive("b", &motor(3, 14));
+        assert_eq!(readback_value(&model, "motor.speed").as_deref(), Some("14"));
+        assert_eq!(model.readback_samples(Some("motor.speed")), 3);
+    }
+
+    #[test]
+    fn values_announced_as_readbacks_later_show() {
+        let mut model = Model::default();
+        model.receive_unrecorded("b", &value(1, "level", proto::Data::from("INFO")));
+        assert!(model.readback("level").is_none());
+        model.receive_unrecorded("b", &announce("level"));
+        assert_eq!(readback_value(&model, "level").as_deref(), Some("INFO"));
+        // and no more once no action has it as its readback
+        model.receive_unrecorded("b", &frame(&proto::Message::Actions(vec![])));
+        assert!(model.readback("level").is_none());
+    }
+
+    #[test]
+    fn values_hold_their_fields_and_elements() {
+        use crate::app::model::actions::holds;
+        assert!(holds("motor", "motor"));
+        assert!(holds("motor", "motor.speed"));
+        assert!(holds("adc", "adc[1]"));
+        assert!(!holds("motor", "motors.speed"));
+        assert!(!holds("motor.speed", "motor"));
     }
 
     #[test]

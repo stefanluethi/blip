@@ -96,10 +96,10 @@ impl State {
         }
     }
 
-    /// Removes the received data, see [`model::Model::clear`].
+    /// Removes the received data, see [`model::Model::clear`]. The readbacks and their
+    /// counts stay, so the invocations still tell which readback samples are newer.
     fn clear_data(&mut self) {
         self.model.clear();
-        self.invoker.forget_readback_marks();
     }
 
     /// Starts afresh with `model`, e.g. of an opened recording: drops all data, also the
