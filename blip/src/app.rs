@@ -32,6 +32,7 @@ mod connections;
 mod files;
 mod layout;
 mod model;
+mod opening;
 #[cfg(all(test, feature = "screenshots"))]
 mod screenshots;
 mod theme;
@@ -212,6 +213,9 @@ pub struct App {
     right_collapsed: bool,
     #[serde(skip)]
     files: files::Files,
+    /// The recording being opened, read a part in each frame.
+    #[serde(skip)]
+    opening: Option<opening::Opening>,
     /// The notices for the user, e.g. why a file could not be opened.
     #[serde(skip)]
     toasts: toasts::Toasts,
@@ -441,24 +445,15 @@ impl App {
         }
     }
 
-    /// Opens a recording or a layout, as which the contents of `file` tell.
-    fn open(&mut self, file: &files::File) -> Result<(), String> {
+    /// Opens a recording or a layout, as which the contents of `file` tell. A recording
+    /// is read over the next frames, see [`Self::continue_opening`], replacing one still
+    /// being read. The connections are closed and recording stops right away, so the
+    /// data shown while it is read is what it replaces.
+    fn open(&mut self, file: files::File) -> Result<(), String> {
         if model::recording::is_recording(&file.bytes) {
-            let mut model = model::Model::default();
-            let loaded = model::recording::read_file(&file.bytes, |source, frame| {
-                model.receive(source, frame);
-            })
-            .map_err(|error| format!("{} cannot be opened: {error}", file.name))?;
+            self.opening = Some(opening::Opening::new(file.name, file.bytes)?);
             self.connections.disconnect_all();
-            self.state.start_fresh(model);
-            self.reset_traces_panel();
-            self.state.time.fit(&self.state.model);
-            if let Some(problem) = loaded.problem {
-                self.toasts.warning(format!(
-                    "{} was opened up to message {}, {problem}",
-                    file.name, loaded.messages
-                ));
-            }
+            self.state.set_recording(false, false);
         } else {
             let layout =
                 serde_json::from_slice::<layout::LayoutFile>(&file.bytes).map_err(|error| {
@@ -466,6 +461,56 @@ impl App {
                 })?;
             self.layout = layout::Layout::migrate(layout)
                 .ok_or_else(|| format!("{} is a layout of a newer version of blip", file.name))?;
+        }
+        Ok(())
+    }
+
+    /// Reads the next part of the recording being opened, and shows it once all is
+    /// read: the views start afresh with its data. Connecting while it is read cancels
+    /// it, so that its data does not replace that of the connection.
+    fn continue_opening(&mut self, ctx: &Context) {
+        let Some(opening) = &mut self.opening else {
+            return;
+        };
+        if !self.connections.is_idle() {
+            self.toasts.warning(format!(
+                "Opening {} was cancelled by connecting",
+                opening.name
+            ));
+            self.opening = None;
+            return;
+        }
+        if !opening.step() {
+            ctx.request_repaint();
+            return;
+        }
+        if let Some(opening) = self.opening.take() {
+            self.show_opened(opening);
+        }
+    }
+
+    /// Shows the recording read by `opening`.
+    fn show_opened(&mut self, opening: opening::Opening) {
+        let name = opening.name.clone();
+        let (model, loaded) = opening.finish();
+        self.state.start_fresh(model);
+        self.reset_traces_panel();
+        self.state.time.fit(&self.state.model);
+        if let Some(problem) = loaded.problem {
+            self.toasts.warning(format!(
+                "{name} was opened up to message {}, {problem}",
+                loaded.messages
+            ));
+        }
+    }
+
+    /// Opens `file` and reads all of a recording at once.
+    #[cfg(test)]
+    fn open_all(&mut self, file: files::File) -> Result<(), String> {
+        self.open(file)?;
+        if let Some(mut opening) = self.opening.take() {
+            while !opening.read_while(|| true) {}
+            self.show_opened(opening);
         }
         Ok(())
     }
@@ -543,10 +588,11 @@ impl eframe::App for App {
         }
         self.files.receive_dropped(ctx);
         while let Some(file) = self.files.try_recv() {
-            if let Err(error) = file.and_then(|file| self.open(&file)) {
+            if let Err(error) = file.and_then(|file| self.open(file)) {
                 self.toasts.error(error);
             }
         }
+        self.continue_opening(ctx);
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.shortcuts(ui.ctx());
@@ -627,7 +673,13 @@ impl eframe::App for App {
                 .request_repaint_after_secs(model::actions::DRAG_INTERVAL as f32);
         }
 
-        self.toasts.ui(ui.ctx(), central.response.rect);
+        let progress = self.opening.as_ref().map(|opening| toasts::Progress {
+            text: format!("Opening {}", opening.name),
+            fraction: opening.progress(),
+        });
+        if self.toasts.ui(ui.ctx(), central.response.rect, progress) {
+            self.opening = None;
+        }
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -965,7 +1017,7 @@ mod tests {
         app.state.recording = true;
         app.trace_search = "temp".to_owned();
         let generation = app.traces_generation;
-        app.open(&file).unwrap();
+        app.open_all(file).unwrap();
         assert!(!app.state.recording);
         assert!(app.state.model.has_samples());
         assert!(app.trace_search.is_empty());
@@ -1068,6 +1120,66 @@ mod tests {
     }
 
     #[test]
+    fn a_recording_is_opened_across_frames_and_can_be_cancelled() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+
+        let mut recorded = model::Model::default();
+        for timestamp in 0..200_000 {
+            recorded.receive("a", &value(timestamp));
+        }
+        let file = || files::File {
+            name: "a.blip".to_owned(),
+            bytes: recorded.recording.to_file(),
+        };
+        let ctx = Context::default();
+        let mut app = App::default();
+        app.state.receive("old", &unit_of("temp"), 0.0);
+        app.open(file()).unwrap();
+        // the data shown stays until all is read
+        app.continue_opening(&ctx);
+        assert!(app.opening.is_some());
+        assert!(!app.state.model.has_samples());
+        let mut frames = 1;
+        while app.opening.is_some() {
+            app.continue_opening(&ctx);
+            frames += 1;
+        }
+        assert!(frames > 1);
+        assert!(app.state.model.has_samples());
+        assert_eq!(app.state.model.recording.messages(), 200_000);
+
+        // connecting while reading cancels it
+        let mut app = App::default();
+        app.open(file()).unwrap();
+        app.connections.connect_first(&ctx);
+        app.continue_opening(&ctx);
+        assert!(app.opening.is_none());
+        assert!(!app.state.model.has_samples());
+        assert!(app.toasts.shown()[0].1.contains("cancelled by connecting"));
+
+        // cancelled, the data shown stays
+        let mut app = App::default();
+        app.state.recording = true;
+        app.state.receive("old", &value(1), 0.0);
+        app.open(file()).unwrap();
+        assert!(!app.state.recording);
+        app.continue_opening(&ctx);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 500.0))
+            .build_ui_state(
+                |ui, app: &mut App| eframe::App::ui(app, ui, &mut Frame::_new_kittest()),
+                app,
+            );
+        harness.run_steps(2);
+        assert!(harness.query_by_label_contains("Opening a.blip").is_some());
+        harness.get_by_label(egui_phosphor::regular::X).click();
+        harness.run_steps(2);
+        assert!(harness.state().opening.is_none());
+        assert!(harness.state().state.model.has_samples());
+    }
+
+    #[test]
     fn a_recording_opened_in_part_is_toasted() {
         let mut recorded = model::Model::default();
         for timestamp in 0..1000 {
@@ -1080,7 +1192,7 @@ mod tests {
             bytes,
         };
         let mut app = App::default();
-        app.open(&file).unwrap();
+        app.open_all(file).unwrap();
         let shown = app.toasts.shown();
         assert_eq!(shown.len(), 1);
         assert_eq!(shown[0].0, toasts::Level::Warning);

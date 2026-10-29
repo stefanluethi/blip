@@ -1,5 +1,6 @@
 //! Toasts: short notices stacked in a corner, e.g. why connecting failed or a file
-//! could not be opened, shown until they expire or the user closes them.
+//! could not be opened, shown until they expire or the user closes them. Below them, a
+//! task under way, like opening a recording, shows how far it got.
 
 use egui_phosphor::regular::{WARNING, WARNING_CIRCLE, X};
 
@@ -18,6 +19,13 @@ pub enum Level {
     Warning,
     /// Something failed, e.g. connecting.
     Error,
+}
+
+/// A task under way shown below the toasts, e.g. opening a recording.
+pub struct Progress {
+    pub text: String,
+    /// How much is done, from 0 to 1.
+    pub fraction: f32,
 }
 
 /// The toasts being shown, oldest first.
@@ -84,13 +92,20 @@ impl Toasts {
     }
 
     /// Shows the toasts stacked in the bottom right corner of `rect`, newest at the
-    /// bottom, each with a button to close it.
-    pub fn ui(&mut self, ctx: &egui::Context, rect: egui::Rect) {
+    /// bottom, each with a button to close it, and `progress` below them, with a
+    /// button to cancel it. Returns whether that was clicked.
+    pub fn ui(
+        &mut self,
+        ctx: &egui::Context,
+        rect: egui::Rect,
+        progress: Option<Progress>,
+    ) -> bool {
         let now = ctx.input(|input| input.time);
         self.expire(now);
-        if self.toasts.is_empty() {
-            return;
+        if self.toasts.is_empty() && progress.is_none() {
+            return false;
         }
+        let mut cancelled = false;
         let width = WIDTH.min(rect.width() - 2.0 * MARGIN).max(0.0);
         let mut closed = vec![];
         egui::Area::new(egui::Id::new("toasts"))
@@ -108,6 +123,9 @@ impl Toasts {
                         toast.expires = Some(now + DURATION);
                     }
                 }
+                if let Some(progress) = &progress {
+                    cancelled = progress_ui(ui, progress);
+                }
             });
         self.toasts.retain(|toast| !closed.contains(&toast.id));
         let next = self
@@ -118,6 +136,7 @@ impl Toasts {
         if next.is_finite() {
             ctx.request_repaint_after_secs((next - now) as f32);
         }
+        cancelled
     }
 
     /// The levels and texts of the toasts, oldest first.
@@ -159,6 +178,48 @@ fn toast_ui(ui: &mut egui::Ui, toast: &Toast) -> bool {
             .inner
         })
         .inner
+}
+
+/// Shows `progress` with its text, a bar of how far it got and a button to cancel it.
+/// Returns whether the button was clicked.
+fn progress_ui(ui: &mut egui::Ui, progress: &Progress) -> bool {
+    egui::Frame::popup(ui.style())
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            let cancelled = ui
+                .horizontal_top(|ui| {
+                    let size = ui.text_style_height(&egui::TextStyle::Body);
+                    ui.add(egui::Spinner::new().size(size));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                        let cancelled = ui.small_button(X).on_hover_text("Cancel").clicked();
+                        let percent = (progress.fraction * 100.0).floor();
+                        ui.weak(format!("{percent:.0} %"));
+                        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                            ui.add(egui::Label::new(progress.text.as_str()).wrap());
+                        });
+                        cancelled
+                    })
+                    .inner
+                })
+                .inner;
+            bar_ui(ui, progress.fraction);
+            cancelled
+        })
+        .inner
+}
+
+/// A thin bar across `ui`, filled `fraction` of the way in the accent.
+fn bar_ui(ui: &mut egui::Ui, fraction: f32) {
+    let tokens = super::theme::tokens(ui.visuals());
+    let size = egui::vec2(ui.available_width(), 4.0);
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, 2.0, tokens.border);
+    let done = rect.with_max_x(
+        rect.lerp_inside(egui::vec2(fraction.clamp(0.0, 1.0), 0.0))
+            .x,
+    );
+    painter.rect_filled(done, 2.0, tokens.accent);
 }
 
 #[cfg(test)]
@@ -205,7 +266,9 @@ mod tests {
         let mut harness = Harness::builder()
             .with_size(egui::vec2(400.0, 300.0))
             .build_ui_state(
-                |ui, toasts: &mut Toasts| toasts.ui(ui.ctx(), ui.max_rect()),
+                |ui, toasts: &mut Toasts| {
+                    toasts.ui(ui.ctx(), ui.max_rect(), None);
+                },
                 Toasts::default(),
             );
         harness.state_mut().error("ws://a cannot be connected");

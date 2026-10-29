@@ -284,6 +284,17 @@ impl Connections {
         self.sockets.iter().any(|socket| socket.open)
     }
 
+    /// Whether no connection is open or being opened.
+    pub fn is_idle(&self) -> bool {
+        self.sockets.is_empty()
+    }
+
+    /// Connects to the first connection, as a click on its row does.
+    #[cfg(test)]
+    pub fn connect_first(&mut self, ctx: &egui::Context) {
+        self.connect(0, ctx.clone());
+    }
+
     fn status(&self, address: &str) -> Status {
         match (self.socket(address), self.failed.get(address)) {
             (Some(socket), _) if socket.open => Status::Connected,

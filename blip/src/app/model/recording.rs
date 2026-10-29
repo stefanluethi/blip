@@ -16,7 +16,7 @@
 //! are, which is the file.
 
 use flate2::{Compression, read::MultiGzDecoder, write::GzEncoder};
-use std::io::{Read, Write};
+use std::io::{Cursor, Read, Write};
 
 /// The value of [`Header::format`].
 const FORMAT: &str = "blip recording";
@@ -124,55 +124,198 @@ pub fn is_recording(file: &[u8]) -> bool {
         .is_some_and(|header| header.is_ok_and(|header| header.format == FORMAT))
 }
 
-/// Calls `receive` with the source and each frame of the recording `file` in the order
-/// they were received.
-pub fn read_file(file: &[u8], mut receive: impl FnMut(&str, &[u8])) -> Result<Loaded, String> {
-    let mut problem = None;
-    let decompressed;
-    let bytes = if file.starts_with(&[0x1f, 0x8b]) {
-        let mut bytes = Vec::new();
-        // on an error, the bytes read so far are kept
-        if let Err(error) = MultiGzDecoder::new(file).read_to_end(&mut bytes) {
-            problem = Some(format!("the file is cut off or damaged: {error}"));
-        }
-        decompressed = bytes;
-        &decompressed[..]
-    } else {
-        file
-    };
+/// Bytes decompressed at once while reading a file, about 0.2 ms of inflating.
+const READ_CHUNK: usize = 1 << 16;
+/// Messages read between looks at the clock, a fraction of a millisecond of them.
+const MESSAGES_PER_LOOK: usize = 256;
+/// The most bytes a message can take, far more than any target sends. A longer one
+/// is damaged, e.g. its length, rather than waiting for the rest of the file.
+const MAX_MESSAGE: usize = 64 << 20;
 
-    let mut items = serde_cbor_2::Deserializer::from_slice(bytes).into_iter::<Header>();
-    match items.next() {
-        Some(Ok(header)) if header.format == FORMAT => {
-            if header.version > VERSION {
-                return Err(format!(
-                    "the recording has version {}, this blip reads up to version {VERSION}",
-                    header.version
-                ));
-            }
+/// The bytes of a recording file as they are read: decompressed or as they are.
+enum Source {
+    Gzip(MultiGzDecoder<Cursor<Vec<u8>>>),
+    Plain(Cursor<Vec<u8>>),
+}
+
+impl Source {
+    /// The bytes of the file read so far.
+    fn position(&self) -> u64 {
+        match self {
+            Source::Gzip(decoder) => decoder.get_ref().position(),
+            Source::Plain(cursor) => cursor.position(),
         }
-        _ => return Err("the file is not a blip recording".to_owned()),
     }
 
-    let mut messages = 0;
-    let mut source = String::new();
-    for item in super::cbor::items(&bytes[items.byte_offset()..]) {
-        let item = match item {
-            Ok(item) => item,
-            Err(error) => {
-                problem.get_or_insert_with(|| format!("a message cannot be read: {error}"));
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Source::Gzip(decoder) => decoder.read(buffer),
+            Source::Plain(cursor) => cursor.read(buffer),
+        }
+    }
+}
+
+/// Reads a recording file a part at a time, so that a long one is read across frames
+/// and the view stays responsive, decompressing only the part being read.
+pub struct FileReader {
+    source: Source,
+    len: usize,
+    /// The decompressed bytes from the item being read on.
+    buffer: Vec<u8>,
+    /// Whether all bytes are decompressed, or as many as could be.
+    ended: bool,
+    /// Whether all messages are read.
+    done: bool,
+    /// The source of the messages being read.
+    name: String,
+    messages: usize,
+    problem: Option<String>,
+}
+
+impl FileReader {
+    /// Starts reading the recording `file`, after its header, or tells why it is none.
+    pub fn new(file: Vec<u8>) -> Result<Self, String> {
+        let len = file.len();
+        let source = if file.starts_with(&[0x1f, 0x8b]) {
+            Source::Gzip(MultiGzDecoder::new(Cursor::new(file)))
+        } else {
+            Source::Plain(Cursor::new(file))
+        };
+        let mut reader = Self {
+            source,
+            len,
+            buffer: vec![],
+            ended: false,
+            done: false,
+            name: String::new(),
+            messages: 0,
+            problem: None,
+        };
+        // the header is a few bytes at the start
+        reader.fill(READ_CHUNK);
+        let mut items =
+            serde_cbor_2::Deserializer::from_slice(&reader.buffer).into_iter::<Header>();
+        match items.next() {
+            Some(Ok(header)) if header.format == FORMAT => {
+                if header.version > VERSION {
+                    return Err(format!(
+                        "the recording has version {}, this blip reads up to version {VERSION}",
+                        header.version
+                    ));
+                }
+            }
+            _ => return Err("the file is not a blip recording".to_owned()),
+        }
+        let header = items.byte_offset();
+        reader.buffer.drain(..header);
+        Ok(reader)
+    }
+
+    /// Decompresses bytes until the buffer holds `wanted` or all are.
+    fn fill(&mut self, wanted: usize) {
+        while !self.ended && self.buffer.len() < wanted {
+            let start = self.buffer.len();
+            self.buffer.resize(start + READ_CHUNK, 0);
+            let read = self.source.read(&mut self.buffer[start..]);
+            self.buffer.truncate(start + *read.as_ref().unwrap_or(&0));
+            match read {
+                Ok(0) => self.ended = true,
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) => {
+                    // the bytes read so far are kept
+                    self.problem = Some(format!("the file is cut off or damaged: {error}"));
+                    self.ended = true;
+                }
+            }
+        }
+    }
+
+    /// Calls `receive` with the source and each frame of the file in the order they
+    /// were received, while `more` tells there is time for more, which it is asked
+    /// every few messages. Returns whether all are read.
+    pub fn read(
+        &mut self,
+        mut more: impl FnMut() -> bool,
+        mut receive: impl FnMut(&str, &[u8]),
+    ) -> bool {
+        while !self.done {
+            let mut reader = super::cbor::Reader::new(&self.buffer);
+            // the bytes of the items read
+            let mut consumed = 0;
+            let mut read = 0;
+            let mut out_of_time = false;
+            while !reader.is_empty() {
+                if let Err(error) = reader.skip() {
+                    // the item may go on in the bytes not decompressed yet
+                    let partial = self.buffer.len() - consumed;
+                    if !error.is_end() || self.ended || partial > MAX_MESSAGE {
+                        self.problem
+                            .get_or_insert_with(|| format!("a message cannot be read: {error}"));
+                        self.done = true;
+                    }
+                    break;
+                }
+                let item = &self.buffer[consumed..reader.position()];
+                consumed = reader.position();
+                // messages are maps, a text string names the source
+                if let Ok(name) = super::cbor::Reader::new(item).str() {
+                    name.clone_into(&mut self.name);
+                } else {
+                    receive(&self.name, item);
+                    self.messages += 1;
+                    read += 1;
+                    if read % MESSAGES_PER_LOOK == 0 && !more() {
+                        out_of_time = true;
+                        break;
+                    }
+                }
+            }
+            self.buffer.drain(..consumed);
+            if self.ended && self.buffer.is_empty() {
+                self.done = true;
+            }
+            if self.done || out_of_time {
                 break;
             }
-        };
-        // messages are maps, a text string names the source
-        if let Ok(name) = super::cbor::Reader::new(item).str() {
-            name.clone_into(&mut source);
-            continue;
+            // more than a chunk, and twice the bytes of a long item, so that one is
+            // read again only so often, but little more than the longest message
+            let wanted = (self.buffer.len() + READ_CHUNK)
+                .max(2 * self.buffer.len())
+                .min(MAX_MESSAGE + READ_CHUNK);
+            self.fill(wanted);
+            if !more() {
+                break;
+            }
         }
-        receive(&source, item);
-        messages += 1;
+        self.done
     }
-    Ok(Loaded { messages, problem })
+
+    /// How much of the file is read, from 0 to 1.
+    pub fn progress(&self) -> f32 {
+        if self.done || self.len == 0 {
+            1.0
+        } else {
+            self.source.position() as f32 / self.len as f32
+        }
+    }
+
+    /// What was found in the file, all of it once [`Self::read`] returned true.
+    pub fn loaded(&self) -> Loaded {
+        Loaded {
+            messages: self.messages,
+            problem: self.problem.clone(),
+        }
+    }
+}
+
+/// Calls `receive` with the source and each frame of the recording `file` in the order
+/// they were received, all at once.
+#[cfg(test)]
+pub fn read_file(file: &[u8], mut receive: impl FnMut(&str, &[u8])) -> Result<Loaded, String> {
+    let mut reader = FileReader::new(file.to_vec())?;
+    while !reader.read(|| true, &mut receive) {}
+    Ok(reader.loaded())
 }
 
 #[cfg(test)]
@@ -252,6 +395,41 @@ mod tests {
     }
 
     #[test]
+    fn a_file_read_in_parts_reads_as_whole() {
+        let mut recording = Recording::default();
+        let mut sent = vec![];
+        while sent.len() * 30 < 4 * READ_CHUNK {
+            let source = ["a", "b"][sent.len() / 3000 % 2];
+            let frame = frame(sent.len() as u64 * 1_000_003);
+            recording.push(source, &frame);
+            sent.push((source.to_owned(), frame));
+        }
+        let mut reader = FileReader::new(recording.to_file()).unwrap();
+        let mut frames = vec![];
+        let mut parts = 0;
+        let mut progress = 0.0;
+        // no time for more than a few messages at once
+        while !reader.read(
+            || false,
+            |source, frame| frames.push((source.to_owned(), frame.to_vec())),
+        ) {
+            parts += 1;
+            assert!(reader.progress() >= progress && reader.progress() <= 1.0);
+            progress = reader.progress();
+        }
+        assert!(parts > sent.len() / MESSAGES_PER_LOOK / 2);
+        assert_eq!(reader.progress(), 1.0);
+        assert_eq!(frames, sent);
+        assert_eq!(
+            reader.loaded(),
+            Loaded {
+                messages: sent.len(),
+                problem: None
+            }
+        );
+    }
+
+    #[test]
     fn the_sources_of_the_frames_are_recorded() {
         let mut recording = Recording::default();
         recording.push("", &frame(0));
@@ -303,6 +481,27 @@ mod tests {
         assert!(loaded.messages > 0 && loaded.messages < 1000);
         assert_eq!(frames.len(), loaded.messages);
         assert_eq!(frames[0], frame(0));
+    }
+
+    #[test]
+    fn a_damaged_length_ends_the_file_without_reading_all_of_it() {
+        let mut recording = Recording::default();
+        recording.push("", &frame(1));
+        // a byte string claiming 2^40 bytes
+        recording.push("", &[0x5b, 0, 0, 1, 0, 0, 0, 0, 0]);
+        let mut bytes = recording.to_file();
+        // followed by more than the longest message of other members
+        let filler = compress(&vec![0; READ_CHUNK]);
+        for _ in 0..MAX_MESSAGE / READ_CHUNK + 64 {
+            bytes.extend(&filler);
+        }
+        let mut reader = FileReader::new(bytes).unwrap();
+        let mut frames = 0;
+        while !reader.read(|| true, |_, _| frames += 1) {}
+        assert_eq!(frames, 1);
+        let loaded = reader.loaded();
+        assert!(loaded.problem.unwrap().contains("cannot be read"));
+        assert!(reader.progress() == 1.0 && !reader.ended);
     }
 
     #[test]

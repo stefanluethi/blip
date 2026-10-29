@@ -10,6 +10,16 @@ pub struct Error {
     pub what: &'static str,
 }
 
+impl Error {
+    /// Whether the bytes ended within an item, which more bytes may complete.
+    pub fn is_end(&self) -> bool {
+        self.what == END
+    }
+}
+
+/// The [`Error::what`] of bytes that end within an item.
+const END: &str = "unexpected end";
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} at byte {}", self.what, self.at)
@@ -67,7 +77,7 @@ impl<'b> Reader<'b> {
                 self.pos += len;
                 Ok(bytes)
             }
-            None => self.error("unexpected end"),
+            None => self.error(END),
         }
     }
 
@@ -76,7 +86,7 @@ impl<'b> Reader<'b> {
     fn take_string(&mut self, len: u64) -> Result<&'b [u8]> {
         match usize::try_from(len) {
             Ok(len) => self.take(len),
-            Err(_) => self.error("unexpected end"),
+            Err(_) => self.error(END),
         }
     }
 
