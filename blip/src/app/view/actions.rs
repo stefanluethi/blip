@@ -3,7 +3,9 @@
 //! An action without parameters is a button. An action with one parameter is sent as
 //! soon as its input changes: a toggle, a choice, a slider while it is dragged (at most
 //! every [`DRAG_INTERVAL`](crate::app::model::actions::DRAG_INTERVAL)), a number or text field on Enter. An action with several
-//! parameters, or one that asks for confirmation, is sent with its Send button.
+//! parameters, or one that asks for confirmation, is sent with its Send button, or one
+//! with several parameters, if chosen in the properties, when one of its inputs changes,
+//! at most every [`DRAG_INTERVAL`](crate::app::model::actions::DRAG_INTERVAL).
 //!
 //! An action is known by its path, which several outposts may announce. The actions
 //! are sent to the outpost chosen in the properties, by default each to the first
@@ -46,6 +48,9 @@ pub struct Actions {
     /// The paths of the actions whose readback, the trace their outpost announces, is
     /// turned off.
     pub readbacks_off: BTreeSet<String>,
+    /// The paths of the actions with several parameters sent when one of their inputs
+    /// changes instead of with their Send button, see [`can_send_on_change`].
+    pub on_change: BTreeSet<String>,
 }
 
 /// A set of paths, empty for `null`.
@@ -113,9 +118,15 @@ fn disabled_reason(
     }
 }
 
-/// Whether the action is sent with a Send button rather than when its input changes.
-fn has_send_button(action: &ActionDescriptor) -> bool {
+/// Whether the action lists its parameters below its row, to be sent together.
+fn lists_params(action: &ActionDescriptor) -> bool {
     action.params.len() > 1 || (action.confirm && !action.params.is_empty())
+}
+
+/// Whether the action can be chosen to be sent when one of its inputs changes instead
+/// of with its Send button: one with several parameters that asks for no confirmation.
+fn can_send_on_change(action: &ActionDescriptor) -> bool {
+    action.params.len() > 1 && !action.confirm
 }
 
 /// The latest value of the trace at `path`, if it is a number, bool or string.
@@ -535,7 +546,14 @@ impl Actions {
         self.fields.contains(&format!("{path}:{param}"))
     }
 
-    /// Shows the row of `shown`, with a row per parameter if it has a Send button.
+    /// Whether `action`, which lists its parameters, is sent when one of its inputs
+    /// changes rather than with its Send button.
+    fn sends_on_change(&self, action: &ActionDescriptor) -> bool {
+        can_send_on_change(action) && self.on_change.contains(&action.path)
+    }
+
+    /// Shows the row of `shown`, with a row per parameter if it has several or asks
+    /// for confirmation, followed by its Send button unless sent on change.
     fn action_ui(
         &self,
         ui: &mut egui::Ui,
@@ -585,7 +603,8 @@ impl Actions {
             })
             .collect();
 
-        let send_button = has_send_button(action);
+        let listed = lists_params(action);
+        let on_change = self.sends_on_change(action);
         let mut change = Change::None;
         ui.label(*name).on_hover_text(&hover);
         ui.add_enabled_ui(disabled.is_none(), |ui| {
@@ -595,7 +614,7 @@ impl Actions {
                     change = Change::Done;
                 }
                 button
-            } else if !send_button {
+            } else if !listed {
                 let field = self.uses_field(&action.path, &action.params[0].name);
                 ui.horizontal(|ui| {
                     change = input_ui(ui, &action.path, &action.params[0], &mut values[0], field);
@@ -615,7 +634,7 @@ impl Actions {
         outcome_ui(ui, invoker, id, now);
         ui.end_row();
 
-        if send_button {
+        if listed {
             for (param, value) in action.params.iter().zip(&mut values) {
                 ui.horizontal(|ui| {
                     ui.add_space(12.0);
@@ -623,21 +642,28 @@ impl Actions {
                 });
                 ui.add_enabled_ui(disabled.is_none(), |ui| {
                     let field = self.uses_field(&action.path, &param.name);
-                    ui.horizontal(|ui| input_ui(ui, &action.path, param, value, field));
+                    let changed = ui
+                        .horizontal(|ui| input_ui(ui, &action.path, param, value, field))
+                        .inner;
+                    if on_change && changed != Change::None {
+                        change = changed;
+                    }
                 });
                 ui.label("");
                 ui.label("");
                 ui.end_row();
             }
-            ui.label("");
-            ui.add_enabled_ui(disabled.is_none(), |ui| {
-                if ui.button("Send").clicked() {
-                    change = Change::Done;
-                }
-            });
-            ui.label("");
-            ui.label("");
-            ui.end_row();
+            if !on_change {
+                ui.label("");
+                ui.add_enabled_ui(disabled.is_none(), |ui| {
+                    if ui.button("Send").clicked() {
+                        change = Change::Done;
+                    }
+                });
+                ui.label("");
+                ui.label("");
+                ui.end_row();
+            }
         }
 
         for (param, value) in action.params.iter().zip(&values) {
@@ -660,6 +686,12 @@ impl Actions {
                 readback: readback_path.map(str::to_owned),
                 args,
             });
+        } else if on_change {
+            // each change at most every DRAG_INTERVAL, the latest held back until due
+            match change {
+                Change::Released => invoker.finish_dragging(id, *readback_path, args, now),
+                _ => invoker.invoke_dragging(id, *readback_path, args, now),
+            }
         } else {
             match change {
                 Change::Dragging => invoker.invoke_dragging(id, *readback_path, args, now),
@@ -784,6 +816,40 @@ impl Actions {
                 self.readbacks_off.insert(path.to_owned());
             }
         }
+    }
+
+    /// Shows whether the actions at `paths` with several parameters are sent with
+    /// their Send button or when one of their inputs changes.
+    fn sending_ui(&mut self, ui: &mut egui::Ui, context: &PropertiesContext<'_>, paths: &[String]) {
+        let several: Vec<&str> = paths
+            .iter()
+            .filter_map(|path| self.announced(context.model, context.connected, path))
+            .filter(|action| can_send_on_change(action))
+            .map(|action| action.path.as_str())
+            .collect();
+        if several.is_empty() {
+            return;
+        }
+        let names = short_names(several.iter().copied());
+        properties_section(ui, "Sending", |ui| {
+            for (path, name) in several.iter().zip(names) {
+                let mut on_change = self.on_change.contains(*path);
+                super::property_label(ui, name).on_hover_text(format!(
+                    "{path}\nSent with its Send button, or each time one of its inputs changes, at most ten times a second"
+                ));
+                theme::segmented(
+                    ui,
+                    &mut on_change,
+                    &[(false, "Send button"), (true, "On change")],
+                );
+                ui.end_row();
+                if on_change {
+                    self.on_change.insert((*path).to_owned());
+                } else {
+                    self.on_change.remove(*path);
+                }
+            }
+        });
     }
 
     /// Shows whether the numbers with a minimum and a maximum of the actions at
@@ -930,6 +996,7 @@ impl Viewable for Actions {
                 ui.end_row();
             }
         });
+        self.sending_ui(ui, context, &paths);
         self.number_inputs_ui(ui, context, &paths);
     }
 }
@@ -937,6 +1004,7 @@ impl Viewable for Actions {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::model::actions::DRAG_INTERVAL;
     use egui_kittest::kittest::{NodeT, Queryable};
 
     fn param(kind: ParamKind) -> Param {
@@ -1045,6 +1113,14 @@ mod tests {
     /// A harness showing a view of `actions`, announced by the connection without a
     /// name.
     fn harness(actions: Vec<ActionDescriptor>) -> egui_kittest::Harness<'static, State> {
+        stepped_harness(actions, 1.0 / 4.0)
+    }
+
+    /// A harness like [`harness`] whose frames are `step_dt` seconds apart.
+    fn stepped_harness(
+        actions: Vec<ActionDescriptor>,
+        step_dt: f32,
+    ) -> egui_kittest::Harness<'static, State> {
         let view = Actions {
             shown: actions.iter().map(|action| action.path.clone()).collect(),
             ..Actions::default()
@@ -1059,19 +1135,21 @@ mod tests {
             invoker,
             time: crate::app::time::TimeRange::default(),
         };
-        let mut harness = egui_kittest::Harness::new_ui_state(
-            |ui, state: &mut State| {
-                let mut context = ViewContext {
-                    model: &state.model,
-                    time: &mut state.time,
-                    invoker: &mut state.invoker,
-                    formats: &super::super::NO_FORMATS,
-                    titled: false,
-                };
-                state.view.view(ui, &mut context);
-            },
-            state,
-        );
+        let mut harness = egui_kittest::Harness::builder()
+            .with_step_dt(step_dt)
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    let mut context = ViewContext {
+                        model: &state.model,
+                        time: &mut state.time,
+                        invoker: &mut state.invoker,
+                        formats: &super::super::NO_FORMATS,
+                        titled: false,
+                    };
+                    state.view.view(ui, &mut context);
+                },
+                state,
+            );
         harness.run();
         harness
     }
@@ -1139,6 +1217,63 @@ mod tests {
             ("far".to_owned(), Data::Bool(true)),
         ]);
         assert_eq!(sent(&mut harness), [("move".to_owned(), args)]);
+    }
+
+    #[test]
+    fn several_parameters_chosen_to_be_sent_on_change_are_sent_at_most_every_interval() {
+        let kinds = ParamKind::Enum(vec!["slow".to_owned(), "fast".to_owned()]);
+        let mut harness = stepped_harness(
+            vec![action(
+                "move",
+                vec![named("mode", kinds), named("far", ParamKind::Bool)],
+            )],
+            0.01,
+        );
+        harness.state_mut().view.on_change.insert("move".to_owned());
+        harness.run();
+        assert!(harness.query_by_label("Send").is_none());
+        let args = |mode: &str, far: bool| {
+            Data::Record(vec![
+                ("mode".to_owned(), Data::from(mode)),
+                ("far".to_owned(), Data::Bool(far)),
+            ])
+        };
+
+        harness.get_by_label("fast").click();
+        harness.run_steps(2);
+        assert_eq!(
+            sent(&mut harness),
+            [("move".to_owned(), args("fast", false))]
+        );
+        // a change right after is held back until the interval has passed
+        harness.get_by_role(egui::accesskit::Role::CheckBox).click();
+        harness.run_steps(2);
+        assert!(sent(&mut harness).is_empty());
+        let now = harness.ctx.input(|input| input.time);
+        harness.state_mut().invoker.update(now + DRAG_INTERVAL);
+        assert_eq!(
+            sent(&mut harness),
+            [("move".to_owned(), args("fast", true))]
+        );
+    }
+
+    #[test]
+    fn confirmed_actions_keep_their_send_button() {
+        let confirmed = ActionDescriptor {
+            confirm: true,
+            ..action(
+                "move",
+                vec![
+                    named("far", ParamKind::Bool),
+                    named("slow", ParamKind::Bool),
+                ],
+            )
+        };
+        assert!(!can_send_on_change(&confirmed));
+        let mut harness = harness(vec![confirmed]);
+        harness.state_mut().view.on_change.insert("move".to_owned());
+        harness.run();
+        harness.get_by_label("Send");
     }
 
     #[test]
@@ -1438,6 +1573,24 @@ mod tests {
         readback_checkbox(&harness).click();
         harness.run();
         assert!(harness.state().0.readbacks_off.is_empty());
+    }
+
+    #[test]
+    fn actions_with_several_parameters_are_switched_to_be_sent_on_change() {
+        let mut harness = properties_harness();
+        assert!(harness.query_by_label("On change").is_none());
+        let point = action(
+            "speed",
+            vec![named("x", ParamKind::Bool), named("y", ParamKind::Bool)],
+        );
+        harness.state_mut().1.actions.set("a", vec![point]);
+        harness.run();
+        harness.get_by_label("On change").click();
+        harness.run();
+        assert_eq!(harness.state().0.on_change, ["speed".to_owned()].into());
+        harness.get_by_label("Send button").click();
+        harness.run();
+        assert!(harness.state().0.on_change.is_empty());
     }
 
     #[test]

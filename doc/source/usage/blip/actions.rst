@@ -50,7 +50,9 @@ Inputs
   Clicking a field to type in it sends nothing. Integers are typed in a text
   field and kept exact, also beyond 2\ :sup:`53`.
 * An action with several parameters lists them below its row and is sent with
-  its **Send** button.
+  its **Send** button, or, if chosen under **Sending** in the properties, each
+  time one of its inputs changes (at most ten times a second, the latest
+  change sent once the time is up).
 * An action that asks for confirmation is sent after confirming it in a
   dialog.
 
@@ -102,6 +104,9 @@ Properties
 * **Readbacks** -- for each action whether it shows the readback its outpost
   announces, which the readback column shows and checkboxes and choices
   follow. The checkbox is disabled if the outpost announces none.
+* **Sending** -- for each action with several parameters whether it is sent
+  with its *Send button* or *On change* of any of its inputs. Actions that ask
+  for confirmation always keep their Send button.
 * **Number inputs** -- switch numbers with a minimum and a maximum between a
   *Slider* and a *Field*.
 
