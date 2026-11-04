@@ -172,6 +172,40 @@ mod tests {
     }
 
     #[test]
+    fn stats_are_added_and_removed_in_the_properties() {
+        use crate::app::view::stats::Stat;
+
+        let mut harness = harness(|_, views| views[0]);
+        harness.run();
+        // without traces there is nothing to measure
+        assert!(harness.query_by_label_contains("Add stat").is_none());
+        let Some(ViewKind::Plot(plot)) =
+            harness.state_mut().selected_view_mut().map(|v| &mut v.kind)
+        else {
+            panic!("the plot is not selected");
+        };
+        plot.traces.extend(["a".to_owned(), "b".to_owned()]);
+        harness.run();
+        let first = "a";
+        harness.get_by_label_contains("Add stat").click();
+        harness.run();
+        harness.get_by_label_contains("Add stat").click();
+        harness.run();
+        let stats = selected_plot(&harness).stats;
+        let added: Vec<_> = stats.iter().map(|m| (m.trace.as_str(), m.stat)).collect();
+        assert_eq!(added, [(first, Stat::Mean), (first, Stat::Rms)]);
+        harness
+            .get_all_by_label(egui_phosphor::regular::MINUS)
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        let stats = selected_plot(&harness).stats;
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].stat, Stat::Rms);
+    }
+
+    #[test]
     fn number_fields_keep_partial_numbers_and_are_auto_when_empty() {
         let mut harness = harness(|_, views| views[0]);
         harness.run();

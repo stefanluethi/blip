@@ -1,4 +1,5 @@
 use super::Selectable;
+use super::stats::{self, Measurement};
 use super::time_axis::{self, TimeAxis, closest_index, index_at, visible_range};
 use super::{Formats, PropertiesContext, ViewContext, Viewable, short_names, with_unit};
 use crate::app::model::numbers::{
@@ -11,6 +12,9 @@ use crate::app::time::seconds_since;
 use std::collections::{BTreeMap, BTreeSet};
 
 const Y_MARGIN_FRACTION: f64 = 0.05;
+
+/// The room between a plot and its stats in points.
+const STATS_GAP: f32 = 6.0;
 
 /// Points of a curve shown as markers are at least this many points apart on average.
 const MIN_MARKER_SPACING: f32 = 8.0;
@@ -255,6 +259,10 @@ pub struct Plot {
     pub legend: LegendPlacement,
     #[serde(skip_serializing_if = "LineStyles::is_empty")]
     pub line_styles: LineStyles,
+    /// The stats shown below the plot, also of traces no longer shown, which are left
+    /// out until they are shown again.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub stats: Vec<Measurement>,
 }
 
 impl Default for Plot {
@@ -271,6 +279,7 @@ impl Default for Plot {
             connect_nulls: false,
             legend: LegendPlacement::default(),
             line_styles: LineStyles::default(),
+            stats: Vec::new(),
         }
     }
 }
@@ -393,6 +402,48 @@ impl Plot {
                     }
                 }
             });
+    }
+
+    /// Whether a stat of a shown trace is shown below the plot.
+    fn shows_stats(&self) -> bool {
+        self.stats
+            .iter()
+            .any(|stat| self.traces.contains(&stat.trace))
+    }
+
+    /// Shows the plot and below it the stats of the shown traces, which take the room
+    /// they took in the last frame, so that the plot fills the rest.
+    fn plot_and_stats_ui(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
+        let id = ui.id().with("stats height");
+        let height = ui
+            .data(|data| data.get_temp::<f32>(id))
+            .unwrap_or(ui.spacing().interact_size.y);
+        let plot_size = egui::vec2(
+            ui.available_width(),
+            (ui.available_height() - height - STATS_GAP).max(0.0),
+        );
+        ui.allocate_ui(plot_size, |ui| self.show_plot(context, ui));
+        ui.add_space(STATS_GAP);
+        let shown: Vec<_> = self.selected_path_iter().collect();
+        let time = &*context.time;
+        let window = time
+            .range()
+            .map(|(start, end)| (time.timestamp(start), time.timestamp(end)));
+        let response = ui.scope(|ui| {
+            stats::measurements_ui(
+                ui,
+                &self.stats,
+                &shown,
+                (context.model, context.formats),
+                window,
+                |series| stats::is_linear(series, self.interpolation),
+            );
+        });
+        let shown_height = response.response.rect.height();
+        if shown_height != height {
+            ui.data_mut(|data| data.insert_temp(id, shown_height));
+            ui.ctx().request_repaint();
+        }
     }
 
     /// Shows the shared time range of `time`, and applies panning and zooming of the
@@ -654,7 +705,11 @@ impl Viewable for Plot {
 
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         self.line_styles.retain_shown(&self.traces);
-        self.show_plot(context, ui);
+        if self.shows_stats() {
+            self.plot_and_stats_ui(ui, context);
+        } else {
+            self.show_plot(context, ui);
+        }
     }
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, context: &PropertiesContext<'_>) {
@@ -715,6 +770,7 @@ impl Viewable for Plot {
         });
         let paths: Vec<&str> = self.traces.iter().map(String::as_str).collect();
         self.line_styles.properties_ui(ui, &paths);
+        stats::properties_ui(ui, &mut self.stats, &paths);
     }
 }
 
@@ -1014,6 +1070,45 @@ mod tests {
             zoomed_high - zoomed_low < (high - low) * 0.9,
             "{zoomed_low} {zoomed_high}"
         );
+    }
+
+    #[test]
+    fn stats_of_shown_traces_are_shown_below_the_plot() {
+        use egui_kittest::kittest::Queryable;
+        use stats::Stat;
+
+        let mut harness = plot_harness();
+        let measurement = |trace: &str, stat| Measurement {
+            trace: trace.to_owned(),
+            stat,
+        };
+        harness.state_mut().plot.stats = vec![
+            measurement("a", Stat::Max),
+            measurement("a", Stat::Frequency),
+            measurement("b", Stat::Min),
+        ];
+        harness.run();
+        // the last 20 of 40 seconds of a ramp are shown
+        assert!(harness.query_by_label("Max(a)").is_some());
+        assert!(harness.query_by_label("40").is_some());
+        // a ramp has no cycles, and b is not shown
+        assert!(harness.query_by_label("Freq(a)").is_some());
+        assert!(harness.query_by_label("—").is_some());
+        assert!(harness.query_by_label("Min(b)").is_none());
+        assert_eq!(harness.state().plot.stats.len(), 3, "stats of b are kept");
+    }
+
+    #[test]
+    fn stats_are_saved_with_the_plot() {
+        let mut plot = Plot::default();
+        assert!(!serde_json::to_string(&plot).unwrap().contains("stats"));
+        plot.stats.push(Measurement {
+            trace: "a".to_owned(),
+            stat: stats::Stat::PkPk,
+        });
+        let json = serde_json::to_string(&plot).unwrap();
+        let loaded: Plot = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.stats, plot.stats);
     }
 
     #[test]

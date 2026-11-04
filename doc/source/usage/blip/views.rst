@@ -85,6 +85,16 @@ Properties:
        no title row and shows the title legend at the top right.
    * - **Line styles**
      - Per trace *Solid*, *Dashed*, *Dotted* or *None* (points only).
+   * - **Stats**
+     - Measurements shown below the plot, like those of an oscilloscope, one
+       per row: a trace and a stat, added with **Add stat** and removed with
+       **−**. *Min*, *Max*, *Pk-Pk*, *Mean*, *RMS* and *Std dev* are taken
+       over the shown time range, each value held until the next sample.
+       *Frequency*, *Period* and *Duty* come from where the trace crosses its
+       mid level, halfway between its min and max, ignoring noise within 10 %
+       of its range around that level; they show *—* without a full cycle.
+       Stats of traces no longer shown are kept, greyed, for when the trace is
+       shown again.
 
 States
 ------

@@ -2,9 +2,15 @@
 //! oscilloscope.
 
 use super::time_axis::visible_range;
-use crate::app::model::numbers::{DisplayFormat, Number, SHOWN_DIGITS, format_significant};
+use super::{Formats, short_names};
+use crate::app::model::Model;
+use crate::app::model::numbers::{
+    DisplayFormat, Number, NumberKind, SHOWN_DIGITS, format_significant,
+};
 use crate::app::model::traces::Series;
+use crate::app::theme;
 use crate::app::time::seconds_since;
+use std::collections::BTreeMap;
 
 /// How far above and below the mid level a signal must go to count as high or low, as
 /// a fraction of its peak-to-peak range, so that noise around the mid level makes no
@@ -13,7 +19,9 @@ const HYSTERESIS: f64 = 0.1;
 
 named_enum! {
     /// What is measured of a trace.
-    #[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
+    #[derive(
+        serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Hash, Debug,
+    )]
     pub enum Stat {
         Min => "Min",
         Max => "Max",
@@ -111,6 +119,245 @@ fn with_prefix(value: f64, unit: &str) -> String {
 pub struct Measurement {
     pub trace: String,
     pub stat: Stat,
+}
+
+/// The traces a plot shows: their paths, names in the legend and indices, which pick
+/// their colours.
+pub type ShownTraces<'a> = [(&'a str, &'a str, usize)];
+
+impl Measurement {
+    /// A measurement to add after `measurements`: of the trace of the last one if it is
+    /// still among `paths`, else of the first of `paths`, and of the next stat it has
+    /// none of yet.
+    fn next(measurements: &[Measurement], paths: &[&str]) -> Option<Self> {
+        let last = measurements.last();
+        let trace = last
+            .map(|last| last.trace.as_str())
+            .filter(|trace| paths.contains(trace))
+            .or(paths.first().copied())?;
+        let after = last.map_or(Stat::default() as usize, |last| last.stat as usize + 1);
+        let stat = (0..Stat::ALL.len())
+            .map(|offset| Stat::ALL[(after + offset) % Stat::ALL.len()])
+            .find(|&stat| {
+                !measurements
+                    .iter()
+                    .any(|other| other.trace == trace && other.stat == stat)
+            })
+            .unwrap_or_default();
+        Some(Self {
+            trace: trace.to_owned(),
+            stat,
+        })
+    }
+}
+
+/// Shows a section of the properties to choose the stats shown below a plot of the
+/// traces at `paths`, one per row, if there are traces or stats. Stats of traces no
+/// longer shown are kept, greyed.
+pub fn properties_ui(ui: &mut egui::Ui, measurements: &mut Vec<Measurement>, paths: &[&str]) {
+    if paths.is_empty() && measurements.is_empty() {
+        return;
+    }
+    let names = short_names(paths.iter().copied());
+    let name_of = |path: &str| {
+        paths
+            .iter()
+            .position(|&shown| shown == path)
+            .map(|index| names[index])
+    };
+    super::properties_section(ui, "Stats", |ui| {
+        let mut removed = None;
+        for (index, measurement) in measurements.iter_mut().enumerate() {
+            let name = name_of(&measurement.trace);
+            let mut text = egui::RichText::new(
+                name.unwrap_or_else(|| short_names([measurement.trace.as_str()])[0]),
+            );
+            if name.is_none() {
+                text = text.color(theme::tokens(ui.visuals()).text_faint);
+            }
+            let hint = if name.is_some() {
+                measurement.trace.clone()
+            } else {
+                format!("{} is not shown in the plot", measurement.trace)
+            };
+            egui::ComboBox::from_id_salt(("stat trace", index))
+                .selected_text(text)
+                .width(super::PROPERTY_LABEL_WIDTH)
+                .show_ui(ui, |ui| {
+                    for (&path, &name) in paths.iter().zip(&names) {
+                        ui.selectable_value(&mut measurement.trace, path.to_owned(), name)
+                            .on_hover_text(path);
+                    }
+                })
+                .response
+                .on_hover_text(hint);
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt(("stat", index))
+                    .selected_text(measurement.stat.name())
+                    .width(100.0)
+                    .show_ui(ui, |ui| {
+                        for stat in Stat::ALL {
+                            ui.selectable_value(&mut measurement.stat, stat, stat.name())
+                                .on_hover_text(stat.hint());
+                        }
+                    })
+                    .response
+                    .on_hover_text(measurement.stat.hint());
+                let remove = ui
+                    .add(theme::icon_button(egui_phosphor::regular::MINUS))
+                    .on_hover_text("Remove this stat");
+                if remove.clicked() {
+                    removed = Some(index);
+                }
+            });
+            ui.end_row();
+        }
+        if let Some(index) = removed {
+            measurements.remove(index);
+        }
+        let next = Measurement::next(measurements, paths);
+        let add = egui::Button::new(format!("{} Add stat", egui_phosphor::regular::PLUS));
+        let response = ui
+            .add_enabled(next.is_some(), theme::hover_frame(add))
+            .on_disabled_hover_text("Add traces to the plot first");
+        if response.clicked()
+            && let Some(next) = next
+        {
+            measurements.push(next);
+        }
+        ui.end_row();
+    });
+}
+
+/// Whether the curve of `series` in a plot with `interpolation` runs straight between
+/// samples, see [`Stats::of_series`].
+pub fn is_linear(series: &Series<'_>, interpolation: super::plot::Interpolation) -> bool {
+    interpolation == super::plot::Interpolation::Linear && series.kind != NumberKind::Bool
+}
+
+/// Shows `measurements` of the `shown` traces of a plot over the shown `window`, in
+/// nanoseconds, side by side and wrapping, each in the colour of its trace. Those of
+/// traces not shown are left out. `linear` tells for a series whether its curve runs
+/// straight between samples.
+pub fn measurements_ui(
+    ui: &mut egui::Ui,
+    measurements: &[Measurement],
+    shown: &ShownTraces<'_>,
+    (model, formats): (&Model, &Formats),
+    window: Option<(u64, u64)>,
+    linear: impl Fn(&Series<'_>) -> bool,
+) {
+    // the stats of each trace, computed once for all its measurements
+    let mut stats: BTreeMap<&str, Option<Stats>> = BTreeMap::new();
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+        for measurement in measurements {
+            let Some(&(path, name, index)) =
+                shown.iter().find(|(path, _, _)| *path == measurement.trace)
+            else {
+                continue;
+            };
+            let trace_stats = *stats.entry(path).or_insert_with(|| {
+                let series = model.traces.series(path)?;
+                Stats::of_series(&series, window?, linear(&series))
+            });
+            let value = trace_stats.and_then(|stats| measurement.stat.of(&stats));
+            let format = formats.of(path);
+            let text = value.map(|value| {
+                measurement
+                    .stat
+                    .format(value, model.traces.unit(path), format)
+            });
+            let color = theme::trace_color(ui.visuals(), index);
+            let label = format!("{}({name})", measurement.stat.short_name());
+            chip_ui(ui, measurement, color, &label, text.as_deref(), format)
+                .on_hover_text(format!("{path}\n{}", measurement.stat.hint()));
+        }
+    });
+}
+
+/// The room around the contents of a measurement and between them, in points.
+const CHIP_MARGIN: egui::Vec2 = egui::vec2(6.0, 2.0);
+const CHIP_SPACING: f32 = 6.0;
+const DOT_SIZE: f32 = 8.0;
+
+/// Shows a measurement as a dot in `color`, its `label` and its `value`, a dash without
+/// one, in a slot as wide as the widest value it showed since it or its `format` last
+/// changed, so that the measurements after it keep their place while it changes. It
+/// goes on the next line as a whole if it does not fit.
+fn chip_ui(
+    ui: &mut egui::Ui,
+    measurement: &Measurement,
+    color: egui::Color32,
+    label: &str,
+    value: Option<&str>,
+    format: DisplayFormat,
+) -> egui::Response {
+    let tokens = theme::tokens(ui.visuals());
+    let galley = |ui: &egui::Ui, text: egui::RichText| {
+        egui::WidgetText::from(text).into_galley(
+            ui,
+            Some(egui::TextWrapMode::Extend),
+            f32::INFINITY,
+            egui::TextStyle::Body,
+        )
+    };
+    let label = galley(
+        ui,
+        egui::RichText::new(label).color(ui.visuals().weak_text_color()),
+    );
+    let value = galley(
+        ui,
+        match value {
+            Some(value) => egui::RichText::new(value).strong(),
+            None => egui::RichText::new("—").color(tokens.text_faint),
+        },
+    );
+    let slot = format!("{} {:?} {format:?}", label.text(), measurement.stat);
+    let id = ui
+        .id()
+        .with(("stat width", &measurement.trace, measurement.stat));
+    let value_width = ui.data_mut(|data| {
+        let (last_slot, width) = data.get_temp_mut_or_default::<(String, f32)>(id);
+        if *last_slot != slot {
+            *last_slot = slot;
+            *width = 0.0;
+        }
+        *width = width.max(value.size().x);
+        *width
+    });
+    let inner = egui::vec2(
+        DOT_SIZE + CHIP_SPACING + label.size().x + CHIP_SPACING + value_width,
+        label.size().y.max(value.size().y),
+    );
+    let size = inner + 2.0 * CHIP_MARGIN;
+    let layout = egui::Layout::left_to_right(egui::Align::Center);
+    ui.allocate_ui_with_layout(size, layout, |ui| {
+        let rect = egui::Rect::from_min_size(ui.max_rect().min, size);
+        ui.painter()
+            .rect_filled(rect, theme::CONTROL_RADIUS, tokens.control);
+        let content = rect.shrink2(CHIP_MARGIN);
+        let dot = egui::pos2(content.left() + DOT_SIZE / 2.0, content.center().y);
+        ui.painter().circle_filled(dot, DOT_SIZE / 2.0, color);
+        let label_rect = egui::Rect::from_min_size(
+            egui::pos2(
+                content.left() + DOT_SIZE + CHIP_SPACING,
+                content.center().y - label.size().y / 2.0,
+            ),
+            label.size(),
+        );
+        let value_rect = egui::Rect::from_min_size(
+            egui::pos2(
+                content.right() - value.size().x,
+                content.center().y - value.size().y / 2.0,
+            ),
+            value.size(),
+        );
+        ui.put(label_rect, egui::Label::new(label));
+        ui.put(value_rect, egui::Label::new(value));
+        ui.allocate_rect(rect, egui::Sense::hover())
+    })
+    .inner
 }
 
 /// The stats of the samples of a trace in a window of time.

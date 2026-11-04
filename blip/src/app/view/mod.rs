@@ -314,7 +314,7 @@ pub fn short_names<'a>(paths: impl IntoIterator<Item = &'a str>) -> Vec<&'a str>
 }
 
 /// The width of the labels of properties, so that their values line up.
-const PROPERTY_LABEL_WIDTH: f32 = 84.0;
+pub const PROPERTY_LABEL_WIDTH: f32 = 84.0;
 
 /// Shows a section of properties titled `title` that can be collapsed, below a line,
 /// with the label and the value of each property added by `add` in a row of a grid.
