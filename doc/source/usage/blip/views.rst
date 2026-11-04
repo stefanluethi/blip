@@ -161,12 +161,13 @@ the value that x trace had at its time.
 
 Checked traces named ``x`` and ``y`` with the same parent, like the fields of
 a record ``robot/pose``, pair up: ``y`` is plotted against ``x``, and the line
-is named after the parent. Other checked traces are plotted against the first
-x trace; the first trace checked is the x trace if there is none.
+is named after the parent, whichever of them is checked first, unless other
+traces are plotted against ``y``. Other checked traces are plotted against the
+first x trace; the first trace checked is the x trace if there is none.
 
 Checking one-dimensional arrays instead plots each array at the cursor time
 over the indices of its elements, e.g. a snapshot of ADC samples or a
-spectrum.
+spectrum. The axes of the other traces are kept for when no array is checked.
 
 The view fits all data of its traces until it is dragged or zoomed.
 
@@ -211,7 +212,7 @@ Logs
 
 A table of the received log records with time, level, component and message,
 of the paths checked in the tree (see :doc:`traces`); a new log view shows
-all. While it shows the logs of several paths, a **Path** column tells them
+all. While the shown records are of several paths, a **Path** column tells them
 apart. Records outside the shown time range are greyed out. The filters are in the
 column headers and are kept with the view:
 

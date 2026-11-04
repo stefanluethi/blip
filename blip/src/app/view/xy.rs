@@ -258,15 +258,22 @@ fn split_last(path: &str) -> (&str, &str) {
     }
 }
 
+/// The path of the sibling of `path` named after its name in `names`, pairs of a name
+/// and the name of the sibling.
+fn sibling(path: &str, names: [(&str, &str); 2]) -> Option<String> {
+    let (_, name) = split_last(path);
+    let (_, other) = names.into_iter().find(|&(from, _)| from == name)?;
+    Some(format!("{}{other}", &path[..path.len() - name.len()]))
+}
+
 /// For a trace named y, the path of its sibling named x, e.g. `pose.x` for `pose.y`.
 fn x_sibling(path: &str) -> Option<String> {
-    let (_, name) = split_last(path);
-    let x = match name {
-        "y" => "x",
-        "Y" => "X",
-        _ => return None,
-    };
-    Some(format!("{}{x}", &path[..path.len() - name.len()]))
+    sibling(path, [("y", "x"), ("Y", "X")])
+}
+
+/// For a trace named x, the path of its sibling named y, e.g. `pose.y` for `pose.x`.
+fn y_sibling(path: &str) -> Option<String> {
+    sibling(path, [("x", "y"), ("X", "Y")])
 }
 
 /// The names of the `lines`, each an x and a y path: the parent of both if they share
@@ -341,34 +348,44 @@ impl Xy {
 
     /// Puts each shown trace on an axis and forgets the traces that are not shown.
     /// Each newly shown trace named y whose sibling named x is shown too is plotted
-    /// against it, e.g. `pose.y` against `pose.x`. The other new traces and those
-    /// whose x trace is gone are plotted against the first x trace, or the first of
-    /// them is the x trace if there is none.
+    /// against it, e.g. `pose.y` against `pose.x`, and so is a shown trace named y when
+    /// its sibling named x is newly shown, unless traces are plotted against it. The
+    /// other new traces and those whose x trace is gone are plotted against the first x
+    /// trace, or the first of them is the x trace if there is none. While arrays are
+    /// shown, which are plotted over the indices of their elements, the axes of the
+    /// other traces are kept for when they are not.
     fn assign_axes(&mut self, model: &Model) {
-        if !self.array_paths(model).is_empty() {
-            // arrays are plotted over the indices of their elements
-            self.xs.clear();
-            self.against.clear();
-            return;
-        }
         let traces = &self.traces;
         self.xs.retain(|path| traces.contains(path));
         let xs = &self.xs;
         self.against
             .retain(|y, x| traces.contains(y) && !xs.contains(y) && xs.contains(x));
+        if !self.array_paths(model).is_empty() {
+            return;
+        }
         let new: Vec<&String> = (traces.iter())
             .filter(|&path| !xs.contains(path) && !self.against.contains_key(path))
             .collect();
         let mut rest = vec![];
         for &path in &new {
             let x = x_sibling(path).filter(|x| self.xs.contains(x) || new.contains(&x));
-            match x {
-                Some(x) => {
-                    self.xs.insert(x.clone());
-                    self.against.insert(path.clone(), x);
-                }
-                None => rest.push(path),
+            if let Some(x) = x {
+                self.xs.insert(x.clone());
+                self.against.insert(path.clone(), x);
+                continue;
             }
+            // a trace named y shown before its sibling named x, unless it is an x
+            // trace others are plotted against
+            let y = y_sibling(path).filter(|y| {
+                traces.contains(y) && !new.contains(&y) && !self.against.values().any(|x| x == y)
+            });
+            if let Some(y) = y {
+                self.xs.remove(&y);
+                self.xs.insert(path.clone());
+                self.against.insert(y, path.clone());
+                continue;
+            }
+            rest.push(path);
         }
         for path in rest {
             if self.xs.contains(path) {
@@ -384,6 +401,19 @@ impl Xy {
                 }
             }
         }
+    }
+
+    /// The traces of the view with their axes assigned, see [`Xy::assign_axes`], without
+    /// changing the view.
+    fn assigned(&self, model: &Model) -> Self {
+        let mut axes = Self {
+            traces: self.traces.clone(),
+            xs: self.xs.clone(),
+            against: self.against.clone(),
+            ..Self::default()
+        };
+        axes.assign_axes(model);
+        axes
     }
 
     /// Puts the trace at `path` on the x axis if `is_x`, else on the y axis against
@@ -626,12 +656,13 @@ impl super::ViewInfo for Xy {
 impl Viewable for Xy {
     fn colored_paths(&self, model: &Model) -> Vec<String> {
         let arrays = self.array_paths(model);
-        let paths = if arrays.is_empty() {
-            self.against.keys().map(String::as_str).collect()
+        if arrays.is_empty() {
+            // the y traces as the view plots them, also before it assigns the axes of
+            // the traces checked since it was last shown
+            self.assigned(model).against.into_keys().collect()
         } else {
-            arrays
-        };
-        paths.into_iter().map(str::to_owned).collect()
+            arrays.into_iter().map(str::to_owned).collect()
+        }
     }
 
     fn selection(&mut self) -> Option<(&mut BTreeSet<String>, bool)> {
@@ -846,6 +877,58 @@ mod tests {
         xy.against.remove("p.y");
         xy.assign_axes(&Model::default());
         assert_eq!(lines_of(&xy)[2], line("p.x", "p.y"));
+    }
+
+    #[test]
+    fn a_y_trace_checked_before_its_x_sibling_pairs_up_with_it() {
+        let mut xy = xy_of(&["pose.y"]);
+        assert_eq!(xy.xs, ["pose.y".to_owned()].into());
+        xy.traces.insert("pose.x".to_owned());
+        xy.assign_axes(&Model::default());
+        assert_eq!(lines_of(&xy), [line("pose.x", "pose.y")]);
+
+        // also when it was plotted against another x trace
+        let mut xy = xy_of(&["a", "pose.y"]);
+        xy.traces.insert("pose.x".to_owned());
+        xy.assign_axes(&Model::default());
+        assert_eq!(lines_of(&xy), [line("pose.x", "pose.y")]);
+
+        // but not when other traces are plotted against it
+        let mut xy = xy_of(&["a", "pose.y"]);
+        xy.set_axis("pose.y", true);
+        xy.set_axis("a", false);
+        assert_eq!(lines_of(&xy), [line("pose.y", "a")]);
+        xy.traces.insert("pose.x".to_owned());
+        xy.assign_axes(&Model::default());
+        assert_eq!(xy.against["a"], "pose.y");
+        assert!(xy.xs.contains("pose.y"));
+    }
+
+    #[test]
+    fn showing_an_array_keeps_the_axes_of_the_traces() {
+        let mut xy = xy_of(&["p.x", "p.y", "rpm"]);
+        xy.set_axis("rpm", true);
+        xy.against.insert("p.y".to_owned(), "rpm".to_owned());
+        let lines = lines_of(&xy);
+        let mut model = Model::default();
+        model.traces.append(&proto::Value {
+            timestamp: 0,
+            path: "adc".to_owned(),
+            value: Data::Array(vec![Data::Float(1.0); 4]),
+        });
+        xy.traces.insert("adc".to_owned());
+        xy.assign_axes(&model);
+        xy.traces.remove("adc");
+        xy.assign_axes(&model);
+        assert_eq!(lines_of(&xy), lines);
+    }
+
+    #[test]
+    fn the_colours_follow_the_axes_before_the_view_assigns_them() {
+        let mut xy = xy_of(&["a"]);
+        xy.traces.extend(["b".to_owned(), "c".to_owned()]);
+        assert_eq!(xy.colored_paths(&Model::default()), ["b", "c"]);
+        assert!(xy.against.is_empty(), "the view is unchanged");
     }
 
     #[test]

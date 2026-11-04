@@ -6,6 +6,7 @@ use crate::app::view::{ViewContext, Viewable};
 use egui_extras::Column;
 use egui_phosphor::regular;
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 #[derive(serde::Deserialize, serde::Serialize, Clone, Debug, PartialEq)]
 #[serde(default)]
@@ -68,10 +69,40 @@ pub struct LogTable {
     /// The indices of the entries the filter shows, see [`LogTable::update_shown`].
     #[serde(skip)]
     shown: Vec<u32>,
-    /// What `shown` was made for: a hash of the paths and of what the filter hides, the
-    /// order of the entries and how many of them were filtered.
+    /// What `shown` was made for, and the paths of the shown entries.
     #[serde(skip)]
-    shown_for: Option<Box<(u64, Version, usize)>>,
+    shown_for: Option<Box<ShownFor>>,
+}
+
+/// What [`LogTable::shown`] was made for, and the paths of the entries in it.
+#[derive(Clone)]
+struct ShownFor {
+    /// A hash of the paths and of what the filter hides.
+    filter: u64,
+    /// The order of the entries.
+    order: Version,
+    /// How many of them were filtered.
+    filtered: usize,
+    paths: ShownPaths,
+}
+
+/// The paths of the shown entries.
+#[derive(Clone, Default, PartialEq, Debug)]
+enum ShownPaths {
+    #[default]
+    None,
+    One(Arc<str>),
+    Several,
+}
+
+impl ShownPaths {
+    fn add(&mut self, path: &Arc<str>) {
+        match self {
+            Self::None => *self = Self::One(path.clone()),
+            Self::One(one) if one != path => *self = Self::Several,
+            _ => {}
+        }
+    }
 }
 
 impl LogTable {
@@ -127,19 +158,32 @@ impl LogTable {
         (&filter.hidden_levels, &filter.hidden_components).hash(&mut hasher);
         (&filter.message_regex, filter.case_sensitive).hash(&mut hasher);
         let filter = hasher.finish();
-        let from = match self.shown_for.take().map(|known| *known) {
-            Some((known, order, filtered)) if known == filter && order == logs.order() => filtered,
+        let (from, mut paths) = match self.shown_for.take().map(|known| *known) {
+            Some(known) if known.filter == filter && known.order == logs.order() => {
+                (known.filtered, known.paths)
+            }
             _ => {
                 self.shown.clear();
-                0
+                (0, ShownPaths::None)
             }
         };
         for (index, entry) in logs.entries.iter().enumerate().skip(from) {
             if self.matches(entry) {
                 self.shown.push(index as u32);
+                paths.add(&entry.path);
             }
         }
-        self.shown_for = Some(Box::new((filter, logs.order(), logs.entries.len())));
+        self.shown_for = Some(Box::new(ShownFor {
+            filter,
+            order: logs.order(),
+            filtered: logs.entries.len(),
+            paths,
+        }));
+    }
+
+    /// Whether the shown entries are of several paths, so that the path tells them apart.
+    fn shows_several_paths(&self) -> bool {
+        (self.shown_for.as_ref()).is_some_and(|shown| shown.paths == ShownPaths::Several)
     }
 
     /// Shows the entries, the ones outside the shown time range greyed out, with the
@@ -161,7 +205,7 @@ impl LogTable {
                 let lines = theme::TableLines::new(ui, true);
 
                 // the path tells the entries apart only if they are of several paths
-                let with_path = self.paths.len() > 1;
+                let with_path = self.shows_several_paths();
                 // the time, level, path and component take only what they need, the
                 // message the rest
                 let mut builder = theme::table(ui)
@@ -639,6 +683,33 @@ mod tests {
         several.get_by_label("Path");
         several.get_by_label("robot/arm");
         assert!(harness(&["motor"]).query_by_label("Path").is_none());
+        // paths picked without shown entries tell nothing apart
+        assert!(harness(&["motor", "log"]).query_by_label("Path").is_none());
+    }
+
+    #[test]
+    fn only_the_paths_of_the_shown_entries_count() {
+        let mut logs = Logs::default();
+        logs.push(create_entry(LogLevel::Info, "core", "message"));
+        logs.push(LogEntry {
+            path: "motor".into(),
+            ..create_entry(LogLevel::Info, "hidden", "message")
+        });
+        let mut table = LogTable {
+            paths: BTreeSet::from([DEFAULT_PATH.to_owned(), "motor".to_owned()]),
+            ..LogTable::default()
+        };
+        // the entry of "motor" is hidden
+        table.filter.hidden_components.insert("hidden".to_owned());
+        table.update_shown(&logs);
+        assert!(!table.shows_several_paths());
+        // an arriving entry of "motor" is filtered with those before
+        logs.push(LogEntry {
+            path: "motor".into(),
+            ..create_entry(LogLevel::Info, "core", "later")
+        });
+        table.update_shown(&logs);
+        assert!(table.shows_several_paths());
     }
 
     #[test]

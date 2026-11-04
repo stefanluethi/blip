@@ -158,6 +158,7 @@ impl Model {
                 // a log without a timestamp happened about when the newest data did, in
                 // the time domain of the device
                 let now = self.time_span().map(|(_, newest)| newest);
+                let path = self.logs.shared_path(path);
                 let entry = LogEntry::new(timestamp, path, level, component, message, now);
                 if timestamp > 0 {
                     // not the wall clock of a record without a timestamp, which may be
