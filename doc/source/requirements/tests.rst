@@ -243,3 +243,13 @@ Test Cases
    show no actions in new views until checked, list the actions in the
    tree of the traces, also those shown but not announced, and check them
    there only for actions views.
+
+.. test:: Documentation builds without warnings
+   :id: TEST_DOC_BUILD
+   :status: implemented
+   :component: doc
+   :verifies: REQ_DOC_BUILD
+
+   ``cd doc && make html`` -- builds with ``-W --keep-going``, so a broken
+   reference or a malformed directive fails the build; the Pages workflow
+   (``.github/workflows/pages.yml``) runs it for each published change.

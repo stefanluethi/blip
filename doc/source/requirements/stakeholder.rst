@@ -40,3 +40,12 @@ Stakeholder Requirements
 
    As a developer I want to keep what I observed, look at it again later and
    share it with others, together with the arrangement of views I used.
+
+.. stk:: Learn and look up
+   :id: STK_DOCS
+   :status: draft
+   :priority: high
+
+   As a developer I want documentation that gets me going without hardware,
+   shows me how to do my task, lets me look up every control and option, and
+   helps me when something does not work, for the version I use.

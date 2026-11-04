@@ -25,6 +25,7 @@ linked to the items it refines:
 
    stakeholder
    system
+   documentation
    tests
    traceability
    authoring
