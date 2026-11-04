@@ -156,7 +156,7 @@ class Translator:
             t = self._timestamp(message, plan.timestamp)
 
         if plan.kind == KIND_LOG:
-            self._log(message, plan, t)
+            self._log(message, plan, path, t)
         elif plan.kind == KIND_ACTION_RESULT:
             self._action_result(message, plan)
         elif plan.kind != KIND_INVOKE and plan.values:
@@ -307,7 +307,7 @@ class Translator:
         if plan.timestamp is not None:
             self._seen(t + int(round((n - 1) * period)))
 
-    def _log(self, message: Any, plan: MessagePlan, t: int) -> None:
+    def _log(self, message: Any, plan: MessagePlan, path: str, t: int) -> None:
         level = DEFAULT_LEVEL
         if plan.level is not None:
             level = min(max(int(getattr(message, plan.level.name)), 0), MAX_LEVEL)
@@ -317,7 +317,7 @@ class Translator:
             raw = getattr(message, f.name)
             component = f.enum_names.get(raw, str(raw)) if f.enum_names is not None else str(raw)
         text = str(getattr(message, plan.message.name)) if plan.message is not None else ""
-        self.outpost.send_log(level, text, component, t)
+        self.outpost.send_log(level, text, component, t, path)
 
     def _action_result(self, message: Any, plan: MessagePlan) -> None:
         if plan.action_id is None:

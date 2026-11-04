@@ -40,7 +40,7 @@ Everything a target sends is one of five messages, encoded in CBOR (see
    * - ``ValueMetadata``
      - The unit of a trace, e.g. ``rpm``. Sent once or now and then.
    * - ``Log``
-     - A log record: timestamp, level, component and message text.
+     - A log record: timestamp, path, level, component and message text.
    * - ``Actions``
      - The list of all actions the target can carry out now.
    * - ``ActionResult``
@@ -98,10 +98,17 @@ Unit
 Log records
 -----------
 
-A log record has a timestamp, one of the levels ``TRACE``, ``DEBUG``,
-``INFO``, ``WARN`` and ``ERROR``, an optional component, e.g. ``motor``, and a
-message. Log views list them, and the timeline at the bottom shows how many of
-each level arrived when.
+A log record has a timestamp, an optional path, one of the levels ``TRACE``,
+``DEBUG``, ``INFO``, ``WARN`` and ``ERROR``, an optional component, e.g.
+``driver``, and a message. Log views list them, and the timeline at the bottom
+shows how many of each level arrived when.
+
+The path says where a record comes from, with levels separated by ``/`` like
+the path of a trace, e.g. ``motor`` or ``robot/arm``. The paths of the logs
+join the traces in the tree, so a log view shows the logs of the paths checked
+there. A record without a path is of the target as a whole and is at ``log``.
+The component is finer: the part of the software that wrote the record, which
+the log view filters by.
 
 Timestamps
 ----------

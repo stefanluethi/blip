@@ -17,6 +17,8 @@ pub enum Message<'b> {
     },
     Log {
         timestamp: u64,
+        /// Empty if the record has none.
+        path: &'b str,
         level: u8,
         component: &'b str,
         message: &'b str,
@@ -326,10 +328,12 @@ fn value<'b>(
 }
 
 fn log<'b>(reader: &mut Reader<'b>) -> cbor::Result<Message<'b>> {
-    let (mut timestamp, mut level, mut component, mut message) = (None, None, "", None);
+    let (mut timestamp, mut path, mut level, mut component, mut message) =
+        (None, "", None, "", None);
     fields(reader, |reader, name| {
         match name {
             "timestamp" => timestamp = Some(reader.u64()?),
+            "path" => path = reader.str()?,
             "level" => {
                 let value = reader.u64()?;
                 level = Some(u8::try_from(value).map_err(|_| error(reader, "level above 255"))?);
@@ -343,6 +347,7 @@ fn log<'b>(reader: &mut Reader<'b>) -> cbor::Result<Message<'b>> {
     match (timestamp, level, message) {
         (Some(timestamp), Some(level), Some(message)) => Ok(Message::Log {
             timestamp,
+            path,
             level,
             component,
             message,
@@ -481,6 +486,7 @@ mod tests {
     fn logs_are_read_and_other_messages_decoded_with_serde() {
         let log = frame(&proto::Message::Log(proto::LogRecord {
             timestamp: 3,
+            path: "robot/arm".to_owned(),
             level: 4,
             component: "motor".to_owned(),
             message: "hot".to_owned(),
@@ -490,11 +496,28 @@ mod tests {
             decode(&log, &mut flat).unwrap(),
             Message::Log {
                 timestamp: 3,
+                path: "robot/arm",
                 level: 4,
                 component: "motor",
                 message: "hot"
             }
         );
+        // without a path, as before logs had one
+        let pathless = frame(&proto::Message::Log(proto::LogRecord {
+            timestamp: 3,
+            path: String::new(),
+            level: 4,
+            component: String::new(),
+            message: "hot".to_owned(),
+        }));
+        assert!(matches!(
+            decode(&pathless, &mut flat).unwrap(),
+            Message::Log {
+                path: "",
+                component: "",
+                ..
+            }
+        ));
         let unit = proto::Message::ValueMetadata(proto::ValueMetadata {
             path: "rpm".to_owned(),
             unit: "1/min".to_owned(),

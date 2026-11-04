@@ -6,6 +6,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstdarg>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -412,14 +413,21 @@ public:
     // proto: Message::ValueMetadata
     Status metadata(std::string_view path, std::string_view unit);
 
-    // proto: Message::Log; an empty component is left out on the wire
+    // proto: Message::Log, at `path` like a value, e.g. "motor", or without one of the
+    // target as a whole; an empty path or component is left out on the wire
     Status log(Level level, std::string_view component, std::string_view message);
     Status log(Timestamp timestamp, Level level, std::string_view component,
                std::string_view message);
+    Status log(std::string_view path, Level level, std::string_view component,
+               std::string_view message);
+    Status log(Timestamp timestamp, std::string_view path, Level level,
+               std::string_view component, std::string_view message);
     /// printf-like, formatted into a buffer of SONDE_LOGF_MAX bytes on the stack,
     /// longer messages are cut off.
     Status logf(Level level, std::string_view component, const char* format, ...)
         SONDE_PRINTF(4, 5);
+    Status logf(std::string_view path, Level level, std::string_view component,
+                const char* format, ...) SONDE_PRINTF(5, 6);
 
     /// Makes the open batch ready, if it holds messages. With a sink, writes it.
     Status commit();
@@ -457,8 +465,10 @@ private:
     // A timestamp of nullptr is read from the clock, once the message has a batch.
     Status value_with(const Timestamp* timestamp, std::string_view path,
                       detail::EncodeFn encode, const void* value);
-    Status log_with(const Timestamp* timestamp, Level level, std::string_view component,
-                    std::string_view message);
+    Status log_with(const Timestamp* timestamp, std::string_view path, Level level,
+                    std::string_view component, std::string_view message);
+    Status logv(std::string_view path, Level level, std::string_view component,
+                const char* format, std::va_list args);
     /// Encodes a message into the open batch and commits on request. If `clock_time` is
     /// not nullptr, it is set from the clock before the message is encoded.
     Status emit(detail::EncodeFn encode, const void* message, Timestamp* clock_time);

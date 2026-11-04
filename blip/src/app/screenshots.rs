@@ -271,7 +271,10 @@ fn screenshots_views() {
             "view-heatmap-grid",
             r#"{"name": "Thermal", "kind": {"Heatmap": {"traces": ["thermal/frame"]}}}"#,
         ),
-        ("view-logs", r#"{"name": "Log", "kind": {"Logs": {}}}"#),
+        (
+            "view-logs",
+            r#"{"name": "Log", "kind": {"Logs": {}}, "wildcards": [""]}"#,
+        ),
         (
             "view-actions",
             r#"{"name": "Actions", "kind": {"Actions": {"shown": ["motor/enable", "motor/speed", "thermal/ambient", "log/level", "log/message", "imu/calibrate"]}}}"#,

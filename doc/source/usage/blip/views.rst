@@ -209,12 +209,15 @@ Logs
    :class: screenshot
    :alt: A log view with times, coloured levels, components and messages.
 
-A table of the received log records with time, level, component and message.
-Records outside the shown time range are greyed out. The filters are in the
+A table of the received log records with time, level, component and message,
+of the paths checked in the tree (see :doc:`traces`); a new log view shows
+all. While it shows the logs of several paths, a **Path** column tells them
+apart. Records outside the shown time range are greyed out. The filters are in the
 column headers and are kept with the view:
 
 * **Level** and **Component** -- checkboxes for what is shown, with **All**
-  and **None**. New components are shown.
+  and **None**. New components are shown. Only the components of the shown
+  paths are listed.
 * **Message** -- a search, as a regular expression; **Aa** matches case. Text
   that is no valid regular expression is searched as it is.
 

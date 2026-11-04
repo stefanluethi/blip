@@ -37,7 +37,7 @@ pub struct Model {
     /// The latest frames the targets describe themselves with, which they send only
     /// once or seldom, in the order they first arrived.
     descriptions: Vec<Description>,
-    /// Changes whenever a trace or an announcement of actions arrives.
+    /// Changes whenever a trace, a log path or an announcement of actions arrives.
     paths_version: Version,
     /// Changes whenever a value or log record arrives.
     samples_version: Version,
@@ -100,8 +100,8 @@ impl Model {
     }
 
     /// Records a frame received from `source`, the name of its connection, and applies
-    /// the message in it. The paths of its traces and actions and the components of its
-    /// logs are kept as the outpost sends them, without the source: how they are
+    /// the message in it. The paths of its traces, actions and logs and the components
+    /// of its logs are kept as the outpost sends them, without the source: how they are
     /// organized is up to the user, also when outposts send the same paths. Returns
     /// the answer to an invocation, for the invoker.
     pub fn receive(&mut self, source: &str, frame: &[u8]) -> Option<proto::ActionResult> {
@@ -150,6 +150,7 @@ impl Model {
             }
             Ok(decode::Message::Log {
                 timestamp,
+                path,
                 level,
                 component,
                 message,
@@ -157,13 +158,15 @@ impl Model {
                 // a log without a timestamp happened about when the newest data did, in
                 // the time domain of the device
                 let now = self.time_span().map(|(_, newest)| newest);
-                let entry = LogEntry::new(timestamp, level, component, message, now);
+                let entry = LogEntry::new(timestamp, path, level, component, message, now);
                 if timestamp > 0 {
                     // not the wall clock of a record without a timestamp, which may be
                     // far from the time domain of the target
                     self.origin.get_or_insert(timestamp);
                 }
-                self.logs.push(entry);
+                if self.logs.push(entry) {
+                    self.paths_version = Version::default();
+                }
                 self.samples_version = Version::default();
             }
             Ok(decode::Message::Other(proto::Message::ValueMetadata(metadata))) => {
@@ -206,7 +209,7 @@ impl Model {
         self.origin
     }
 
-    /// Changes whenever a trace or an announcement of actions arrives.
+    /// Changes whenever a trace, a log path or an announcement of actions arrives.
     pub fn paths_version(&self) -> Version {
         self.paths_version
     }
@@ -353,6 +356,7 @@ mod tests {
         };
         let log = frame(&proto::Message::Log(proto::LogRecord {
             timestamp: 1,
+            path: "robot/arm".to_owned(),
             level: 2,
             component: "motor".to_owned(),
             message: "hi".to_owned(),
@@ -366,6 +370,7 @@ mod tests {
         assert_eq!(model.traces.iter().count(), 1);
         assert_eq!(model.traces.get("cpu").unwrap().timestamps.len(), 3);
         assert_eq!(model.logs.entries[0].component, "motor");
+        assert_eq!(&*model.logs.entries[0].path, "robot/arm");
         assert_eq!(model.recording.messages(), 4);
     }
 
@@ -394,6 +399,7 @@ mod tests {
             "",
             &frame(&proto::Message::Log(proto::LogRecord {
                 timestamp: 5,
+                path: String::new(),
                 level: 2,
                 component: String::new(),
                 message: "hi".to_owned(),
@@ -505,6 +511,7 @@ mod tests {
         let log = |timestamp| {
             frame(&proto::Message::Log(proto::LogRecord {
                 timestamp,
+                path: String::new(),
                 level: 2,
                 component: String::new(),
                 message: "hi".to_owned(),
@@ -616,6 +623,7 @@ mod tests {
         }));
         let log = frame(&proto::Message::Log(proto::LogRecord {
             timestamp: 1,
+            path: String::new(),
             level: 2,
             component: "motor".to_owned(),
             message: "hi".to_owned(),

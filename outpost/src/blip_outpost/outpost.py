@@ -223,9 +223,11 @@ class Outpost:
         message: str,
         component: str = "",
         timestamp_ns: Optional[int] = None,
+        path: str = "",
     ) -> None:
-        """Sends a log record of a `LogLevel`, timestamped now unless given (ns)."""
-        self._send_frame(Message.create_log(int(level), message, timestamp_ns, component).encode_cbor())
+        """Sends a log record of a `LogLevel`, timestamped now unless given (ns), at
+        `path` like a value, e.g. ``motor``, or of the target as a whole without one."""
+        self._send_frame(Message.create_log(int(level), message, timestamp_ns, component, path).encode_cbor())
 
     def send(self, message: Union[Message, bytes]) -> None:
         """Sends a `Message`, or the bytes of complete messages: one or several one

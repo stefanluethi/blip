@@ -23,6 +23,11 @@ pub struct Value {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct LogRecord {
     pub timestamp: u64,
+    /// Where the record comes from, levels separated by "/" as in the paths of values,
+    /// e.g. "motor" or "robot/arm". Empty for the target as a whole, also in recordings
+    /// made before logs had a path. Left out on the wire when empty.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub path: String,
     pub level: u8,
     #[serde(default)]
     pub component: String,

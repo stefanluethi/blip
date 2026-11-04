@@ -1,4 +1,9 @@
 use super::Version;
+use std::collections::BTreeSet;
+use std::sync::Arc;
+
+/// The path of the records without one, which are of the target as a whole.
+pub const DEFAULT_PATH: &str = "log";
 
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Deserialize, serde::Serialize,
@@ -46,6 +51,9 @@ impl LogLevel {
 pub struct LogEntry {
     /// Nanoseconds in the time domain of the target.
     pub time: u64,
+    /// Where the record comes from, [`DEFAULT_PATH`] if it has no path. Entries of the
+    /// same path share it, see [`Logs::push`].
+    pub path: Arc<str>,
     pub component: String,
     pub level: LogLevel,
     pub message: String,
@@ -56,6 +64,7 @@ impl LogEntry {
     /// or the wall-clock time if there is none.
     pub fn new(
         timestamp: u64,
+        path: &str,
         level: u8,
         component: &str,
         message: &str,
@@ -86,8 +95,11 @@ impl LogEntry {
             component
         };
 
+        let path = if path.is_empty() { DEFAULT_PATH } else { path };
+
         Self {
             time,
+            path: path.into(),
             component: component.to_owned(),
             level,
             message: message.to_owned(),
@@ -99,6 +111,8 @@ impl LogEntry {
 #[derive(Default)]
 pub struct Logs {
     pub entries: Vec<LogEntry>,
+    /// The paths of the entries.
+    paths: BTreeSet<Arc<str>>,
     /// Changes when an entry is put before others rather than appended, so views that
     /// keep what they made of the entries make it anew.
     order: Version,
@@ -106,8 +120,15 @@ pub struct Logs {
 
 impl Logs {
     /// Adds `entry` in the order of the times, after the entries of the same time, e.g.
-    /// also when another outpost sends it late.
-    pub fn push(&mut self, entry: LogEntry) {
+    /// also when another outpost sends it late. Returns whether its path is new.
+    pub fn push(&mut self, mut entry: LogEntry) -> bool {
+        let new_path = match self.paths.get(&entry.path) {
+            Some(known) => {
+                entry.path = known.clone();
+                false
+            }
+            None => self.paths.insert(entry.path.clone()),
+        };
         let at = self
             .entries
             .partition_point(|known| known.time <= entry.time);
@@ -115,6 +136,12 @@ impl Logs {
             self.order = Version::default();
         }
         self.entries.insert(at, entry);
+        new_path
+    }
+
+    /// The paths of the entries, in order.
+    pub fn paths(&self) -> impl Iterator<Item = &str> {
+        self.paths.iter().map(|path| &**path)
     }
 
     /// Changes when an entry is put before others rather than appended.

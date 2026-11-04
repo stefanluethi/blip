@@ -104,9 +104,25 @@ def test_recordings_of_sonde_are_read():
             "value": {"speed_rpm": 1500, "enabled": True, "state": "running"},
         }
     }
+    assert cbor2.loads(read[8]) == {
+        "Log": {
+            "timestamp": 3_000_000,
+            "path": "robot/arm",
+            "level": 2,
+            "component": "motor",
+            "message": "started",
+        }
+    }
+    # sonde leaves out an empty path and component, as the outpost does an empty path
     assert cbor2.loads(read[9]) == {
         "Log": {"timestamp": 3_000_000, "level": 3, "message": "no component"}
     }
+    assert cbor2.loads(Message.create_log(3, "no component", 3_000_000).encode_cbor()) == {
+        "Log": {"timestamp": 3_000_000, "level": 3, "component": "", "message": "no component"}
+    }
+    assert cbor2.loads(Message.create_log(2, "started", 3_000_000, "motor", "robot/arm").encode_cbor()) == (
+        cbor2.loads(read[8])
+    )
     # the batches of sonde are the messages one after another
     data = SONDE_RECORDING.read_bytes()
     items, rest = split_items(data)

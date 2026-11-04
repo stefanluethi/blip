@@ -105,8 +105,9 @@ Sending to blip
    * - ``send_metadata(path, unit)``
      - the unit of a trace; for a record field, the path joined with ``.``,
        e.g. ``imu.acc``
-   * - ``send_log(level, message, component="", timestamp_ns=None)``
-     - a log record of a ``LogLevel``
+   * - ``send_log(level, message, component="", timestamp_ns=None, path="")``
+     - a log record of a ``LogLevel``, at ``path`` like a trace, e.g.
+       ``motor``, or without one of the target as a whole
    * - ``send(message)``
      - a ``Message``, or the bytes of complete messages, e.g. as received
        from a target that speaks the blip protocol
@@ -419,7 +420,8 @@ The rules:
   In the downlink message the outpost sets it, +1 per message.
 * **Log records.** A message of ``kind: KIND_LOG`` is a log record of its
   fields of the roles ``ROLE_LEVEL`` (0 trace … 4 error; larger values are
-  errors), ``ROLE_COMPONENT`` and ``ROLE_MESSAGE``.
+  errors), ``ROLE_COMPONENT`` and ``ROLE_MESSAGE``, at the path of the
+  message like values: its ``path``, else that of the field holding it.
 * **Actions.** The ``KIND_INVOKE`` message in the downlink message has a field
   of ``ROLE_ACTION_ID`` and a oneof: each message member is an action at its
   ``path`` (else its field name) with its ``description``, ``confirm`` and

@@ -72,6 +72,7 @@ void write_metadata(Encoder& encoder, const void* message) {
 
 struct LogMessage {
     Timestamp timestamp;
+    std::string_view path;
     Level level;
     std::string_view component;
     std::string_view message;
@@ -80,10 +81,13 @@ struct LogMessage {
 void write_log(Encoder& encoder, const void* message) {
     const auto& log = *static_cast<const LogMessage*>(message);
     encoder.record(1, [&](Record& variant) {
-        // the component has a default in proto, an empty one is left out
-        const std::size_t count = log.component.empty() ? 3 : 4;
+        // the path and the component have defaults in proto, empty ones are left out
+        const std::size_t count = 3 + (log.path.empty() ? 0 : 1) + (log.component.empty() ? 0 : 1);
         variant.field("Log", record(count, [&](Record& fields) {
                           fields.field("timestamp", log.timestamp.ns);
+                          if (!log.path.empty()) {
+                              fields.field("path", log.path);
+                          }
                           fields.field("level", static_cast<std::uint8_t>(log.level));
                           if (!log.component.empty()) {
                               fields.field("component", log.component);
@@ -126,20 +130,45 @@ Status Tracer::metadata(std::string_view path, std::string_view unit) {
 }
 
 Status Tracer::log(Level level, std::string_view component, std::string_view message) {
-    return log_with(nullptr, level, component, message);
+    return log_with(nullptr, {}, level, component, message);
 }
 
 Status Tracer::log(Timestamp timestamp, Level level, std::string_view component,
                    std::string_view message) {
-    return log_with(&timestamp, level, component, message);
+    return log_with(&timestamp, {}, level, component, message);
+}
+
+Status Tracer::log(std::string_view path, Level level, std::string_view component,
+                   std::string_view message) {
+    return log_with(nullptr, path, level, component, message);
+}
+
+Status Tracer::log(Timestamp timestamp, std::string_view path, Level level,
+                   std::string_view component, std::string_view message) {
+    return log_with(&timestamp, path, level, component, message);
 }
 
 Status Tracer::logf(Level level, std::string_view component, const char* format, ...) {
-    char buffer[SONDE_LOGF_MAX];
     std::va_list args;
     va_start(args, format);
-    const int length = std::vsnprintf(buffer, sizeof buffer, format, args);
+    const Status status = logv({}, level, component, format, args);
     va_end(args);
+    return status;
+}
+
+Status Tracer::logf(std::string_view path, Level level, std::string_view component,
+                    const char* format, ...) {
+    std::va_list args;
+    va_start(args, format);
+    const Status status = logv(path, level, component, format, args);
+    va_end(args);
+    return status;
+}
+
+Status Tracer::logv(std::string_view path, Level level, std::string_view component,
+                    const char* format, std::va_list args) {
+    char buffer[SONDE_LOGF_MAX];
+    const int length = std::vsnprintf(buffer, sizeof buffer, format, args);
 
     std::size_t size = 0;
     if (length > 0) {
@@ -148,7 +177,7 @@ Status Tracer::logf(Level level, std::string_view component, const char* format,
             size = whole_utf8(buffer, sizeof buffer - 1);
         }
     }
-    return log(level, component, std::string_view{buffer, size});
+    return log_with(nullptr, path, level, component, std::string_view{buffer, size});
 }
 
 Status Tracer::commit() {
@@ -163,9 +192,9 @@ Status Tracer::value_with(const Timestamp* timestamp, std::string_view path,
     return emit(&write_value, &message, timestamp == nullptr ? &message.timestamp : nullptr);
 }
 
-Status Tracer::log_with(const Timestamp* timestamp, Level level, std::string_view component,
-                        std::string_view message) {
-    LogMessage log{timestamp != nullptr ? *timestamp : Timestamp{0}, level, component,
+Status Tracer::log_with(const Timestamp* timestamp, std::string_view path, Level level,
+                        std::string_view component, std::string_view message) {
+    LogMessage log{timestamp != nullptr ? *timestamp : Timestamp{0}, path, level, component,
                    message};
     return emit(&write_log, &log, timestamp == nullptr ? &log.timestamp : nullptr);
 }

@@ -49,14 +49,18 @@ class LogRecord:
     level: int
     component: str
     message: str
+    # Where the record comes from, e.g. "motor"; empty for the target as a whole
+    path: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            "timestamp": self.timestamp,
-            "level": self.level,
-            "component": self.component,
-            "message": self.message,
-        }
+        record: Dict[str, Any] = {"timestamp": self.timestamp}
+        # an empty path is left out, as blip defaults it
+        if self.path:
+            record["path"] = self.path
+        record["level"] = self.level
+        record["component"] = self.component
+        record["message"] = self.message
+        return record
 
 
 @dataclass
@@ -99,6 +103,7 @@ class Message:
         message: str,
         timestamp_ns: Optional[int] = None,
         component: str = "",
+        path: str = "",
     ) -> "Message":
         if timestamp_ns is None:
             timestamp_ns = int(time.time() * 1e9)
@@ -109,6 +114,7 @@ class Message:
                 level=level,
                 component=component,
                 message=message,
+                path=path,
             )
         )
 

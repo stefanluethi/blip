@@ -18,7 +18,8 @@ The tree
 
 * The tree branches at each ``/`` of a path. Each trace shows the icon of its
   type at the end of its row, and the type itself on hover, e.g. ``float``,
-  ``int[8×8]`` or ``string``; each announced action shows a lightning.
+  ``int[8×8]`` or ``string``; each announced action shows a lightning, and
+  the logs of a path a list.
 * The fields of a record are separate traces joined to its path with ``.``,
   e.g. ``imu.acc``, listed below the record as ``.acc``.
 * Arrays list their elements, e.g. ``imu.acc[0]``, if they have at most 16;
@@ -26,15 +27,15 @@ The tree
   arrays of one or two dimensions as a whole, and an XY view plots a
   one-dimensional array over the indices of its elements.
 * What the selected view cannot show is disabled, with the reason on hover:
-  e.g. strings in a plot, floats in a states view, traces in an actions view
-  or actions in any other view. With no view selected, the panel asks
-  to select one; while a log view is selected, it shows nothing to check.
+  e.g. strings in a plot, floats in a states view, traces in an actions view,
+  actions in any other view or logs in any but a log view. With no view
+  selected, the panel asks to select one.
 
 Checking traces
 ---------------
 
-* The checkboxes choose the traces a view shows, or the actions of an actions
-  view.
+* The checkboxes choose the traces a view shows, the actions of an actions
+  view or the logs of a log view. A new log view shows all logs.
 * In a plot or an XY view, the box of a checked trace takes the colour of its
   line, so the tree also tells the lines apart.
 * **Checking a branch also checks what is added below it later**, e.g. a trace
@@ -45,14 +46,14 @@ Checking traces
 Searching and filtering
 -----------------------
 
-* The search field above the tree shows only the traces and actions whose path
+* The search field above the tree shows only the traces, actions and logs whose path
   contains each of its words, ignoring case. While searching, checking a
   branch checks only the matching traces, and adds nothing that arrives
   later.
-* The filter button beside it shows only the traces and actions the selected
-  view can show, e.g. the numbers for a plot or the actions for an actions
-  view. It stays on until it is clicked again, and is disabled while no view
-  that shows traces or actions is selected, which shows all of them.
+* The filter button beside it shows only what the selected view can show,
+  e.g. the numbers for a plot, the actions for an actions view or the logs for
+  a log view. It stays on until it is clicked again, and is disabled while no
+  view is selected, which shows all.
 
 When a recording file is opened, and when a connection opens while no other is
 open, the panel starts anew: the search is cleared, the tree is scrolled to

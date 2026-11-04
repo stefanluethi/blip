@@ -132,7 +132,8 @@ The model
   fit a float. It keeps the lowest and highest value of each block of 256
   rows. ``Traces::series`` gives views the numbers of a trace or of an array
   element as a ``Series``, whose ``extent`` reads the blocks.
-* ``Logs``: all log records in the order of their times.
+* ``Logs``: all log records in the order of their times, and their paths,
+  each kept once and shared by its records.
 * ``Actions``: the latest list of actions of each source.
 * ``Recording``: the received messages, with the source names written in
   between where the source changes, compressed fast as they arrive, a gzip
@@ -142,7 +143,8 @@ The model
   re-applied by ``Model::clear``.
 
 Two ``Version`` counters let views and the timeline cache work: the
-``paths_version`` changes when a trace or a list of actions arrives (views
+``paths_version`` changes when a trace, the first log record of a path or a
+list of actions arrives (views
 expand their wildcards only then), the ``samples_version`` when a value or log
 record arrives.
 
@@ -224,7 +226,8 @@ layout**. ``LayoutFile::migrate`` brings older versions up to date (version 2:
 the x trace of an XY view is one of its traces; version 3: ``streams`` renamed
 to ``traces``; version 4: an XY view has several x traces, ``xs``, and the x
 trace each y trace is plotted against, ``against``); a layout of a newer version
-is refused. Format changes must add a migration, not drop old layouts.
+is refused. Format changes must
+add a migration, not drop old layouts.
 
 Actions and the invoker
 -----------------------

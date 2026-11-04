@@ -17,7 +17,7 @@ use crate::app::theme;
 use crate::app::time::TimeRange;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use trace_selection::{MAX_LISTED_ELEMENTS, Picks, ViewSelection};
+use trace_selection::{MAX_LISTED_ELEMENTS, Picks, ROOT_KEY, ViewSelection};
 
 /// What views get from the app to show their contents.
 pub struct ViewContext<'a> {
@@ -66,8 +66,8 @@ pub trait Viewable {
     /// Shows the properties of the view in the properties panel, in sections.
     fn properties_ui(&mut self, _ui: &mut egui::Ui, _context: &PropertiesContext<'_>) {}
 
-    /// The paths of the traces, records or actions the view shows, chosen in the tree
-    /// of the left panel, and whether it shows records as a whole. `None` if it shows
+    /// The paths of the traces, records, actions or logs the view shows, chosen in the
+    /// tree of the left panel, and whether it shows records as a whole. `None` if it shows
     /// nothing of the tree.
     fn selection(&mut self) -> Option<(&mut BTreeSet<String>, bool)> {
         None
@@ -105,7 +105,7 @@ pub struct View {
 pub trait ViewInfo {
     const NAME: &'static str;
     const ICON: &'static str;
-    /// Whether it shows traces or actions chosen in the tree of the left panel.
+    /// Whether it shows traces, actions or logs chosen in the tree of the left panel.
     const HAS_SELECTION: bool = true;
     /// Whether it writes the values of its traces as text, so their display formats
     /// apply.
@@ -114,6 +114,8 @@ pub trait ViewInfo {
     const SHOWS_ONE_TRACE: bool = false;
     /// Whether it shows the actions chosen in the tree, and no traces.
     const SHOWS_ACTIONS: bool = false;
+    /// Whether it shows the logs chosen in the tree, and no traces.
+    const SHOWS_LOGS: bool = false;
 
     /// What it can show of `trace`.
     fn selectable(trace: Trace<'_>) -> Selectable;
@@ -184,6 +186,11 @@ macro_rules! views {
             /// See [`ViewInfo::SHOWS_ACTIONS`].
             pub fn shows_actions(self) -> bool {
                 match self { $(Self::$kind => <$view>::SHOWS_ACTIONS),* }
+            }
+
+            /// See [`ViewInfo::SHOWS_LOGS`].
+            pub fn shows_logs(self) -> bool {
+                match self { $(Self::$kind => <$view>::SHOWS_LOGS),* }
             }
 
             /// What a view of this type can show of `trace`.
@@ -423,11 +430,17 @@ pub fn elements(shape: &[usize]) -> Selectable {
 
 impl View {
     pub fn new(view_type: ViewType, name: String) -> Self {
+        // a new log view shows all logs, also those of paths that arrive later
+        let wildcards = if view_type.shows_logs() {
+            BTreeSet::from([ROOT_KEY.to_owned()])
+        } else {
+            BTreeSet::new()
+        };
         Self {
             name,
             kind: view_type.create(),
             formats: Formats::default(),
-            wildcards: BTreeSet::new(),
+            wildcards,
             expanded: None,
         }
     }
@@ -436,13 +449,14 @@ impl View {
         self.kind.view_type()
     }
 
-    /// Whether the view shows traces or actions chosen in the tree of the left panel.
+    /// Whether the view shows traces, actions or logs chosen in the tree of the left
+    /// panel.
     pub fn has_selection(&self) -> bool {
         self.view_type().has_selection()
     }
 
-    /// What the view shows of the trace tree: traces, records, or the chosen actions
-    /// for an actions view, or `None` if it shows nothing of it.
+    /// What the view shows of the trace tree: traces, records, or the chosen actions or
+    /// logs for an actions or log view, or `None` if it shows nothing of it.
     pub fn selection_mut(&mut self) -> Option<ViewSelection<'_>> {
         let view_type = self.view_type();
         let (paths, records) = self.kind.viewable().selection()?;

@@ -220,7 +220,7 @@ TEST_CASE("metadata") {
               "64756e6974" "6372706d"));            // "unit": "rpm"}}
 }
 
-TEST_CASE("logs leave out an empty component") {
+TEST_CASE("logs leave out an empty path and component") {
     CHECK(traced([](sonde::Tracer& tracer) {
               tracer.log(sonde::Timestamp{3}, sonde::Level::Warn, "motor", "hot");
           }) == hex("a1634c6f67"                                // {"Log":
@@ -234,6 +234,13 @@ TEST_CASE("logs leave out an empty component") {
                     "a3" "6974696d657374616d70" "00"
                     "656c6576656c" "04"
                     "676d657373616765" "63686f74"));
+    CHECK(traced([](sonde::Tracer& tracer) {
+              tracer.log(sonde::Timestamp{3}, "arm", sonde::Level::Warn, "", "hot");
+          }) == hex("a1634c6f67"                                // {"Log":
+                    "a4" "6974696d657374616d70" "03"          // {"timestamp": 3,
+                    "6470617468" "6361726d"                    // "path": "arm",
+                    "656c6576656c" "03"                        // "level": 3,
+                    "676d657373616765" "63686f74"));            // "message": "hot"}}
 }
 
 TEST_CASE("logf formats into a message") {
@@ -241,6 +248,11 @@ TEST_CASE("logf formats into a message") {
               tracer.logf(sonde::Level::Info, "", "%d mA", 12);
           }) == traced([](sonde::Tracer& tracer) {
               tracer.log(sonde::Level::Info, "", "12 mA");
+          }));
+    CHECK(traced([](sonde::Tracer& tracer) {
+              tracer.logf("arm", sonde::Level::Info, "", "%d mA", 12);
+          }) == traced([](sonde::Tracer& tracer) {
+              tracer.log("arm", sonde::Level::Info, "", "12 mA");
           }));
 }
 

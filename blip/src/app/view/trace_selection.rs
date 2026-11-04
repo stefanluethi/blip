@@ -4,7 +4,8 @@ use crate::app::theme;
 use crate::app::view::{Selectable, ViewType};
 use egui::{RichText, Ui};
 use egui_phosphor::regular::{
-    BRACKETS_CURLY, BRACKETS_SQUARE, FUNNEL, HASH, LIGHTNING, MAGNIFYING_GLASS, TEXT_AA, X,
+    BRACKETS_CURLY, BRACKETS_SQUARE, FUNNEL, HASH, LIGHTNING, LIST_BULLETS, MAGNIFYING_GLASS,
+    TEXT_AA, X,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -14,6 +15,13 @@ pub const MAX_LISTED_ELEMENTS: usize = 16;
 
 /// The icon marking an action in the tree, in place of the type of a trace.
 pub const ACTION_ICON: &str = LIGHTNING;
+
+/// The icon marking the log records of a path in the tree, that of the log views.
+pub const LOG_ICON: &str = LIST_BULLETS;
+
+/// The key of the root of the tree, a wildcard of which picks all a view can show, see
+/// [`ViewSelection::wildcards`].
+pub const ROOT_KEY: &str = "";
 
 /// What a view picks in the tree.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -34,7 +42,7 @@ impl From<ViewType> for Picks {
 
 /// What is picked for a view in the tree.
 pub struct ViewSelection<'a> {
-    /// The paths of the picked traces, array elements, records or actions.
+    /// The paths of the picked traces, array elements, records, actions or logs.
     pub paths: &'a mut BTreeSet<String>,
     /// The keys of the branches that also pick what is added below them later. The key
     /// of a node is the segments leading to it, each after a "/", e.g. "/sensors/imu".
@@ -42,8 +50,8 @@ pub struct ViewSelection<'a> {
     pub picks: Picks,
 }
 
-/// Trace and action paths split into a tree at each "/", and trace paths also at each
-/// "." between the fields of a record.
+/// Trace, action and log paths split into a tree at each "/", and trace paths also at
+/// each "." between the fields of a record.
 #[derive(Default)]
 pub struct TraceTree<'a> {
     /// The trace if one ends at this node.
@@ -54,6 +62,8 @@ pub struct TraceTree<'a> {
     pub action: Option<&'a str>,
     /// Whether the action is shown by the view, but no outpost announces it.
     pub unannounced: bool,
+    /// The path of the log records at this node, if any arrived.
+    pub log: Option<&'a str>,
     /// Children by path segment, record fields with their leading ".", e.g. ".acc".
     pub children: BTreeMap<&'a str, TraceTree<'a>>,
 }
@@ -87,6 +97,13 @@ impl<'a> TraceTree<'a> {
         }
     }
 
+    /// Adds the log records at `paths`, which branch at each "/" only.
+    pub fn add_logs(&mut self, paths: impl Iterator<Item = &'a str>) {
+        for path in paths {
+            self.node_mut(segments(path)).log = Some(path);
+        }
+    }
+
     /// The node at `segments` below this one, added if missing.
     fn node_mut(&mut self, segments: impl Iterator<Item = &'a str>) -> &mut Self {
         let mut node = self;
@@ -113,8 +130,8 @@ impl<'a> TraceTree<'a> {
         }
     }
 
-    /// Removes the traces, records and actions of which a view picking `picks` can show
-    /// nothing, and the branches left without any.
+    /// Removes the traces, records, actions and logs of which a view picking `picks` can
+    /// show nothing, and the branches left without any.
     pub fn retain_selectable(&mut self, picks: Picks) {
         if self.trace.is_some_and(|trace| {
             trace_picks(trace, picks).is_empty() && whole_array_pick(trace, picks).is_none()
@@ -130,11 +147,18 @@ impl<'a> TraceTree<'a> {
         {
             self.action = None;
         }
+        if self
+            .log
+            .is_some_and(|path| log_path(path, picks.view_type).is_none())
+        {
+            self.log = None;
+        }
         self.children.retain(|_, child| {
             child.retain_selectable(picks);
             child.trace.is_some()
                 || child.record.is_some()
                 || child.action.is_some()
+                || child.log.is_some()
                 || !child.children.is_empty()
         });
     }
@@ -143,8 +167,8 @@ impl<'a> TraceTree<'a> {
         self.record.is_some() || self.children.keys().any(|segment| segment.starts_with('.'))
     }
 
-    /// The paths of all traces, records and actions at and below this node that a view
-    /// picking `picks` can show.
+    /// The paths of all traces, records, actions and logs at and below this node that a
+    /// view picking `picks` can show.
     fn paths(&self, picks: Picks) -> Vec<String> {
         self.trace
             .into_iter()
@@ -154,6 +178,7 @@ impl<'a> TraceTree<'a> {
                 self.action
                     .and_then(|path| action_path(path, picks.view_type)),
             )
+            .chain(self.log.and_then(|path| log_path(path, picks.view_type)))
             .chain(self.children.values().flat_map(|child| child.paths(picks)))
             .collect()
     }
@@ -196,6 +221,7 @@ pub fn expand_wildcards(model: &Model, selection: ViewSelection<'_>) {
     }
     let mut tree = TraceTree::build(model.traces.iter());
     tree.add_actions(model.actions.paths());
+    tree.add_logs(model.logs.paths());
     for key in selection.wildcards.iter() {
         if let Some(node) = tree.node(key) {
             selection.paths.extend(node.paths(selection.picks));
@@ -375,6 +401,11 @@ fn action_path(path: &str, view_type: ViewType) -> Option<String> {
     view_type.shows_actions().then(|| path.to_owned())
 }
 
+/// The path of the log records at `path` if a view of `view_type` can show them.
+fn log_path(path: &str, view_type: ViewType) -> Option<String> {
+    view_type.shows_logs().then(|| path.to_owned())
+}
+
 /// What a row of the tree shows, owned so the rows are kept from frame to frame.
 enum RowKind {
     /// A branch with what is below it, `paths` it picks as a whole.
@@ -401,10 +432,12 @@ enum RowKind {
         path: Box<str>,
         unannounced: bool,
     },
+    /// The log records at the path.
+    Log(Box<str>),
 }
 
-/// A row of the tree: a branch, a trace, an element of an array, a record or an
-/// action.
+/// A row of the tree: a branch, a trace, an element of an array, a record, an action or
+/// log records.
 struct Row {
     depth: usize,
     label: Box<str>,
@@ -419,8 +452,8 @@ fn is_open(ctx: &egui::Context, id: egui::Id, default_open: bool) -> bool {
         .is_open()
 }
 
-/// Adds the rows of the trace, the record and the action ending at `node` with `key`,
-/// if any, labelled `label`, at `depth`.
+/// Adds the rows of the trace, the record, the action and the logs ending at `node` with
+/// `key`, if any, labelled `label`, at `depth`.
 fn leaf_rows(
     ui: &Ui,
     node: &TraceTree<'_>,
@@ -474,10 +507,14 @@ fn leaf_rows(
             unannounced,
         }));
     }
+    if let Some(path) = node.log {
+        rows.push(row(RowKind::Log(path.into())));
+    }
 }
 
 /// Adds the rows of the children of `node` with the key `prefix` at `depth`: the
-/// branches, and what is below those that are open, the traces, records and actions.
+/// branches, and what is below those that are open, the traces, records, actions and
+/// logs.
 fn tree_rows(
     ui: &Ui,
     node: &TraceTree<'_>,
@@ -507,7 +544,7 @@ fn tree_rows(
             },
         });
         if open {
-            // a trace or an action can also be the prefix of other paths
+            // a trace, an action or logs can also be the prefix of other paths
             leaf_rows(ui, child, (label, &key), depth + 1, picks, rows);
             tree_rows(ui, child, &key, depth + 1, (picks, searching), rows);
         }
@@ -638,6 +675,16 @@ fn row_ui(ui: &mut Ui, model: &Model, row: &Row, selection: &mut Selection<'_>) 
                     .on_hover_text(&hover)
                     .on_disabled_hover_text(hover);
             }
+            RowKind::Log(path) => {
+                let paths = Vec::from_iter(log_path(path, picks.view_type));
+                let mut hover = format!("{path}\nLog records");
+                if paths.is_empty() {
+                    hover.push_str("\nOnly log views show log records");
+                }
+                show_checkbox(ui, label, Some(LOG_ICON), &paths, key, false, selection)
+                    .on_hover_text(&hover)
+                    .on_disabled_hover_text(hover);
+            }
         }
     });
 }
@@ -654,7 +701,7 @@ fn matches(path: &str, search: &str) -> bool {
         .all(|word| path.contains(word))
 }
 
-/// Shows a field to search the traces and actions by `search`, with a button to clear
+/// Shows a field to search the traces, actions and logs by `search`, with a button to clear
 /// it, and a toggle to show only those the selected view can show, `compatible_only`,
 /// disabled and shown off unless the view is `filterable`, i.e. it shows any.
 pub fn search_ui(ui: &mut Ui, search: &mut String, compatible_only: &mut bool, filterable: bool) {
@@ -674,7 +721,7 @@ pub fn search_ui(ui: &mut Ui, search: &mut String, compatible_only: &mut bool, f
                     .hint_text(format!("{MAGNIFYING_GLASS} Search paths"))
                     .desired_width(ui.available_width() - buttons * button_width),
             )
-            .on_hover_text("Show only the traces and actions whose path contains each word");
+            .on_hover_text("Show only the traces, actions and logs whose path contains each word");
         ui.spacing_mut().button_padding.x = 0.0;
         let square = egui::Vec2::splat(field.rect.height());
         if !search.is_empty()
@@ -686,9 +733,9 @@ pub fn search_ui(ui: &mut Ui, search: &mut String, compatible_only: &mut bool, f
             search.clear();
         }
         let hint = if *compatible_only {
-            "Showing only the traces and actions the selected view can show, click to show all"
+            "Showing only what the selected view can show, click to show all"
         } else {
-            "Click to show only the traces and actions the selected view can show"
+            "Click to show only what the selected view can show"
         };
         let selected = *compatible_only && filterable;
         let filter = theme::hover_frame(egui::Button::new(FUNNEL).min_size(square));
@@ -696,7 +743,7 @@ pub fn search_ui(ui: &mut Ui, search: &mut String, compatible_only: &mut bool, f
         if ui
             .add_enabled(filterable, filter)
             .on_hover_text(hint)
-            .on_disabled_hover_text("Select a view that shows traces or actions to filter by it")
+            .on_disabled_hover_text("Select a view to show only what it can show")
             .clicked()
         {
             *compatible_only = !*compatible_only;
@@ -746,6 +793,7 @@ fn rows(ui: &Ui, model: &Model, key: RowsKey) -> Rows {
     );
     tree.add_actions(model.actions.paths().filter(|path| matches(path, search)));
     tree.add_unannounced_actions(key.unannounced.iter().map(String::as_str));
+    tree.add_logs(model.logs.paths().filter(|path| matches(path, search)));
     if key.picks.records {
         tree.fold_records();
     }
@@ -757,12 +805,15 @@ fn rows(ui: &Ui, model: &Model, key: RowsKey) -> Rows {
         .children
         .is_empty()
         .then(|| match (key.filter, searching) {
-            _ if model.traces.iter().next().is_none() && model.actions.is_empty() => {
-                "No traces or actions received"
+            _ if model.traces.iter().next().is_none()
+                && model.actions.is_empty()
+                && model.logs.paths().next().is_none() =>
+            {
+                "No traces, actions or logs received"
             }
-            (Some(_), true) => "No traces or actions the selected view can show match the search",
-            (Some(_), false) => "The selected view can show none of the traces and actions",
-            (None, _) => "No traces or actions match the search",
+            (Some(_), true) => "Nothing the selected view can show matches the search",
+            (Some(_), false) => "The selected view can show none of the traces, actions and logs",
+            (None, _) => "Nothing matches the search",
         });
     let mut rows = vec![];
     tree_rows(ui, &tree, "", 0, (key.picks, searching), &mut rows);
@@ -780,10 +831,11 @@ fn rows(ui: &Ui, model: &Model, key: RowsKey) -> Rows {
     rows
 }
 
-/// Shows the traces and the announced actions of `model` whose path matches `search`
-/// in a scroll area as a tree with checkboxes for what is picked for a view, disabled
-/// if there is no selection to edit, filled with the colours of the `colored` traces. If `compatible_only`, only what the view can show
-/// is in the tree, or all without a view. The rows are made anew only when what they
+/// Shows the traces, the announced actions and the logs of `model` whose path matches
+/// `search` in a scroll area as a tree with checkboxes for what is picked for a view,
+/// disabled if there is no selection to edit, filled with the colours of the `colored`
+/// traces. If `compatible_only`, only what the view can show is in the tree, or all
+/// without a view. The rows are made anew only when what they
 /// show changed, and only the rows in sight are laid out.
 pub fn show(
     ui: &mut Ui,
@@ -1069,6 +1121,21 @@ mod tests {
         assert_eq!(motor.paths(ViewType::Table.into()), ["motor/speed"]);
     }
 
+    #[test]
+    fn logs_join_the_traces_in_the_tree() {
+        let traces = [Trace::leaked("motor/speed", None, Samples::Empty(0))];
+        let mut tree = TraceTree::build(traces.iter().copied());
+        tree.add_logs(["log", "motor"].into_iter());
+        let motor = &tree.children["motor"];
+        assert_eq!(motor.log, Some("motor"));
+        assert_eq!(tree.children["log"].log, Some("log"));
+        // only log views show logs, and no traces
+        assert_eq!(tree.paths(ViewType::Logs.into()), ["log", "motor"]);
+        assert_eq!(motor.paths(ViewType::Table.into()), ["motor/speed"]);
+        tree.retain_selectable(ViewType::Logs.into());
+        assert!(tree.children["motor"].children.is_empty());
+    }
+
     /// A harness showing the tree of the trace "motor/rpm" and the action
     /// "motor/speed" for a view of `view_type`, with the paths selected for it.
     /// Measures how long showing the tree of 2000 traces in 20 branches takes per
@@ -1307,14 +1374,14 @@ mod tests {
         harness.run();
         assert!(
             harness
-                .query_by_label("The selected view can show none of the traces and actions")
+                .query_by_label("The selected view can show none of the traces, actions and logs")
                 .is_some()
         );
         harness.state_mut().0 = "rpm".to_owned();
         harness.run();
         assert!(
             harness
-                .query_by_label("No traces or actions the selected view can show match the search")
+                .query_by_label("Nothing the selected view can show matches the search")
                 .is_some()
         );
         harness.state_mut().0.clear();
@@ -1462,6 +1529,43 @@ mod tests {
         harness.run();
         click(&mut harness, "motor");
         assert_eq!(harness.state().1, set(&["motor/b"]));
+        assert!(harness.state().2.is_empty());
+    }
+
+    /// Adds a log record at `path` to `model`.
+    fn add_log(model: &mut Model, path: &str) {
+        let record = proto::Message::Log(proto::LogRecord {
+            timestamp: 1,
+            path: path.to_owned(),
+            level: 2,
+            component: String::new(),
+            message: "hi".to_owned(),
+        });
+        model.receive("", &serde_cbor_2::to_vec(&record).unwrap());
+    }
+
+    #[test]
+    fn new_log_views_check_the_logs_of_all_paths_also_later_ones() {
+        use egui_kittest::kittest::Queryable;
+
+        let mut model = Model::default();
+        add_trace(&mut model, "motor/rpm");
+        add_log(&mut model, "motor");
+        let mut harness = pick_harness(model, ViewType::Logs.into());
+        let view = crate::app::view::View::new(ViewType::Logs, String::new());
+        harness.state_mut().2 = view.wildcards;
+        harness.run();
+        assert_eq!(harness.state().1, set(&["motor"]));
+        add_log(&mut harness.state_mut().0, "robot/arm");
+        // without a path, of the target as a whole
+        add_log(&mut harness.state_mut().0, "");
+        harness.run();
+        assert_eq!(harness.state().1, set(&["log", "motor", "robot/arm"]));
+
+        // unchecking the logs of a path ends the wildcard
+        harness.get_by_label("arm").click();
+        harness.run();
+        assert_eq!(harness.state().1, set(&["log", "motor"]));
         assert!(harness.state().2.is_empty());
     }
 

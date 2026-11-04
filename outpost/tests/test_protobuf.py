@@ -166,8 +166,10 @@ def test_log_records_take_level_component_and_text(schema):
     log = schema.message_class("test.link.Log")
     t.feed(up(schema, log=log(t_ns=9, level=5, component=1, text="overflow")))
     logs = [m["Log"] for m in sent if "Log" in m]
-    # blip has no FATAL
-    assert logs == [{"timestamp": 9, "level": 4, "component": "imu", "message": "overflow"}]
+    # blip has no FATAL; the path is the one of the field holding the record
+    assert logs == [
+        {"timestamp": 9, "path": "items/log", "level": 4, "component": "imu", "message": "overflow"}
+    ]
 
 
 def test_action_results_go_to_the_callback(schema):

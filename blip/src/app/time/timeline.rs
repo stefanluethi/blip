@@ -857,6 +857,7 @@ mod tests {
         }
         receive(proto::Message::Log(proto::LogRecord {
             timestamp: 30_000_000_000,
+            path: String::new(),
             level: 4,
             component: String::new(),
             message: "oops".to_owned(),

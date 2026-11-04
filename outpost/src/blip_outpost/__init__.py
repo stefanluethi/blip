@@ -113,9 +113,12 @@ def send_metadata(path: str, unit: str) -> None:
     _outpost.send_metadata(path, unit)
 
 
-def send_log(level: int, message: str, component: str = "", timestamp_ns: Optional[int] = None) -> None:
-    """Sends a log record of a `LogLevel`, timestamped now unless given (ns)."""
-    _outpost.send_log(level, message, component, timestamp_ns)
+def send_log(
+    level: int, message: str, component: str = "", timestamp_ns: Optional[int] = None, path: str = ""
+) -> None:
+    """Sends a log record of a `LogLevel`, timestamped now unless given (ns), at `path`
+    or of the target as a whole, see `Outpost.send_log`."""
+    _outpost.send_log(level, message, component, timestamp_ns, path)
 
 
 def send(message: Union[Message, bytes]) -> None:

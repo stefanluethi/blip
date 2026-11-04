@@ -64,7 +64,7 @@ void trace(sonde::Tracer& tracer) {
     tracer.value("motor", Motor{1500, true, "running"});
     tracer.value("offset", -42);
     tracer.value("ratio", 0.1);
-    tracer.log(sonde::Level::Info, "motor", "started");
+    tracer.log("robot/arm", sonde::Level::Info, "motor", "started");
     tracer.log(sonde::Level::Warn, "", "no component");
     tracer.logf(sonde::Level::Error, "adc", "overrun %d", 3);
     tracer.value("adc/samples", std::array<std::uint16_t, 4>{0, 1023, 2048, 4095});

@@ -51,10 +51,13 @@ impl LogFilter {
 #[derive(serde::Deserialize, serde::Serialize, Clone, Default)]
 #[serde(default)]
 pub struct LogTable {
+    /// The paths of the shown logs, chosen in the tree of the left panel.
+    pub paths: BTreeSet<String>,
     pub filter: LogFilter,
 
+    /// Boxed, as views are kept by value in the layout.
     #[serde(skip)]
-    compiled_regex: Option<Result<regex::Regex, String>>,
+    compiled_regex: Option<Box<Result<regex::Regex, String>>>,
     #[serde(skip)]
     last_regex_str: String,
     #[serde(skip)]
@@ -65,8 +68,8 @@ pub struct LogTable {
     /// The indices of the entries the filter shows, see [`LogTable::update_shown`].
     #[serde(skip)]
     shown: Vec<u32>,
-    /// What `shown` was made for: a hash of what the filter hides, the order of the
-    /// entries and how many of them were filtered.
+    /// What `shown` was made for: a hash of the paths and of what the filter hides, the
+    /// order of the entries and how many of them were filtered.
     #[serde(skip)]
     shown_for: Option<Box<(u64, Version, usize)>>,
 }
@@ -86,18 +89,19 @@ impl LogTable {
                     .case_insensitive(!self.filter.case_sensitive)
                     .build()
                     .map_err(|e| e.to_string());
-                self.compiled_regex = Some(res);
+                self.compiled_regex = Some(Box::new(res));
             }
         }
     }
 
     pub fn matches(&self, entry: &LogEntry) -> bool {
-        if self.filter.hidden_levels.contains(&entry.level)
+        if !self.paths.contains(&*entry.path)
+            || self.filter.hidden_levels.contains(&entry.level)
             || self.filter.hidden_components.contains(&entry.component)
         {
             return false;
         }
-        match &self.compiled_regex {
+        match self.compiled_regex.as_deref() {
             None => true,
             Some(Ok(re)) => re.is_match(&entry.message),
             // an invalid or incomplete pattern matches as plain text
@@ -112,13 +116,14 @@ impl LogTable {
     }
 
     /// Filters the entries of `logs` that arrived since the last call, or all of them
-    /// again if the filter or the order of the entries changed.
+    /// again if the paths, the filter or the order of the entries changed.
     fn update_shown(&mut self, logs: &Logs) {
         use std::hash::{Hash, Hasher};
         self.update_regex_cache();
         // without whether to scroll, which shows the same entries
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         let filter = &self.filter;
+        self.paths.hash(&mut hasher);
         (&filter.hidden_levels, &filter.hidden_components).hash(&mut hasher);
         (&filter.message_regex, filter.case_sensitive).hash(&mut hasher);
         let filter = hasher.finish();
@@ -155,15 +160,21 @@ impl LogTable {
                 let row_height = theme::table_row_height(ui, &egui::TextStyle::Monospace, 1);
                 let lines = theme::TableLines::new(ui, true);
 
-                // the time, level and component take only what they need, the message
-                // the rest
+                // the path tells the entries apart only if they are of several paths
+                let with_path = self.paths.len() > 1;
+                // the time, level, path and component take only what they need, the
+                // message the rest
                 let mut builder = theme::table(ui)
                     .id_salt("log entries")
                     .min_scrolled_height(0.0)
                     // the footer stays at the bottom, also with few entries
                     .auto_shrink([false, false])
                     .column(Column::auto().resizable(false)) // Timestamp
-                    .column(Column::auto().resizable(false)) // Log Level
+                    .column(Column::auto().resizable(false)); // Log Level
+                if with_path {
+                    builder = builder.column(Column::auto().resizable(false)); // Path
+                }
+                builder = builder
                     .column(Column::auto().resizable(false)) // Log Component
                     .column(Column::remainder().at_least(150.0)); // Message
 
@@ -206,6 +217,11 @@ impl LogTable {
                         header.col(|ui| {
                             self.level_filter_ui(ui);
                         });
+                        if with_path {
+                            header.col(|ui| {
+                                header_title(ui, "Path");
+                            });
+                        }
                         header.col(|ui| {
                             self.component_filter_ui(ui, logs);
                         });
@@ -227,7 +243,7 @@ impl LogTable {
                                 let color = match role {
                                     _ if !shown => tokens.text_faint,
                                     Role::Time => tokens.text_faint,
-                                    Role::Component => ui.visuals().weak_text_color(),
+                                    Role::Path | Role::Component => ui.visuals().weak_text_color(),
                                     Role::Message => ui.visuals().text_color(),
                                 };
                                 egui::RichText::new(text).monospace().color(color)
@@ -240,6 +256,11 @@ impl LogTable {
                             row.col(|ui| {
                                 level_badge(ui, entry.level, shown);
                             });
+                            if with_path {
+                                row.col(|ui| {
+                                    ui.label(text(&entry.path, ui, Role::Path));
+                                });
+                            }
                             row.col(|ui| {
                                 ui.label(text(&entry.component, ui, Role::Component));
                             });
@@ -314,13 +335,16 @@ impl LogTable {
         });
     }
 
-    /// The header of the component column, with checkboxes for the shown components.
+    /// The header of the component column, with checkboxes for the components of the
+    /// shown paths.
     fn component_filter_ui(&mut self, ui: &mut egui::Ui, logs: &Logs) {
+        let paths = &self.paths;
         let hidden = &mut self.filter.hidden_components;
         filter_header(ui, "Component", !hidden.is_empty(), |ui| {
             let components: BTreeSet<&str> = logs
                 .entries
                 .iter()
+                .filter(|entry| paths.contains(&*entry.path))
                 .map(|entry| entry.component.as_str())
                 .collect();
             if components.is_empty() {
@@ -350,7 +374,7 @@ impl LogTable {
     /// The header of the message column, with the search of the messages.
     fn message_filter_ui(&mut self, ui: &mut egui::Ui) {
         let filter = &mut self.filter;
-        let error = match &self.compiled_regex {
+        let error = match self.compiled_regex.as_deref() {
             Some(Err(error)) => Some(error.as_str()),
             _ => None,
         };
@@ -401,9 +425,9 @@ impl LogTable {
 
 impl super::ViewInfo for LogTable {
     const NAME: &'static str = "Logs";
-    const ICON: &'static str = egui_phosphor::regular::LIST_BULLETS;
-    const HAS_SELECTION: bool = false;
+    const ICON: &'static str = super::trace_selection::LOG_ICON;
     const WRITES_VALUES: bool = false;
+    const SHOWS_LOGS: bool = true;
 
     fn selectable(_trace: crate::app::model::traces::Trace<'_>) -> super::Selectable {
         super::Selectable::No("Log views show no traces".into())
@@ -411,6 +435,11 @@ impl super::ViewInfo for LogTable {
 }
 
 impl Viewable for LogTable {
+    fn selection(&mut self) -> Option<(&mut BTreeSet<String>, bool)> {
+        let records = false;
+        Some((&mut self.paths, records))
+    }
+
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         self.ui(ui, &context.model.logs, context.time);
     }
@@ -506,6 +535,7 @@ fn badge_size(ui: &egui::Ui) -> egui::Vec2 {
 #[derive(Clone, Copy)]
 enum Role {
     Time,
+    Path,
     Component,
     Message,
 }
@@ -513,12 +543,22 @@ enum Role {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::model::logs::DEFAULT_PATH;
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
+
+    /// A table showing the logs without a path.
+    fn table() -> LogTable {
+        LogTable {
+            paths: BTreeSet::from([DEFAULT_PATH.to_owned()]),
+            ..LogTable::default()
+        }
+    }
 
     fn create_entry(level: LogLevel, component: &str, message: &str) -> LogEntry {
         LogEntry {
             time: 0,
+            path: DEFAULT_PATH.into(),
             component: component.to_string(),
             level,
             message: message.to_string(),
@@ -534,7 +574,7 @@ mod tests {
         let mut logs = Logs::default();
         logs.push(at(1, LogLevel::Info));
         logs.push(at(2, LogLevel::Warn));
-        let mut table = LogTable::default();
+        let mut table = table();
         table.filter.hidden_levels.insert(LogLevel::Info);
         table.update_shown(&logs);
         assert_eq!(table.shown, [1]);
@@ -556,13 +596,58 @@ mod tests {
         assert_eq!(table.shown, [0, 2, 3]);
     }
 
+    /// Records at "motor" and at "robot/arm".
+    fn logs_of_two_paths() -> Logs {
+        let mut logs = Logs::default();
+        for path in ["motor", "robot/arm"] {
+            logs.push(LogEntry {
+                path: path.into(),
+                ..create_entry(LogLevel::Info, "core", "message")
+            });
+        }
+        logs
+    }
+
+    #[test]
+    fn only_the_logs_of_the_picked_paths_are_shown() {
+        let logs = logs_of_two_paths();
+        let mut table = LogTable {
+            paths: BTreeSet::from(["motor".to_owned()]),
+            ..LogTable::default()
+        };
+        table.update_shown(&logs);
+        assert_eq!(table.shown, [0]);
+        table.paths.insert("robot/arm".to_owned());
+        table.update_shown(&logs);
+        assert_eq!(table.shown, [0, 1]);
+    }
+
+    #[test]
+    fn the_path_is_shown_while_the_logs_of_several_paths_are() {
+        let harness = |paths: &[&str]| {
+            let logs = logs_of_two_paths();
+            let mut table = LogTable {
+                paths: paths.iter().map(|path| path.to_string()).collect(),
+                ..LogTable::default()
+            };
+            let time = TimeRange::default();
+            Harness::builder()
+                .with_size(egui::vec2(600.0, 300.0))
+                .build_ui(move |ui| table.ui(ui, &logs, &time))
+        };
+        let several = harness(&["motor", "robot/arm"]);
+        several.get_by_label("Path");
+        several.get_by_label("robot/arm");
+        assert!(harness(&["motor"]).query_by_label("Path").is_none());
+    }
+
     #[test]
     fn autoscroll_button_stays_visible_in_a_small_view() {
         let mut logs = Logs::default();
         for _ in 0..100 {
             logs.push(create_entry(LogLevel::Info, "core", "message"));
         }
-        let mut table = LogTable::default();
+        let mut table = table();
         let time = TimeRange::default();
         let size = egui::vec2(400.0, 120.0);
         let harness = Harness::builder()
@@ -575,7 +660,7 @@ mod tests {
     #[test]
     fn autoscroll_keeps_up_with_new_entries() {
         let mut logs = Logs::default();
-        let mut table = LogTable::default();
+        let mut table = table();
         let time = TimeRange::default();
         let newest = std::rc::Rc::new(std::cell::Cell::new(0));
         let shared = newest.clone();
@@ -608,7 +693,7 @@ mod tests {
     #[test]
     fn the_header_holds_the_filters() {
         let logs = Logs::default();
-        let mut table = LogTable::default();
+        let mut table = table();
         let time = TimeRange::default();
         let mut harness = Harness::builder()
             .with_size(egui::vec2(600.0, 300.0))
@@ -623,7 +708,7 @@ mod tests {
 
     #[test]
     fn hidden_levels_are_filtered() {
-        let mut table = LogTable::default();
+        let mut table = table();
         let debug_entry = create_entry(LogLevel::Debug, "core", "debug message");
         let warn_entry = create_entry(LogLevel::Warn, "core", "warn message");
 
@@ -637,7 +722,7 @@ mod tests {
 
     #[test]
     fn hidden_components_are_filtered() {
-        let mut table = LogTable::default();
+        let mut table = table();
         let entry1 = create_entry(LogLevel::Info, "motor_ctrl", "speed 100");
         let entry2 = create_entry(LogLevel::Info, "sensor_nav", "heading 90");
 
@@ -668,7 +753,7 @@ mod tests {
 
     #[test]
     fn test_regex_filter() {
-        let mut table = LogTable::default();
+        let mut table = table();
         let entry1 = create_entry(
             LogLevel::Info,
             "ws",
@@ -695,7 +780,7 @@ mod tests {
         let entry3 = create_entry(LogLevel::Info, "ws", "retrying (3 left)");
         table.filter.message_regex = r"(3".to_string();
         table.update_regex_cache();
-        assert!(matches!(table.compiled_regex, Some(Err(_))));
+        assert!(matches!(table.compiled_regex.as_deref(), Some(Err(_))));
         assert!(table.matches(&entry3));
         assert!(!table.matches(&entry1));
     }

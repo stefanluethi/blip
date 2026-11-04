@@ -90,8 +90,10 @@ messages.
      - ``Value``, timestamped by the clock or explicitly
    * - ``metadata(path, unit)``
      - ``ValueMetadata``
-   * - ``log(level, component, message)``, ``log(timestamp, …)``, ``logf(…)``
-     - ``Log``; an empty component is left out
+   * - ``log(level, component, message)``, ``log(path, level, component,
+       message)``, ``log(timestamp, …)``, ``logf(…)``
+     - ``Log``, of the target as a whole or at ``path``; an empty path or
+       component is left out
    * - ``commit()``
      - none: makes the open batch ready to send
 

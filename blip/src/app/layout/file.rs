@@ -1,6 +1,7 @@
 //! The saved form of a layout. It is versioned, so layouts saved by older versions of
 //! blip can be migrated when the format changes.
 
+use crate::app::view::trace_selection::ROOT_KEY;
 use crate::app::view::{View, ViewKind};
 use egui_tiles::{Container, ContainerKind, Tile, TileId, Tiles, Tree};
 use std::collections::HashMap;
@@ -8,8 +9,10 @@ use std::collections::HashMap;
 /// Version of the format written by [`LayoutFile::new`]. Since version 2, the x trace
 /// of an XY view is one of its traces. Since version 3, the traces of a view are saved
 /// as `traces` instead of `streams`, which views still read. Since version 4, an XY
-/// view can have several x traces, each y trace is plotted against one of them.
-pub const VERSION: u32 = 4;
+/// view can have several x traces, each y trace is plotted against one of them. Since
+/// version 5, log views show the logs of the paths picked in the tree, so the log views
+/// of older layouts pick all.
+pub const VERSION: u32 = 5;
 
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct LayoutFile {
@@ -107,6 +110,14 @@ impl LayoutFile {
                 }
             });
             self.version = 4;
+        }
+        if self.version == 4 {
+            self.root.for_each_view(&mut |view| {
+                if view.view_type().shows_logs() {
+                    view.wildcards.insert(ROOT_KEY.to_owned());
+                }
+            });
+            self.version = 5;
         }
         (self.version == VERSION).then_some(self)
     }
@@ -316,6 +327,21 @@ mod tests {
         let bytes = serde_cbor_2::to_vec(&saved).unwrap();
         let xy: crate::app::view::xy::Xy = serde_cbor_2::from_slice(&bytes).unwrap();
         assert_eq!(xy.traces, ["pose.x", "pose.y"].map(str::to_owned).into());
+    }
+
+    #[test]
+    fn version_4_log_views_show_all_logs() {
+        let mut logs = View::new(ViewType::Logs, "Logs".to_owned());
+        logs.wildcards.clear();
+        let file = LayoutFile {
+            version: 4,
+            root: Group::tabs(vec![Node::View(logs)]),
+        };
+        let file = file.migrate().unwrap();
+        let Node::View(logs) = &file.root.children[0] else {
+            panic!("the log view is missing")
+        };
+        assert_eq!(logs.wildcards, [ROOT_KEY.to_owned()].into());
     }
 
     #[test]
