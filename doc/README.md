@@ -13,6 +13,7 @@ Requires [uv](https://docs.astral.sh/uv/) and [Graphviz](https://graphviz.org)
 cd doc
 make html     # output: _build/html/index.html (warnings are errors)
 make serve    # live-reloading preview
+make linkcheck  # check the links to other sites, before each release
 make clean
 ```
 
@@ -24,14 +25,18 @@ Without make: `uv run sphinx-build -W source _build/html`.
 source/
 ├── conf.py            Sphinx + sphinx-needs configuration (need types, links)
 ├── index.rst
+├── changes.rst        release notes
 ├── usage/             installation, quick start, concepts, the guides of
-│   └── blip/          blip (one page per part of the window), outpost, sonde
+│   │                  blip, outpost and sonde, troubleshooting, limits
+│   ├── blip/          blip (one page per part of the window)
+│   └── reference/     outpost command line and API, sonde API, file formats
 ├── architecture/      overview, concepts, wire protocol, blip, outpost, sonde,
 │                      components (ARCH_*)
 ├── diagrams/          draw.io sources (*.drawio) and their exported *.svg
 ├── screenshots/       screenshots of blip, rendered by `make screenshots`
-└── requirements/      stakeholder (STK_*), system (REQ_*), tests (TEST_*),
-                       traceability tables, authoring guide
+└── requirements/      stakeholder (STK_*), system (REQ_*), documentation
+                       (REQ_DOC_*), tests (TEST_*), traceability tables,
+                       authoring guide
 ```
 
 ## Diagrams
@@ -99,3 +104,13 @@ full-size image; `_static/themed-images.js` shows the dark one in dark mode:
 
 To record a new demo, run the simulator with `--record` while a script invokes
 its actions, and replace `demo.blip`; keep it short, as it is committed.
+
+## Keeping it right
+
+The expectations for this documentation are in
+`source/requirements/documentation.rst`. In short: update the pages in the same
+commit as the code; a page that moves leaves an entry in `redirects` in
+`conf.py`; the outpost's API reference comes from its docstrings, sonde's from
+its headers; `outpost/tests/test_docs.py` fails when an option of
+`blip-outpost` is not on `usage/reference/outpost-cli.rst`; add each release to
+`changes.rst`.

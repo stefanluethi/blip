@@ -40,6 +40,11 @@ Where to start
   views, the time range, recordings and actions.
 * The guides for each part: :doc:`usage/blip/index`, :doc:`usage/outpost` and
   :doc:`usage/sonde`.
+* Something does not work? See :doc:`usage/troubleshooting`, and
+  :doc:`usage/limits` before you serve an outpost on a network.
+* :doc:`usage/reference/index` lists every option of the command line, the
+  APIs of the outpost and sonde, and the file formats.
+* :doc:`changes` says what changed in each release.
 * :doc:`architecture/index` describes how the software is built, for those
   who change it or connect their own targets.
 * :doc:`requirements/index` lists what the software must do, with traceability
@@ -52,3 +57,4 @@ Where to start
    usage/index
    architecture/index
    requirements/index
+   changes

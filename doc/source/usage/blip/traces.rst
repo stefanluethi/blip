@@ -61,3 +61,9 @@ the top and its branches are open.
 
 Actions a view shows that no outpost announces any more stay in the tree,
 greyed out, so they can be unchecked.
+
+Next steps
+----------
+
+* :doc:`views` -- what each type of view shows and its settings.
+* :doc:`layout` -- add and arrange views.

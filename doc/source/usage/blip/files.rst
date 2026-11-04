@@ -64,3 +64,9 @@ blip keeps, across restarts:
 It does not keep the received data: save a recording to keep it. The native
 app stores its settings in the configuration directory of the user, the web
 app in the local storage of the browser for the site it is served from.
+
+Next steps
+----------
+
+* :doc:`/usage/reference/files` -- the formats of recordings and layouts.
+* :doc:`reference` -- all mouse and keyboard controls.

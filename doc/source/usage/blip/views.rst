@@ -229,3 +229,9 @@ Actions
 
 A form of the checked actions, to carry them out on their targets. See
 :doc:`actions`.
+
+Next steps
+----------
+
+* :doc:`layout` -- add, arrange and save views.
+* :doc:`time` -- choose the time the views show.

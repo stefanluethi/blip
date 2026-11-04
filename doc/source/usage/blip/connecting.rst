@@ -8,6 +8,11 @@ in the window or on :kbd:`Escape`. It starts with
 ``ws://127.0.0.1:3000/ws/outpost``, named ``outpost``, where an outpost started
 with its defaults listens. Several connections can be open at once.
 
+.. admonition:: Before you begin
+
+   An outpost running, e.g. the simulator of the :doc:`/usage/quickstart`, or one of
+   your own, see :doc:`/usage/outpost`.
+
 Adding and editing connections
 ------------------------------
 
@@ -85,3 +90,10 @@ were started at the same time.
    In the web app served over ``https``, browsers only allow connections to
    ``wss://`` addresses and to the same machine. See
    :doc:`/usage/installation`.
+
+Next steps
+----------
+
+* :doc:`time` -- start recording to keep what arrives.
+* :doc:`traces` -- choose what a view shows.
+* :doc:`/usage/troubleshooting` -- when blip does not connect.

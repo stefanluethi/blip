@@ -7,6 +7,11 @@ carry them out. blip only sends an action when you do: never on its own, at
 startup or when it connects again. And only while recording, so that the
 recording shows what the action did.
 
+.. admonition:: Before you begin
+
+   A connection to an outpost or target that announces actions, and recording on:
+   blip carries out actions only while recording.
+
 .. figure:: /diagrams/action-sequence.svg
    :target: ../../_images/action-sequence.svg
    :class: diagram
@@ -135,3 +140,9 @@ Properties
   *Slider* and a *Field*.
 
 To offer actions from your own target, see :ref:`outpost-actions`.
+
+Next steps
+----------
+
+* :ref:`outpost-actions` -- offer actions from your own target.
+* :doc:`/usage/limits` -- what to take care of with actions on real hardware.

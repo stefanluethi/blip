@@ -84,7 +84,9 @@ def serve(
     path: str = "/ws/outpost",
     record: Optional[Union[str, Path]] = None,
 ) -> Outpost:
-    """`start` for asyncio code, serving from the running event loop::
+    """`start` for asyncio code, serving from the running event loop.
+
+    For example::
 
         async with blip_outpost.serve(port=3000):
             ...

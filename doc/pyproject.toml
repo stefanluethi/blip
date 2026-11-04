@@ -8,7 +8,12 @@ dependencies = [
     "sphinx-needs[plotting]>=6.0",
     "shibuya>=2025.1.29",
     "sphinx-autobuild>=2024.10.3",
+    "sphinx-reredirects>=0.1.6",
+    "blip-outpost",
 ]
 
 [tool.uv]
 package = false
+
+[tool.uv.sources]
+blip-outpost = { path = "../outpost", editable = true }

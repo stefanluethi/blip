@@ -5,13 +5,19 @@ SOURCEDIR   = source
 BUILDDIR    = _build
 SPHINX      = uv run sphinx-build
 
-.PHONY: help html serve clean diagrams screenshots
+.PHONY: help html linkcheck serve clean diagrams screenshots
 
 help:
 	@$(SPHINX) -M help "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS)
 
 html:
 	@$(SPHINX) -M html "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS)
+
+# Check the links to other sites; needs the internet. Run it before each release.
+# It fails on broken links; without -W, as needflow warns for builders other than
+# html.
+linkcheck:
+	@$(SPHINX) -M linkcheck "$(SOURCEDIR)" "$(BUILDDIR)" --keep-going
 
 serve:
 	uv run sphinx-autobuild "$(SOURCEDIR)" "$(BUILDDIR)/html" --open-browser

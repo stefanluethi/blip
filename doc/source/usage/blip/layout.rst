@@ -75,3 +75,9 @@ Saving layouts
 blip keeps the layout across restarts. **File › Save layout** saves it, with
 all settings of the views, to a JSON file, and **File › Open layout** opens
 one, e.g. a layout per project or per target. See :doc:`files`.
+
+Next steps
+----------
+
+* :doc:`files` -- save and open layouts.
+* :doc:`/usage/reference/files` -- the layout file, to keep, compare or generate.

@@ -29,21 +29,21 @@ Sources
    * - `The Rust Book <https://doc.rust-lang.org/book/>`_ and rustdoc
      - The output shown after each command; examples in the docs compiled and
        run as tests.
-   * - `Kubernetes <https://kubernetes.io/docs/>`_
+   * - `Kubernetes <https://kubernetes.io/docs/home/>`_
      - *Before you begin* and *What's next* on task pages; a glossary;
        documentation as part of finishing a feature.
    * - `GitLab <https://docs.gitlab.com>`_
      - Topic types (concept, task, reference, troubleshooting);
        *Troubleshooting* sections that start from the symptom; a style guide
        checked by a linter (Vale); docs in the definition of done.
-   * - `Blender manual <https://docs.blender.org/manual/>`_ and the
+   * - `Blender manual <https://docs.blender.org/manual/en/latest/>`_ and the
        `Wireshark User's Guide <https://www.wireshark.org/docs/wsug_html/>`_
      - A reference for every menu, panel and tool of a GUI, with its keyboard
        and mouse controls.
    * - `curl <https://curl.se/docs/>`_
      - Every command line option documented, and a test that fails when an
        option is missing from the docs.
-   * - `Zephyr <https://docs.zephyrproject.org>`_
+   * - `Zephyr <https://docs.zephyrproject.org/latest/>`_
      - Getting started per host OS with the exact versions needed; lists of
        what is supported; troubleshooting for the common setup problems.
    * - `Grafana <https://grafana.com/docs/>`_
@@ -59,7 +59,7 @@ Structure
 
 .. req:: Four kinds of documentation
    :id: REQ_DOC_KINDS
-   :status: draft
+   :status: implemented
    :component: doc
    :priority: high
    :satisfies: STK_DOCS
@@ -115,7 +115,7 @@ Getting started
 
 .. req:: Before you begin and next steps
    :id: REQ_DOC_NEXT
-   :status: draft
+   :status: implemented
    :component: doc
    :priority: medium
    :satisfies: STK_DOCS
@@ -144,7 +144,7 @@ How-to guides
 
 .. req:: Troubleshooting
    :id: REQ_DOC_TROUBLESHOOT
-   :status: draft
+   :status: implemented
    :component: doc
    :priority: high
    :satisfies: STK_DOCS
@@ -175,7 +175,7 @@ Reference
 
 .. req:: Reference of the command line
    :id: REQ_DOC_CLI_REF
-   :status: draft
+   :status: implemented
    :component: doc
    :priority: medium
    :satisfies: STK_DOCS
@@ -188,7 +188,7 @@ Reference
 
 .. req:: Reference of the libraries
    :id: REQ_DOC_API_REF
-   :status: draft
+   :status: implemented
    :component: doc
    :priority: medium
    :satisfies: STK_DOCS
@@ -198,12 +198,12 @@ Reference
 
    The public API of the outpost (Python) and of sonde (C++) shall be
    documented with each class and function, its parameters with their units,
-   what it returns and the errors it raises, generated from the docstrings
-   and comments in the code.
+   what it returns and the errors it raises, taken from the docstrings and
+   comments in the code.
 
 .. req:: File formats for users
    :id: REQ_DOC_FORMATS
-   :status: draft
+   :status: implemented
    :component: doc
    :priority: low
    :satisfies: STK_DOCS
@@ -291,7 +291,7 @@ Versions and changes
 
 .. req:: Release notes
    :id: REQ_DOC_CHANGES
-   :status: draft
+   :status: implemented
    :component: doc
    :priority: medium
    :satisfies: STK_DOCS
@@ -308,7 +308,7 @@ Finding things
 
 .. req:: Search and stable links
    :id: REQ_DOC_FIND
-   :status: draft
+   :status: implemented
    :component: doc
    :priority: medium
    :satisfies: STK_DOCS
@@ -365,7 +365,7 @@ Presentation
 
 .. req:: Limits and safety
    :id: REQ_DOC_LIMITS
-   :status: draft
+   :status: implemented
    :component: doc
    :priority: medium
    :satisfies: STK_DOCS
@@ -374,8 +374,8 @@ Presentation
                docs, not from the target.
 
    The documentation shall state the known limits (supported platforms and
-   browsers, tested message rates and recording sizes) and what to take care
-   of: the outpost has no authentication, binding it to ``0.0.0.0`` serves
+   browsers, message rates, queues and the size of recordings) and what to
+   take care of: the outpost has no authentication, binding it to ``0.0.0.0`` serves
    anyone on the network, and actions act on real hardware.
 
 Keeping it right
@@ -408,7 +408,7 @@ Keeping it right
 
 .. req:: Working links
    :id: REQ_DOC_LINKS
-   :status: draft
+   :status: implemented
    :component: doc
    :priority: low
    :satisfies: STK_DOCS
@@ -420,7 +420,7 @@ Keeping it right
 
 .. req:: Feedback from each page
    :id: REQ_DOC_FEEDBACK
-   :status: draft
+   :status: implemented
    :component: doc
    :priority: low
    :satisfies: STK_DOCS
@@ -459,23 +459,33 @@ Where it stands
    :style: table
    :sort: id
 
-The open ones, in short:
+Where each is met:
 
-* :need:`REQ_DOC_KINDS` -- the guides of the outpost and sonde mix how-to,
-  reference and examples on one page; the command line and the API summary
-  could move to reference pages of their own.
-* :need:`REQ_DOC_TROUBLESHOOT` -- there is no troubleshooting page yet.
-* :need:`REQ_DOC_NEXT` -- only the quick start ends with next steps.
-* :need:`REQ_DOC_CLI_REF` -- the options are documented, but no test checks
-  them against ``--help``.
-* :need:`REQ_DOC_API_REF` -- the outpost has an API summary, sonde none;
-  neither is generated from the code.
-* :need:`REQ_DOC_FORMATS` -- the layout file is not described for users.
-* :need:`REQ_DOC_EXAMPLES` -- the examples on the pages are not included from
-  the tested files.
-* :need:`REQ_DOC_CHANGES` -- there are no release notes yet.
-* :need:`REQ_DOC_LIMITS` -- the limits and the safety notes are spread or
-  missing.
-* :need:`REQ_DOC_FIND` -- search and navigation work; nothing sets up
-  redirects for pages that move.
-* :need:`REQ_DOC_LINKS`, :need:`REQ_DOC_FEEDBACK` -- not set up.
+* :need:`REQ_DOC_KINDS` -- the tutorial is the :doc:`/usage/quickstart`, the
+  how-to guides are the pages of blip, the outpost and sonde, the reference is
+  :doc:`/usage/reference/index`, the explanation is :doc:`/usage/concepts` and
+  :doc:`/architecture/index`.
+* :need:`REQ_DOC_TROUBLESHOOT` -- :doc:`/usage/troubleshooting`.
+* :need:`REQ_DOC_NEXT` -- *Before you begin* and *Next steps* on the guides.
+* :need:`REQ_DOC_CLI_REF` -- :doc:`/usage/reference/outpost-cli`, checked by
+  :need:`TEST_DOC_CLI`.
+* :need:`REQ_DOC_API_REF` -- :doc:`/usage/reference/outpost-api` from the
+  docstrings, :doc:`/usage/reference/sonde-api` from the headers.
+* :need:`REQ_DOC_FORMATS` -- :doc:`/usage/reference/files` and
+  :doc:`/architecture/protocol`.
+* :need:`REQ_DOC_CHANGES` -- :doc:`/changes`.
+* :need:`REQ_DOC_LIMITS` -- :doc:`/usage/limits`.
+* :need:`REQ_DOC_FIND` -- ``redirects`` in ``conf.py``, for pages that move.
+* :need:`REQ_DOC_LINKS` -- ``make linkcheck``.
+* :need:`REQ_DOC_FEEDBACK` -- *Edit this page* and *Report a problem* beside
+  each page.
+
+Still open:
+
+* :need:`REQ_DOC_EXAMPLES` -- the Python examples of the outpost guide are
+  compiled and the ``minimal`` example it includes is run by
+  :need:`TEST_DOC_EXAMPLES`, but the C++ snippets of the sonde guide are not
+  compiled.
+
+:doc:`/usage/limits` gives no measured message rate of blip itself, as it depends
+on the machine and the views; the ``fast`` example measures it.

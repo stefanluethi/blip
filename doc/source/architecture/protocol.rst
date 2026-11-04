@@ -195,6 +195,8 @@ Example (shown as JSON for readability)::
    {"Invoke": {"id": 1, "path": "motor/speed", "args": {"rpm": 1500}}}
    {"ActionResult": {"id": 1, "result": {"Ok": null}}}
 
+.. _recording-files:
+
 Recording files
 ---------------
 

@@ -6,6 +6,13 @@ target or in a unit test and encodes them as blip messages. It hands them over
 in **batches**: the firmware sends them, e.g. over UDP, TCP or UART to an
 outpost, or a **sink** writes them to a recording file that blip opens.
 
+.. admonition:: Before you begin
+
+   A C++17 compiler and CMake 3.16 or newer (see :doc:`installation`), and an
+   outpost to receive what the firmware sends (``blip-outpost tcp`` or ``udp``,
+   see :doc:`reference/outpost-cli`) or blip to open the recording files of unit
+   tests.
+
 * No heap allocation, works with ``-fno-exceptions -fno-rtti``, no iostreams;
   you provide the storage.
 * The context that traces and the one that sends may differ -- two tasks, an
@@ -96,6 +103,8 @@ messages.
        component is left out
    * - ``commit()``
      - none: makes the open batch ready to send
+
+.. _sonde-values:
 
 Values
 ------
@@ -321,5 +330,12 @@ The example ``sonde/examples/desktop.cpp`` traces a damped oscillation to
 More
 ----
 
-``sonde/README.md`` in the repository has the full API, the design decisions
-and the tests; :doc:`/architecture/sonde` describes how it works inside.
+``sonde/README.md`` in the repository has the design decisions and the tests;
+:doc:`/architecture/sonde` describes how it works inside.
+
+Next steps
+----------
+
+* :doc:`reference/sonde-api` -- all of the API, from the headers.
+* :doc:`reference/outpost-cli` -- pass the batches of the firmware on to blip with ``tcp`` or ``udp``.
+* :doc:`troubleshooting` -- when the times or the values look wrong.

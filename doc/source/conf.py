@@ -17,9 +17,11 @@ release = "0.1.0"
 # -- General configuration ---------------------------------------------------
 
 extensions = [
+    "sphinx.ext.autodoc",
     "sphinx.ext.graphviz",
     "sphinx.ext.todo",
     "sphinx_needs",
+    "sphinx_reredirects",
 ]
 
 templates_path = ["_templates"]
@@ -27,6 +29,31 @@ exclude_patterns = ["_build"]
 
 todo_include_todos = True
 graphviz_output_format = "svg"
+
+# The docstrings of blip_outpost name code in single backticks.
+default_role = "py:obj"
+autodoc_member_order = "bysource"
+autodoc_typehints = "signature"
+
+# A page that moves or is deleted leaves a redirect here, old name -> new URL,
+# relative to the old page, so links from outside keep working, e.g.
+#   "usage/old-name": "new-name.html",
+redirects = {}
+
+# Links to other sites are checked by `make linkcheck`. Left out: the images the
+# figures link to (they exist only in the HTML build), addresses on the reader's
+# machine, and the hosted app and the GitHub links, which answer only once
+# published.
+linkcheck_ignore = [
+    r"(\.\./)*_images/.*",
+    r"https?://(127\.0\.0\.1|localhost)[:/].*",
+    r"wss?://.*",
+    # answers link checkers with 403
+    r"https://trunkrs\.dev/?",
+    r"https://stefanluethi\.github\.io/blip/.*",
+    r"https://github\.com/stefanluethi/blip/(edit|blob|issues).*",
+]
+linkcheck_anchors = False
 
 # -- HTML output -------------------------------------------------------------
 
@@ -41,6 +68,22 @@ html_static_path = ["_static"]
 html_css_files = ["fonts.css", "theme.css", "needs.css"]
 # themed-images.js shows the dark variant of the diagrams and screenshots in dark mode.
 html_js_files = ["themed-images.js"]
+# "Edit this page" and "Report a problem" on each page. The repo-stats sidebar of
+# shibuya is left out, as it calls the GitHub API from the reader's browser.
+html_context = {
+    "source_type": "github",
+    "source_user": "stefanluethi",
+    "source_repo": "blip",
+    "source_version": "main",
+    "source_docs_path": "/doc/source/",
+}
+html_sidebars = {
+    "**": [
+        "sidebars/localtoc.html",
+        "sidebars/edit-this-page.html",
+        "sidebars/report-problem.html",
+    ]
+}
 
 
 def _drop_cdn_fonts(app, exception):

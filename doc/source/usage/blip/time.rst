@@ -98,3 +98,9 @@ Time axes
 
 The time axes show the timestamps as local time of day, or as time since boot
 if they are too small to be a date (before 2001).
+
+Next steps
+----------
+
+* :doc:`files` -- save the recording.
+* :doc:`actions` -- carry out actions while recording.
