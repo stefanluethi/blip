@@ -3,6 +3,7 @@ pub mod heatmap;
 pub mod log_table;
 pub mod plot;
 pub mod states;
+pub mod stats;
 pub mod table;
 pub mod time_axis;
 pub mod trace_selection;
