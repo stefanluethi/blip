@@ -26,6 +26,7 @@ linked to the items it refines:
    stakeholder
    system
    documentation
+   architecture
    tests
    traceability
    authoring

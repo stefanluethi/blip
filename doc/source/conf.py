@@ -36,9 +36,33 @@ autodoc_member_order = "bysource"
 autodoc_typehints = "signature"
 
 # A page that moves or is deleted leaves a redirect here, old name -> new URL,
-# relative to the old page, so links from outside keep working, e.g.
-#   "usage/old-name": "new-name.html",
-redirects = {}
+# relative to the old page, so links from outside keep working. The pages of the
+# user guide and the software architecture moved into one section per part.
+redirects = {
+    "architecture/blip": "../blip/internals.html",
+    "architecture/components": "../requirements/architecture.html",
+    "architecture/concepts": "../overview/concepts.html",
+    "architecture/index": "../overview/index.html",
+    "architecture/outpost": "../outpost/internals.html",
+    "architecture/overview": "../overview/index.html",
+    "architecture/protocol": "../reference/protocol.html",
+    "architecture/sonde": "../sonde/internals.html",
+    "usage/blip/actions": "../../blip/actions.html",
+    "usage/blip/connecting": "../../blip/connecting.html",
+    "usage/blip/files": "../../blip/files.html",
+    "usage/blip/index": "../../blip/index.html",
+    "usage/blip/layout": "../../blip/layout.html",
+    "usage/blip/reference": "../../blip/controls.html",
+    "usage/blip/time": "../../blip/time.html",
+    "usage/blip/traces": "../../blip/traces.html",
+    "usage/blip/views": "../../blip/views.html",
+    "usage/concepts": "../overview/concepts.html",
+    "usage/index": "../index.html",
+    "usage/installation": "../start/installation.html",
+    "usage/outpost": "../outpost/index.html",
+    "usage/quickstart": "../start/quickstart.html",
+    "usage/sonde": "../sonde/index.html",
+}
 
 # Links to other sites are checked by `make linkcheck`. Left out: the images the
 # figures link to (they exist only in the HTML build), addresses on the reader's

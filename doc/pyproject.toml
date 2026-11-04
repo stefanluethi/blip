@@ -1,7 +1,7 @@
 [project]
 name = "blip-docs"
 version = "0.1.0"
-description = "User documentation for blip: software architecture, usage guide and requirements"
+description = "Documentation of blip: overview, guides, internals, reference and requirements"
 requires-python = ">=3.10"
 dependencies = [
     "sphinx>=8.1",

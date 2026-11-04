@@ -11,8 +11,8 @@ firmware / unit test
 ```
 
 Status: implemented as described here, except [actions](#later-actions). The user guide is
-in the documentation: [sonde](https://stefanluethi.github.io/blip/docs/usage/sonde.html)
-([source](../doc/source/usage/sonde.rst)); this file is the full design. See
+in the documentation: [sonde](https://stefanluethi.github.io/blip/docs/sonde/index.html)
+([source](../doc/source/sonde/index.rst)); this file is the full design. See
 [Build](#build) for building and testing it.
 
 ## Goals

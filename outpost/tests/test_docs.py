@@ -19,8 +19,8 @@ from blip_client import receive
 
 OUTPOST = Path(__file__).parents[1]
 DOCS = OUTPOST.parent / "doc" / "source"
-CLI_PAGE = DOCS / "usage" / "reference" / "outpost-cli.rst"
-GUIDE = DOCS / "usage" / "outpost.rst"
+CLI_PAGE = DOCS / "reference" / "outpost-cli.rst"
+GUIDE = DOCS / "outpost" / "index.rst"
 
 pytestmark = pytest.mark.skipif(not DOCS.is_dir(), reason="needs the repository's doc folder")
 

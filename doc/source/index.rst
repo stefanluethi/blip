@@ -13,48 +13,75 @@ offers, e.g. set a motor setpoint. It runs in the browser or as a native app.
 
    blip showing the outpost's simulator.
 
-Three parts work together:
-
-* **blip**, the app you look at (Rust, egui; web and native).
-* **outpost**, a small Python service next to the target. It talks to the target
-  in whatever protocol the target speaks and serves blip over a WebSocket. It
-  also simulates a target, records and replays.
-* **sonde**, a C++17 library for firmware and unit tests that encodes traces as
-  blip messages, to send them to an outpost or write them to a recording file.
-
-.. figure:: /diagrams/system-context.svg
-   :target: _images/system-context.svg
-   :class: diagram
-   :alt: The target, optionally with sonde, talks to the outpost; the outpost
-         serves blip over a WebSocket and can record to a file; unit tests with
-         sonde write recording files that blip opens.
-
-   How the parts fit together.
+blip is one of three parts. The **outpost** runs next to the target and passes
+what it sends on to blip; **sonde** traces from firmware and unit tests. How
+they fit together is in :doc:`overview/index`.
 
 Where to start
 --------------
 
-* New to blip? Follow the :doc:`usage/quickstart`: a simulated target on the
-  screen in a few minutes.
-* :doc:`usage/concepts` explains the words used everywhere: traces, records,
-  views, the time range, recordings and actions.
-* The guides for each part: :doc:`usage/blip/index`, :doc:`usage/outpost` and
-  :doc:`usage/sonde`.
-* Something does not work? See :doc:`usage/troubleshooting`, and
-  :doc:`usage/limits` before you serve an outpost on a network.
-* :doc:`usage/reference/index` lists every option of the command line, the
-  APIs of the outpost and sonde, and the file formats.
-* :doc:`changes` says what changed in each release.
-* :doc:`architecture/index` describes how the software is built, for those
-  who change it or connect their own targets.
-* :doc:`requirements/index` lists what the software must do, with traceability
-  managed by `sphinx-needs <https://sphinx-needs.readthedocs.io>`_.
+.. list-table::
+   :header-rows: 1
+   :widths: 40 60
+
+   * - You want to …
+     - Read
+   * - see blip working, without hardware
+     - :doc:`start/quickstart`
+   * - know what the parts are and which you need
+     - :doc:`overview/index`, then :doc:`overview/concepts`
+   * - look at and record the data of a target
+     - :doc:`blip/index`
+   * - connect your own target from Python
+     - :doc:`outpost/index`
+   * - trace from firmware or unit tests in C++
+     - :doc:`sonde/index`
+   * - fix something that does not work
+     - :doc:`help/troubleshooting`
+   * - look up an option, a function or a file format
+     - :doc:`reference/index`
+   * - change blip, the outpost or sonde
+     - the *internals* page of each part, e.g. :doc:`blip/internals`, and
+       :doc:`requirements/index`
 
 .. toctree::
-   :maxdepth: 2
-   :caption: Contents
+   :caption: Getting started
+   :maxdepth: 1
 
-   usage/index
-   architecture/index
+   start/installation
+   start/quickstart
+
+.. toctree::
+   :caption: Overview
+   :maxdepth: 1
+
+   overview/index
+   overview/concepts
+
+.. toctree::
+   :caption: The parts
+   :maxdepth: 2
+
+   blip/index
+   outpost/index
+   sonde/index
+
+.. toctree::
+   :caption: Help
+   :maxdepth: 1
+
+   help/troubleshooting
+   help/limits
+
+.. toctree::
+   :caption: Reference
+   :maxdepth: 2
+
+   reference/index
+
+.. toctree::
+   :caption: Project
+   :maxdepth: 1
+
    requirements/index
    changes

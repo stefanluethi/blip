@@ -38,4 +38,4 @@ sonde
 
 Upgrading
    Layouts saved by blip before this release are migrated when opened; the
-   versions of the layout file are listed in :doc:`usage/reference/files`.
+   versions of the layout file are listed in :doc:`/reference/files`.

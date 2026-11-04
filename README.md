@@ -11,11 +11,11 @@ sonde, a C++ library, encodes those messages on the target or in unit tests.
 Try the web app at <https://stefanluethi.github.io/blip/> and read the
 documentation at <https://stefanluethi.github.io/blip/docs/>:
 
-- [Quick start](https://stefanluethi.github.io/blip/docs/usage/quickstart.html) — a simulated target in blip in a few minutes
-- User guides for [blip](https://stefanluethi.github.io/blip/docs/usage/blip/index.html),
-  the [outpost](https://stefanluethi.github.io/blip/docs/usage/outpost.html) and
-  [sonde](https://stefanluethi.github.io/blip/docs/usage/sonde.html)
-- [Software architecture](https://stefanluethi.github.io/blip/docs/architecture/index.html) — concepts, wire protocol and the inside of each part
+- [How it fits together](https://stefanluethi.github.io/blip/docs/overview/index.html) — the parts, which setup you need, and the concepts they share
+- [Quick start](https://stefanluethi.github.io/blip/docs/start/quickstart.html) — a simulated target in blip in a few minutes
+- Guides for [blip](https://stefanluethi.github.io/blip/docs/blip/index.html),
+  the [outpost](https://stefanluethi.github.io/blip/docs/outpost/index.html) and
+  [sonde](https://stefanluethi.github.io/blip/docs/sonde/index.html)
 
 The sources are in [`doc/source`](doc/source).
 
@@ -104,7 +104,7 @@ cargo run --release -p blip
 ```
 
 To connect a target of your own, write a script that reads it and passes on what it
-decodes, see the [outpost guide](https://stefanluethi.github.io/blip/docs/usage/outpost.html):
+decodes, see the [outpost guide](https://stefanluethi.github.io/blip/docs/outpost/index.html):
 
 ```python
 import blip_outpost as outpost

@@ -30,7 +30,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://stefanluethi.github.io/blip/"
-Documentation = "https://stefanluethi.github.io/blip/docs/usage/outpost.html"
+Documentation = "https://stefanluethi.github.io/blip/docs/outpost/index.html"
 Source = "https://github.com/stefanluethi/blip"
 
 [project.scripts]

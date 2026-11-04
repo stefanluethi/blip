@@ -1,7 +1,7 @@
 # blip documentation
 
-User documentation for blip — software architecture, usage guide and
-requirements — built with [Sphinx](https://www.sphinx-doc.org) and
+The documentation of blip, the outpost and sonde — overview, guides, internals,
+reference and requirements — built with [Sphinx](https://www.sphinx-doc.org) and
 [sphinx-needs](https://sphinx-needs.readthedocs.io).
 
 ## Build
@@ -23,20 +23,24 @@ Without make: `uv run sphinx-build -W source _build/html`.
 
 ```
 source/
-├── conf.py            Sphinx + sphinx-needs configuration (need types, links)
-├── index.rst
+├── conf.py            Sphinx + sphinx-needs configuration (need types, links,
+│                      redirects of moved pages)
+├── index.rst          what blip is, where to start
+├── start/             installation, quick start
+├── overview/          how the parts fit together, the concepts they share
+├── blip/              the guide of blip (a page per part of the window), its
+│                      controls and internals
+├── outpost/           the guide of the outpost, its examples and internals
+├── sonde/             the guide of sonde and its internals
+├── help/              troubleshooting, limits and safety
+├── reference/         wire protocol, outpost command line and API, sonde API,
+│                      file formats
+├── requirements/      stakeholder (STK_*), system (REQ_*), documentation
+│                      (REQ_DOC_*), architecture elements (ARCH_*), tests
+│                      (TEST_*), traceability tables, authoring guide
 ├── changes.rst        release notes
-├── usage/             installation, quick start, concepts, the guides of
-│   │                  blip, outpost and sonde, troubleshooting, limits
-│   ├── blip/          blip (one page per part of the window)
-│   └── reference/     outpost command line and API, sonde API, file formats
-├── architecture/      overview, concepts, wire protocol, blip, outpost, sonde,
-│                      components (ARCH_*)
 ├── diagrams/          draw.io sources (*.drawio) and their exported *.svg
-├── screenshots/       screenshots of blip, rendered by `make screenshots`
-└── requirements/      stakeholder (STK_*), system (REQ_*), documentation
-                       (REQ_DOC_*), tests (TEST_*), traceability tables,
-                       authoring guide
+└── screenshots/       screenshots of blip, rendered by `make screenshots`
 ```
 
 ## Diagrams
@@ -112,5 +116,5 @@ The expectations for this documentation are in
 commit as the code; a page that moves leaves an entry in `redirects` in
 `conf.py`; the outpost's API reference comes from its docstrings, sonde's from
 its headers; `outpost/tests/test_docs.py` fails when an option of
-`blip-outpost` is not on `usage/reference/outpost-cli.rst`; add each release to
+`blip-outpost` is not on `reference/outpost-cli.rst`; add each release to
 `changes.rst`.

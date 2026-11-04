@@ -1,7 +1,9 @@
 # CLAUDE.md
 
 blip is a lightweight web tracing tool for embedded systems. See `README.md` for the
-overview and `doc/source` for the user guides, the architecture and the requirements.
+overview and `doc/source` for the documentation: how the parts fit together, a
+section per part (blip, outpost, sonde) with its guides and internals, the
+reference and the requirements.
 
 | Directory  | Contents |
 |------------|----------|

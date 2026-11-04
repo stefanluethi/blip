@@ -8,7 +8,7 @@ say (`blip/options.proto`), and offers the actions of its downlink message to bl
     invoker = Invoker(schema, "link.Downlink", send=link.send)
     invoker.install(outpost.actions)            # one action per member of the Invoke oneof
 
-The rules, in short (see doc/source/usage/outpost.rst):
+The rules, in short (see doc/source/reference/outpost-cli.rst):
 
 - A message has the path of its annotation, else the path of the field that holds it;
   the uplink message has the path "".

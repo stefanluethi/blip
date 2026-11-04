@@ -83,6 +83,47 @@ Structure
    reader (first time, connecting a target, tracing firmware, changing blip)
    to where they start.
 
+.. req:: Overview of the parts
+   :id: REQ_DOC_OVERVIEW
+   :status: implemented
+   :component: doc
+   :priority: high
+   :satisfies: STK_DOCS
+   :rationale: The Kubernetes *Components* page and Zephyr's introduction:
+               readers must know what each part is for before they can pick
+               the guide to read.
+
+   Before the guide of any part, the documentation shall show the parts --
+   blip, the outpost and sonde -- what each is for, how they connect, and
+   which setup fits which situation.
+
+.. req:: Organised by part
+   :id: REQ_DOC_PARTS
+   :status: implemented
+   :component: doc
+   :priority: medium
+   :satisfies: STK_DOCS
+   :rationale: Zephyr keeps the overview, usage and API of each subsystem
+               together: readers work with one part at a time, users and
+               contributors alike.
+
+   The pages of each part shall be together: its guides, then how it is built
+   inside, with its reference linked from them. Concepts shared by all parts
+   shall be apart from the guide of any one part.
+
+.. req:: Each topic in one place
+   :id: REQ_DOC_ONE_PLACE
+   :status: implemented
+   :component: doc
+   :priority: medium
+   :satisfies: STK_DOCS
+   :rationale: GitLab's single source of truth for its docs: a topic told
+               twice drifts apart, and readers cannot tell which is right.
+
+   Each topic shall be described on one page; other pages link to it rather
+   than repeat it, and a page for users and a page for contributors on the
+   same topic shall each say only what their reader needs.
+
 Getting started
 ---------------
 
@@ -461,20 +502,25 @@ Where it stands
 
 Where each is met:
 
-* :need:`REQ_DOC_KINDS` -- the tutorial is the :doc:`/usage/quickstart`, the
+* :need:`REQ_DOC_KINDS` -- the tutorial is the :doc:`/start/quickstart`, the
   how-to guides are the pages of blip, the outpost and sonde, the reference is
-  :doc:`/usage/reference/index`, the explanation is :doc:`/usage/concepts` and
-  :doc:`/architecture/index`.
-* :need:`REQ_DOC_TROUBLESHOOT` -- :doc:`/usage/troubleshooting`.
+  :doc:`/reference/index`, the explanation is :doc:`/overview/index`,
+  :doc:`/overview/concepts` and the internals page of each part.
+* :need:`REQ_DOC_OVERVIEW` -- :doc:`/overview/index`.
+* :need:`REQ_DOC_PARTS` -- a section for each of :doc:`/blip/index`,
+  :doc:`/outpost/index` and :doc:`/sonde/index`, each with its internals.
+* :need:`REQ_DOC_ONE_PLACE` -- the user guide and the software architecture,
+  which told the concepts and the parts twice, are merged.
+* :need:`REQ_DOC_TROUBLESHOOT` -- :doc:`/help/troubleshooting`.
 * :need:`REQ_DOC_NEXT` -- *Before you begin* and *Next steps* on the guides.
-* :need:`REQ_DOC_CLI_REF` -- :doc:`/usage/reference/outpost-cli`, checked by
+* :need:`REQ_DOC_CLI_REF` -- :doc:`/reference/outpost-cli`, checked by
   :need:`TEST_DOC_CLI`.
-* :need:`REQ_DOC_API_REF` -- :doc:`/usage/reference/outpost-api` from the
-  docstrings, :doc:`/usage/reference/sonde-api` from the headers.
-* :need:`REQ_DOC_FORMATS` -- :doc:`/usage/reference/files` and
-  :doc:`/architecture/protocol`.
+* :need:`REQ_DOC_API_REF` -- :doc:`/reference/outpost-api` from the
+  docstrings, :doc:`/reference/sonde-api` from the headers.
+* :need:`REQ_DOC_FORMATS` -- :doc:`/reference/files` and
+  :doc:`/reference/protocol`.
 * :need:`REQ_DOC_CHANGES` -- :doc:`/changes`.
-* :need:`REQ_DOC_LIMITS` -- :doc:`/usage/limits`.
+* :need:`REQ_DOC_LIMITS` -- :doc:`/help/limits`.
 * :need:`REQ_DOC_FIND` -- ``redirects`` in ``conf.py``, for pages that move.
 * :need:`REQ_DOC_LINKS` -- ``make linkcheck``.
 * :need:`REQ_DOC_FEEDBACK` -- *Edit this page* and *Report a problem* beside
@@ -487,5 +533,5 @@ Still open:
   :need:`TEST_DOC_EXAMPLES`, but the C++ snippets of the sonde guide are not
   compiled.
 
-:doc:`/usage/limits` gives no measured message rate of blip itself, as it depends
+:doc:`/help/limits` gives no measured message rate of blip itself, as it depends
 on the machine and the views; the ``fast`` example measures it.

@@ -9,9 +9,9 @@ over a WebSocket, records the messages if asked, and calls your **actions** when
 invokes them, e.g. a setpoint or a calibration.
 
 The user guide is in the documentation:
-[outpost](https://stefanluethi.github.io/blip/docs/usage/outpost.html). Its internals
+[outpost](https://stefanluethi.github.io/blip/docs/outpost/index.html). Its internals
 are described in
-[architecture/outpost](https://stefanluethi.github.io/blip/docs/architecture/outpost.html).
+[outpost internals](https://stefanluethi.github.io/blip/docs/outpost/internals.html).
 
 ## Install
 
@@ -125,7 +125,7 @@ message Battery {
 }
 ```
 
-See the [user guide](https://stefanluethi.github.io/blip/docs/usage/outpost.html) for all
+See the [user guide](https://stefanluethi.github.io/blip/docs/outpost/index.html) for all
 rules.
 
 The target sends CBOR messages, several at once as a CBOR sequence (RFC 8742): a UDP
@@ -163,7 +163,7 @@ uv run pytest
 ## Message schema (CBOR)
 
 Messages sent in binary WebSocket frames match the Rust `proto` crate, see the
-[wire protocol](https://stefanluethi.github.io/blip/docs/architecture/protocol.html):
+[wire protocol](https://stefanluethi.github.io/blip/docs/reference/protocol.html):
 
 - **Value**: `{ timestamp: int (ns), path: str, value: any }`, where `value` is a plain CBOR item: `None`, `int`, `float`, `bool`, `str`, a `list` of fixed length or a `dict` with `str` keys, nested freely
 - **ValueMetadata**: `{ path: str, unit: str }`
