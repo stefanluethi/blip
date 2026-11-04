@@ -35,7 +35,9 @@ Checking traces
 ---------------
 
 * The checkboxes choose the traces a view shows, the actions of an actions
-  view or the logs of a log view. A new log view shows all logs.
+  view or the logs of a log view. A new log view shows all logs. The checked
+  logs of paths without records yet, e.g. of an opened layout, are listed too,
+  so they can be unchecked.
 * In a plot or an XY view, the box of a checked trace takes the colour of its
   line, so the tree also tells the lines apart.
 * **Checking a branch also checks what is added below it later**, e.g. a trace

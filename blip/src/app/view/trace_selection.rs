@@ -678,6 +678,9 @@ fn row_ui(ui: &mut Ui, model: &Model, row: &Row, selection: &mut Selection<'_>) 
             RowKind::Log(path) => {
                 let paths = Vec::from_iter(log_path(path, picks.view_type));
                 let mut hover = format!("{path}\nLog records");
+                if !model.logs.has_path(path) {
+                    hover.push_str(", none received yet");
+                }
                 if paths.is_empty() {
                     hover.push_str("\nOnly log views show log records");
                 }
@@ -762,6 +765,8 @@ struct RowsKey {
     filter: Option<Picks>,
     picks: Picks,
     unannounced: Vec<String>,
+    /// The shown logs of paths without records, see [`show`].
+    unreceived_logs: Vec<String>,
     toggles: u64,
 }
 
@@ -794,6 +799,7 @@ fn rows(ui: &Ui, model: &Model, key: RowsKey) -> Rows {
     tree.add_actions(model.actions.paths().filter(|path| matches(path, search)));
     tree.add_unannounced_actions(key.unannounced.iter().map(String::as_str));
     tree.add_logs(model.logs.paths().filter(|path| matches(path, search)));
+    tree.add_logs(key.unreceived_logs.iter().map(String::as_str));
     if key.picks.records {
         tree.fold_records();
     }
@@ -832,7 +838,7 @@ fn rows(ui: &Ui, model: &Model, key: RowsKey) -> Rows {
 }
 
 /// Shows the traces, the announced actions and the logs of `model` whose path matches
-/// `search` in a scroll area as a tree with checkboxes for what is picked for a view,
+/// `search`, and what the view shows of them that did not arrive, in a scroll area as a tree with checkboxes for what is picked for a view,
 /// disabled if there is no selection to edit, filled with the colours of the `colored`
 /// traces. If `compatible_only`, only what the view can show is in the tree, or all
 /// without a view. The rows are made anew only when what they
@@ -857,6 +863,18 @@ pub fn show(
             .collect(),
         _ => vec![],
     };
+    // the same for the shown logs of paths without records, e.g. of a layout opened
+    // before they arrive, so that they can be unchecked
+    let unreceived_logs: Vec<String> = match &selection {
+        Some(selection) if selection.picks.view_type.shows_logs() => selection
+            .paths
+            .iter()
+            .filter(|path| !model.logs.has_path(path))
+            .filter(|path| matches(path, search))
+            .cloned()
+            .collect(),
+        _ => vec![],
+    };
     let key = RowsKey {
         paths: model.paths_version(),
         kinds: model.traces.kinds(),
@@ -864,6 +882,7 @@ pub fn show(
         filter: picks.filter(|_| compatible_only),
         picks: picks.unwrap_or(ViewType::Plot.into()),
         unannounced,
+        unreceived_logs,
         toggles: ui.data(|data| data.get_temp::<u64>(toggles_id()).unwrap_or(0)),
     };
     let rows = rows(ui, model, key);
@@ -1567,6 +1586,20 @@ mod tests {
         harness.run();
         assert_eq!(harness.state().1, set(&["log", "motor"]));
         assert!(harness.state().2.is_empty());
+    }
+
+    #[test]
+    fn shown_logs_of_paths_without_records_can_be_unchecked() {
+        use egui_kittest::kittest::Queryable;
+
+        let mut model = Model::default();
+        add_log(&mut model, "motor");
+        let mut harness = pick_harness(model, ViewType::Logs.into());
+        harness.state_mut().1 = set(&["motor", "robot/arm"]);
+        harness.run();
+        harness.get_by_label("arm").click();
+        harness.run();
+        assert_eq!(harness.state().1, set(&["motor"]));
     }
 
     /// Adds an array of `len` floats at `path` to `model`.

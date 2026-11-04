@@ -209,7 +209,10 @@ impl Layout {
     #[cfg(test)]
     pub fn select_view_showing_traces(&mut self) {
         let view = self.tree.tiles.iter().find_map(|(&tile_id, tile)| {
-            let traces = |view: &View| view.has_selection() && !view.view_type().shows_actions();
+            let traces = |view: &View| {
+                let view_type = view.view_type();
+                view.has_selection() && !view_type.shows_actions() && !view_type.shows_logs()
+            };
             matches!(tile, Tile::Pane(view) if traces(view)).then_some(tile_id)
         });
         if let Some(view) = view {

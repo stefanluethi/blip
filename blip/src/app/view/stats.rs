@@ -45,6 +45,11 @@ impl Stat {
         }
     }
 
+    /// Whether it is measured from the full cycles of a trace.
+    pub fn is_cyclic(self) -> bool {
+        matches!(self, Stat::Frequency | Stat::Period | Stat::Duty)
+    }
+
     /// What it measures, for a tooltip.
     pub fn hint(self) -> &'static str {
         match self {
@@ -130,11 +135,9 @@ impl Measurement {
     /// still among `paths`, else of the first of `paths`, and of the next stat it has
     /// none of yet.
     fn next(measurements: &[Measurement], paths: &[&str]) -> Option<Self> {
-        let last = measurements.last();
-        let trace = last
-            .map(|last| last.trace.as_str())
-            .filter(|trace| paths.contains(trace))
-            .or(paths.first().copied())?;
+        // the stats of a trace no longer shown start anew with the first shown trace
+        let last = (measurements.last()).filter(|last| paths.contains(&last.trace.as_str()));
+        let trace = (last.map(|last| last.trace.as_str())).or(paths.first().copied())?;
         let after = last.map_or(Stat::default() as usize, |last| last.stat as usize + 1);
         let stat = (0..Stat::ALL.len())
             .map(|offset| Stat::ALL[(after + offset) % Stat::ALL.len()])
@@ -235,6 +238,10 @@ pub fn is_linear(series: &Series<'_>, interpolation: super::plot::Interpolation)
     interpolation == super::plot::Interpolation::Linear && series.kind != NumberKind::Bool
 }
 
+/// What the stats of a trace were computed for: the samples of the model, the window
+/// and how edges are found, see [`Stats::of_series`].
+type StatsKey = (crate::app::model::Version, (u64, u64), Option<bool>);
+
 /// Shows `measurements` of the `shown` traces of a plot over the shown `window`, in
 /// nanoseconds, side by side and wrapping, each in the colour of its trace. Those of
 /// traces not shown are left out. `linear` tells for a series whether its curve runs
@@ -249,6 +256,7 @@ pub fn measurements_ui(
 ) {
     // the stats of each trace, computed once for all its measurements
     let mut stats: BTreeMap<&str, Option<Stats>> = BTreeMap::new();
+    let samples = model.samples_version();
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
         for measurement in measurements {
@@ -259,7 +267,22 @@ pub fn measurements_ui(
             };
             let trace_stats = *stats.entry(path).or_insert_with(|| {
                 let series = model.traces.series(path)?;
-                Stats::of_series(&series, window?, linear(&series))
+                let cycles = (measurements.iter())
+                    .any(|other| other.trace == path && other.stat.is_cyclic());
+                let edges = cycles.then(|| linear(&series));
+                // kept from frame to frame while the samples and the window stay the
+                // same, e.g. while paused
+                let key: StatsKey = (samples, window?, edges);
+                let id = ui.id().with(("stats of", path));
+                if let Some((known, stats)) =
+                    ui.data(|data| data.get_temp::<(StatsKey, Option<Stats>)>(id))
+                    && known == key
+                {
+                    return stats;
+                }
+                let stats = Stats::of_series(&series, key.1, edges);
+                ui.data_mut(|data| data.insert_temp(id, (key, stats)));
+                stats
             });
             let value = trace_stats.and_then(|stats| measurement.stat.of(&stats));
             let format = formats.of(path);
@@ -377,15 +400,16 @@ impl Stats {
     /// The stats of `series` within `window`, in nanoseconds. Each value holds until the
     /// next sample, also the one before the window into it. The last sample holds for no
     /// time, as what follows it is unknown. Edges are found where the curve crosses the
-    /// mid level, between samples if it is `linear`, else at the sample after. `None`
-    /// without values.
-    pub fn of_series(series: &Series<'_>, window: (u64, u64), linear: bool) -> Option<Self> {
+    /// mid level, between samples if `edges` is `Some(true)`, i.e. the curve is linear,
+    /// else at the sample after; none and no cycles if it is `None`. `None` without
+    /// values.
+    pub fn of_series(series: &Series<'_>, window: (u64, u64), edges: Option<bool>) -> Option<Self> {
         let series = series.slice(visible_range(series.timestamps, Some(window)));
         Self::of(
             series.timestamps,
             |index| series.value(index),
             window,
-            linear,
+            edges,
         )
     }
 
@@ -395,7 +419,7 @@ impl Stats {
         timestamps: &[u64],
         value: impl Fn(usize) -> f64,
         (start, end): (u64, u64),
-        linear: bool,
+        edges: Option<bool>,
     ) -> Option<Self> {
         // times in seconds from the start of the window
         let seconds = |timestamp: u64| seconds_since(start, timestamp);
@@ -430,19 +454,17 @@ impl Stats {
         let mean = sums.mean();
         let variance = (sums.mean_square() - mean * mean).max(0.0);
         let mean = shift + mean;
-        let cycles = (max > min)
-            .then(|| {
-                cycles(
-                    timestamps,
-                    &value,
-                    (min + max) / 2.0,
-                    (max - min) * HYSTERESIS,
-                    start,
-                    length,
-                    linear,
-                )
-            })
-            .flatten();
+        let cycles = edges.filter(|_| max > min).and_then(|linear| {
+            cycles(
+                timestamps,
+                &value,
+                (min + max) / 2.0,
+                (max - min) * HYSTERESIS,
+                start,
+                length,
+                linear,
+            )
+        });
         Some(Self {
             min,
             max,
@@ -611,7 +633,12 @@ mod tests {
     /// The stats of `values` 1 ms apart over the window from `start` to `end` in ms.
     fn stats_of(values: &[f64], (start, end): (u64, u64), linear: bool) -> Option<Stats> {
         let timestamps: Vec<u64> = (0..values.len() as u64).map(|i| i * MS).collect();
-        Stats::of(&timestamps, |i| values[i], (start * MS, end * MS), linear)
+        Stats::of(
+            &timestamps,
+            |i| values[i],
+            (start * MS, end * MS),
+            Some(linear),
+        )
     }
 
     fn assert_near(actual: f64, expected: f64) {
@@ -637,11 +664,11 @@ mod tests {
         let values = [4.0, 4.0, 8.0];
         // from 0.5 ms to 2 ms: 4 for 1.5 ms, then 8 at the end
         let timestamps = [0, MS, 2 * MS];
-        let stats = Stats::of(&timestamps, |i| values[i], (MS / 2, 2 * MS), false).unwrap();
+        let stats = Stats::of(&timestamps, |i| values[i], (MS / 2, 2 * MS), Some(false)).unwrap();
         assert_eq!((stats.min, stats.max), (4.0, 8.0));
         assert_near(stats.mean, 4.0);
         // a sample after the window counts for nothing
-        let stats = Stats::of(&timestamps, |i| values[i], (0, MS + MS / 2), false).unwrap();
+        let stats = Stats::of(&timestamps, |i| values[i], (0, MS + MS / 2), Some(false)).unwrap();
         assert_eq!(stats.max, 4.0);
     }
 
@@ -651,7 +678,7 @@ mod tests {
         assert_eq!((stats.min, stats.max, stats.mean), (6.0, 6.0, 6.0));
         let timestamps = [0, 0, 0];
         let values = [1.0, 2.0, 6.0];
-        let stats = Stats::of(&timestamps, |i| values[i], (0, 0), false).unwrap();
+        let stats = Stats::of(&timestamps, |i| values[i], (0, 0), Some(false)).unwrap();
         assert_near(stats.mean, 3.0);
     }
 
@@ -748,6 +775,36 @@ mod tests {
         // 2 cycles of 4 ms before (from 2 to 10 ms), 2 of 2 ms after (14 to 18 ms)
         assert_near(period, 0.012 / 4.0);
         assert_near(duty, 0.5);
+    }
+
+    #[test]
+    fn cycles_are_found_only_when_asked() {
+        let values = square(2, 2, 4);
+        let timestamps: Vec<u64> = (0..values.len() as u64).map(|i| i * MS).collect();
+        let window = (0, (values.len() as u64 - 1) * MS);
+        let stats = Stats::of(&timestamps, |i| values[i], window, None).unwrap();
+        assert_eq!(stats.cycles, None);
+        assert_eq!((stats.min, stats.max), (0.0, 5.0));
+        assert!(
+            stats_of(&values, (0, values.len() as u64 - 1), false)
+                .unwrap()
+                .cycles
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn the_next_stat_starts_anew_for_another_trace() {
+        let measurement = |trace: &str, stat| Measurement {
+            trace: trace.to_owned(),
+            stat,
+        };
+        let stats = [measurement("a", Stat::Mean), measurement("a", Stat::Rms)];
+        let next = Measurement::next(&stats, &["a", "b"]).unwrap();
+        assert_eq!(next, measurement("a", Stat::StdDev));
+        // "a" is no longer shown
+        let next = Measurement::next(&stats, &["b"]).unwrap();
+        assert_eq!(next, measurement("b", Stat::Mean));
     }
 
     #[test]
