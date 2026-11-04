@@ -123,7 +123,7 @@ uv run blip-outpost tcp 127.0.0.1 9000
 ## Checks
 
 `check.sh` runs the CI-style checks: `cargo check` for native and WASM,
-`rustfmt`, `clippy`, the tests and a `trunk build`:
+`rustfmt`, `clippy`, the tests and a `trunk build`, all in release mode:
 
 ```bash
 ./check.sh
