@@ -265,7 +265,7 @@ fn screenshots_views() {
         ),
         (
             "view-xy",
-            r#"{"name": "Robot", "kind": {"Xy": {"x": "robot/pose.x", "traces": ["robot/pose.x", "robot/pose.y"], "equal_axes": true}}}"#,
+            r#"{"name": "Robot", "kind": {"Xy": {"traces": ["robot/pose.x", "robot/pose.y"], "xs": ["robot/pose.x"], "against": {"robot/pose.y": "robot/pose.x"}, "equal_axes": true}}}"#,
         ),
         (
             "view-heatmap-grid",

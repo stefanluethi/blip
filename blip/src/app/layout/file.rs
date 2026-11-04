@@ -7,8 +7,9 @@ use std::collections::HashMap;
 
 /// Version of the format written by [`LayoutFile::new`]. Since version 2, the x trace
 /// of an XY view is one of its traces. Since version 3, the traces of a view are saved
-/// as `traces` instead of `streams`, which views still read.
-pub const VERSION: u32 = 3;
+/// as `traces` instead of `streams`, which views still read. Since version 4, an XY
+/// view can have several x traces, each y trace is plotted against one of them.
+pub const VERSION: u32 = 4;
 
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct LayoutFile {
@@ -98,6 +99,14 @@ impl LayoutFile {
         if self.version == 2 {
             // views read the traces saved as `streams`
             self.version = 3;
+        }
+        if self.version == 3 {
+            self.root.for_each_view(&mut |view| {
+                if let ViewKind::Xy(xy) = &mut view.kind {
+                    xy.migrate_v3();
+                }
+            });
+            self.version = 4;
         }
         (self.version == VERSION).then_some(self)
     }
@@ -297,8 +306,8 @@ mod tests {
         else {
             panic!("the XY view is missing")
         };
-        assert_eq!(xy.x_path(), Some("pose.x"));
-        assert!(xy.traces.contains("pose.y"));
+        assert_eq!(xy.xs, ["pose.x".to_owned()].into());
+        assert_eq!(xy.against.get("pose.y").map(String::as_str), Some("pose.x"));
     }
 
     #[test]

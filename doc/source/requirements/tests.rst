@@ -50,8 +50,9 @@ Test Cases
 
    ``blip/src/app/view`` unit tests -- merge equal values into state runs
    with gaps at nulls, hide collapsed rows of the table, pair samples with the
-   current sample of the x trace, sample arrays over time for heatmaps, and
-   zoom plots with the mouse wheel without panning them, unless disabled.
+   current sample of their x trace, pair sibling x and y traces, sample arrays
+   over time for heatmaps, and zoom plots with the mouse wheel without panning
+   them, unless disabled.
 
 .. test:: Time cursor is set and dragged
    :id: TEST_BLIP_CURSOR

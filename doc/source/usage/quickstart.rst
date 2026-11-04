@@ -96,7 +96,8 @@ added next to the selected one; select it and check its traces:
 * **States**: ``motor`` › ``.state`` and ``.enabled`` show as coloured bands,
   one per run of equal values.
 * **XY**: ``robot/pose`` › ``.x`` and ``.y`` draw the figure eight the robot
-  drives. Choose which trace is on the x axis in the properties.
+  drives; ``.y`` is plotted against ``.x`` on its own. Choose which traces are
+  on the x axis, and what each y trace is plotted against, in the properties.
 * **Heatmap**: ``thermal/frame`` is an 8×8 array, shown as a grid at the time
   cursor; ``audio/spectrum`` is a 64-bin array, shown over time.
 * **Table**: the values of the checked traces at the time cursor.

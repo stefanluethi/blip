@@ -222,8 +222,9 @@ The saved layout
 as JSON. It is written to the app storage under its own key and by **Save
 layout**. ``LayoutFile::migrate`` brings older versions up to date (version 2:
 the x trace of an XY view is one of its traces; version 3: ``streams`` renamed
-to ``traces``); a layout of a newer version is refused. Format changes must
-add a migration, not drop old layouts.
+to ``traces``; version 4: an XY view has several x traces, ``xs``, and the x
+trace each y trace is plotted against, ``against``); a layout of a newer version
+is refused. Format changes must add a migration, not drop old layouts.
 
 Actions and the invoker
 -----------------------

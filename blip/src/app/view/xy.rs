@@ -1,5 +1,5 @@
-//! An XY plot: traces plotted against another trace instead of against time, e.g. a
-//! position as a path.
+//! An XY plot: traces plotted against other traces instead of against time, e.g.
+//! positions as paths.
 
 use super::Selectable;
 use super::heatmap::{index_spacer, index_x_axis, sample_at_cursor};
@@ -12,7 +12,7 @@ use crate::app::model::numbers::{SHOWN_DIGITS, format_significant};
 use crate::app::model::traces::{Samples, Series, Trace};
 use crate::app::theme;
 use crate::app::time::TimeRange;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
 /// Upper bound of points drawn per trace.
@@ -21,21 +21,31 @@ const MAX_POINTS: usize = 20_000;
 const FADE_STEPS: usize = 8;
 /// How far the trail fades out unless set otherwise.
 const DEFAULT_FADE: f32 = 0.85;
+/// Width of the choice between the x and the y axis in the properties.
+const AXIS_CHOICE_WIDTH: f32 = 64.0;
 /// Radius of the marks of the points.
 const POINT_RADIUS: f32 = 2.0;
 
-/// The shown traces plotted against one of them, the x trace, within the shown
-/// window. Or the shown arrays at the cursor time, plotted over the indices of their
-/// elements, e.g. snapshots of an ADC.
+/// The shown traces on the y axis, each plotted against one of the shown traces on
+/// the x axis, within the shown window. Or the shown arrays at the cursor time,
+/// plotted over the indices of their elements, e.g. snapshots of an ADC.
 #[derive(serde::Deserialize, serde::Serialize, Clone)]
 #[serde(default)]
 pub struct Xy {
-    /// Path of the trace on the x axis, see [`Xy::x_path`].
+    /// Path of the single x trace in layouts before version 4, see [`Xy::migrate_v3`].
+    #[serde(skip_serializing)]
     pub x: Option<String>,
-    /// Paths of the shown traces, the x trace and the traces on the y axis, or the
-    /// shown arrays, see [`Xy::array_paths`].
+    /// Paths of the shown traces, on the x axis and on the y axis, or the shown
+    /// arrays, see [`Xy::array_paths`].
     #[serde(alias = "streams")] // the name before layout version 3
     pub traces: BTreeSet<String>,
+    /// Paths of the shown traces on the x axis.
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    pub xs: BTreeSet<String>,
+    /// For each shown trace on the y axis, the path of the x trace it is plotted
+    /// against, see [`Xy::assign_axes`].
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub against: BTreeMap<String, String>,
     /// Whether a unit has the same length on both axes, e.g. for positions.
     pub equal_axes: bool,
     /// When the points are marked.
@@ -52,6 +62,8 @@ impl Default for Xy {
         Self {
             x: None,
             traces: BTreeSet::new(),
+            xs: BTreeSet::new(),
+            against: BTreeMap::new(),
             equal_axes: false,
             points: ShowPoints::default(),
             fade: DEFAULT_FADE,
@@ -238,6 +250,52 @@ pub(super) fn plot_array(
     }
 }
 
+/// The parent of `path` and the name of its last level.
+fn split_last(path: &str) -> (&str, &str) {
+    match path.rfind(['/', '.']) {
+        Some(index) => (&path[..index], &path[index + 1..]),
+        None => ("", path),
+    }
+}
+
+/// For a trace named y, the path of its sibling named x, e.g. `pose.x` for `pose.y`.
+fn x_sibling(path: &str) -> Option<String> {
+    let (_, name) = split_last(path);
+    let x = match name {
+        "y" => "x",
+        "Y" => "X",
+        _ => return None,
+    };
+    Some(format!("{}{x}", &path[..path.len() - name.len()]))
+}
+
+/// The names of the `lines`, each an x and a y path: the parent of both if they share
+/// it and no other line does, e.g. `pose` for `pose.x` and `pose.y`, else the name of
+/// the y trace; as short as they can be told apart.
+fn line_names<'a>(lines: &[(&'a str, &'a str)]) -> Vec<&'a str> {
+    let parent = |(x, y): (&'a str, &'a str)| {
+        let (x_parent, _) = split_last(x);
+        let (y_parent, _) = split_last(y);
+        (x_parent == y_parent && !y_parent.is_empty()).then_some(y_parent)
+    };
+    let keys: Vec<&str> = lines
+        .iter()
+        .map(|&line| match parent(line) {
+            Some(shared)
+                if lines
+                    .iter()
+                    .filter(|&&other| parent(other) == Some(shared))
+                    .count()
+                    == 1 =>
+            {
+                shared
+            }
+            _ => line.1,
+        })
+        .collect();
+    short_names(keys)
+}
+
 /// The label of an axis: the name of its trace and the unit of its traces.
 fn axis_label(name: &str, unit: Option<&str>) -> String {
     match unit {
@@ -255,6 +313,20 @@ impl Xy {
         }
     }
 
+    /// Before layout version 4, there was one x trace: the chosen one if it was shown,
+    /// else the first shown trace, and all other traces were plotted against it.
+    pub fn migrate_v3(&mut self) {
+        let x = (self.x.take())
+            .filter(|x| self.traces.contains(x))
+            .or_else(|| self.traces.first().cloned());
+        if let Some(x) = x {
+            for y in self.traces.iter().filter(|&path| *path != x) {
+                self.against.insert(y.clone(), x.clone());
+            }
+            self.xs.insert(x);
+        }
+    }
+
     /// Paths of the shown traces that are whole arrays, plotted over the indices of
     /// their elements instead of against the x trace.
     fn array_paths<'a>(&'a self, model: &Model) -> Vec<&'a str> {
@@ -267,22 +339,79 @@ impl Xy {
             .collect()
     }
 
-    /// Path of the trace on the x axis: the chosen one if it is shown, else the first
-    /// shown trace.
-    pub fn x_path(&self) -> Option<&str> {
-        self.x
-            .as_deref()
-            .filter(|x| self.traces.contains(*x))
-            .or_else(|| self.traces.first().map(String::as_str))
+    /// Puts each shown trace on an axis and forgets the traces that are not shown.
+    /// Each newly shown trace named y whose sibling named x is shown too is plotted
+    /// against it, e.g. `pose.y` against `pose.x`. The other new traces and those
+    /// whose x trace is gone are plotted against the first x trace, or the first of
+    /// them is the x trace if there is none.
+    fn assign_axes(&mut self, model: &Model) {
+        if !self.array_paths(model).is_empty() {
+            // arrays are plotted over the indices of their elements
+            self.xs.clear();
+            self.against.clear();
+            return;
+        }
+        let traces = &self.traces;
+        self.xs.retain(|path| traces.contains(path));
+        let xs = &self.xs;
+        self.against
+            .retain(|y, x| traces.contains(y) && !xs.contains(y) && xs.contains(x));
+        let new: Vec<&String> = (traces.iter())
+            .filter(|&path| !xs.contains(path) && !self.against.contains_key(path))
+            .collect();
+        let mut rest = vec![];
+        for &path in &new {
+            let x = x_sibling(path).filter(|x| self.xs.contains(x) || new.contains(&x));
+            match x {
+                Some(x) => {
+                    self.xs.insert(x.clone());
+                    self.against.insert(path.clone(), x);
+                }
+                None => rest.push(path),
+            }
+        }
+        for path in rest {
+            if self.xs.contains(path) {
+                // the sibling of a trace named y
+                continue;
+            }
+            match self.xs.first() {
+                Some(x) => {
+                    self.against.insert(path.clone(), x.clone());
+                }
+                None => {
+                    self.xs.insert(path.clone());
+                }
+            }
+        }
     }
 
-    /// Paths of the traces on the y axis: the shown traces but the x trace.
-    fn y_paths(&self) -> impl Iterator<Item = &str> {
-        let x = self.x_path();
-        self.traces
-            .iter()
-            .map(String::as_str)
-            .filter(move |&path| Some(path) != x)
+    /// Puts the trace at `path` on the x axis if `is_x`, else on the y axis against
+    /// the first x trace. If it was the only x trace, another trace takes its place.
+    fn set_axis(&mut self, path: &str, is_x: bool) {
+        if is_x {
+            self.against.remove(path);
+            self.xs.insert(path.to_owned());
+            return;
+        }
+        self.xs.remove(path);
+        if self.xs.is_empty()
+            && let Some(other) = self.traces.iter().find(|&other| other != path)
+        {
+            self.against.remove(other);
+            self.xs.insert(other.clone());
+        }
+        if let Some(x) = self.xs.first() {
+            self.against.insert(path.to_owned(), x.clone());
+        }
+    }
+
+    /// The lines plotted, each the path of an x trace and of a y trace plotted
+    /// against it, in the order of the y traces.
+    fn lines(&self) -> Vec<(&str, &str)> {
+        (self.against.iter())
+            .map(|(y, x)| (x.as_str(), y.as_str()))
+            .collect()
     }
 
     /// A plot with `x_axis` and the y axis labelled `y_label`, whose tooltips name the
@@ -366,15 +495,19 @@ impl Xy {
         }
     }
 
-    /// Shows the shown traces against the x trace within the shown window.
+    /// Shows the y traces against their x traces within the shown window.
     fn show_plot(&self, ui: &mut egui::Ui, model: &Model, time: &TimeRange) {
-        let x_path = self.x_path();
-        let y_paths: Vec<&str> = self.y_paths().collect();
-        let names = short_names(y_paths.iter().copied());
-        let x_unit = x_path.and_then(|x| model.traces.unit(x));
-        let x_label = axis_label(&short_names(x_path).concat(), x_unit);
+        let lines = self.lines();
+        let names = line_names(&lines);
+        let x_paths: BTreeSet<&str> = lines.iter().map(|&(x, _)| x).collect();
+        let y_paths: Vec<&str> = lines.iter().map(|&(_, y)| y).collect();
+        let x_unit = super::common_unit(model, x_paths.iter().copied());
+        let x_label = match short_names(x_paths.iter().copied())[..] {
+            [name] => axis_label(name, x_unit),
+            _ => axis_label("", x_unit),
+        };
         let y_unit = super::common_unit(model, y_paths.iter().copied());
-        let y_label = match names[..] {
+        let y_label = match short_names(y_paths.iter().copied())[..] {
             [name] => axis_label(name, y_unit),
             _ => axis_label("", y_unit),
         };
@@ -383,14 +516,10 @@ impl Xy {
 
         // the plot fits all values, also outside the shown window, until panned or
         // zoomed, and again after a double click
-        let x = x_path.and_then(|path| model.traces.series(path));
-        if let Some((low, high)) = x.and_then(|x| x.range) {
+        for (low, high) in (x_paths.iter()).filter_map(|path| model.traces.series(path)?.range) {
             plot = plot.include_x(low).include_x(high);
         }
-        for (low, high) in y_paths
-            .iter()
-            .filter_map(|path| model.traces.series(path)?.range)
-        {
+        for (low, high) in (y_paths.iter()).filter_map(|path| model.traces.series(path)?.range) {
             plot = plot.include_y(low).include_y(high);
         }
         let range = time
@@ -400,16 +529,17 @@ impl Xy {
         let ring_color = ui.visuals().strong_text_color();
         let visuals = ui.visuals().clone();
         let response = plot.show(ui, |plot_ui| {
-            let (Some(x), Some(range)) = (x, range) else {
+            let Some(range) = range else {
                 return;
             };
-            for (index, (path, name)) in y_paths.iter().zip(&names).enumerate() {
-                let Some(y) = model.traces.series(path) else {
+            for (index, (&(x_path, y_path), name)) in lines.iter().zip(&names).enumerate() {
+                let (Some(x), Some(y)) = (model.traces.series(x_path), model.traces.series(y_path))
+                else {
                     continue;
                 };
                 let color = theme::trace_color(&visuals, index);
                 let points = thin_out(pair(x, y, within(y.timestamps, range)), MAX_POINTS);
-                let style = self.line_styles.of(path);
+                let style = self.line_styles.of(y_path);
                 self.plot_trail(name, &points, color, style, plot_ui);
 
                 // where the trace was at the cursor
@@ -497,7 +627,7 @@ impl Viewable for Xy {
     fn colored_paths(&self, model: &Model) -> Vec<String> {
         let arrays = self.array_paths(model);
         let paths = if arrays.is_empty() {
-            self.y_paths().collect()
+            self.against.keys().map(String::as_str).collect()
         } else {
             arrays
         };
@@ -511,10 +641,11 @@ impl Viewable for Xy {
 
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         self.line_styles.retain_shown(&self.traces);
+        self.assign_axes(context.model);
         let arrays = self.array_paths(context.model);
         if !arrays.is_empty() {
             self.show_arrays(ui, context.model, context.time, &arrays);
-        } else if self.traces.len() < 2 {
+        } else if self.against.is_empty() {
             ui.weak("Select an x and a y trace, or an array, in the traces panel");
         } else {
             self.show_plot(ui, context.model, context.time);
@@ -525,22 +656,49 @@ impl Viewable for Xy {
         let arrays: Vec<String> = (self.array_paths(context.model).into_iter())
             .map(str::to_owned)
             .collect();
-        let x_path = self.x_path().map(str::to_owned);
+        self.assign_axes(context.model);
         let paths: Vec<String> = self.traces.iter().cloned().collect();
         let names = short_names(paths.iter().map(String::as_str));
+        let name_by_path: BTreeMap<&str, &str> = (paths.iter().map(String::as_str))
+            .zip(names.iter().copied())
+            .collect();
+        let name_of = |path: &str| name_by_path.get(path).copied().unwrap_or("").to_owned();
         super::properties_section(ui, "Axes", |ui| {
             if arrays.is_empty() {
-                for (path, name) in paths.iter().zip(names) {
+                for (path, &name) in paths.iter().zip(&names) {
                     super::property_label(ui, name).on_hover_text(path);
-                    let mut is_x = x_path.as_ref() == Some(path);
-                    if theme::segmented(ui, &mut is_x, &[(true, "X"), (false, "Y")]) {
-                        self.x = if is_x {
-                            Some(path.clone())
-                        } else {
-                            // another trace becomes the x trace
-                            paths.iter().find(|other| *other != path).cloned()
+                    ui.horizontal(|ui| {
+                        let mut is_x = self.xs.contains(path);
+                        let height = ui.spacing().interact_size.y;
+                        let changed = ui
+                            .allocate_ui(egui::vec2(AXIS_CHOICE_WIDTH, height), |ui| {
+                                theme::segmented(ui, &mut is_x, &[(true, "X"), (false, "Y")])
+                            })
+                            .inner;
+                        if changed {
+                            self.set_axis(path, is_x);
+                            self.assign_axes(context.model);
+                        }
+                        let Some(current) = self.against.get(path).cloned() else {
+                            return;
                         };
-                    }
+                        egui::ComboBox::from_id_salt(("xy against", path))
+                            .selected_text(name_of(&current))
+                            .width(90.0)
+                            .show_ui(ui, |ui| {
+                                for x in &self.xs {
+                                    if ui
+                                        .selectable_label(*x == current, name_of(x))
+                                        .on_hover_text(x)
+                                        .clicked()
+                                    {
+                                        self.against.insert(path.clone(), x.clone());
+                                    }
+                                }
+                            })
+                            .response
+                            .on_hover_text(format!("Plotted against {current}"));
+                    });
                     ui.end_row();
                 }
             } else {
@@ -576,7 +734,7 @@ impl Viewable for Xy {
             ui.end_row();
         });
         let styled: Vec<String> = if arrays.is_empty() {
-            self.y_paths().map(str::to_owned).collect()
+            self.against.keys().cloned().collect()
         } else {
             arrays
         };
@@ -624,19 +782,133 @@ mod tests {
         assert_eq!(pair(x, y, 2..3), [[1.0, 30.0]]);
     }
 
-    #[test]
-    fn the_x_trace_is_the_chosen_or_else_the_first_shown_trace() {
+    /// An XY view of the traces at `paths` with their axes assigned.
+    fn xy_of(paths: &[&str]) -> Xy {
         let mut xy = Xy {
-            traces: ["a", "b", "c"].map(str::to_owned).into(),
+            traces: paths.iter().map(|&path| path.to_owned()).collect(),
             ..Xy::default()
         };
-        assert_eq!(xy.x_path(), Some("a"));
-        assert_eq!(xy.y_paths().collect::<Vec<_>>(), ["b", "c"]);
-        xy.x = Some("b".to_owned());
-        assert_eq!(xy.x_path(), Some("b"));
-        assert_eq!(xy.y_paths().collect::<Vec<_>>(), ["a", "c"]);
-        xy.traces.remove("b");
-        assert_eq!(xy.x_path(), Some("a"));
+        xy.assign_axes(&Model::default());
+        xy
+    }
+
+    /// The lines of `xy` as owned pairs of x and y paths.
+    fn lines_of(xy: &Xy) -> Vec<(String, String)> {
+        (xy.lines().into_iter())
+            .map(|(x, y)| (x.to_owned(), y.to_owned()))
+            .collect()
+    }
+
+    fn line(x: &str, y: &str) -> (String, String) {
+        (x.to_owned(), y.to_owned())
+    }
+
+    #[test]
+    fn the_first_trace_is_the_x_trace_unless_siblings_pair_up() {
+        let xy = xy_of(&["a", "b", "c"]);
+        assert_eq!(lines_of(&xy), [line("a", "b"), line("a", "c")]);
+
+        let xy = xy_of(&[
+            "heading",
+            "one/pose.x",
+            "one/pose.y",
+            "two/pos/X",
+            "two/pos/Y",
+        ]);
+        assert_eq!(
+            lines_of(&xy),
+            [
+                line("one/pose.x", "heading"),
+                line("one/pose.x", "one/pose.y"),
+                line("two/pos/X", "two/pos/Y"),
+            ]
+        );
+    }
+
+    #[test]
+    fn newly_shown_traces_keep_the_axes_of_the_others() {
+        let mut xy = xy_of(&["a", "b"]);
+        // a y trace whose sibling x is already an x trace
+        for path in ["c", "p.x", "p.y"] {
+            xy.traces.insert(path.to_owned());
+            xy.assign_axes(&Model::default());
+        }
+        assert_eq!(
+            lines_of(&xy),
+            [
+                line("a", "b"),
+                line("a", "c"),
+                line("a", "p.x"),
+                line("a", "p.y")
+            ]
+        );
+        xy.set_axis("p.x", true);
+        xy.against.remove("p.y");
+        xy.assign_axes(&Model::default());
+        assert_eq!(lines_of(&xy)[2], line("p.x", "p.y"));
+    }
+
+    #[test]
+    fn y_traces_of_a_gone_x_trace_move_to_another_one() {
+        let mut xy = xy_of(&["a", "b", "p.x", "p.y"]);
+        xy.set_axis("a", true);
+        xy.against.insert("b".to_owned(), "p.x".to_owned());
+        xy.traces.remove("p.x");
+        xy.assign_axes(&Model::default());
+        assert_eq!(lines_of(&xy), [line("a", "b"), line("a", "p.y")]);
+
+        // without an x trace, the first trace takes its place
+        xy.traces.remove("a");
+        xy.assign_axes(&Model::default());
+        assert_eq!(lines_of(&xy), [line("b", "p.y")]);
+    }
+
+    #[test]
+    fn the_only_x_trace_put_on_the_y_axis_gives_way_to_another() {
+        let mut xy = xy_of(&["a", "b", "c"]);
+        xy.set_axis("a", false);
+        xy.assign_axes(&Model::default());
+        assert_eq!(xy.xs, ["b".to_owned()].into());
+        assert_eq!(lines_of(&xy), [line("b", "a"), line("b", "c")]);
+
+        // with another x trace, the y traces of the one moved stay on that
+        xy.set_axis("c", true);
+        xy.against.insert("a".to_owned(), "c".to_owned());
+        xy.set_axis("c", false);
+        xy.assign_axes(&Model::default());
+        assert_eq!(lines_of(&xy), [line("b", "a"), line("b", "c")]);
+    }
+
+    #[test]
+    fn version_3_layouts_plot_all_traces_against_their_one_x_trace() {
+        let mut xy: Xy =
+            serde_json::from_str(r#"{"x": "b", "traces": ["b", "p.x", "p.y"]}"#).unwrap();
+        xy.migrate_v3();
+        xy.assign_axes(&Model::default());
+        assert_eq!(lines_of(&xy), [line("b", "p.x"), line("b", "p.y")]);
+        let json = serde_json::to_string(&xy).unwrap();
+        assert!(!json.contains(r#""x""#), "{json}");
+
+        let mut xy: Xy = serde_json::from_str(r#"{"traces": ["a", "b"]}"#).unwrap();
+        xy.migrate_v3();
+        assert_eq!(lines_of(&xy), [line("a", "b")]);
+    }
+
+    #[test]
+    fn lines_are_named_after_the_parent_they_share() {
+        assert_eq!(
+            line_names(&[
+                ("one/pose.x", "one/pose.y"),
+                ("two/pose.x", "two/pose.y"),
+                ("one/pose.x", "speed"),
+            ]),
+            ["one/pose", "two/pose", "speed"]
+        );
+        // two lines of one parent are named after their y traces
+        assert_eq!(
+            line_names(&[("pose.x", "pose.y"), ("pose.x", "pose.z"), ("x", "y")]),
+            ["pose.y", "z", "y"]
+        );
     }
 
     #[test]
