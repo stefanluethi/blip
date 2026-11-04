@@ -51,7 +51,7 @@ or in the browser (then open http://127.0.0.1:8080)::
 
    cd blip && trunk serve
 
-blip starts with a tab holding a plot and a log view. The window has five
+blip starts with an empty layout. The window has five
 parts, see :doc:`blip/index`: the menu on top, the traces and the layout on
 the left, the properties and the connections on the right, the views in the
 center and the time range at the bottom.
@@ -68,14 +68,11 @@ center and the time range at the bottom.
    only while recording; before, it only learns which traces and actions
    there are.
 
-The log view starts to fill with log records of the components ``sensor``,
-``net``, ``storage`` and ``power``.
-
 4. Plot something
 -----------------
 
-#. Click the plot (or **Plot 1** in the **Layout** panel) to select it. The
-   tree on the left now chooses what this plot shows.
+#. The empty center shows the view types; click **Plot** to add a plot in a
+   new tab. It is selected, so the tree on the left now chooses what it shows.
 #. Check ``sysinfo`` › ``cpu``: one line per CPU core. Checking a branch also
    adds what arrives below it later.
 #. Expand ``imu`` and check ``.acc``: the three elements of the acceleration
@@ -124,8 +121,10 @@ Drag a view by its title onto the side of another view to arrange them, see
    and drag again; plot ``motor`` › ``.speed_rpm`` to watch the motor follow.
 #. Check ``imu`` › ``calibrate``: it asks for confirmation before it is sent.
 
-Every invocation also appears in the log view, with the component
-``actions``. See :doc:`blip/actions`.
+Every invocation also appears as a log record with the component
+``actions``; add a **Logs** view to see them, next to the log records of the
+components ``sensor``, ``net``, ``storage`` and ``power``. See
+:doc:`blip/actions`.
 
 7. Inspect and keep what you saw
 --------------------------------

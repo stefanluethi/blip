@@ -1058,7 +1058,10 @@ mod tests {
         use egui_kittest::Harness;
         use egui_kittest::kittest::Queryable;
 
-        let mut app = App::default();
+        let mut app = App {
+            layout: layout::Layout::with_plot_and_logs(),
+            ..App::default()
+        };
         app.layout.select_view_showing_traces();
         app.state.set_recording(true, true);
         app.state.receive("a", &value_of("motor/rpm", 1), 0.0);

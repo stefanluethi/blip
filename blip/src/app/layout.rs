@@ -97,21 +97,28 @@ pub struct Layout {
     properties_name: Option<(TileId, String)>,
 }
 
+/// An empty layout without tabs, which shows the view types to add the first view.
 impl Default for Layout {
     fn default() -> Self {
-        let mut layout = Self::from_file(LayoutFile {
+        Self::from_file(LayoutFile {
             version: file::VERSION,
             root: file::Group::tabs(vec![]),
-        });
+        })
+    }
+}
+
+impl Layout {
+    /// A layout with one tab holding a plot and a log view, for tests.
+    #[cfg(test)]
+    pub fn with_plot_and_logs() -> Self {
+        let mut layout = Self::default();
         let main = layout.add_tab();
         layout.add_view_into(main, ViewType::Plot);
         layout.add_view_into(main, ViewType::Logs);
         layout.selected = Some(main);
         layout
     }
-}
 
-impl Layout {
     pub fn from_file(file: LayoutFile) -> Self {
         let (tree, group_names) = file.load();
         Self {
@@ -1159,20 +1166,19 @@ mod tests {
         GroupKind::of(layout.container(tile_id).unwrap())
     }
 
-    /// The default layout with its tab, plot and log view.
+    /// A layout with a tab holding a plot and a log view, and their ids.
     fn default_layout() -> (Layout, TileId, TileId, TileId) {
-        let layout = Layout::default();
+        let layout = Layout::with_plot_and_logs();
         let tab = children(&layout, layout.root())[0];
         let views = children(&layout, tab);
         (layout, tab, views[0], views[1])
     }
 
     #[test]
-    fn default_layout_has_a_tab_with_a_plot_and_logs() {
-        let (layout, tab, plot, logs) = default_layout();
-        assert_eq!(kind(&layout, tab), GroupKind::Vertical);
-        assert_eq!(layout.view(plot).unwrap().view_type(), ViewType::Plot);
-        assert_eq!(layout.view(logs).unwrap().view_type(), ViewType::Logs);
+    fn the_default_layout_is_empty() {
+        let layout = Layout::default();
+        assert!(children(&layout, layout.root()).is_empty());
+        assert_eq!(layout.selected, None);
     }
 
     #[test]
@@ -1298,7 +1304,7 @@ mod tests {
 
     #[test]
     fn clicking_the_open_tab_renames_it() {
-        let mut layout = Layout::default();
+        let mut layout = Layout::with_plot_and_logs();
         let main = children(&layout, layout.root())[0];
         layout.add_tab();
         let renaming = Rc::new(RefCell::new(None));

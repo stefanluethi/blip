@@ -3,8 +3,9 @@ Layout and properties
 
 The views are arranged in **tabs** in the center. A tab holds its views in
 **groups**, stacked vertically or side by side, or shown as tabs again. blip
-starts with one tab holding a plot and a log view; **File › Reset layout**
-returns to that.
+starts with an empty layout that shows the view types (see :doc:`views`);
+click one to add a view of that type in a new tab. **File › Reset layout**
+returns to the empty layout.
 
 Adding views and tabs
 ---------------------

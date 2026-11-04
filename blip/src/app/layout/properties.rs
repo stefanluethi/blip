@@ -118,8 +118,8 @@ mod tests {
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
 
-    /// A harness showing the properties panel of the default layout with what
-    /// `selected` picks from its tab and the views in it selected.
+    /// A harness showing the properties panel of a layout with a plot and a log view,
+    /// with what `selected` picks from its tab and the views in it selected.
     fn harness(selected: impl FnOnce(TileId, &[TileId]) -> TileId) -> Harness<'static, Layout> {
         harness_with(Model::default(), selected)
     }
@@ -129,7 +129,7 @@ mod tests {
         model: Model,
         selected: impl FnOnce(TileId, &[TileId]) -> TileId,
     ) -> Harness<'static, Layout> {
-        let mut layout = Layout::default();
+        let mut layout = Layout::with_plot_and_logs();
         let tab = layout.container(layout.root()).unwrap().children_vec()[0];
         let views = layout.container(tab).unwrap().children_vec();
         layout.select(selected(tab, &views));

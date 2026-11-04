@@ -26,7 +26,7 @@ File menu
    file, see :doc:`layout`.
 
 **Reset layout**
-   Returns to a tab with a plot and a log view.
+   Returns to the empty layout, with no tabs or views.
 
 Recording and layout files can also be **dropped onto the window**; blip tells
 them apart by their contents.
