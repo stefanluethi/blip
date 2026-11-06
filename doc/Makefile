@@ -47,7 +47,7 @@ diagrams: $(DIAGRAMS:.drawio=.svg) $(DIAGRAMS:.drawio=-dark.svg)
 	$(PYTHON) $(PALETTE) fonts "$@"
 
 # Render the screenshots of blip to source/screenshots from the demo recording and
-# layout in blip/tests/data, in both themes, with wgpu; see
+# preset in blip/tests/data, in both themes, with wgpu; see
 # blip/src/app/screenshots.rs. Times show in UTC. optipng, if installed, makes the
 # PNGs smaller.
 OPTIPNG ?= $(shell command -v optipng)

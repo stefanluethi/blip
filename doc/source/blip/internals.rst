@@ -37,6 +37,10 @@ Structure
        and the invoker, and the rules between them (a recording starts only
        while connected and clears the data; the first connection to open
        starts afresh).
+   * - ``app/presets.rs``
+     - The ``Presets``: the kept presets and which is active, their menu, the
+       dialogs to rename, delete, export and import them, and the versioned
+       ``PresetsFile`` format.
    * - ``app/connections.rs``
      - The list of connections, opened from the status chip in the menu bar,
        and one ``ewebsock`` socket per open address.
@@ -258,19 +262,29 @@ uses to enable checkboxes and to filter.
 To add a view type: add its struct with ``Default``, ``Viewable`` and
 ``ViewInfo`` in a file in ``app/view``, and a line to the list in ``views!`` in
 ``app/view/mod.rs``, which makes ``ViewKind``, ``ViewType`` and their
-dispatch. The name of the line is saved in layouts. Its settings are saved
+dispatch. The name of the line is saved in presets. Its settings are saved
 with the layout through serde; give new fields defaults (``#[serde(default)]``)
-so older layouts still load.
+so older presets still load.
 
-The saved layout
-~~~~~~~~~~~~~~~~
+Presets
+~~~~~~~
 
-``LayoutFile`` is the saved form: a version and the tree of groups and views,
-as JSON, described for users in :doc:`/reference/files`. It is written to the
-app storage under its own key and by **Save layout**. ``LayoutFile::migrate``
-brings older versions up to date, one version after another; a layout of a
-newer version is refused. Format changes must add a migration, not drop old
-layouts, and a line to the versions in :doc:`/reference/files`.
+The ``Layout`` and the ``Connections`` shown are those of the active preset.
+``Layout::to_saved`` gives the saved form of the layout, the ``Group`` of the
+tabs at the top level with the groups and views below (``layout/file.rs``),
+and ``Connections::saved`` the names and addresses. ``App::store_preset``
+writes both into the active ``Preset`` before the presets are kept, exported
+or switched; ``App::show_preset`` loads the active one, disconnected.
+Changing the active preset is not offered while recording, since it changes
+the connections.
+
+``PresetsFile`` is the one saved form, for the kept presets and the files: a
+version and the presets, as JSON, described for users in
+:doc:`/reference/files`. ``presets::read`` reads the version first and
+brings older versions up to date, one version after another, before reading
+the presets; a file of a newer version is refused, and so are presets without
+a name or with the same name. Format changes must add a migration there, not
+drop old presets, and a line to the versions in :doc:`/reference/files`.
 
 Actions and the invoker
 -----------------------
@@ -296,9 +310,10 @@ choices follow it, but never infers success from it.
 Persistence
 -----------
 
-eframe's storage keeps the serialised ``App`` (window length, connections,
-panel state; the data is skipped) under its app key and the ``LayoutFile``
-under ``layout``. eframe saves every 30 seconds and on exit; on the web,
+eframe's storage keeps the serialised ``App`` (window length, panel state;
+the data, the layout and the connections are skipped) under its app key, the
+JSON of the ``PresetsFile`` under ``presets`` and the name of the active
+preset under ``active preset``. eframe saves every 30 seconds and on exit; on the web,
 ``main.rs`` also saves when the page is hidden or left, as eframe's own save
 on closing does not run there. egui keeps its memory, e.g. the zoom and the
 theme.
@@ -324,6 +339,6 @@ local ``tungstenite`` WebSocket server.
 
 The screenshots of this documentation are tests too (``app/screenshots.rs``,
 behind the ``screenshots`` feature and ignored by default): they render the
-app with wgpu from the recording ``tests/data/demo.blip`` and the layout
-``tests/data/demo-layout.json``, the window connected to a WebSocket server in
+app with wgpu from the recording ``tests/data/demo.blip`` and the preset
+``tests/data/demo-presets.json``, the window connected to a WebSocket server in
 the test as to an outpost. ``make screenshots`` in ``doc`` runs them.

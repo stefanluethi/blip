@@ -247,8 +247,19 @@ Platforms
    :status: implemented
    :component: blip
 
-   blip shall persist the layout of the views and the target addresses across
-   restarts.
+   blip shall persist the presets, each with the layout of the views and the
+   connections, and which preset is active across restarts.
+
+.. req:: Presets
+   :id: REQ_PRESETS
+   :status: implemented
+   :component: blip
+   :satisfies: STK_LIVE_OBSERVE
+
+   blip shall keep named presets, each with the layout of the views and the
+   connections, show those of the active preset, and switch between them
+   while not recording. Changes of the layout and the connections shall apply
+   to the active preset.
 
 Files
 -----
@@ -263,14 +274,15 @@ Files
    a recording file, and open recording files, showing their data as if it
    had been received, in place of all data, traces and actions before.
 
-.. req:: Save and open layouts
-   :id: REQ_FILE_LAYOUT
+.. req:: Export and import presets
+   :id: REQ_FILE_PRESETS
    :status: implemented
    :component: blip
    :satisfies: STK_REVIEW
 
-   blip shall save the layout of the views to a JSON file and open layout
-   files saved by the same or an older version of blip.
+   blip shall export the presets the user chooses to one JSON file, and
+   import the presets the user chooses from a file exported by the same or an
+   older version of blip, replacing the presets of the same names.
 
 Outpost
 -------

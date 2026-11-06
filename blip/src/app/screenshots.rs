@@ -1,4 +1,4 @@
-//! Renders the screenshots of the documentation, from a fixed recording and layout, in
+//! Renders the screenshots of the documentation, from a fixed recording and preset, in
 //! the light and the dark theme, with wgpu:
 //!
 //! ```text
@@ -11,8 +11,8 @@
 //! depend on the time zone of the machine.
 //!
 //! The recording `tests/data/demo.blip` is 30 s of the outpost's simulator while a
-//! script invoked some of its actions, the layout `tests/data/demo-layout.json` shows
-//! it; both can also be opened in blip. The window is rendered connected to a
+//! script invoked some of its actions, the preset `tests/data/demo-presets.json`
+//! shows it; both can also be opened in blip. The window is rendered connected to a
 //! WebSocket server in the test that sends the recording, on port 3000 where blip
 //! looks for an outpost by default (or another port while an outpost runs there); the
 //! views and panels are rendered on their own.
@@ -27,7 +27,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 const RECORDING: &[u8] = include_bytes!("../../tests/data/demo.blip");
-const LAYOUT: &str = include_str!("../../tests/data/demo-layout.json");
+const PRESETS: &[u8] = include_bytes!("../../tests/data/demo-presets.json");
 
 /// Pixels per point of the screenshots, for sharp images on high density screens.
 const PIXELS_PER_POINT: f32 = 2.0;
@@ -60,8 +60,8 @@ fn demo_model() -> model::Model {
 }
 
 fn demo_layout() -> layout::Layout {
-    let file = serde_json::from_str(LAYOUT).expect("the demo layout is a layout");
-    layout::Layout::migrate(file).expect("the demo layout has a known version")
+    let mut presets = presets::read("demo-presets.json", PRESETS).expect("the demo presets read");
+    layout::Layout::from_saved(presets.remove(0).layout)
 }
 
 /// Renders the harness in the light and the dark theme, to `name.png` and
@@ -142,10 +142,10 @@ fn screenshots_window() {
         .build_eframe(|cc| App::new(cc));
     let app = harness.state_mut();
     app.layout = demo_layout();
-    app.connections = serde_json::from_value(serde_json::json!({
-        "connections": [{"name": "outpost", "address": address}]
-    }))
-    .expect("connections");
+    app.connections.set_saved(vec![connections::Connection {
+        name: "outpost".to_owned(),
+        address,
+    }]);
     harness.run_steps(2);
 
     // connect as the user does, from the list of the connection chip, then record

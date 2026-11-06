@@ -81,8 +81,8 @@ image:
 
 The screenshots in `source/screenshots` are rendered by tests of blip with
 [egui_kittest](https://docs.rs/egui_kittest) and wgpu, from the 30 s recording
-of the simulator `blip/tests/data/demo.blip` and the layout
-`blip/tests/data/demo-layout.json`, in the light (`name.png`) and the dark
+of the simulator `blip/tests/data/demo.blip` and the preset
+`blip/tests/data/demo-presets.json`, in the light (`name.png`) and the dark
 theme (`name-dark.png`):
 
 ```bash

@@ -52,7 +52,6 @@ named_enum! {
 #[serde(default)]
 pub struct Heatmap {
     /// Path of the shown trace, at most one.
-    #[serde(alias = "streams")] // the name before layout version 3
     pub traces: BTreeSet<String>,
     pub mode: ArrayMode,
     /// The values at the ends of the colour scale, or `None` to fit the shown values.

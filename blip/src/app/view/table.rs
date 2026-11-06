@@ -52,7 +52,6 @@ named_enum! {
 pub struct Table {
     pub layout: TableLayout,
     /// Paths of the shown traces, or of the shown records in the records layout.
-    #[serde(alias = "streams")] // the name before layout version 3
     pub traces: BTreeSet<String>,
     /// The collapsed branches, by the path segments leading to them joined with "/".
     pub collapsed: BTreeSet<String>,

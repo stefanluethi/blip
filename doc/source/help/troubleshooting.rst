@@ -144,12 +144,18 @@ protobuf targets
 Files
 -----
 
-*… is no blip recording or layout: …*
-   blip tells recordings and layouts apart by their contents; the file is
-   neither, or damaged.
-*… is a layout of a newer version of blip*
-   The layout was saved by a newer blip. Update blip, see
+*… is no blip recording or presets file*
+   blip tells recordings and presets files apart by their contents; the file
+   is neither, e.g. a layout file of an earlier version of blip, or damaged.
+*… is no blip presets file: …*
+   The file has a version and presets but does not read as presets, e.g. it
+   was edited by hand. The message tells where it went wrong.
+*… holds presets of a newer version of blip*
+   The presets were exported by a newer blip. Update blip, see
    :doc:`/reference/files`.
+*… holds no presets*, *… holds a preset without a name*, *… holds two presets named …*
+   Each preset in a file needs a name, and the names differ. Fix the file,
+   e.g. one that was generated.
 *… was opened up to message …, …*
    The recording ends in the middle of a message, e.g. as the outpost was
    killed while recording. blip shows what it holds up to there.

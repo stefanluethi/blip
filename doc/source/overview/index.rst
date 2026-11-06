@@ -30,7 +30,7 @@ The parts
      - The app you look at, in the browser or native (Rust, egui). It connects
        to outposts over WebSockets.
      - Arrange views, record, inspect the data over time, save and open
-       recordings and layouts, carry out actions.
+       recordings and presets, carry out actions.
    * - :doc:`outpost </outpost/index>`
      - A Python library and command, ``blip-outpost``, that runs on the machine
        the target is attached to and serves blip.
@@ -116,7 +116,7 @@ Plain, self-describing values
 
 One time range, many views
    All views show the same window of time and the same time cursor, like a
-   dashboard. The layout is yours, saved apart from the data.
+   dashboard. The layout is yours, kept in presets apart from the data.
 
 Actions only on request
    blip never invokes an action on its own. The target decides whether to

@@ -21,15 +21,9 @@ File menu
    which they may send only when connecting or when they change. The recording
    starts again with them, so a saved recording has them too.
 
-**Open layout**, **Save layout**
-   Open and save the layout of the views, with all their settings, as a JSON
-   file, see :doc:`/blip/layout`.
-
-**Reset layout**
-   Returns to the empty layout, with no tabs or views.
-
-Recording and layout files can also be **dropped onto the window**; blip tells
-them apart by their contents.
+Recording and presets files can also be **dropped onto the window**; blip
+tells them apart by their contents. A presets file picked with **Open
+recording** or dropped is imported, see :doc:`/blip/presets`.
 
 Recording files are also written by the outpost (``record``, see
 :doc:`/outpost/index`) and by sonde's ``FileSink`` (see :doc:`/sonde/index`),
@@ -46,6 +40,13 @@ The zoom buttons zoom the whole UI in and out, also with :kbd:`Ctrl` and :kbd:`+
 and :kbd:`0` in the native app. In the browser, these keys zoom the page. The
 zoom is kept across restarts.
 
+Presets menu
+------------
+
+The presets to switch between, and **New**, **Duplicate**, **Rename** and
+**Delete preset**, **Import presets** and **Export presets**, see
+:doc:`/blip/presets`.
+
 Help menu
 ---------
 
@@ -56,9 +57,10 @@ What blip remembers
 
 blip keeps, across restarts:
 
-* the layout, with all settings of the views,
+* the presets, each with its layout, with all settings of the views, and its
+  connections, their names and addresses,
+* which preset is active,
 * the length of the window,
-* the connections, their names and addresses,
 * the zoom, the theme and whether the side panels are hidden.
 
 It does not keep the received data: save a recording to keep it. The native
@@ -68,5 +70,5 @@ app in the local storage of the browser for the site it is served from.
 Next steps
 ----------
 
-* :doc:`/reference/files` -- the formats of recordings and layouts.
+* :doc:`/reference/files` -- the formats of recordings and presets.
 * :doc:`/blip/controls` -- all mouse and keyboard controls.

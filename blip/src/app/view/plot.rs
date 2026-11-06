@@ -238,7 +238,6 @@ impl LegendPlacement {
 #[serde(default)]
 pub struct Plot {
     /// Paths of the shown traces.
-    #[serde(alias = "streams")] // the name before layout version 3
     pub traces: BTreeSet<String>,
     /// The bottom of the y axis, or `None` to fit all values of the shown traces.
     pub y_min: Option<f64>,

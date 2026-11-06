@@ -4,8 +4,9 @@ Layout and properties
 The views are arranged in **tabs** in the center. A tab holds its views in
 **groups**, stacked vertically or side by side, or shown as tabs again. blip
 starts with an empty layout that shows the view types (see :doc:`/blip/views`);
-click one to add a view of that type in a new tab. **File › Reset layout**
-returns to the empty layout.
+click one to add a view of that type in a new tab. The layout belongs to the
+active preset, see :doc:`/blip/presets`; **Presets › New preset** starts
+another with an empty layout.
 
 Adding views and tabs
 ---------------------
@@ -59,8 +60,8 @@ Properties
 ----------
 
 The **Properties** panel shows the settings of the selected view or group in
-sections that can be collapsed. Changes apply at once and are saved with the
-layout.
+sections that can be collapsed. Changes apply at once and are kept with the
+preset.
 
 * A **group** has its **Name** and **Arrange**: whether it shows its children
   as *Tabs*, *Vertical* or *Horizontal*.
@@ -69,15 +70,16 @@ layout.
 
 Log views keep their search and filters in the view itself.
 
-Saving layouts
---------------
+Keeping layouts
+---------------
 
-blip keeps the layout across restarts. **File › Save layout** saves it, with
-all settings of the views, to a JSON file, and **File › Open layout** opens
-one, e.g. a layout per project or per target. See :doc:`/blip/files`.
+The layout, with all settings of the views, is part of the active preset:
+blip keeps it across restarts, and **Presets › Export presets** saves it to a
+JSON file with the connections, e.g. a preset per project or per target. See
+:doc:`/blip/presets`.
 
 Next steps
 ----------
 
-* :doc:`/blip/files` -- save and open layouts.
-* :doc:`/reference/files` -- the layout file, to keep, compare or generate.
+* :doc:`/blip/presets` -- switch, export and import presets.
+* :doc:`/reference/files` -- the presets file, to keep, compare or generate.
