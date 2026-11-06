@@ -8,13 +8,16 @@ satisfies. How each is built is described on the internals page of its part.
    :id: ARCH_BLIP
    :status: implemented
    :component: blip
-   :satisfies: REQ_VIS_PLOT, REQ_VIS_LOG, REQ_VIS_STATES, REQ_VIS_TABLE, REQ_VIS_XY, REQ_VIS_HEATMAP, REQ_VIS_CURSOR, REQ_CONN_WS, REQ_PLAT_WEB, REQ_PLAT_NATIVE, REQ_PERSIST_STATE, REQ_CTRL_ACTION, REQ_CTRL_FEEDBACK, REQ_CTRL_VIEW, REQ_CTRL_SAFE
+   :satisfies: REQ_VIS_PLOT, REQ_VIS_LOG, REQ_VIS_STATES, REQ_VIS_TABLE, REQ_VIS_XY, REQ_VIS_HEATMAP, REQ_VIS_CURSOR, REQ_CONN_WS, REQ_PLAT_WEB, REQ_PLAT_NATIVE, REQ_PERSIST_STATE, REQ_PRESETS, REQ_CTRL_ACTION, REQ_CTRL_FEEDBACK, REQ_CTRL_VIEW, REQ_CTRL_SAFE
 
    egui/eframe application compiled to WebAssembly (served by Trunk) or to a
    native binary. Main modules in ``blip/src``, see :doc:`/blip/internals`:
 
    * ``app.rs`` -- the panels of the window, the menu, files and persistence,
      and the ``State`` of time range, recording, model and invoker.
+   * ``app/presets.rs`` -- the presets, each a layout with its connections,
+     their menu and dialogs and their versioned saved form, kept and in
+     files.
    * ``app/connections.rs`` -- the WebSocket connections and their panel;
      splits frames into messages.
    * ``app/model`` -- the data model: value ``traces``, ``logs``, the
@@ -22,8 +25,7 @@ satisfies. How each is built is described on the internals page of its part.
      tracks their answers, and the ``recording`` of the received messages.
    * ``app/time.rs`` -- the time range shared by all views, and the timeline.
    * ``app/layout`` -- the layout of the views as a tree of groups, shown
-     with ``egui_tiles``, the layout and properties panels and its versioned
-     saved form.
+     with ``egui_tiles``, the properties panel and its saved form.
    * ``app/view`` -- views: time-series ``plot``, ``states`` over time,
      ``table`` of values, ``xy`` plot, ``heatmap`` of arrays,
      ``log_table`` and the ``actions`` form; ``time_axis`` shared by the views

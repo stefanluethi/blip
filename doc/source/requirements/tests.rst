@@ -54,6 +54,20 @@ Test Cases
    over time for heatmaps, and zoom plots with the mouse wheel without panning
    them, unless disabled.
 
+.. test:: Log records are kept by path and shown in a table
+   :id: TEST_BLIP_LOGS
+   :status: implemented
+   :component: blip
+   :verifies: REQ_VIS_LOG
+
+   ``blip/src/app/model/logs.rs`` and ``blip/src/app/view/log_table.rs`` unit
+   tests -- keep records by path in the order of their times, changing the
+   order of a path only when a record arrives before others of it; show the
+   records of the picked paths merged by time, filter only new records unless
+   the filter or the paths change, filter by level, component and message, show
+   the path while several are shown, and show or hide the date and the
+   component as the properties say.
+
 .. test:: Time cursor is set and dragged
    :id: TEST_BLIP_CURSOR
    :status: implemented
@@ -163,14 +177,38 @@ Test Cases
    off file up to the cut and reject other files; open a recording in place
    of the data and units before, and with the traces panel started anew.
 
-.. test:: Layouts are saved as JSON
-   :id: TEST_BLIP_LAYOUT_FILE
+.. test:: Presets are exported and imported as JSON
+   :id: TEST_BLIP_PRESETS_FILE
    :status: implemented
    :component: blip
-   :verifies: REQ_FILE_LAYOUT
+   :verifies: REQ_FILE_PRESETS
 
    ``blip/src/app/layout/file.rs::layouts_survive_json`` -- saves a layout
    with a view of each type as JSON and checks it loads unchanged.
+   ``blip/src/app/presets.rs`` tests -- write presets with their layout and
+   connections to a file and read them back unchanged, export the chosen
+   presets, import replacing those of the same names, refuse files of a newer
+   version, layout files and presets without or with the same names, keep the
+   connections read apart, refuse an import while a dialog is open, leave out
+   the active preset while recording and take it once recording stops, keep
+   kept presets that cannot be read, read the demo presets.
+   ``blip/src/app.rs::a_presets_file_is_imported_as_chosen_in_its_dialog`` --
+   opens a presets file, imports it from its dialog and shows the replaced
+   active preset.
+
+.. test:: Presets are switched and kept
+   :id: TEST_BLIP_PRESETS
+   :status: implemented
+   :component: blip
+   :verifies: REQ_PRESETS, REQ_PERSIST_STATE
+
+   ``blip/src/app.rs`` tests -- switching, adding, duplicating and deleting
+   presets shows the layout and connections of each, and the presets menu
+   does not switch while recording. ``blip/src/app/presets.rs`` tests --
+   the presets are kept with the active one, kept presets of a newer version
+   are not read.
+   ``blip/src/app/connections.rs::connections_of_a_preset_keep_their_addresses_and_names_apart``
+   -- the connections of a preset keep their addresses and names apart.
 
 .. test:: Outpost records and replays
    :id: TEST_OUTPOST_RECORDING

@@ -15,7 +15,8 @@ outpost first, see :doc:`/start/installation`.
 .. tip::
 
    ``blip/tests/data`` has a 30 s recording of the simulator, ``demo.blip``, and a
-   layout for it, ``demo-layout.json``. Drop both onto blip to look around
+   preset for it, ``demo-presets.json``. Drop both onto blip, import the
+   *Demo* preset and switch to it in the **Presets** menu to look around
    without running anything.
 
 .. figure:: /diagrams/setups.svg
@@ -136,9 +137,9 @@ components ``sensor``, ``net``, ``storage`` and ``power``. See
 * **File › Save recording** (:kbd:`Ctrl+S`) saves everything recorded to a
   ``.blip`` file; **File › Open recording** (:kbd:`Ctrl+O`) shows it again
   later, or drop the file onto the window.
-* **File › Save layout** saves the views and their settings to a JSON file.
-  blip also keeps the layout, the window length and the connections across
-  restarts on its own.
+* blip keeps the views, their settings and the connections in the active
+  preset across restarts. **Presets › Export presets** saves them to a JSON
+  file, see :doc:`/blip/presets`.
 
 Next steps
 ----------

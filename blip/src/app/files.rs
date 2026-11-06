@@ -7,7 +7,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 #[derive(Clone, Copy)]
 pub enum Kind {
     Recording,
-    Layout,
+    Presets,
 }
 
 impl Kind {
@@ -16,14 +16,14 @@ impl Kind {
     fn name(self) -> &'static str {
         match self {
             Kind::Recording => "blip recording",
-            Kind::Layout => "blip layout",
+            Kind::Presets => "blip presets",
         }
     }
 
     pub fn extension(self) -> &'static str {
         match self {
             Kind::Recording => "blip",
-            Kind::Layout => "json",
+            Kind::Presets => "json",
         }
     }
 }

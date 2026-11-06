@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>blip design ideas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400&family=Fira+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<style>
+/* The tokens of blip/src/app/theme.rs. */
+:root, :root[data-theme="dark"] {
+  --canvas:#111217; --panel:#181b1f; --card:#181b1f; --control:#22252b; --hover:#2a2d34;
+  --border:#2a2d33; --border-strong:#3a3e46; --text:#ccccdc; --text-weak:#9a9aab; --text-faint:#6e6e80;
+  --accent:#3d71d9; --accent-text:#6e9fff; --on-accent:#fff; --cursor:#ececf4;
+  --ok:#3fbf72; --warn:#e3a93a; --error:#f2615b; --debug:#a68bfa; --trace:#80838b;
+  --t0:#648fff; --t1:#fe6100; --t2:#dc267f; --t3:#ffb000; --t4:#785ef0; --t5:#9aa0a6;
+  --tint:42%; --quiet:16%;
+  --teal:#14a0a0; --teal-text:#3cc6c6;
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --canvas:#f4f5f5; --panel:#fff; --card:#fff; --control:#f4f5f5; --hover:#eceef0;
+  --border:#dcdee1; --border-strong:#c7cacf; --text:#24292e; --text-weak:#5b6168; --text-faint:#878d95;
+  --accent:#3871dc; --accent-text:#1f62e0; --on-accent:#fff; --cursor:#3a3f46;
+  --ok:#1f9d55; --warn:#c27c0e; --error:#d93a3a; --debug:#7b61d9; --trace:#8e9199;
+  --t5:#6b7280;
+  --tint:30%; --quiet:14%;
+  --teal:#0f8a8a; --teal-text:#0b7a7a;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--canvas); color: var(--text);
+  font: 400 15px/1.5 "Fira Sans", system-ui, sans-serif;
+}
+.mono { font-family: "Fira Code", ui-monospace, monospace; }
+
+/* the page around the mockups */
+.page { max-width: 1240px; margin: 0 auto; padding: 32px 24px 80px; }
+.page > header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 40px; }
+.page > header img { width: 32px; height: 32px; }
+.page h1 { font-size: 26px; font-weight: 500; margin: 0; letter-spacing: -0.01em; }
+.page > header p { margin: 0; color: var(--text-weak); flex: 1 1 320px; }
+section.idea { margin: 0 0 64px; }
+section.idea > h2 {
+  font-size: 20px; font-weight: 500; margin: 0 0 6px; display: flex; gap: 12px; align-items: baseline;
+}
+section.idea > h2 .n { color: var(--text-faint); font-weight: 400; font-variant-numeric: tabular-nums; }
+section.idea > p { margin: 0 0 20px; max-width: 72ch; color: var(--text-weak); }
+section.idea > p b { color: var(--text); font-weight: 500; }
+.compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 24px 20px; align-items: start; }
+.compare.wide { grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); }
+.compare.one { grid-template-columns: minmax(0, 1fr); max-width: 980px; }
+.stage.narrow { max-width: 300px; }
+figure { margin: 0; min-width: 0; }
+figcaption { font-size: 13px; color: var(--text-weak); margin: 0 0 8px; display: flex; gap: 8px; align-items: baseline; }
+figcaption b { color: var(--text); font-weight: 500; }
+figcaption .pick { color: var(--accent-text); }
+
+/* The mockup of the app: egui points are CSS pixels. */
+.app { font: 300 13px/1 "Fira Sans", sans-serif; color: var(--text); }
+.app.regular { font-weight: 400; }
+.app.tnum { font-variant-numeric: tabular-nums; }
+.app .mono { font-size: 12px; font-weight: 400; }
+.app.tnum .mono { font-variant-numeric: normal; }
+.stage { background: var(--canvas); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+.stage.pad0 { padding: 0; overflow: hidden; }
+.panelbox { background: var(--panel); }
+
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; min-width: 0; }
+.card.sel { border-color: var(--accent); }
+.card-title { height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 12px; white-space: nowrap; }
+.card-title .ph { color: var(--text-weak); font-size: 14px; }
+.card-title .name { flex: 0 0 auto; }
+.card-title .more { margin-left: auto; color: var(--text-weak); font-size: 16px; }
+.card-title .unit { color: var(--text-faint); }
+.card-body { padding: 0 8px 8px; }
+.plotbox { width: 100%; }
+.card svg { display: block; }
+
+/* legend in the title row */
+.legend { display: flex; gap: 14px; overflow: hidden; margin-left: 10px; min-width: 0; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; color: var(--text-weak); }
+.legend i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+.legend .v { color: var(--text); font-family: "Fira Code", monospace; font-size: 12px; }
+
+/* trees */
+.tree { padding: 4px 0; }
+.row { height: 27px; display: flex; align-items: center; padding-right: 10px; white-space: nowrap; }
+.row .caret { width: 16px; flex: none; text-align: center; color: var(--text-weak); font-size: 10px; }
+.row .caret.ph { font-size: 12px; }
+.row .glyph { color: var(--text-weak); margin-left: 6px; }
+.row .glyph.right { margin-left: auto; width: 22px; text-align: center; color: var(--text-faint); font-size: 12px; }
+.row.off .name, .row.off .glyph { color: var(--text-faint); }
+.row.off .box { opacity: .45; }
+.box {
+  width: 15px; height: 15px; flex: none; margin-right: 8px; border-radius: 3px;
+  background: var(--control); border: 1px solid var(--border-strong);
+  display: inline-flex; align-items: center; justify-content: center; font-size: 11px; color: var(--text);
+}
+.box.colour { border-color: transparent; color: #121318; }
+.panel-head { height: 30px; display: flex; align-items: center; padding: 0 10px; font-size: 11px; font-weight: 500; color: var(--text-weak); letter-spacing: .02em; }
+.search { margin: 2px 10px 6px; height: 24px; border: 1px solid var(--border); background: var(--canvas); border-radius: 3px; display: flex; align-items: center; gap: 6px; padding: 0 6px; color: var(--text-weak); }
+
+/* properties */
+.props { padding: 4px 10px 10px; }
+.props .sec { height: 30px; display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 500; color: var(--text-weak); border-top: 1px solid var(--border); margin-top: 4px; }
+.props .sec .ph { font-size: 10px; }
+.props .pr { height: 30px; display: grid; grid-template-columns: 96px 1fr; align-items: center; }
+.props .pr > span:first-child { color: var(--text-weak); }
+.field { height: 24px; border: 1px solid var(--border); background: var(--canvas); border-radius: 3px; display: flex; align-items: center; padding: 0 6px; }
+.field.short { width: 52px; }
+.seg { height: 24px; border: 1px solid var(--border); background: var(--canvas); border-radius: 3px; display: flex; padding: 2px; gap: 2px; }
+.seg span { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--text-weak); border-radius: 2px; border: 1px solid transparent; }
+.seg span.on { background: var(--control); border-color: var(--border-strong); color: var(--text); }
+
+/* tables */
+.tbl { width: 100%; border-collapse: collapse; }
+.tbl th { text-align: left; font-weight: inherit; color: var(--text-weak); height: 30px; padding: 0 8px; border-bottom: 1px solid var(--border); }
+.tbl td { height: 30px; padding: 0 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.tbl td:first-child { width: 42%; }
+.tbl .glyph { color: var(--text-weak); margin-left: 6px; }
+.clock { display: flex; gap: 16px; padding: 10px 8px 4px; color: var(--text-weak); }
+.clock b { color: var(--text); font-weight: inherit; }
+
+/* bottom bar and tabs */
+.bar { display: flex; gap: 8px; align-items: center; padding: 8px 0 0; flex-wrap: wrap; }
+.btn { height: 24px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border-radius: 3px; background: var(--control); border: 1px solid var(--border); white-space: nowrap; }
+.btn.live { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn.rec { color: var(--error); border-color: color-mix(in srgb, var(--error) 70%, var(--card)); background: color-mix(in srgb, var(--error) 12%, var(--card)); }
+.btn.rec i { width: 8px; height: 8px; border-radius: 50%; background: var(--error); display: inline-block; }
+.tabs { display: flex; gap: 18px; padding: 2px 4px 0; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
+.tabs span { padding: 6px 2px 7px; color: var(--text-weak); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tabs span.on { color: var(--text); border-color: var(--accent); }
+.pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+.pair > * { min-width: 0; }
+
+/* variant A: neutral selection */
+.sel-neutral .card.sel { border-color: var(--text-faint); }
+.sel-neutral .card.sel .card-title { background: var(--hover); }
+.sel-neutral .card.sel .card-title .name { font-weight: 500; }
+/* variant B: teal accent */
+.accent-teal { --accent: var(--teal); --accent-text: var(--teal-text); }
+
+/* states */
+.states { padding: 6px 8px 4px; }
+.lane { display: grid; grid-template-columns: 74px 1fr; align-items: center; height: 34px; }
+.lane > span { text-align: right; padding-right: 8px; color: var(--text); }
+.track { position: relative; height: 26px; }
+.seg-b { position: absolute; top: 0; bottom: 0; display: block; line-height: 26px; text-align: center; font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding: 0 4px; }
+.states.quiet .seg-b { border-top: 2px solid; line-height: 24px; }
+.states.quiet .seg-b.empty { background: none !important; border-top: 1px dashed var(--border-strong); color: var(--text-faint); }
+.axis { display: grid; grid-template-columns: 74px 1fr; color: var(--text-weak); height: 22px; align-items: end; }
+.axis div { position: relative; }
+.axis div span { position: absolute; transform: translateX(-50%); }
+
+/* the toggle of the page */
+.toggle { display: inline-flex; }
+.toggle button { font: inherit; font-size: 13px; color: var(--text-weak); background: none; border: 1px solid transparent; border-radius: 2px; padding: 0 12px; cursor: pointer; }
+.toggle button[aria-pressed="true"] { background: var(--control); border-color: var(--border-strong); color: var(--text); }
+.toggle button:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 1px; }
+
+.combined { display: grid; grid-template-columns: 230px 1fr; gap: 0; }
+.combined .center { padding: 8px; display: grid; gap: 8px; min-width: 0; }
+.combined .side { border-right: 1px solid var(--border); }
+
+@media (max-width: 720px) {
+  .page { padding: 24px 16px 64px; }
+  .combined { grid-template-columns: 1fr; }
+  .combined .side { border-right: 0; border-bottom: 1px solid var(--border); }
+  .pair { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) { .live-demo { animation: none; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <h1>blip design ideas</h1>
+    <p>Each idea from the review, with the current look on the left and the proposal next to it. Built from the colours and fonts in <span class="mono">theme.rs</span>, at the app's size.</p>
+    <div class="seg toggle" role="group" aria-label="Theme">
+      <button type="button" data-theme-choice="dark" aria-pressed="true">Dark</button>
+      <button type="button" data-theme-choice="light" aria-pressed="false">Light</button>
+    </div>
+  </header>
+
+  <section class="idea" id="digits">
+    <h2><span class="n">1</span>Equal-width digits</h2>
+    <p>These values change ten times a second. On the left the digits have their own widths, so units and decimals shift sideways. On the right every digit is equally wide, so only the changed digits move. Both use Fira Sans Light, as now.</p>
+    <div class="compare">
+      <figure><figcaption><b>Now</b> proportional digits</figcaption>
+        <div class="stage"><div class="card app" data-live="table"></div></div></figure>
+      <figure><figcaption><b>Proposed</b> tabular digits (<span class="mono">tnum</span> frozen into the font)</figcaption>
+        <div class="stage"><div class="card app tnum" data-live="table"></div></div></figure>
+    </div>
+  </section>
+
+  <section class="idea" id="weight">
+    <h2><span class="n">2</span>Regular instead of Light</h2>
+    <p>The same panels at 13 px. Light strokes thin out on dark backgrounds and on screens without high density. Regular keeps the same calm look with more body.</p>
+    <div class="compare wide">
+      <figure><figcaption><b>Now</b> Fira Sans Light</figcaption>
+        <div class="stage pad0"><div class="app panelbox pair" data-build="weight-now"></div></div></figure>
+      <figure><figcaption><b>Proposed</b> Fira Sans Regular</figcaption>
+        <div class="stage pad0"><div class="app regular panelbox pair" data-build="weight-new"></div></div></figure>
+    </div>
+  </section>
+
+  <section class="idea" id="accent">
+    <h2><span class="n">3</span>Selection that isn't trace blue</h2>
+    <p>Now the selected view, the first trace, the open tab and the Live button are all blue, so a selected plot with one trace looks like blue on blue. <b>A</b> shows selection with a neutral frame and a raised title bar and keeps blue for Live. <b>B</b> keeps a coloured selection but moves the accent to teal, which is close to the green used for info and connected.</p>
+    <div class="compare one">
+      <figure><figcaption><b>Now</b></figcaption><div class="stage app" data-build="accent"></div></figure>
+      <figure><figcaption><b>A</b> neutral selection <span class="pick">recommended</span></figcaption><div class="stage app sel-neutral" data-build="accent"></div></figure>
+      <figure><figcaption><b>B</b> teal accent</figcaption><div class="stage app accent-teal" data-build="accent"></div></figure>
+    </div>
+  </section>
+
+  <section class="idea" id="tree">
+    <h2><span class="n">4</span>Trace colours in the tree</h2>
+    <p>A checked trace fills its checkbox with its colour in the selected view, so the tree doubles as the legend. The type marks move into a faint column on the right, so the names line up and read first. The arrows become Phosphor carets like everywhere else. In an XY view the x trace stays neutral, since it has no line of its own.</p>
+    <div class="compare">
+      <figure><figcaption><b>Now</b></figcaption><div class="stage pad0 narrow"><div class="app panelbox" data-build="tree-now"></div></div></figure>
+      <figure><figcaption><b>Proposed</b></figcaption><div class="stage pad0 narrow"><div class="app panelbox" data-build="tree-new"></div></div></figure>
+    </div>
+  </section>
+
+  <section class="idea" id="legend">
+    <h2><span class="n">5</span>Legend in the title row</h2>
+    <p>The legend now covers the top of the plot, here right over acc[2]. In the title row it covers nothing, and it can show each trace's value at the cursor, which makes the Table view less necessary for a quick reading. The unit moves next to the title, so the rotated axis label is no longer needed.</p>
+    <div class="compare wide">
+      <figure><figcaption><b>Now</b></figcaption><div class="stage app" data-build="legend-now"></div></figure>
+      <figure><figcaption><b>Proposed</b> values at the cursor</figcaption><div class="stage app" data-build="legend-new"></div></figure>
+    </div>
+  </section>
+
+  <section class="idea" id="states">
+    <h2><span class="n">6</span>Quieter state bands</h2>
+    <p>Bands get a light fill and a 2 px edge in the full colour, so states stay readable without dominating the screen. A false boolean is empty, so true reads as on. Log levels take the colours of the Log view: debug is violet in both places.</p>
+    <div class="compare wide">
+      <figure><figcaption><b>Now</b></figcaption><div class="stage app" data-build="states-now"></div></figure>
+      <figure><figcaption><b>Proposed</b></figcaption><div class="stage app" data-build="states-new"></div></figure>
+    </div>
+  </section>
+
+  <section class="idea" id="together">
+    <h2><span class="n">1–6</span>All together</h2>
+    <p>The Overview tab with every proposal: Regular weight, tabular digits, neutral selection, colour checkboxes for the selected Motor speed view, legends with values, and quiet bands. The cursor line at the live end is drawn faint, from the polish list.</p>
+    <div class="stage pad0"><div class="app regular tnum combined" data-build="combined"></div></div>
+  </section>
+</div>
+
+<script>
+// theme toggle; the choice is only a convenience, so storage may fail
+(function () {
+  const root = document.documentElement;
+  let saved = null;
+  try { saved = localStorage.getItem('blip-ideas-theme'); } catch (e) {}
+  const set = (t) => {
+    root.dataset.theme = t;
+    document.querySelectorAll('[data-theme-choice]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.themeChoice === t)));
+    try { localStorage.setItem('blip-ideas-theme', t); } catch (e) {}
+  };
+  set(saved === 'light' ? 'light' : 'dark');
+  document.querySelectorAll('[data-theme-choice]').forEach(b => b.addEventListener('click', () => set(b.dataset.themeChoice)));
+})();
+
+// a seeded random source, so the noise is the same on every load
+function rng(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const mix = (c, p) => `color-mix(in srgb, ${c} ${p}, var(--card))`;
+
+// ---- plots -----------------------------------------------------------------
+function drawPlot({ w = 520, h = 236, series, yMin, yMax, yTicks, unit, legend, cursor = 'strong' }) {
+  const L = unit ? 46 : 36, R = 10, T = 10, B = 24;
+  const pw = w - L - R, ph = h - T - B;
+  const X = f => L + f * pw, Y = v => T + (1 - (v - yMin) / (yMax - yMin)) * ph;
+  let s = `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="plot">`;
+  for (const v of yTicks) {
+    s += `<line x1="${L}" x2="${w - R}" y1="${Y(v)}" y2="${Y(v)}" style="stroke:var(--border-strong);stroke-opacity:.55"/>`;
+    s += `<text x="${L - 6}" y="${Y(v) + 4}" text-anchor="end" style="fill:var(--text-weak)" font-size="12">${v}</text>`;
+  }
+  for (const [f, label] of [[0.3, '17:15:32'], [0.8, '17:15:42']]) {
+    s += `<line x1="${X(f)}" x2="${X(f)}" y1="${T}" y2="${T + ph}" style="stroke:var(--border-strong);stroke-opacity:.55"/>`;
+    s += `<text x="${X(f)}" y="${h - 6}" text-anchor="middle" style="fill:var(--text-weak)" font-size="12">${label}</text>`;
+  }
+  if (unit) s += `<text transform="translate(12 ${T + ph / 2}) rotate(-90)" text-anchor="middle" style="fill:var(--text-weak)" font-size="12">${unit}</text>`;
+  for (const { color, pts } of series) {
+    const d = pts.map((v, i) => `${i ? 'L' : 'M'}${X(i / (pts.length - 1)).toFixed(1)},${Y(v).toFixed(1)}`).join('');
+    s += `<path d="${d}" fill="none" style="stroke:var(${color})" stroke-width="1.5" stroke-linejoin="round"/>`;
+  }
+  const cx = X(1) - 0.5;
+  const op = cursor === 'faint' ? 0.35 : 1;
+  s += `<line x1="${cx}" x2="${cx}" y1="${T}" y2="${T + ph}" style="stroke:var(--cursor);stroke-opacity:${op}" stroke-width="1.5"/>`;
+  s += `<path d="M${cx - 4},${T - 4}h8l-4,6z" style="fill:var(--cursor);fill-opacity:${op}"/>`;
+  if (legend) {
+    const lw = 94, lh = 8 + legend.length * 19, lx = w - R - lw - 6, ly = T + 2;
+    s += `<rect x="${lx}" y="${ly}" width="${lw}" height="${lh}" rx="4" style="fill:var(--card);fill-opacity:.82;stroke:var(--border)"/>`;
+    legend.forEach(([name, color], i) => {
+      const y = ly + 17 + i * 19;
+      s += `<text x="${lx + lw - 22}" y="${y}" text-anchor="end" style="fill:var(--text)" font-size="13">${name}</text>`;
+      s += `<circle cx="${lx + lw - 11}" cy="${y - 4}" r="4" style="fill:var(${color})"/>`;
+    });
+  }
+  return s + '</svg>';
+}
+// plots are drawn at the width they get, so their text stays at the app's size
+const PLOTS = [];
+function plot(opts) { PLOTS.push(opts); return `<div class="plotbox" data-plot="${PLOTS.length - 1}"></div>`; }
+function renderPlots() {
+  document.querySelectorAll('[data-plot]').forEach(el => {
+    const w = Math.floor(el.clientWidth);
+    if (w > 0 && el.dataset.w != w) { el.dataset.w = w; el.innerHTML = drawPlot({ ...PLOTS[el.dataset.plot], w }); }
+  });
+}
+function noise(seed, n, base, amp) { const r = rng(seed); return Array.from({ length: n }, () => base + (r() - 0.5) * amp); }
+function motorSpeed(seed, n) {
+  const r = rng(seed);
+  return Array.from({ length: n }, (_, i) => {
+    const f = i / (n - 1); let v;
+    if (f < 0.25) v = 2400; else if (f < 0.5) v = 800 + 1600 * Math.exp(-(f - 0.25) * 24);
+    else if (f < 0.55) v = 800; else v = 1800 - 1000 * Math.exp(-(f - 0.55) * 30);
+    return v + (r() - 0.5) * 18;
+  });
+}
+const ACC = [['acc[0]', '--t0', noise(1, 320, 0.05, 0.35)], ['acc[1]', '--t1', noise(2, 320, 0.02, 0.35)], ['acc[2]', '--t2', noise(3, 320, 9.82, 0.4)]];
+const accSeries = ACC.map(([, color, pts]) => ({ color, pts }));
+const accPlot = (opts) => plot({ series: accSeries, yMin: -0.5, yMax: 10.5, yTicks: [0, 2, 4, 6, 8, 10], ...opts });
+const MOTOR = motorSpeed(4, 320);
+const motorPlot = (opts) => plot({ series: [{ color: '--t0', pts: MOTOR }], yMin: -100, yMax: 2700, yTicks: [0, 1000, 2000], ...opts });
+
+function card({ icon, title, sel, unit, legend, body, small }) {
+  let t = `<div class="card${sel ? ' sel' : ''}"><div class="card-title"><i class="ph ph-${icon}"></i><span class="name">${title}</span>`;
+  if (unit) t += `<span class="unit">${unit}</span>`;
+  if (legend) t += `<span class="legend">${legend.map(([n, c, v]) => `<span><i style="background:var(${c})"></i>${n}${v ? ` <span class="v">${v}</span>` : ''}</span>`).join('')}</span>`;
+  return t + `<i class="ph ph-dots-three more"></i></div><div class="card-body">${body}</div></div>`;
+}
+
+// ---- tree ------------------------------------------------------------------
+const TREE = [
+  { d: 0, name: 'accelerometer', g: '#' },
+  { d: 0, name: 'imu', g: '{}', open: 1 },
+  { d: 1, name: 'acc', g: '[]', open: 0 },
+  { d: 1, name: 'gyro', g: '[]', open: 0 },
+  { d: 1, name: 'calibrate', g: 'act', off: 1 },
+  { d: 0, name: 'motor', g: '{}', open: 1, mixed: 1 },
+  { d: 1, name: 'enabled', g: '#' },
+  { d: 1, name: 'speed_rpm', g: '#', check: 0 },
+  { d: 1, name: 'state', g: 'Aa', off: 1 },
+  { d: 0, name: 'robot', open: 1, mixed: 1 },
+  { d: 1, name: 'pose', g: '{}', open: 1, mixed: 1 },
+  { d: 2, name: 'heading', g: '#', check: 1 },
+  { d: 2, name: 'x', g: '#' },
+  { d: 2, name: 'y', g: '#' },
+  { d: 0, name: 'sensor', open: 1, mixed: 1 },
+  { d: 1, name: 'temperature', g: '#', check: 2 },
+];
+function tree(proposed, onlyFirst) {
+  let s = `<div><div class="panel-head">TRACES &amp; ACTIONS</div><div class="search"><i class="ph ph-magnifying-glass"></i>Search paths</div><div class="tree">`;
+  for (const n of TREE) {
+    let check = n.check;
+    if (onlyFirst && check !== undefined && check !== 0) check = undefined;
+    const mixed = n.mixed && (!onlyFirst || n.name === 'motor');
+    const glyph = n.g === 'act' ? '<i class="ph ph-lightning"></i>' : (n.g || '');
+    const branch = n.open !== undefined;
+    let caret = '<span class="caret"></span>';
+    if (branch) caret = proposed ? `<span class="caret ph ph-caret-${n.open ? 'down' : 'right'}"></span>` : `<span class="caret">${n.open ? '▼' : '▶'}</span>`;
+    let box;
+    if (check !== undefined) box = proposed ? `<span class="box colour" style="background:var(--t${check})"><i class="ph ph-check"></i></span>` : `<span class="box"><i class="ph ph-check"></i></span>`;
+    else box = `<span class="box">${mixed ? '–' : ''}</span>`;
+    const g = glyph ? (proposed ? `<span class="glyph right">${glyph}</span>` : `<span class="glyph">${glyph}</span>`) : '';
+    s += `<div class="row${n.off ? ' off' : ''}" style="padding-left:${4 + n.d * 16}px">${caret}${box}<span class="name">${n.name}</span>${g}</div>`;
+  }
+  return s + '</div></div>';
+}
+
+function props() {
+  return `<div><div class="panel-head">PROPERTIES</div><div class="props">
+    <div class="sec"><i class="ph ph-caret-down"></i>Y AXIS</div>
+    <div class="pr"><span>Min</span><span class="field">auto</span></div>
+    <div class="pr"><span>Max</span><span class="field">auto</span></div>
+    <div class="pr"><span>Label</span><span class="field">rpm</span></div>
+    <div class="sec"><i class="ph ph-caret-down"></i>LINES</div>
+    <div class="pr"><span>Interpolation</span><span class="seg"><span>Linear</span><span class="on">Step</span></span></div>
+    <div class="pr"><span>Width</span><span class="field short">1.5</span></div>
+    <div class="pr"><span>Nulls</span><span class="seg"><span class="on">Gap</span><span>Connect</span></span></div>
+  </div></div>`;
+}
+
+// ---- states ----------------------------------------------------------------
+function states(proposed) {
+  const lanes = [
+    ['enabled', [[0, .62, 'true', '--t0'], [.62, .78, 'false', proposed ? null : '--t1'], [.78, 1, 'true', '--t0']]],
+    ['state', [[0, .035, '', '--t1'], [.035, .29, 'running', '--t4'], [.29, .445, 'braking', '--t2'], [.445, .54, 'running', '--t4'], [.54, .68, 'accelerating', '--t1'], [.68, 1, 'running', '--t4']]],
+    ['log_level', [[0, .69, 'TRACE', proposed ? '--trace' : '--t2'], [.69, 1, 'DEBUG', proposed ? '--debug' : '--t3']]],
+  ];
+  let s = `<div class="states${proposed ? ' quiet' : ''}">`;
+  for (const [name, segs] of lanes) {
+    s += `<div class="lane"><span>${name}</span><div class="track">`;
+    for (const [a, b, label, c] of segs) {
+      const style = `left:${a * 100}%;width:${(b - a) * 100}%;` + (c ? (proposed ? `background:${mix(`var(${c})`, 'var(--quiet)')};border-top-color:var(${c});` : `background:${mix(`var(${c})`, 'var(--tint)')};`) : '');
+      s += `<div class="seg-b${c ? '' : ' empty'}" style="${style}">${label}</div>`;
+    }
+    s += `</div></div>`;
+  }
+  return s + `<div class="axis"><span></span><div><span style="left:24%">17:15:32</span><span style="left:74%">17:15:42</span></div></div></div>`;
+}
+
+// ---- live table for idea 1 ------------------------------------------------------
+const LIVE = [
+  ['speed_rpm', () => 1791, 6, 0, ' rpm'],
+  ['heading', () => 2.406, 0.02, 3, ' rad'],
+  ['x', () => 0.4803, 0.01, 4, ' m'],
+  ['y', () => -0.4874, 0.01, 4, ' m'],
+  ['temperature', () => 36.12, 0.08, 2, ' °C'],
+];
+function liveTable(el) {
+  el.innerHTML = `<table class="tbl"><thead><tr><th>Trace</th><th>Value</th></tr></thead><tbody>${LIVE.map(([n]) => `<tr><td>${n}<span class="glyph">#</span></td><td data-v></td></tr>`).join('')}</tbody></table>
+  <div class="clock">Cursor <b data-clock></b> Window <b>20.0 s</b></div>`;
+}
+const liveState = LIVE.map(([, init]) => init());
+let ms = 42245;
+function tick() {
+  const r = Math.random;
+  LIVE.forEach(([, , step], i) => { liveState[i] += (r() - 0.5) * 2 * step; });
+  ms += 50 + Math.floor(r() * 60);
+  const s = Math.floor(ms / 1000), clock = `17:15:${String(s % 60).padStart(2, '0')}.${String(ms % 1000).padStart(3, '0')}`;
+  document.querySelectorAll('[data-live="table"]').forEach(el => {
+    el.querySelectorAll('[data-v]').forEach((td, i) => {
+      const [, , , dp, unit] = LIVE[i]; td.textContent = liveState[i].toFixed(dp) + unit;
+    });
+    el.querySelector('[data-clock]').textContent = clock;
+  });
+}
+
+// ---- build ---------------------------------------------------------------------
+const B = {
+  'weight-now': () => tree(false) + props(),
+  'weight-new': () => tree(false) + props(),
+  'tree-now': () => tree(false),
+  'tree-new': () => tree(true),
+  'accent': () => `<div class="tabs"><span class="on">Overview</span><span>Sensors</span><span>Control</span></div>
+    <div class="pair">${card({ icon: 'chart-line', title: 'Acceleration', body: accPlot({ h: 200 }) })}${card({ icon: 'chart-line', title: 'Motor speed', sel: 1, body: motorPlot({ h: 200 }) })}</div>
+    <div class="bar"><span class="btn rec"><i></i>Record</span><span class="btn"><i class="ph ph-pause"></i></span><span class="btn live"><i class="ph ph-broadcast"></i>Live</span><span class="btn">20.0 s</span></div>`,
+  'legend-now': () => card({ icon: 'chart-line', title: 'Acceleration', body: accPlot({ unit: 'm/s²', legend: ACC.map(([n, c]) => [n, c]) }) }),
+  'legend-new': () => card({ icon: 'chart-line', title: 'Acceleration', unit: 'm/s²', legend: [['acc[0]', '--t0', '0.021'], ['acc[1]', '--t1', '-0.050'], ['acc[2]', '--t2', '9.910']], body: accPlot({}) }),
+  'states-now': () => card({ icon: 'rows', title: 'Motor state', body: states(false) }),
+  'states-new': () => card({ icon: 'rows', title: 'Motor state', body: states(true) }),
+  'combined': () => `<div class="side panelbox">${tree(true, true)}</div>
+    <div class="center sel-neutral">
+      <div class="tabs"><span class="on">Overview</span><span>Sensors</span><span>Control</span></div>
+      <div class="pair">
+        ${card({ icon: 'chart-line', title: 'Acceleration', unit: 'm/s²', legend: [['acc[0]', '--t0', '0.021'], ['acc[1]', '--t1', '-0.050'], ['acc[2]', '--t2', '9.910']], body: accPlot({ h: 220, cursor: 'faint' }) })}
+        ${card({ icon: 'chart-line', title: 'Motor speed', sel: 1, unit: 'rpm', legend: [['speed_rpm', '--t0', '1791']], body: motorPlot({ h: 220, cursor: 'faint' }) })}
+      </div>
+      ${card({ icon: 'rows', title: 'Motor state', body: states(true) })}
+      <div class="bar" style="padding-top:0"><span class="btn rec"><i></i>Record</span><span class="btn"><i class="ph ph-pause"></i></span><span class="btn live"><i class="ph ph-broadcast"></i>Live</span><span class="btn">20.0 s</span></div>
+    </div>`,
+};
+document.querySelectorAll('[data-build]').forEach(el => { el.innerHTML = B[el.dataset.build](); });
+document.querySelectorAll('[data-live="table"]').forEach(liveTable);
+renderPlots();
+new ResizeObserver(renderPlots).observe(document.body);
+tick();
+const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+setInterval(tick, reduce ? 1000 : 100);
+</script>
+</body>
+</html>

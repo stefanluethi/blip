@@ -13,7 +13,7 @@ The window
    :class: screenshot
    :alt: blip connected to an outpost, recording: plots of the acceleration and the motor speed, the states of the motor, the log, the traces tree and the properties of the selected plot, and the timeline.
 
-   blip with the demo recording and layout.
+   blip with the demo recording and preset.
 
 .. figure:: /diagrams/blip-window.svg
    :target: ../_images/blip-window.svg
@@ -25,7 +25,8 @@ The window
    The parts of the window.
 
 ① Menu bar
-   The **File**, **View** and **Help** menus (see :doc:`/blip/files`), a chip with
+   The **File**, **View**, **Presets** and **Help** menus (see :doc:`/blip/files`
+   and :doc:`/blip/presets`), a chip with
    the open connections and the messages received per second, which opens the
    connections to the outposts and targets (see :doc:`/blip/connecting`), buttons to hide
    or show the side panels, and the theme button, which switches between the
@@ -68,8 +69,13 @@ Selection
 Layout
    The views arranged as a tree of groups: the groups at the top level are
    tabs, the groups below show their children as tabs, stacked vertically or
-   side by side. The layout is kept across restarts and can be saved to a
-   JSON file. See :doc:`layout`.
+   side by side. See :doc:`layout`.
+
+Preset
+   A named layout with the connections, to switch between, e.g. one per
+   project or target. Changes apply to the active preset; blip keeps the
+   presets across restarts and exports them to JSON files. See
+   :doc:`presets`.
 
 Recording
    blip is connected all the time but keeps values and log records only while
@@ -109,7 +115,8 @@ The usual workflow
    arrange views as needed (:doc:`/blip/layout`, :doc:`/blip/views`).
 #. Pause, scroll back, set the time cursor to inspect (:doc:`/blip/time`).
 #. Invoke actions on the target from an actions view (:doc:`/blip/actions`).
-#. Save the recording and the layout (:doc:`/blip/files`).
+#. Save the recording (:doc:`/blip/files`) and export the preset
+   (:doc:`/blip/presets`).
 
 .. toctree::
    :maxdepth: 2
@@ -119,6 +126,7 @@ The usual workflow
    views
    actions
    layout
+   presets
    time
    files
    controls

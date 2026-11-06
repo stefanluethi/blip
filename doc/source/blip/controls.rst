@@ -19,7 +19,7 @@ Anywhere
    * - :kbd:`Ctrl` + :kbd:`+` / :kbd:`-` / :kbd:`0`
      - zoom the UI (native app; the browser zooms the page)
    * - drop a file on the window
-     - open a recording or layout
+     - open a recording or import presets
 
 Plots and states over time
 --------------------------

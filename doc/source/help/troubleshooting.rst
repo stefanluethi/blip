@@ -157,12 +157,33 @@ protobuf targets
 Files
 -----
 
-*… is no blip recording or layout: …*
-   blip tells recordings and layouts apart by their contents; the file is
-   neither, or damaged.
-*… is a layout of a newer version of blip*
-   The layout was saved by a newer blip. Update blip, see
+*… is no blip recording or presets file*
+   blip tells recordings and presets files apart by their contents; the file
+   is neither, or damaged.
+*… is no blip presets file: …*
+   The file has a version but does not read as presets, e.g. it was edited by
+   hand. The message tells where it went wrong.
+*… is a layout file of an earlier version of blip, which presets replace*
+   Layout files of the development versions before presets are no longer
+   opened. Arrange the views again and export them as a preset, see
+   :doc:`/blip/presets`.
+*… holds presets of a newer version of blip*
+   The presets were exported by a newer blip. Update blip, see
    :doc:`/reference/files`.
+*… holds no presets*, *… holds a preset without a name*, *… holds two presets named …*
+   Each preset in a file needs a name, and the names differ. Fix the file,
+   e.g. one that was generated.
+*… is not imported while a dialog of the presets is open*
+   A presets file was dropped while renaming, deleting, exporting or importing.
+   Close the dialog and drop the file again.
+*The kept presets are of a newer version of blip: …*
+   A newer blip kept its presets in the same place, e.g. another build served
+   from the same address. This blip shows the default preset and leaves the
+   kept presets as they are, so changes to presets are not kept. Use the newer
+   blip, or export the presets from it and import them here.
+*The kept presets … : blip starts with the default preset and keeps the unread presets aside*
+   The kept presets are damaged. blip starts afresh and keeps the damaged
+   ones in its storage under ``unread presets``, e.g. to recover them by hand.
 *… was opened up to message …, …*
    The recording ends in the middle of a message, e.g. as the outpost was
    killed while recording. blip shows what it holds up to there.

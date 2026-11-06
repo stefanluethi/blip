@@ -13,7 +13,9 @@ The first release.
 
 blip
    * Plots, states, tables, XY plots, heatmaps, logs and actions views,
-     arranged in tabs and groups, saved and opened as layout files.
+     arranged in tabs and groups.
+   * Presets: layouts with their connections, to switch between, exported to
+     and imported from JSON files.
    * One time range for all views: live, paused or playing, with a time cursor
      and a timeline of all data.
    * Records with fields, arrays of one and two dimensions, units, display
@@ -37,5 +39,7 @@ sonde
      files by a sink.
 
 Upgrading
-   Layouts saved by blip before this release are migrated when opened; the
-   versions of the layout file are listed in :doc:`/reference/files`.
+   Presets replace the layout files of the development versions: blip no
+   longer opens layout files, and the layout and connections it kept are
+   dropped on the first start. Arrange the views again and export them as a
+   preset, see :doc:`/blip/presets`.

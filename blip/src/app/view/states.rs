@@ -28,7 +28,6 @@ const LABEL_CHAR_WIDTH: f64 = 8.0;
 #[serde(default)]
 pub struct States {
     /// Paths of the shown traces.
-    #[serde(alias = "streams")] // the name before layout version 3
     pub traces: BTreeSet<String>,
     /// Height of a band as a fraction of its row, the rest is the gap to the next row.
     pub band_height: f64,

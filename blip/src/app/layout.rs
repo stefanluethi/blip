@@ -6,7 +6,7 @@ mod drag;
 mod file;
 mod properties;
 
-pub use file::{GroupKind, LayoutFile};
+pub use file::{Group, GroupKind};
 
 use crate::app::theme;
 use crate::app::view::{View, ViewContext, ViewType, Viewable};
@@ -100,10 +100,7 @@ pub struct Layout {
 /// An empty layout without tabs, which shows the view types to add the first view.
 impl Default for Layout {
     fn default() -> Self {
-        Self::from_file(LayoutFile {
-            version: file::VERSION,
-            root: file::Group::tabs(vec![]),
-        })
+        Self::from_saved(Group::tabs(vec![]))
     }
 }
 
@@ -119,8 +116,9 @@ impl Layout {
         layout
     }
 
-    pub fn from_file(file: LayoutFile) -> Self {
-        let (tree, group_names) = file.load();
+    /// Restores a saved layout, see [`Self::to_saved`].
+    pub fn from_saved(saved: Group) -> Self {
+        let (tree, group_names) = saved.load();
         Self {
             tree,
             group_names,
@@ -130,13 +128,9 @@ impl Layout {
         }
     }
 
-    /// Restores a saved layout, or returns `None` if it was saved in an unknown format.
-    pub fn migrate(file: LayoutFile) -> Option<Self> {
-        file.migrate().map(Self::from_file)
-    }
-
-    pub fn to_file(&self) -> LayoutFile {
-        LayoutFile::new(&self.tree, self.root(), &self.group_names)
+    /// The saved form of the layout: the group of the tabs at the top level.
+    pub fn to_saved(&self) -> Group {
+        Group::save(&self.tree, self.root(), &self.group_names)
     }
 
     /// The tab group at the top level.

@@ -181,7 +181,7 @@ How-to guides
    The documentation shall have step by step guides for the common tasks:
    connecting an own target to an outpost, tracing from firmware and from
    unit tests with sonde, recording, replaying and sharing a recording with
-   its layout, and invoking actions.
+   its preset, and invoking actions.
 
 .. req:: Troubleshooting
    :id: REQ_DOC_TROUBLESHOOT
@@ -196,7 +196,7 @@ How-to guides
    The documentation shall describe the common problems by their symptom,
    quoting the error and warning messages word for word, with their cause and
    fix: blip does not connect, no data arrives, timestamps or rates look
-   wrong, a recording or layout does not open.
+   wrong, a recording or presets file does not open.
 
 Reference
 ---------
@@ -248,11 +248,11 @@ Reference
    :component: doc
    :priority: low
    :satisfies: STK_DOCS
-   :rationale: Grafana's dashboard JSON model: users keep layouts in their
+   :rationale: Grafana's dashboard JSON model: users keep dashboards in their
                repositories, review and edit them, and generate them.
 
    The documentation shall describe the formats users keep and exchange: the
-   recording file, the layout file with its versions, and the wire protocol,
+   recording file, the presets file with its versions, and the wire protocol,
    in enough detail to write or read them with other tools.
 
 .. req:: Terms defined once

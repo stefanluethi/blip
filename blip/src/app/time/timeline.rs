@@ -246,7 +246,7 @@ pub(super) fn show(time: &mut TimeRange, ui: &mut egui::Ui, model: &Model) {
     if let Some(logs) = hovered_logs {
         track
             .clone()
-            .on_hover_ui_at_pointer(|ui| log_tooltip_ui(ui, model, logs.entries));
+            .on_hover_ui_at_pointer(|ui| log_tooltip_ui(ui, model, logs.times));
     }
 
     let mut label_rect = ruler_rect;
@@ -411,8 +411,8 @@ fn grab_at(thumb: egui::Rect, pos: egui::Pos2) -> Grab {
 
 /// The log records hovered in a bin.
 struct HoveredLogs {
-    /// The indices of the records in the bin.
-    entries: Range<usize>,
+    /// The times of the bin in nanoseconds.
+    times: Range<u64>,
     /// The time of the first of the most severe records in seconds.
     most_severe: f64,
 }
@@ -578,19 +578,11 @@ impl Bins {
             return None;
         }
         let start = self.start + self.step * bin as u64;
-        let entries = &model.logs.entries;
-        let first = entries.partition_point(|entry| entry.time < start);
-        let last = entries.partition_point(|entry| entry.time < start + self.step);
-        let most_severe = (first..last).reduce(|most, index| {
-            if entries[index].level > entries[most].level {
-                index
-            } else {
-                most
-            }
-        })?;
+        let times = start..start + self.step;
+        let most_severe = model.logs.most_severe_between(times.start, times.end)?;
         Some(HoveredLogs {
-            entries: first..last,
-            most_severe: seconds_since(self.origin, entries[most_severe].time),
+            most_severe: seconds_since(self.origin, most_severe.time),
+            times,
         })
     }
 
@@ -713,10 +705,10 @@ fn paint_hatching(painter: &egui::Painter, rect: egui::Rect, stroke: egui::Strok
     }
 }
 
-/// Lists the log records `entries` of `model` in a bin.
-fn log_tooltip_ui(ui: &mut egui::Ui, model: &Model, entries: Range<usize>) {
-    let count = entries.len();
-    for entry in model.logs.entries[entries].iter().take(TOOLTIP_ENTRIES) {
+/// Lists the log records of `model` of all paths in a bin, the first ones by time.
+fn log_tooltip_ui(ui: &mut egui::Ui, model: &Model, times: Range<u64>) {
+    let (first, count) = (model.logs).first_between(times.start, times.end, TOOLTIP_ENTRIES);
+    for entry in first {
         ui.horizontal(|ui| {
             ui.weak(TimeBase::guess(entry.time).format(entry.time, 3));
             let level = egui::RichText::new(entry.level.as_str())

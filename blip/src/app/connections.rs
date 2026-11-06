@@ -14,35 +14,26 @@ const RECORDING_HINT: &str = "Stop recording to change the connections";
 /// The height of the list of connections from which it scrolls.
 const MAX_LIST_HEIGHT: f32 = 320.0;
 
-#[derive(serde::Deserialize, serde::Serialize)]
-#[serde(default)] // if we add new fields, give them default values when deserializing old state
+/// The connections of the active preset, see [`super::presets`].
 pub struct Connections {
     /// The connections in the order they were added, their addresses differ.
     connections: Vec<Connection>,
     /// The open connections and those being opened.
-    #[serde(skip)]
     sockets: Vec<Socket>,
     /// Why connecting to an address failed, until it is connected again.
-    #[serde(skip)]
     failed: HashMap<String, String>,
     /// What went wrong since [`Self::take_errors`] was last called, to tell the user.
-    #[serde(skip)]
     errors: Vec<String>,
-    #[serde(skip)]
     editing: Option<Editing>,
     /// The addresses connected when the recording started, which can be connected
     /// again while recording if they break, `None` while not recording.
-    #[serde(skip)]
     recorded: Option<HashSet<String>>,
 }
 
 impl Default for Connections {
     fn default() -> Self {
         Self {
-            connections: vec![Connection {
-                name: name_of(DEFAULT_ADDRESS).to_owned(),
-                address: DEFAULT_ADDRESS.to_owned(),
-            }],
+            connections: Connection::defaults(),
             sockets: vec![],
             failed: HashMap::new(),
             errors: vec![],
@@ -52,12 +43,45 @@ impl Default for Connections {
     }
 }
 
+/// A connection as a preset saves it.
 #[derive(serde::Deserialize, serde::Serialize, Clone, PartialEq, Eq, Debug)]
-struct Connection {
+pub struct Connection {
     /// The name of the connection, which the actions of its outpost are sent to and
     /// which a recording keeps with each message. The names that are not empty differ.
-    name: String,
-    address: String,
+    #[serde(default)]
+    pub name: String,
+    pub address: String,
+}
+
+impl Connection {
+    /// `saved` kept apart as editing keeps them: trimmed, without blank addresses, the
+    /// first of connections to the same address, and a name that an earlier
+    /// connection has is cleared.
+    pub fn sanitized(saved: Vec<Self>) -> Vec<Self> {
+        let mut kept: Vec<Self> = Vec::with_capacity(saved.len());
+        for mut connection in saved {
+            connection.name = connection.name.trim().to_owned();
+            connection.address = connection.address.trim().to_owned();
+            let address = &connection.address;
+            if address.is_empty() || kept.iter().any(|c| c.address == *address) {
+                continue;
+            }
+            let name = &connection.name;
+            if !name.is_empty() && kept.iter().any(|c| c.name == *name) {
+                connection.name.clear();
+            }
+            kept.push(connection);
+        }
+        kept
+    }
+
+    /// The connections of a new preset: one to an outpost started with its defaults.
+    pub fn defaults() -> Vec<Self> {
+        vec![Connection {
+            name: name_of(DEFAULT_ADDRESS).to_owned(),
+            address: DEFAULT_ADDRESS.to_owned(),
+        }]
+    }
 }
 
 /// The connection to one of the addresses.
@@ -178,6 +202,20 @@ impl Connections {
             log::info!("ws disconnected from {address}");
             false
         });
+    }
+
+    /// The connections as a preset saves them.
+    pub fn saved(&self) -> Vec<Connection> {
+        self.connections.clone()
+    }
+
+    /// Replaces the connections with those of a preset, disconnected, kept apart as
+    /// [`Connection::sanitized`] does.
+    pub fn set_saved(&mut self, saved: Vec<Connection>) {
+        self.disconnect_all();
+        self.failed.clear();
+        self.editing = None;
+        self.connections = Connection::sanitized(saved);
     }
 
     pub fn disconnect_all(&mut self) {
@@ -547,11 +585,7 @@ impl Connections {
                 self.connections[index].address = address.to_owned();
             }
             Edited::New => {
-                let base = name_of(address);
-                let name = std::iter::once(base.to_owned())
-                    .chain((2..).map(|n| format!("{base} {n}")))
-                    .find(|name| !self.is_named(name))
-                    .expect("there is always an unused name");
+                let name = super::unused_name(name_of(address), false, |name| self.is_named(name));
                 self.connections.push(Connection {
                     name,
                     address: address.to_owned(),
@@ -695,6 +729,24 @@ mod tests {
             .iter()
             .map(|c| c.address.as_str())
             .collect()
+    }
+
+    #[test]
+    fn connections_of_a_preset_keep_their_addresses_and_names_apart() {
+        let connection = |name: &str, address: &str| Connection {
+            name: name.to_owned(),
+            address: address.to_owned(),
+        };
+        let mut connections = Connections::default();
+        connections.set_saved(vec![
+            connection("a", " ws://a "),
+            connection("b", "ws://a"),
+            connection("a", "ws://b"),
+            connection("c", " "),
+        ]);
+        assert_eq!(names(&connections), ["a", ""]);
+        assert_eq!(addresses(&connections), ["ws://a", "ws://b"]);
+        assert_eq!(connections.saved().len(), 2);
     }
 
     #[test]

@@ -11,35 +11,45 @@ them, the outpost and sonde write them, blip opens them and the outpost
 replays them. The format, with its versions, is described in
 :ref:`recording-files`.
 
-Layout files (``.json``)
-------------------------
+Presets files (``.json``)
+-------------------------
 
-The views with all their settings, saved with **File › Save layout** and opened
-with **File › Open layout** or by dropping the file onto blip (see
-:doc:`/blip/files`). It is JSON, so it can be kept in a repository next to
-the firmware, compared, edited and generated.
+One or more presets, each a layout of the views with all their settings and
+the connections, exported with **Presets › Export presets** and imported with
+**Presets › Import presets** or by dropping the file onto blip (see
+:doc:`/blip/presets`). It is JSON, so it can be kept in a repository next to
+the firmware, compared, edited and generated. blip keeps its own presets in
+the same format.
 
 .. code-block:: json
 
    {
-     "version": 5,
-     "root": {
-       "name": "",
-       "kind": "Tabs",
-       "active": 0,
-       "children": [
-         {"Group": {
-           "name": "Overview",
-           "kind": "Vertical",
-           "shares": [2.0, 1.0],
+     "version": 1,
+     "presets": [
+       {
+         "name": "Bench",
+         "connections": [
+           {"name": "outpost", "address": "ws://127.0.0.1:3000/ws/outpost"}
+         ],
+         "layout": {
+           "name": "",
+           "kind": "Tabs",
+           "active": 0,
            "children": [
-             {"View": {"name": "Motor speed",
-                       "kind": {"Plot": {"traces": ["motor.speed_rpm"], "interpolation": "Step"}}}},
-             {"View": {"name": "Log", "kind": {"Logs": {}}, "wildcards": [""]}}
+             {"Group": {
+               "name": "Overview",
+               "kind": "Vertical",
+               "shares": [2.0, 1.0],
+               "children": [
+                 {"View": {"name": "Motor speed",
+                           "kind": {"Plot": {"traces": ["motor.speed_rpm"], "interpolation": "Step"}}}},
+                 {"View": {"name": "Log", "kind": {"Logs": {}}, "wildcards": [""]}}
+               ]
+             }}
            ]
-         }}
-       ]
-     }
+         }
+       }
+     ]
    }
 
 .. list-table::
@@ -50,10 +60,18 @@ the firmware, compared, edited and generated.
      - Meaning
    * - ``version``
      - The version of the format, see below.
-   * - ``root``
-     - The group of the tabs at the top level.
+   * - ``presets``
+     - The presets, at least one.
+   * - Preset ``name``
+     - The name of the preset, not blank; the names in a file differ.
+   * - Preset ``connections``
+     - The connections, each with its ``name`` and ``address``; left out,
+       none. The name is the source of the messages of the connection and
+       may be empty, see :doc:`/blip/connecting`.
+   * - Preset ``layout``
+     - The group of the tabs at the top level; left out, an empty layout.
    * - Group ``name``
-     - The name shown on its tab; empty for the root.
+     - The name shown on its tab; empty for the top level.
    * - Group ``kind``
      - ``Tabs``, ``Vertical`` (stacked) or ``Horizontal`` (side by side).
    * - Group ``children``
@@ -78,17 +96,17 @@ the firmware, compared, edited and generated.
 
 The settings of each type of view are those of its properties (see
 :doc:`/blip/views`), e.g. ``traces`` (the paths shown), ``interpolation``
-of a plot, ``x`` and ``equal_axes`` of an XY view, ``mode`` of a heatmap,
-``layout`` of a table, ``shown`` of an actions view. A setting left out takes
-its default, so a generated layout only needs what differs. To find the key of
-a setting, change it in blip and save the layout.
+of a plot, ``xs``, ``against`` and ``equal_axes`` of an XY view, ``mode`` of
+a heatmap, ``layout`` of a table, ``shown`` of an actions view. A setting
+left out takes its default, so a generated preset only needs what differs.
+To find the key of a setting, change it in blip and export the preset.
 
 Versions
 ~~~~~~~~
 
-blip opens layouts of its own and of older versions and migrates them; it
-refuses a layout of a newer version (*… is a layout of a newer version of
-blip*). It always saves the newest version.
+blip opens presets files of its own and of older versions and migrates them;
+it refuses a file of a newer version (*… holds presets of a newer version of
+blip*). It always exports the newest version.
 
 .. list-table::
    :header-rows: 1
@@ -98,14 +116,6 @@ blip*). It always saves the newest version.
      - Change
    * - 1
      - The first.
-   * - 2
-     - The x trace of an XY view is one of its traces.
-   * - 3
-     - The traces of a view are saved as ``traces``; ``streams`` is still
-       read.
-   * - 4
-     - An XY view can have several x traces; each y trace is plotted against
-       one of them.
-   * - 5
-     - Log views show the logs of the paths picked in the tree; the log views
-       of older layouts pick all (``"wildcards": [""]``).
+
+Layout files of the development versions before presets are no longer
+opened.

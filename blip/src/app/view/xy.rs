@@ -32,12 +32,8 @@ const POINT_RADIUS: f32 = 2.0;
 #[derive(serde::Deserialize, serde::Serialize, Clone)]
 #[serde(default)]
 pub struct Xy {
-    /// Path of the single x trace in layouts before version 4, see [`Xy::migrate_v3`].
-    #[serde(skip_serializing)]
-    pub x: Option<String>,
     /// Paths of the shown traces, on the x axis and on the y axis, or the shown
     /// arrays, see [`Xy::array_paths`].
-    #[serde(alias = "streams")] // the name before layout version 3
     pub traces: BTreeSet<String>,
     /// Paths of the shown traces on the x axis.
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
@@ -60,7 +56,6 @@ pub struct Xy {
 impl Default for Xy {
     fn default() -> Self {
         Self {
-            x: None,
             traces: BTreeSet::new(),
             xs: BTreeSet::new(),
             against: BTreeMap::new(),
@@ -313,27 +308,6 @@ fn axis_label(name: &str, unit: Option<&str>) -> String {
 }
 
 impl Xy {
-    /// Before layout version 2, the x trace was not one of the shown traces.
-    pub fn migrate_v1(&mut self) {
-        if let Some(x) = &self.x {
-            self.traces.insert(x.clone());
-        }
-    }
-
-    /// Before layout version 4, there was one x trace: the chosen one if it was shown,
-    /// else the first shown trace, and all other traces were plotted against it.
-    pub fn migrate_v3(&mut self) {
-        let x = (self.x.take())
-            .filter(|x| self.traces.contains(x))
-            .or_else(|| self.traces.first().cloned());
-        if let Some(x) = x {
-            for y in self.traces.iter().filter(|&path| *path != x) {
-                self.against.insert(y.clone(), x.clone());
-            }
-            self.xs.insert(x);
-        }
-    }
-
     /// Paths of the shown traces that are whole arrays, plotted over the indices of
     /// their elements instead of against the x trace.
     fn array_paths<'a>(&'a self, model: &Model) -> Vec<&'a str> {
@@ -960,21 +934,6 @@ mod tests {
         xy.set_axis("c", false);
         xy.assign_axes(&Model::default());
         assert_eq!(lines_of(&xy), [line("b", "a"), line("b", "c")]);
-    }
-
-    #[test]
-    fn version_3_layouts_plot_all_traces_against_their_one_x_trace() {
-        let mut xy: Xy =
-            serde_json::from_str(r#"{"x": "b", "traces": ["b", "p.x", "p.y"]}"#).unwrap();
-        xy.migrate_v3();
-        xy.assign_axes(&Model::default());
-        assert_eq!(lines_of(&xy), [line("b", "p.x"), line("b", "p.y")]);
-        let json = serde_json::to_string(&xy).unwrap();
-        assert!(!json.contains(r#""x""#), "{json}");
-
-        let mut xy: Xy = serde_json::from_str(r#"{"traces": ["a", "b"]}"#).unwrap();
-        xy.migrate_v3();
-        assert_eq!(lines_of(&xy), [line("a", "b")]);
     }
 
     #[test]

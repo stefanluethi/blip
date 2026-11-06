@@ -1,33 +1,17 @@
-//! The saved form of a layout. It is versioned, so layouts saved by older versions of
-//! blip can be migrated when the format changes.
+//! The saved form of a layout, part of a preset: the tree of groups with the views
+//! and their settings as leaves.
 
-use crate::app::view::trace_selection::ROOT_KEY;
-use crate::app::view::{View, ViewKind};
+use crate::app::view::View;
 use egui_tiles::{Container, ContainerKind, Tile, TileId, Tiles, Tree};
 use std::collections::HashMap;
 
-/// Version of the format written by [`LayoutFile::new`]. Since version 2, the x trace
-/// of an XY view is one of its traces. Since version 3, the traces of a view are saved
-/// as `traces` instead of `streams`, which views still read. Since version 4, an XY
-/// view can have several x traces, each y trace is plotted against one of them. Since
-/// version 5, log views show the logs of the paths picked in the tree, so the log views
-/// of older layouts pick all.
-pub const VERSION: u32 = 5;
-
-#[derive(serde::Deserialize, serde::Serialize)]
-pub struct LayoutFile {
-    pub version: u32,
-    /// The tabs at the top level.
-    pub root: Group,
-}
-
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(serde::Deserialize, serde::Serialize, Clone)]
 pub enum Node {
     Group(Group),
     View(View),
 }
 
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(serde::Deserialize, serde::Serialize, Clone)]
 pub struct Group {
     pub name: String,
     pub kind: GroupKind,
@@ -76,70 +60,23 @@ impl GroupKind {
     }
 }
 
-impl LayoutFile {
-    /// Saves the tiles below `root`, with the group names from `group_names`.
-    pub fn new(tree: &Tree<View>, root: TileId, group_names: &HashMap<TileId, String>) -> Self {
-        let root = match save_node(&tree.tiles, root, group_names) {
+impl Group {
+    /// Saves the tiles below `root`, with the group names from `group_names`, as the
+    /// group of the tabs at the top level.
+    pub fn save(tree: &Tree<View>, root: TileId, group_names: &HashMap<TileId, String>) -> Self {
+        match save_node(&tree.tiles, root, group_names) {
             Some(Node::Group(group)) => group,
             _ => Group::tabs(vec![]),
-        };
-        Self {
-            version: VERSION,
-            root,
         }
     }
 
-    /// The layout in the current format, or `None` if its version cannot be migrated.
-    pub fn migrate(mut self) -> Option<Self> {
-        if self.version == 1 {
-            self.root.for_each_view(&mut |view| {
-                if let ViewKind::Xy(xy) = &mut view.kind {
-                    xy.migrate_v1();
-                }
-            });
-            self.version = 2;
-        }
-        if self.version == 2 {
-            // views read the traces saved as `streams`
-            self.version = 3;
-        }
-        if self.version == 3 {
-            self.root.for_each_view(&mut |view| {
-                if let ViewKind::Xy(xy) = &mut view.kind {
-                    xy.migrate_v3();
-                }
-            });
-            self.version = 4;
-        }
-        if self.version == 4 {
-            self.root.for_each_view(&mut |view| {
-                if view.view_type().shows_logs() {
-                    view.wildcards.insert(ROOT_KEY.to_owned());
-                }
-            });
-            self.version = 5;
-        }
-        (self.version == VERSION).then_some(self)
-    }
-
-    /// Restores the tiles, returns the tree and the group names.
+    /// Restores the tiles of the group of the tabs at the top level, returns the tree
+    /// and the group names.
     pub fn load(self) -> (Tree<View>, HashMap<TileId, String>) {
         let mut tiles = Tiles::default();
         let mut group_names = HashMap::new();
-        let root = load_group(&mut tiles, &mut group_names, self.root);
+        let root = load_group(&mut tiles, &mut group_names, self);
         (Tree::new("layout", root, tiles), group_names)
-    }
-}
-
-impl Group {
-    /// Calls `f` with each view in the group and the groups in it.
-    fn for_each_view(&mut self, f: &mut impl FnMut(&mut View)) {
-        for child in &mut self.children {
-            match child {
-                Node::Group(group) => group.for_each_view(f),
-                Node::View(view) => f(view),
-            }
-        }
     }
 
     pub fn tabs(children: Vec<Node>) -> Self {
@@ -227,37 +164,32 @@ mod tests {
 
     #[test]
     fn layout_survives_save_and_load() {
-        let file = LayoutFile {
-            version: VERSION,
-            root: Group {
-                active: Some(0),
-                ..Group::tabs(vec![Node::Group(Group {
-                    name: "Main".to_owned(),
-                    kind: GroupKind::Vertical,
-                    children: vec![
-                        Node::View(View::new(ViewType::Plot, "Plot 1".to_owned())),
-                        Node::Group(Group {
-                            name: "Side by side".to_owned(),
-                            kind: GroupKind::Horizontal,
-                            children: vec![
-                                Node::View(View::new(ViewType::Plot, "Plot 2".to_owned())),
-                                Node::View(View::new(ViewType::Logs, "Logs".to_owned())),
-                            ],
-                            shares: vec![2.0, 1.0],
-                            active: None,
-                        }),
-                    ],
-                    shares: vec![1.0, 1.0],
-                    active: None,
-                })])
-            },
+        let file = Group {
+            active: Some(0),
+            ..Group::tabs(vec![Node::Group(Group {
+                name: "Main".to_owned(),
+                kind: GroupKind::Vertical,
+                children: vec![
+                    Node::View(View::new(ViewType::Plot, "Plot 1".to_owned())),
+                    Node::Group(Group {
+                        name: "Side by side".to_owned(),
+                        kind: GroupKind::Horizontal,
+                        children: vec![
+                            Node::View(View::new(ViewType::Plot, "Plot 2".to_owned())),
+                            Node::View(View::new(ViewType::Logs, "Logs".to_owned())),
+                        ],
+                        shares: vec![2.0, 1.0],
+                        active: None,
+                    }),
+                ],
+                shares: vec![1.0, 1.0],
+                active: None,
+            })])
         };
         let bytes = serde_cbor_2::to_vec(&file).unwrap();
 
-        let (tree, group_names) = serde_cbor_2::from_slice::<LayoutFile>(&bytes)
-            .unwrap()
-            .load();
-        let saved = LayoutFile::new(&tree, tree.root().unwrap(), &group_names);
+        let (tree, group_names) = serde_cbor_2::from_slice::<Group>(&bytes).unwrap().load();
+        let saved = Group::save(&tree, tree.root().unwrap(), &group_names);
         assert_eq!(serde_cbor_2::to_vec(&saved).unwrap(), bytes);
     }
 
@@ -278,78 +210,14 @@ mod tests {
             view.formats
                 .set("imu.acc[1]", crate::app::model::numbers::DisplayFormat::Hex);
         }
-        let file = LayoutFile {
-            version: VERSION,
-            root: Group::tabs(vec![Node::Group(Group {
-                shares: vec![1.5; views.len()],
-                ..Group::tabs(views)
-            })]),
-        };
+        let file = Group::tabs(vec![Node::Group(Group {
+            shares: vec![1.5; views.len()],
+            ..Group::tabs(views)
+        })]);
         let cbor = serde_cbor_2::to_vec(&file).unwrap();
 
         let json = serde_json::to_vec_pretty(&file).unwrap();
-        let file: LayoutFile = serde_json::from_slice(&json).unwrap();
+        let file: Group = serde_json::from_slice(&json).unwrap();
         assert_eq!(serde_cbor_2::to_vec(&file).unwrap(), cbor);
-    }
-
-    #[test]
-    fn version_1_xy_views_get_their_x_trace_as_one_of_their_traces() {
-        let mut view = View::new(ViewType::Xy, "XY".to_owned());
-        let ViewKind::Xy(xy) = &mut view.kind else {
-            unreachable!()
-        };
-        xy.x = Some("pose.x".to_owned());
-        xy.traces.insert("pose.y".to_owned());
-        let file = LayoutFile {
-            version: 1,
-            root: Group::tabs(vec![Node::Group(Group::tabs(vec![Node::View(view)]))]),
-        };
-
-        let file = file.migrate().unwrap();
-        assert_eq!(file.version, VERSION);
-        let Node::Group(tab) = &file.root.children[0] else {
-            panic!("the tab is missing")
-        };
-        let Node::View(View {
-            kind: ViewKind::Xy(xy),
-            ..
-        }) = &tab.children[0]
-        else {
-            panic!("the XY view is missing")
-        };
-        assert_eq!(xy.xs, ["pose.x".to_owned()].into());
-        assert_eq!(xy.against.get("pose.y").map(String::as_str), Some("pose.x"));
-    }
-
-    #[test]
-    fn version_2_views_read_their_traces_saved_as_streams() {
-        let saved = HashMap::from([("streams", ["pose.x", "pose.y"])]);
-        let bytes = serde_cbor_2::to_vec(&saved).unwrap();
-        let xy: crate::app::view::xy::Xy = serde_cbor_2::from_slice(&bytes).unwrap();
-        assert_eq!(xy.traces, ["pose.x", "pose.y"].map(str::to_owned).into());
-    }
-
-    #[test]
-    fn version_4_log_views_show_all_logs() {
-        let mut logs = View::new(ViewType::Logs, "Logs".to_owned());
-        logs.wildcards.clear();
-        let file = LayoutFile {
-            version: 4,
-            root: Group::tabs(vec![Node::View(logs)]),
-        };
-        let file = file.migrate().unwrap();
-        let Node::View(logs) = &file.root.children[0] else {
-            panic!("the log view is missing")
-        };
-        assert_eq!(logs.wildcards, [ROOT_KEY.to_owned()].into());
-    }
-
-    #[test]
-    fn unknown_versions_are_not_migrated() {
-        let file = LayoutFile {
-            version: VERSION + 1,
-            root: Group::tabs(vec![]),
-        };
-        assert!(file.migrate().is_none());
     }
 }

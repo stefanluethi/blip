@@ -33,6 +33,7 @@ mod files;
 mod layout;
 mod model;
 mod opening;
+mod presets;
 #[cfg(all(test, feature = "screenshots"))]
 mod screenshots;
 mod theme;
@@ -187,13 +188,28 @@ fn record_button(ui: &mut egui::Ui, recording: bool, connected: bool) -> bool {
 
 //--------------------------------------------------------------------------------------------------
 
-/// Storage key of the layout, saved apart from the app state in its own versioned format.
-const LAYOUT_KEY: &str = "layout";
+/// A name that is not `taken`: `base`, else `base` with the first number from 2 that
+/// gives one, or always numbered, from 1, if `numbered`. E.g. for connections and
+/// presets.
+fn unused_name(base: &str, numbered: bool, taken: impl Fn(&str) -> bool) -> String {
+    let plain = (!numbered).then(|| base.to_owned());
+    let from = if numbered { 1 } else { 2 };
+    plain
+        .into_iter()
+        .chain((from..).map(|n| format!("{base} {n}")))
+        .find(|name| !taken(name))
+        .expect("there is always an unused name")
+}
 
 #[derive(serde::Deserialize, serde::Serialize, Default)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct App {
     state: State,
+    /// The presets, kept apart from the app state in their own versioned format. The
+    /// layout and the connections are those of the active one.
+    #[serde(skip)]
+    presets: presets::Presets,
+    #[serde(skip)]
     connections: connections::Connections,
     #[serde(skip)]
     layout: layout::Layout,
@@ -263,12 +279,55 @@ impl App {
             return Default::default();
         };
         let mut app: Self = eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
-        if let Some(layout) = eframe::get_value::<layout::LayoutFile>(storage, LAYOUT_KEY)
-            .and_then(layout::Layout::migrate)
-        {
-            app.layout = layout;
+        app.presets = presets::Presets::load(storage);
+        if let Some(problem) = app.presets.take_problem() {
+            app.toasts.warning(problem);
         }
+        app.show_preset();
         app
+    }
+
+    /// Stores the shown layout and connections in the active preset.
+    fn store_preset(&mut self) {
+        let (layout, connections) = (self.layout.to_saved(), self.connections.saved());
+        self.presets.store(layout, connections);
+    }
+
+    /// Shows the layout and the connections of the active preset, disconnected.
+    fn show_preset(&mut self) {
+        let preset = self.presets.active();
+        self.layout = layout::Layout::from_saved(preset.layout.clone());
+        self.connections.set_saved(preset.connections.clone());
+    }
+
+    /// Applies a change of the presets asked for in their menu or a dialog. Those that
+    /// change the active preset are not offered while recording.
+    fn apply_preset(&mut self, action: presets::Action, ctx: &Context) {
+        use presets::Action;
+        self.store_preset();
+        match action {
+            Action::Switch(index) => self.presets.switch(index),
+            Action::New => self.presets.add_new(),
+            Action::Duplicate => self.presets.duplicate(),
+            Action::Delete => self.presets.delete(),
+            Action::Import => {
+                self.files.open(files::Kind::Presets, ctx);
+                return;
+            }
+            Action::Export(indices) => {
+                let bytes = self.presets.export(&indices);
+                if let Err(error) = files::save(files::Kind::Presets, "blip-presets.json", &bytes) {
+                    self.toasts.error(error);
+                }
+                return;
+            }
+            Action::Imported(presets) => {
+                if !self.presets.import(presets) {
+                    return;
+                }
+            }
+        }
+        self.show_preset();
     }
 
     fn menu_ui(&mut self, ui: &mut egui::Ui) {
@@ -304,16 +363,6 @@ impl App {
                 {
                     self.state.clear_data();
                 }
-                ui.separator();
-                if ui.button("Open layout…").clicked() {
-                    self.files.open(files::Kind::Layout, ui.ctx());
-                }
-                if ui.button("Save layout…").clicked() {
-                    self.save_layout();
-                }
-                if ui.button("Reset layout").clicked() {
-                    self.layout = layout::Layout::default();
-                }
             });
             ui.menu_button("View", |ui| {
                 ui.menu_button("Add view", |ui| {
@@ -324,9 +373,21 @@ impl App {
                         }
                     }
                 });
+                if ui
+                    .button("Clear layout")
+                    .on_hover_text("Remove all views and tabs of the active preset")
+                    .clicked()
+                {
+                    self.layout = layout::Layout::default();
+                }
                 ui.separator();
                 egui::gui_zoom::zoom_menu_buttons(ui);
                 ui.weak(format!("Zoom {:.0} %", ui.ctx().zoom_factor() * 100.0));
+            });
+            ui.menu_button("Presets", |ui| {
+                if let Some(action) = self.presets.menu_ui(ui, self.state.recording) {
+                    self.apply_preset(action, ui.ctx());
+                }
             });
             ui.menu_button("Help", |ui| {
                 ui.label(format!("blip {}", env!("CARGO_PKG_VERSION")));
@@ -438,29 +499,24 @@ impl App {
         }
     }
 
-    fn save_layout(&mut self) {
-        let file = serde_json::to_vec_pretty(&self.layout.to_file()).expect("layouts are JSON");
-        if let Err(error) = files::save(files::Kind::Layout, "layout.json", &file) {
-            self.toasts.error(error);
-        }
-    }
-
-    /// Opens a recording or a layout, as which the contents of `file` tell. A recording
-    /// is read over the next frames, see [`Self::continue_opening`], replacing one still
-    /// being read. The connections are closed and recording stops right away, so the
-    /// data shown while it is read is what it replaces.
+    /// Opens a recording or a presets file, as which the contents of `file` tell. A
+    /// recording is read over the next frames, see [`Self::continue_opening`], replacing
+    /// one still being read. The connections are closed and recording stops right away,
+    /// so the data shown while it is read is what it replaces. Of a presets file, the
+    /// user chooses which presets to import.
     fn open(&mut self, file: files::File) -> Result<(), String> {
         if model::recording::is_recording(&file.bytes) {
             self.opening = Some(opening::Opening::new(file.name, file.bytes)?);
             self.connections.disconnect_all();
             self.state.set_recording(false, false);
+        } else if presets::is_presets(&file.bytes) {
+            let presets = presets::read(&file.name, &file.bytes)?;
+            self.presets.start_import(file.name, presets)?;
         } else {
-            let layout =
-                serde_json::from_slice::<layout::LayoutFile>(&file.bytes).map_err(|error| {
-                    format!("{} is no blip recording or layout: {error}", file.name)
-                })?;
-            self.layout = layout::Layout::migrate(layout)
-                .ok_or_else(|| format!("{} is a layout of a newer version of blip", file.name))?;
+            return Err(format!(
+                "{} is no blip recording or presets file",
+                file.name
+            ));
         }
         Ok(())
     }
@@ -680,11 +736,17 @@ impl eframe::App for App {
         if self.toasts.ui(ui.ctx(), central.response.rect, progress) {
             self.opening = None;
         }
+        if let Some(action) = self.presets.dialog_ui(ui.ctx(), self.state.recording) {
+            self.apply_preset(action, ui.ctx());
+        }
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);
-        eframe::set_value(storage, LAYOUT_KEY, &self.layout.to_file());
+        self.store_preset();
+        self.presets.save(storage);
+        // the layout kept apart before presets
+        storage.remove_string("layout");
     }
 }
 
@@ -1200,5 +1262,107 @@ mod tests {
         assert_eq!(shown.len(), 1);
         assert_eq!(shown[0].0, toasts::Level::Warning);
         assert!(shown[0].1.starts_with("a.blip was opened up to message"));
+    }
+
+    fn addresses(app: &App) -> Vec<String> {
+        (app.connections.saved().into_iter())
+            .map(|connection| connection.address)
+            .collect()
+    }
+
+    fn tabs(app: &App) -> usize {
+        app.layout.to_saved().children.len()
+    }
+
+    #[test]
+    fn switching_presets_keeps_the_layout_and_connections_of_each() {
+        let ctx = Context::default();
+        let mut app = App::default();
+        app.layout.add_view(view::ViewType::Plot);
+        app.connections.set_saved(vec![connections::Connection {
+            name: "bench".to_owned(),
+            address: "ws://bench:3000/ws/outpost".to_owned(),
+        }]);
+        app.apply_preset(presets::Action::New, &ctx);
+        assert_eq!(tabs(&app), 0);
+        assert_eq!(addresses(&app), ["ws://127.0.0.1:3000/ws/outpost"]);
+
+        app.apply_preset(presets::Action::Switch(0), &ctx);
+        assert_eq!(tabs(&app), 1);
+        assert_eq!(addresses(&app), ["ws://bench:3000/ws/outpost"]);
+
+        // a copy has the same, deleting it shows the one after it, else before
+        app.apply_preset(presets::Action::Duplicate, &ctx);
+        assert_eq!(app.presets.active().name, "Default copy");
+        assert_eq!(tabs(&app), 1);
+        app.apply_preset(presets::Action::Delete, &ctx);
+        assert_eq!(app.presets.active().name, "Preset 1");
+        assert_eq!(tabs(&app), 0);
+    }
+
+    #[test]
+    fn a_presets_file_is_imported_as_chosen_in_its_dialog() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+
+        let mut source = App::default();
+        source.layout.add_view(view::ViewType::Logs);
+        source.store_preset();
+        let mut other = presets::Presets::default();
+        other.add_new();
+        let mut bytes = source.presets.export(&[0]);
+        // a file with the default preset, which replaces the active one, and another
+        let mut file: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let new = serde_json::from_slice::<serde_json::Value>(&other.export(&[1])).unwrap();
+        file["presets"]
+            .as_array_mut()
+            .unwrap()
+            .push(new["presets"][0].clone());
+        bytes = serde_json::to_vec(&file).unwrap();
+
+        let mut app = App::default();
+        let file = files::File {
+            name: "presets.json".to_owned(),
+            bytes,
+        };
+        app.open(file).unwrap();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 500.0))
+            .build_ui_state(
+                |ui, app: &mut App| eframe::App::ui(app, ui, &mut Frame::_new_kittest()),
+                app,
+            );
+        harness.run();
+        assert!(
+            harness
+                .query_by_label_contains("replaces the existing one")
+                .is_some()
+        );
+        harness.get_by_label("Import").click();
+        harness.run();
+        let app = harness.state();
+        assert!(!app.presets.has_dialog());
+        assert_eq!(tabs(app), 1);
+        assert_eq!(app.presets.active().name, "Default");
+        assert_eq!(app.presets.names(), ["Default", "Preset 1"]);
+    }
+
+    #[test]
+    fn presets_are_not_switched_while_recording() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+
+        let mut app = App::default();
+        app.apply_preset(presets::Action::New, &Context::default());
+        app.state.recording = true;
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 500.0))
+            .build_ui_state(|ui, app: &mut App| app.menu_ui(ui), app);
+        harness.run();
+        harness.get_by_label("Presets").click();
+        harness.run();
+        harness.get_by_label("Default").click();
+        harness.run();
+        assert_eq!(harness.state().presets.active().name, "Preset 1");
     }
 }

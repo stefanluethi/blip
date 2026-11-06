@@ -73,6 +73,16 @@ impl TimeBase {
     /// Formats `timestamp` in nanoseconds as local time of day, or as hours, minutes
     /// and seconds since boot, with `decimals` decimals of the seconds, rounded.
     pub fn format(self, timestamp: u64, decimals: usize) -> String {
+        self.format_as(timestamp, decimals, "%H:%M:%S")
+    }
+
+    /// Formats `timestamp` like [`Self::format`], local time with the date before it.
+    pub fn format_dated(self, timestamp: u64, decimals: usize) -> String {
+        self.format_as(timestamp, decimals, "%Y-%m-%d %H:%M:%S")
+    }
+
+    /// Formats `timestamp` like [`Self::format`], local time as `pattern` has it.
+    fn format_as(self, timestamp: u64, decimals: usize, pattern: &str) -> String {
         let decimals = decimals.min(9);
         let unit = 10u64.pow(9 - decimals as u32);
         let rounded = timestamp.saturating_add(unit / 2) / unit * unit;
@@ -87,7 +97,7 @@ impl TimeBase {
             TimeBase::Unix => match chrono::DateTime::from_timestamp(whole as i64, 0) {
                 Some(utc) => {
                     let local: chrono::DateTime<chrono::Local> = utc.into();
-                    format!("{}{fraction}", local.format("%H:%M:%S"))
+                    format!("{}{fraction}", local.format(pattern))
                 }
                 None => format!("{timestamp}"),
             },
@@ -673,6 +683,18 @@ mod tests {
         // nanoseconds are kept also at Unix times
         let text = TimeBase::Unix.format(1_700_000_000_000_000_001, 9);
         assert!(text.ends_with(":20.000000001"), "{text}");
+    }
+
+    #[test]
+    fn unix_time_is_formatted_with_the_date_if_asked() {
+        // 2023-11-14 22:13:20 UTC, the 14th or the 15th in local time
+        let text = TimeBase::Unix.format_dated(1_700_000_000_250_000_000, 2);
+        assert_eq!(text.len(), "yyyy-mm-dd hh:mm:ss.25".len());
+        assert!(text.starts_with("2023-11-1"), "{text}");
+        assert!(text.ends_with(":20.25"));
+        // time since boot has no date
+        let text = TimeBase::SinceBoot.format_dated(12_300_000_000, 1);
+        assert_eq!(text, "0:00:12.3");
     }
 
     #[test]
