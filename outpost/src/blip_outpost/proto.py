@@ -4,7 +4,7 @@ import enum
 import io
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import cbor2
 
 
@@ -147,6 +147,61 @@ def variant_prefix(variant: str) -> bytes:
 ACTIONS_PREFIX = variant_prefix("Actions")
 ACTION_RESULT_PREFIX = variant_prefix("ActionResult")
 METADATA_PREFIX = variant_prefix("ValueMetadata")
+VALUE_PREFIX = variant_prefix("Value")
+LOG_PREFIX = variant_prefix("Log")
+TIMESTAMP_KEY = cbor2.dumps("timestamp")
+
+# The bytes after the first of a CBOR head, by its additional information
+_ARGUMENT_BYTES = {**{info: 0 for info in range(24)}, 24: 1, 25: 2, 26: 4, 27: 8}
+
+
+def _head(data: bytes, i: int, major: int) -> Optional[Tuple[int, int]]:
+    """The argument of the CBOR head of `major` type at `i`, and where the head ends;
+    `None` if there is none. An indefinite length has the argument -1."""
+    if i >= len(data) or data[i] >> 5 != major:
+        return None
+    info = data[i] & 0x1F
+    if info == 31 and major in (2, 3, 4, 5):
+        return -1, i + 1
+    n = _ARGUMENT_BYTES.get(info)
+    if n is None or i + 1 + n > len(data):
+        return None
+    if n == 0:
+        return info, i + 1
+    return int.from_bytes(data[i + 1:i + 1 + n], "big"), i + 1 + n
+
+
+def retime(frame: bytes, map_time: Callable[[int], int]) -> bytes:
+    """The message in `frame` with the timestamp `t` of a Value or Log changed to
+    `map_time(t)`; other messages, and a timestamp 0 (none), as they are. The timestamp
+    is changed in place where it is the first field, as sonde and blip encode it, else
+    the message is decoded and encoded anew."""
+    if frame.startswith(VALUE_PREFIX):
+        start = len(VALUE_PREFIX)
+    elif frame.startswith(LOG_PREFIX):
+        start = len(LOG_PREFIX)
+    else:
+        return frame
+    fields = _head(frame, start, 5)
+    if fields is not None and frame.startswith(TIMESTAMP_KEY, fields[1]):
+        at = fields[1] + len(TIMESTAMP_KEY)
+        found = _head(frame, at, 0)
+        if found is not None:
+            t, end = found
+            if t == 0:
+                return frame
+            mapped = map_time(t)
+            return frame if mapped == t else frame[:at] + cbor2.dumps(mapped) + frame[end:]
+    message = decode_cbor_message(frame)
+    content = next(iter(message.values()), None) if message is not None and len(message) == 1 else None
+    t = content.get("timestamp") if isinstance(content, dict) else None
+    if not isinstance(t, int) or isinstance(t, bool) or t <= 0:
+        return frame
+    mapped = map_time(t)
+    if mapped == t:
+        return frame
+    content["timestamp"] = mapped
+    return cbor2.dumps(message)
 
 
 def split_items(data: bytes) -> Tuple[List[bytes], bytes]:

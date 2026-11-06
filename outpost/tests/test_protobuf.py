@@ -186,10 +186,10 @@ def test_messages_without_a_timestamp_get_the_estimated_time_of_the_target(schem
     clock = Clock(1_000)
     t, sent = translator(schema, clock=clock, wall_clock=lambda: 123)
     raw = schema.message_class("test.link.Unannotated")
-    # before any timestamp: the time of this computer
+    # before any timestamp: dropped, not at the time of this computer
     t.feed(up(schema, raw=raw(a=1)))
-    assert values(sent, plain=True)[:2] == [("plain", 0, 123), ("items/raw/a", 1, 123)]
-    sent.clear()
+    assert values(sent, plain=True) == []
+    assert t.target_time_ns() is None
     battery = schema.message_class("test.link.Battery")(t_ns=50_000)
     t.feed(up(schema, battery=battery))
     clock.now += 700
@@ -208,6 +208,34 @@ def test_sequence_gaps_and_restarts_are_counted(schema):
     t.restart()
     t.feed(up(schema, seq=100))
     assert t.counters["seq_gaps"] == 3
+
+
+def test_a_restart_of_the_target_follows_its_time_before(schema):
+    clock = Clock(0)
+    t, sent = translator(schema, clock=clock)
+    battery = schema.message_class("test.link.Battery")
+    t.feed(up(schema, seq=0, battery=battery(t_ns=20_000_000_000, voltage_mv=8000)))
+    clock.now += 3_000_000_000
+    # its uptime and its sequence numbers start over
+    t.feed(up(schema, seq=0, battery=battery(t_ns=200_000_000, voltage_mv=7000)))
+    t.feed(up(schema, seq=1, battery=battery(t_ns=300_000_000, voltage_mv=6000)))
+    assert [v[2] for v in values(sent) if v[0] == "battery/voltage"] == [
+        20_000_000_000, 23_000_000_000, 23_100_000_000]
+    logs = [m["Log"] for m in sent if "Log" in m]
+    assert len(logs) == 1
+    assert logs[0]["timestamp"] == 23_000_000_000
+    assert logs[0]["level"] == 3
+    assert "restarted" in logs[0]["message"]
+
+
+def test_a_reset_sequence_number_makes_a_small_step_back_a_restart(schema):
+    clock = Clock(0)
+    t, sent = translator(schema, clock=clock)
+    battery = schema.message_class("test.link.Battery")
+    t.feed(up(schema, seq=7, battery=battery(t_ns=500_000_000, voltage_mv=8000)))
+    clock.now += 100
+    t.feed(up(schema, seq=0, battery=battery(t_ns=100_000_000, voltage_mv=8000)))
+    assert [v[2] for v in values(sent) if v[0] == "battery/voltage"] == [500_000_000, 500_000_100]
 
 
 def test_sequence_numbers_wrap(schema):

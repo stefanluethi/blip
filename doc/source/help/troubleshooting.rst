@@ -114,6 +114,17 @@ Two targets do not line up
    from both, or let a script stamp the values as they arrive:
    ``send_value`` without ``timestamp_ns`` uses the time of the PC.
 
+Samples are dropped for their time base
+   blip shows one time base, that of the first sample. A sample of the other
+   one, e.g. at the time of day while the target sends its uptime, is dropped
+   with a warning. Send all samples in one time base, or clear the data to
+   start with another.
+
+The data after a restart of the target is shifted
+   When a target restarts and its uptime starts over, the outpost shifts the
+   timestamps of the new run to follow the ones before, and logs a warning, so
+   the two runs do not overlap.
+
 The outpost drops messages
 --------------------------
 

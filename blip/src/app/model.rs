@@ -11,6 +11,7 @@ use crate::app::model::actions::Actions;
 use crate::app::model::logs::{LogEntry, Logs};
 use crate::app::model::recording::Recording;
 use crate::app::model::traces::Traces;
+use crate::app::time::TimeBase;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -45,6 +46,8 @@ pub struct Model {
     flat: decode::Flat,
     /// The timestamp of the first value or log record, from which times count.
     origin: Option<u64>,
+    /// Whether a sample was dropped as its time base is not the one of the origin.
+    warned_time_base: bool,
     /// The latest value of each path, also while not recording, so that actions show
     /// their readbacks without recording. Kept when the data is cleared, as the target
     /// is as it was.
@@ -140,6 +143,9 @@ impl Model {
         }
         match message {
             Ok(decode::Message::Value { timestamp, path }) => {
+                if !self.fits_time_base(timestamp, path) {
+                    return None;
+                }
                 self.origin.get_or_insert(timestamp);
                 let generation = self.traces.generation();
                 self.traces.insert(path, timestamp, &self.flat, frame);
@@ -155,6 +161,9 @@ impl Model {
                 component,
                 message,
             }) => {
+                if timestamp > 0 && !self.fits_time_base(timestamp, path) {
+                    return None;
+                }
                 // a log without a timestamp happened about when the newest data did, in
                 // the time domain of the device
                 let now = self.time_span().map(|(_, newest)| newest);
@@ -202,6 +211,34 @@ impl Model {
             Err(error) => log::warn!("error parsing message: {error}"),
         }
         None
+    }
+
+    /// Whether `timestamp` has the time base of the origin, the Unix epoch or the boot
+    /// of the device, as the time axis shows only one. Warns of the first sample at
+    /// `path` that does not, which is dropped, e.g. from a source with the time of its
+    /// computer while the target sends its uptime.
+    fn fits_time_base(&mut self, timestamp: u64, path: &str) -> bool {
+        let Some(origin) = self.origin else {
+            return true;
+        };
+        let (base, expected) = (TimeBase::guess(timestamp), TimeBase::guess(origin));
+        if base == expected {
+            return true;
+        }
+        if !self.warned_time_base {
+            self.warned_time_base = true;
+            let counts = |base| match base {
+                TimeBase::Unix => "the Unix epoch (UTC)",
+                TimeBase::SinceBoot => "the boot of the target",
+            };
+            log::warn!(
+                "{path}: dropped a sample timed since {}, as the data is timed since {}, \
+                 and one time axis cannot show both (further ones are dropped silently)",
+                counts(base),
+                counts(expected),
+            );
+        }
+        false
     }
 
     /// The timestamp of the first value or log record in nanoseconds, from which the
@@ -532,6 +569,35 @@ mod tests {
         );
         model.receive("a", &log(7_000_000_000));
         assert_eq!(model.origin(), Some(5_000_000_000));
+    }
+
+    #[test]
+    fn samples_of_another_time_base_than_the_origin_are_dropped() {
+        let utc = 1_700_000_000_000_000_000;
+        let mut model = Model::default();
+        model.receive("target", &value(5_000_000_000, "rpm", proto::Data::Uint(1)));
+        // e.g. from a source with the time of its computer
+        model.receive("pc", &value(utc, "rpm", proto::Data::Uint(2)));
+        model.receive("pc", &value(utc, "pc/load", proto::Data::Uint(3)));
+        model.receive(
+            "pc",
+            &frame(&proto::Message::Log(proto::LogRecord {
+                timestamp: utc,
+                path: String::new(),
+                level: 2,
+                component: String::new(),
+                message: "hi".to_owned(),
+            })),
+        );
+        model.receive("target", &value(6_000_000_000, "rpm", proto::Data::Uint(4)));
+        assert_eq!(model.time_span(), Some((5_000_000_000, 6_000_000_000)));
+        assert!(model.logs.entries.is_empty());
+        assert!(model.traces.get("pc/load").is_none());
+
+        // cleared, the next sample sets the time base anew
+        model.clear();
+        model.receive("pc", &value(utc, "rpm", proto::Data::Uint(5)));
+        assert_eq!(model.time_span(), Some((utc, utc)));
     }
 
     fn value(timestamp: u64, path: &str, value: proto::Data) -> Vec<u8> {

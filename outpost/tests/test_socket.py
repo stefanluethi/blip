@@ -3,6 +3,8 @@
 import asyncio
 import socket
 
+import cbor2
+
 import blip_outpost.passthrough as socket_protocol
 from blip_outpost import Outpost
 from blip_outpost.passthrough import SocketPassthrough
@@ -151,3 +153,27 @@ async def test_failing_udp_endpoints_are_retried(monkeypatch):
         assert len(attempts) >= 2
     finally:
         task.cancel()
+
+
+async def test_a_target_that_restarts_continues_after_its_time_before():
+    protocol, frames = passthrough()
+    first = Message.create_value("speed", 1, timestamp_ns=5_000_000_000).encode_cbor()
+    await protocol._forward(Reads(first))
+    # connected again, the uptime started over
+    again = Message.create_value("speed", 2, timestamp_ns=1_000_000).encode_cbor()
+    await protocol._forward(Reads(again))
+    sent = [cbor2.loads(frame) for frame in frames]
+    assert frames[0] == first
+    times = [m["Value"]["timestamp"] for m in sent if "Value" in m]
+    assert times[1] > times[0]
+    assert any("restarted" in m["Log"]["message"] for m in sent if "Log" in m)
+
+
+def test_the_messages_of_a_datagram_are_retimed():
+    protocol, frames = passthrough()
+    late = Message.create_value("speed", 1, timestamp_ns=9_000_000_000).encode_cbor()
+    early = Message.create_value("speed", 2, timestamp_ns=1_000).encode_cbor()
+    protocol._datagram(late + early)
+    times = [cbor2.loads(frame)["Value"]["timestamp"] for frame in frames if b"Value" in frame]
+    assert times[0] == 9_000_000_000
+    assert times[1] > times[0]

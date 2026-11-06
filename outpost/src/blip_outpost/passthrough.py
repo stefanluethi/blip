@@ -9,7 +9,8 @@ import cbor2
 
 from blip_outpost.actions import ActionError
 from blip_outpost.outpost import Outpost
-from blip_outpost.proto import split_items
+from blip_outpost.proto import retime, split_items
+from blip_outpost.timing import TargetClock, report_restart
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,8 @@ class SocketPassthrough:
     unchanged, and forwards their invocations to the target as Invoke requests. The
     target announces its actions itself, an invocation succeeds once it is forwarded.
     The ActionResult messages of the target are dropped by the outpost, which answered
-    already.
+    already. When the target restarts and its timestamps start over, they are shifted
+    to follow the ones before, see `TargetClock`; a new TCP connection may be a restart.
 
     The target sends its messages as a CBOR sequence (RFC 8742), any number at once;
     over TCP they may be split anywhere, a UDP datagram holds complete messages. With
@@ -51,6 +53,7 @@ class SocketPassthrough:
         self.writer: Optional[asyncio.StreamWriter] = None
         self._udp_transport: Optional[asyncio.DatagramTransport] = None
         self._next_id = 0
+        self.target_clock = TargetClock(on_restart=lambda t: report_restart(outpost, self.target_clock, t))
         outpost.on_invoke = self.invoke
 
     async def run(self) -> None:
@@ -104,6 +107,7 @@ class SocketPassthrough:
     async def _forward(self, reader: asyncio.StreamReader) -> None:
         """Sends each complete message of the TCP stream to blip, keeping the start of
         an incomplete one until the rest arrives."""
+        self.target_clock.restart()
         pending = b""
         while True:
             data = await reader.read(4096)
@@ -123,15 +127,15 @@ class SocketPassthrough:
                 logger.error(f"Dropping {len(pending)} bytes of a message that does not end: {pending[:32].hex()}")
                 pending = b""
             for frame in frames:
-                self.outpost._send_frame(frame)
+                self.outpost._send_frame(retime(frame, self.target_clock.map))
 
     async def _udp(self) -> None:
         """Sets up the UDP endpoint, retrying while that fails."""
-        outpost = self.outpost
+        passthrough = self
 
         class UDPProtocol(asyncio.DatagramProtocol):
             def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
-                outpost.send(data)
+                passthrough._datagram(data)
 
         loop = asyncio.get_running_loop()
         while True:
@@ -152,6 +156,18 @@ class SocketPassthrough:
                 await asyncio.sleep(RETRY_DELAY_SEC)
         self._udp_transport = transport
         await asyncio.Event().wait()
+
+    def _datagram(self, data: bytes) -> None:
+        """Sends the messages of a datagram to blip."""
+        try:
+            frames, rest = split_items(data)
+        except ValueError as e:
+            logger.error(f"Dropping {len(data)} bytes that are no messages ({e}): {data[:32].hex()}")
+            return
+        if rest:
+            logger.error(f"Dropping {len(rest)} bytes of an incomplete message: {rest[:32].hex()}")
+        for frame in frames:
+            self.outpost._send_frame(retime(frame, self.target_clock.map))
 
     async def invoke(self, path: str, args: dict) -> None:
         """Forwards the invocation to the target as an Invoke request."""

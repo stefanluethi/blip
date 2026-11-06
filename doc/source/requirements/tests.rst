@@ -132,6 +132,21 @@ Test Cases
    tests -- put the samples of a path in the order of their timestamps,
    also when several connections send it.
 
+.. test:: Samples stay on one timeline
+   :id: TEST_TIMELINE
+   :status: implemented
+   :component: blip, outpost
+   :verifies: REQ_CONN_TIMELINE
+
+   ``blip/src/app/model.rs`` tests -- drop values and log records of another
+   time base than the first sample, and start afresh when cleared;
+   ``outpost/tests/test_timing.py`` -- keep the time of a target, shift a run
+   after a jump back or an earlier time after a possible restart to follow the
+   newest time plus the time since, but not a little out of order sample, and
+   change the timestamp of a message in place or anew; ``test_protobuf.py``
+   and ``test_socket.py`` -- shift the times after a restart of a protobuf or
+   socket target, log it, and drop untimed values before the first timestamp.
+
 .. test:: Recordings are saved and opened
    :id: TEST_BLIP_RECORDING
    :status: implemented

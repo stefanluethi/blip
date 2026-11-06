@@ -140,6 +140,10 @@ What happens to a message on its way into the model:
   newest (e.g. from a second outpost) is moved into place. One older than the
   newest 65 536 values of its path is dropped with a warning, as moving all of
   them for each value of a clock minutes behind would stall blip.
+* **Time base.** The first timestamp fixes the time base, UTC or time since
+  boot, and the origin the views count from. A value or log record of the
+  other base is dropped with a single warning, as it would land decades away
+  from the others.
 * **Units** come from ``ValueMetadata`` and are kept by path, also before the
   first sample.
 * **Log records** are kept, all of them, in the order of their timestamps. A
