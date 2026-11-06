@@ -20,7 +20,8 @@ Visualisation
    :satisfies: STK_LIVE_OBSERVE
 
    blip shall display received ``Log`` messages in a table showing timestamp,
-   level, component and message.
+   level, component and message. The date of the timestamp and the component
+   can be shown or hidden.
 
 .. req:: Show states over time
    :id: REQ_VIS_STATES

@@ -1,5 +1,5 @@
 use crate::app::model::Version;
-use crate::app::model::logs::{LogEntry, LogLevel, Logs};
+use crate::app::model::logs::{LogEntry, LogLevel, Logs, PathLogs};
 use crate::app::theme;
 use crate::app::time::{TimeBase, TimeRange};
 use crate::app::view::{ViewContext, Viewable};
@@ -33,10 +33,11 @@ impl Default for LogFilter {
 }
 
 impl LogFilter {
-    /// Whether any entries are hidden by the filters.
-    fn is_active(&self) -> bool {
+    /// Whether any entries are hidden by the filters, of the components only if
+    /// `components` are shown.
+    fn is_active(&self, components: bool) -> bool {
         !self.hidden_levels.is_empty()
-            || !self.hidden_components.is_empty()
+            || components && !self.hidden_components.is_empty()
             || !self.message_regex.is_empty()
     }
 
@@ -49,12 +50,33 @@ impl LogFilter {
     }
 }
 
+/// Which columns besides the level and the message the table shows, set in the
+/// properties panel.
+#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Debug, PartialEq)]
+#[serde(default)]
+pub struct LogColumns {
+    /// Whether the time shows the date too, of times in Unix time.
+    pub date: bool,
+    /// Whether the component and its filter show. Its filter hides nothing while not.
+    pub component: bool,
+}
+
+impl Default for LogColumns {
+    fn default() -> Self {
+        Self {
+            date: false,
+            component: true,
+        }
+    }
+}
+
 #[derive(serde::Deserialize, serde::Serialize, Clone, Default)]
 #[serde(default)]
 pub struct LogTable {
     /// The paths of the shown logs, chosen in the tree of the left panel.
     pub paths: BTreeSet<String>,
     pub filter: LogFilter,
+    pub columns: LogColumns,
 
     /// Boxed, as views are kept by value in the layout.
     #[serde(skip)]
@@ -66,43 +88,52 @@ pub struct LogTable {
     /// The time range shown in the last frame, to scroll to it when it moves.
     #[serde(skip)]
     last_range: Option<(f64, f64)>,
-    /// The indices of the entries the filter shows, see [`LogTable::update_shown`].
+    /// The entries the filter shows, in the order of their times, see
+    /// [`LogTable::update_shown`].
     #[serde(skip)]
-    shown: Vec<u32>,
-    /// What `shown` was made for, and the paths of the shown entries.
+    shown: Vec<ShownEntry>,
+    /// What `shown` was made for.
     #[serde(skip)]
     shown_for: Option<Box<ShownFor>>,
 }
 
-/// What [`LogTable::shown`] was made for, and the paths of the entries in it.
+/// An entry the filter shows: the index of its path in [`ShownFor::paths`] and its
+/// index in the entries of that path.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ShownEntry {
+    path: u32,
+    index: u32,
+}
+
+/// What [`LogTable::shown`] was made for.
 #[derive(Clone)]
 struct ShownFor {
-    /// A hash of the paths and of what the filter hides.
+    /// A hash of what the filter hides.
     filter: u64,
-    /// The order of the entries.
+    /// The shown paths with entries, in the order they were added in, so that the
+    /// entries in [`LogTable::shown`] keep the indices of their paths.
+    paths: Vec<ShownPath>,
+}
+
+/// A shown path with entries, see [`ShownFor`].
+#[derive(Clone)]
+struct ShownPath {
+    path: Arc<str>,
+    /// The order of its entries.
     order: Version,
-    /// How many of them were filtered.
+    /// How many of its entries were filtered.
     filtered: usize,
-    paths: ShownPaths,
+    /// How many of them the filter shows.
+    shown: usize,
 }
 
-/// The paths of the shown entries.
-#[derive(Clone, Default, PartialEq, Debug)]
-enum ShownPaths {
-    #[default]
-    None,
-    One(Arc<str>),
-    Several,
-}
+/// The entries of the paths of [`ShownFor::paths`], by the indices of
+/// [`ShownEntry::path`].
+type Slots<'a> = Vec<&'a PathLogs>;
 
-impl ShownPaths {
-    fn add(&mut self, path: &Arc<str>) {
-        match self {
-            Self::None => *self = Self::One(path.clone()),
-            Self::One(one) if one != path => *self = Self::Several,
-            _ => {}
-        }
-    }
+/// The entry `shown` of `slots`.
+fn entry<'a>(slots: &[&'a PathLogs], shown: ShownEntry) -> &'a LogEntry {
+    &slots[shown.path as usize].entries[shown.index as usize]
 }
 
 impl LogTable {
@@ -125,10 +156,10 @@ impl LogTable {
         }
     }
 
+    /// Whether the filter shows `entry`, an entry of a shown path.
     pub fn matches(&self, entry: &LogEntry) -> bool {
-        if !self.paths.contains(&*entry.path)
-            || self.filter.hidden_levels.contains(&entry.level)
-            || self.filter.hidden_components.contains(&entry.component)
+        if self.filter.hidden_levels.contains(&entry.level)
+            || self.columns.component && self.filter.hidden_components.contains(&entry.component)
         {
             return false;
         }
@@ -146,50 +177,118 @@ impl LogTable {
         }
     }
 
-    /// Filters the entries of `logs` that arrived since the last call, or all of them
-    /// again if the paths, the filter or the order of the entries changed.
-    fn update_shown(&mut self, logs: &Logs) {
+    /// Filters the entries of the shown paths of `logs` that arrived since the last
+    /// call, all of those of a path again if an entry was put before others of it, and
+    /// all entries again if the filter changed or a path was no longer shown. Returns
+    /// the entries of the paths with entries, by the indices of [`ShownEntry::path`].
+    fn update_shown<'a>(&mut self, logs: &'a Logs) -> Slots<'a> {
         use std::hash::{Hash, Hasher};
         self.update_regex_cache();
         // without whether to scroll, which shows the same entries
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         let filter = &self.filter;
-        self.paths.hash(&mut hasher);
+        self.columns.component.hash(&mut hasher);
         (&filter.hidden_levels, &filter.hidden_components).hash(&mut hasher);
         (&filter.message_regex, filter.case_sensitive).hash(&mut hasher);
         let filter = hasher.finish();
-        let (from, mut paths) = match self.shown_for.take().map(|known| *known) {
-            Some(known) if known.filter == filter && known.order == logs.order() => {
-                (known.filtered, known.paths)
-            }
-            _ => {
-                self.shown.clear();
-                (0, ShownPaths::None)
-            }
-        };
-        for (index, entry) in logs.entries.iter().enumerate().skip(from) {
-            if self.matches(entry) {
-                self.shown.push(index as u32);
-                paths.add(&entry.path);
+
+        // the known paths and their entries, as long as the filter is the same and
+        // they are still shown and have entries
+        let known = (self.shown_for.take())
+            .filter(|known| known.filter == filter)
+            .and_then(|known| {
+                let slots = (known.paths.iter())
+                    .map(|shown| {
+                        logs.get(&shown.path)
+                            .filter(|_| self.paths.contains(&*shown.path))
+                    })
+                    .collect::<Option<Slots<'a>>>()?;
+                Some((known.paths, slots))
+            });
+        let (mut paths, mut slots) = known.unwrap_or_else(|| {
+            self.shown.clear();
+            (Vec::new(), Vec::new())
+        });
+        // a path with an entry put before others of it is filtered again, alone
+        for (slot, (known, entries)) in paths.iter_mut().zip(&slots).enumerate() {
+            if known.order != entries.order() {
+                self.shown.retain(|shown| shown.path != slot as u32);
+                *known = ShownPath {
+                    path: known.path.clone(),
+                    order: entries.order(),
+                    filtered: 0,
+                    shown: 0,
+                };
             }
         }
-        self.shown_for = Some(Box::new(ShownFor {
-            filter,
-            order: logs.order(),
-            filtered: logs.entries.len(),
-            paths,
-        }));
+        // the shown paths whose first entries arrived or which were picked, after the
+        // known ones, all of which are shown and have entries
+        let with_entries = self.paths.iter().filter(|path| logs.has_path(path));
+        if with_entries.count() > paths.len() {
+            let known: BTreeSet<Arc<str>> = paths.iter().map(|known| known.path.clone()).collect();
+            for (path, entries) in self
+                .paths
+                .iter()
+                .filter_map(|path| logs.get_key_value(path))
+            {
+                if !known.contains(path) {
+                    paths.push(ShownPath {
+                        path: path.clone(),
+                        order: entries.order(),
+                        filtered: 0,
+                        shown: 0,
+                    });
+                    slots.push(entries);
+                }
+            }
+        }
+
+        let mut new = Vec::new();
+        for (slot, (known, entries)) in paths.iter_mut().zip(&slots).enumerate() {
+            for (index, entry) in entries.entries.iter().enumerate().skip(known.filtered) {
+                if self.matches(entry) {
+                    new.push(ShownEntry {
+                        path: slot as u32,
+                        index: index as u32,
+                    });
+                    known.shown += 1;
+                }
+            }
+            known.filtered = entries.entries.len();
+        }
+        // stable, so that entries of the same time keep the order of their paths
+        let time = |shown: &ShownEntry| entry(&slots, *shown).time;
+        new.sort_by_key(time);
+        match (self.shown.last(), new.first()) {
+            (Some(last), Some(first)) if time(last) > time(first) => {
+                // an entry of one path arrived later than a newer one of another
+                self.shown = merge(std::mem::take(&mut self.shown), new, time);
+            }
+            _ => self.shown.extend(new),
+        }
+        self.shown_for = Some(Box::new(ShownFor { filter, paths }));
+        slots
+    }
+
+    /// The paths with entries of the last [`Self::update_shown`], by the indices of
+    /// [`ShownEntry::path`].
+    fn shown_paths(&self) -> &[ShownPath] {
+        self.shown_for.as_ref().map_or(&[], |shown| &shown.paths)
     }
 
     /// Whether the shown entries are of several paths, so that the path tells them apart.
     fn shows_several_paths(&self) -> bool {
-        (self.shown_for.as_ref()).is_some_and(|shown| shown.paths == ShownPaths::Several)
+        (self.shown_paths().iter())
+            .filter(|path| path.shown > 0)
+            .count()
+            > 1
     }
 
     /// Shows the entries, the ones outside the shown time range greyed out, with the
     /// filters in the header of the table.
     pub fn ui(&mut self, ui: &mut egui::Ui, logs: &Logs, time: &TimeRange) {
-        self.update_shown(logs);
+        let slots = self.update_shown(logs);
+        let total = slots.iter().map(|path| path.entries.len()).sum();
 
         let footer_height = 20.0;
         // the table shrinks to nothing before the footer is pushed out of a small view
@@ -206,6 +305,7 @@ impl LogTable {
 
                 // the path tells the entries apart only if they are of several paths
                 let with_path = self.shows_several_paths();
+                let columns = self.columns;
                 // the time, level, path and component take only what they need, the
                 // message the rest
                 let mut builder = theme::table(ui)
@@ -218,9 +318,10 @@ impl LogTable {
                 if with_path {
                     builder = builder.column(Column::auto().resizable(false)); // Path
                 }
-                builder = builder
-                    .column(Column::auto().resizable(false)) // Log Component
-                    .column(Column::remainder().at_least(150.0)); // Message
+                if columns.component {
+                    builder = builder.column(Column::auto().resizable(false)); // Component
+                }
+                builder = builder.column(Column::remainder().at_least(150.0)); // Message
 
                 let range = time.range();
                 let timestamps =
@@ -245,7 +346,7 @@ impl LogTable {
                     // scroll to the newest entry in the moved range
                     let last_in_range = self
                         .shown
-                        .partition_point(|&index| logs.entries[index as usize].time <= end)
+                        .partition_point(|&shown| entry(&slots, shown).time <= end)
                         .saturating_sub(1);
                     builder = builder
                         .animate_scrolling(!following)
@@ -266,9 +367,11 @@ impl LogTable {
                                 header_title(ui, "Path");
                             });
                         }
-                        header.col(|ui| {
-                            self.component_filter_ui(ui, logs);
-                        });
+                        if columns.component {
+                            header.col(|ui| {
+                                self.component_filter_ui(ui, &slots);
+                            });
+                        }
                         header.col(|ui| {
                             self.message_filter_ui(ui);
                         });
@@ -276,9 +379,11 @@ impl LogTable {
                     .body(|mut body| {
                         let lines = lines.in_body(body.ui_mut());
                         let shown_entries = &self.shown;
+                        let paths = self.shown_paths();
                         body.rows(row_height, shown_entries.len(), |mut row| {
                             let index = row.index();
-                            let entry = &logs.entries[shown_entries[index] as usize];
+                            let path = &paths[shown_entries[index].path as usize].path;
+                            let entry = entry(&slots, shown_entries[index]);
                             let shown = in_range(entry);
                             // the message stands out, the time and the component less,
                             // and all of an entry outside the time range stays faint
@@ -294,7 +399,12 @@ impl LogTable {
                             };
                             row.col(|ui| {
                                 lines.above(ui, index);
-                                let time = TimeBase::guess(entry.time).format(entry.time, 3);
+                                let base = TimeBase::guess(entry.time);
+                                let time = if columns.date {
+                                    base.format_dated(entry.time, 3)
+                                } else {
+                                    base.format(entry.time, 3)
+                                };
                                 ui.label(text(&time, ui, Role::Time));
                             });
                             row.col(|ui| {
@@ -302,12 +412,14 @@ impl LogTable {
                             });
                             if with_path {
                                 row.col(|ui| {
-                                    ui.label(text(&entry.path, ui, Role::Path));
+                                    ui.label(text(path, ui, Role::Path));
                                 });
                             }
-                            row.col(|ui| {
-                                ui.label(text(&entry.component, ui, Role::Component));
-                            });
+                            if columns.component {
+                                row.col(|ui| {
+                                    ui.label(text(&entry.component, ui, Role::Component));
+                                });
+                            }
                             row.col(|ui| {
                                 ui.label(text(&entry.message, ui, Role::Message));
                             });
@@ -316,7 +428,7 @@ impl LogTable {
             },
         );
 
-        self.footer_ui(ui, self.shown.len(), logs.entries.len());
+        self.footer_ui(ui, self.shown.len(), total);
     }
 
     /// The autoscroll button, how many entries are shown and a button to clear the
@@ -346,7 +458,7 @@ impl LogTable {
             };
             ui.label(egui::RichText::new(count).small().weak());
 
-            if self.filter.is_active()
+            if self.filter.is_active(self.columns.component)
                 && ui
                     .add(egui::Button::new(egui::RichText::new("Clear filters").small()).small())
                     .clicked()
@@ -380,15 +492,12 @@ impl LogTable {
     }
 
     /// The header of the component column, with checkboxes for the components of the
-    /// shown paths.
-    fn component_filter_ui(&mut self, ui: &mut egui::Ui, logs: &Logs) {
-        let paths = &self.paths;
+    /// shown paths, `slots`.
+    fn component_filter_ui(&mut self, ui: &mut egui::Ui, slots: &[&PathLogs]) {
         let hidden = &mut self.filter.hidden_components;
         filter_header(ui, "Component", !hidden.is_empty(), |ui| {
-            let components: BTreeSet<&str> = logs
-                .entries
-                .iter()
-                .filter(|entry| paths.contains(&*entry.path))
+            let components: BTreeSet<&str> = (slots.iter())
+                .flat_map(|path| &path.entries)
                 .map(|entry| entry.component.as_str())
                 .collect();
             if components.is_empty() {
@@ -487,6 +596,37 @@ impl Viewable for LogTable {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         self.ui(ui, &context.model.logs, context.time);
     }
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, _context: &super::PropertiesContext<'_>) {
+        super::properties_section(ui, "Columns", |ui| {
+            super::property_label(ui, "Date");
+            ui.checkbox(&mut self.columns.date, "")
+                .on_hover_text("Show the date with the time, of times in Unix time");
+            ui.end_row();
+            super::property_label(ui, "Component");
+            ui.checkbox(&mut self.columns.component, "")
+                .on_hover_text("Show the component of the entries, to filter by it");
+            ui.end_row();
+        });
+    }
+}
+
+/// `known` and `new`, each in the order of `time`, merged in that order, the known ones
+/// before the new ones of the same time.
+fn merge<T: Copy>(known: Vec<T>, new: Vec<T>, time: impl Fn(&T) -> u64) -> Vec<T> {
+    let mut merged = Vec::with_capacity(known.len() + new.len());
+    let (mut known, mut new) = (known.into_iter().peekable(), new.into_iter().peekable());
+    while let (Some(a), Some(b)) = (known.peek(), new.peek()) {
+        let next = if time(b) < time(a) {
+            new.next()
+        } else {
+            known.next()
+        };
+        merged.extend(next);
+    }
+    merged.extend(known);
+    merged.extend(new);
+    merged
 }
 
 /// The title of a column without a filter, in the font of the other titles.
@@ -602,11 +742,23 @@ mod tests {
     fn create_entry(level: LogLevel, component: &str, message: &str) -> LogEntry {
         LogEntry {
             time: 0,
-            path: DEFAULT_PATH.into(),
             component: component.to_string(),
             level,
             message: message.to_string(),
         }
+    }
+
+    /// The paths and the indices of the shown entries.
+    fn shown(table: &LogTable) -> Vec<(&str, u32)> {
+        let paths = &table.shown_for.as_ref().unwrap().paths;
+        (table.shown.iter())
+            .map(|shown| (&*paths[shown.path as usize].path, shown.index))
+            .collect()
+    }
+
+    /// The indices of the shown entries of the logs without a path.
+    fn shown_indices(table: &LogTable) -> Vec<u32> {
+        shown(table).into_iter().map(|(_, index)| index).collect()
     }
 
     #[test]
@@ -616,38 +768,35 @@ mod tests {
             ..create_entry(level, "core", "message")
         };
         let mut logs = Logs::default();
-        logs.push(at(1, LogLevel::Info));
-        logs.push(at(2, LogLevel::Warn));
+        logs.push("", at(1, LogLevel::Info));
+        logs.push("", at(2, LogLevel::Warn));
         let mut table = table();
         table.filter.hidden_levels.insert(LogLevel::Info);
         table.update_shown(&logs);
-        assert_eq!(table.shown, [1]);
+        assert_eq!(shown_indices(&table), [1]);
 
-        logs.push(at(3, LogLevel::Warn));
-        logs.push(at(4, LogLevel::Info));
+        logs.push("", at(3, LogLevel::Warn));
+        logs.push("", at(4, LogLevel::Info));
         table.update_shown(&logs);
-        assert_eq!(table.shown, [1, 2]);
+        assert_eq!(shown_indices(&table), [1, 2]);
 
         table.filter.hidden_levels.clear();
         table.update_shown(&logs);
-        assert_eq!(table.shown, [0, 1, 2, 3]);
+        assert_eq!(shown_indices(&table), [0, 1, 2, 3]);
 
         // an entry before the others moves them on
         table.filter.hidden_levels.insert(LogLevel::Info);
         table.update_shown(&logs);
-        logs.push(at(0, LogLevel::Warn));
+        logs.push("", at(0, LogLevel::Warn));
         table.update_shown(&logs);
-        assert_eq!(table.shown, [0, 2, 3]);
+        assert_eq!(shown_indices(&table), [0, 2, 3]);
     }
 
     /// Records at "motor" and at "robot/arm".
     fn logs_of_two_paths() -> Logs {
         let mut logs = Logs::default();
         for path in ["motor", "robot/arm"] {
-            logs.push(LogEntry {
-                path: path.into(),
-                ..create_entry(LogLevel::Info, "core", "message")
-            });
+            logs.push(path, create_entry(LogLevel::Info, "core", "message"));
         }
         logs
     }
@@ -660,10 +809,66 @@ mod tests {
             ..LogTable::default()
         };
         table.update_shown(&logs);
-        assert_eq!(table.shown, [0]);
+        assert_eq!(shown(&table), [("motor", 0)]);
         table.paths.insert("robot/arm".to_owned());
         table.update_shown(&logs);
-        assert_eq!(table.shown, [0, 1]);
+        assert_eq!(shown(&table), [("motor", 0), ("robot/arm", 0)]);
+        // a path no longer picked is no longer shown
+        table.paths.remove("motor");
+        table.update_shown(&logs);
+        assert_eq!(shown(&table), [("robot/arm", 0)]);
+    }
+
+    #[test]
+    fn the_entries_of_several_paths_are_shown_in_the_order_of_their_times() {
+        let at = |time| LogEntry {
+            time,
+            ..create_entry(LogLevel::Info, "core", "message")
+        };
+        let mut logs = Logs::default();
+        logs.push("motor", at(1));
+        logs.push("robot", at(2));
+        logs.push("motor", at(3));
+        let mut table = LogTable {
+            paths: BTreeSet::from(["motor".to_owned(), "robot".to_owned()]),
+            ..LogTable::default()
+        };
+        table.update_shown(&logs);
+        assert_eq!(shown(&table), [("motor", 0), ("robot", 0), ("motor", 1)]);
+        // appended to its path, but before an entry of the other one
+        logs.push("robot", at(2));
+        logs.push("motor", at(4));
+        table.update_shown(&logs);
+        let expected = [
+            ("motor", 0),
+            ("robot", 0),
+            ("robot", 1),
+            ("motor", 1),
+            ("motor", 2),
+        ];
+        assert_eq!(shown(&table), expected);
+        // a path whose first entry arrives, after the known ones of the same time
+        table.paths.insert("arm".to_owned());
+        logs.push("arm", at(3));
+        table.update_shown(&logs);
+        assert_eq!(shown(&table)[3..5], [("motor", 1), ("arm", 0)]);
+        // an entry before the others of its path, which alone is filtered again
+        logs.push("robot", at(0));
+        table.update_shown(&logs);
+        let expected = [
+            ("robot", 0),
+            ("motor", 0),
+            ("robot", 1),
+            ("robot", 2),
+            ("motor", 1),
+            ("arm", 0),
+            ("motor", 2),
+        ];
+        assert_eq!(shown(&table), expected);
+        let counts: Vec<_> = (table.shown_paths().iter())
+            .map(|path| (&*path.path, path.shown))
+            .collect();
+        assert_eq!(counts, [("motor", 3), ("robot", 3), ("arm", 1)]);
     }
 
     #[test]
@@ -690,11 +895,8 @@ mod tests {
     #[test]
     fn only_the_paths_of_the_shown_entries_count() {
         let mut logs = Logs::default();
-        logs.push(create_entry(LogLevel::Info, "core", "message"));
-        logs.push(LogEntry {
-            path: "motor".into(),
-            ..create_entry(LogLevel::Info, "hidden", "message")
-        });
+        logs.push("", create_entry(LogLevel::Info, "core", "message"));
+        logs.push("motor", create_entry(LogLevel::Info, "hidden", "message"));
         let mut table = LogTable {
             paths: BTreeSet::from([DEFAULT_PATH.to_owned(), "motor".to_owned()]),
             ..LogTable::default()
@@ -704,10 +906,7 @@ mod tests {
         table.update_shown(&logs);
         assert!(!table.shows_several_paths());
         // an arriving entry of "motor" is filtered with those before
-        logs.push(LogEntry {
-            path: "motor".into(),
-            ..create_entry(LogLevel::Info, "core", "later")
-        });
+        logs.push("motor", create_entry(LogLevel::Info, "core", "later"));
         table.update_shown(&logs);
         assert!(table.shows_several_paths());
     }
@@ -716,7 +915,7 @@ mod tests {
     fn autoscroll_button_stays_visible_in_a_small_view() {
         let mut logs = Logs::default();
         for _ in 0..100 {
-            logs.push(create_entry(LogLevel::Info, "core", "message"));
+            logs.push("", create_entry(LogLevel::Info, "core", "message"));
         }
         let mut table = table();
         let time = TimeRange::default();
@@ -746,7 +945,7 @@ mod tests {
                 frame += 1;
                 if frame % 7 == 0 {
                     let message = format!("message {}", frame / 7);
-                    logs.push(create_entry(LogLevel::Info, "core", &message));
+                    logs.push("", create_entry(LogLevel::Info, "core", &message));
                     shared.set(frame / 7);
                 }
                 table.ui(ui, &logs, &time);
@@ -804,9 +1003,44 @@ mod tests {
         assert!(table.matches(&entry1));
         assert!(!table.matches(&entry2));
 
+        // not while the components are hidden
+        table.columns.component = false;
+        assert!(table.matches(&entry2));
+        assert!(!table.filter.is_active(false));
+        table.columns.component = true;
+
         table.filter.clear();
         assert!(table.matches(&entry1));
         assert!(table.matches(&entry2));
+    }
+
+    #[test]
+    fn the_columns_follow_the_properties() {
+        let harness = |columns: LogColumns| {
+            let mut logs = Logs::default();
+            let entry = LogEntry {
+                time: 1_700_000_000_000_000_000,
+                ..create_entry(LogLevel::Info, "motor_ctrl", "speed 100")
+            };
+            logs.push("", entry);
+            let mut table = LogTable { columns, ..table() };
+            let time = TimeRange::default();
+            Harness::builder()
+                .with_size(egui::vec2(600.0, 300.0))
+                .build_ui(move |ui| table.ui(ui, &logs, &time))
+        };
+        let shown = harness(LogColumns::default());
+        shown.get_by_label("motor_ctrl");
+        shown.get_by_label(&format!("Component {}", regular::CARET_DOWN));
+        let date = TimeBase::Unix.format_dated(1_700_000_000_000_000_000, 3);
+        assert!(shown.query_by_label(&date).is_none());
+
+        let hidden = harness(LogColumns {
+            date: true,
+            component: false,
+        });
+        assert!(hidden.query_by_label("motor_ctrl").is_none());
+        hidden.get_by_label(&date);
     }
 
     #[test]
@@ -816,9 +1050,9 @@ mod tests {
             message_regex: "x".to_string(),
             ..LogFilter::default()
         };
-        assert!(filter.is_active());
+        assert!(filter.is_active(true));
         filter.clear();
-        assert!(!filter.is_active());
+        assert!(!filter.is_active(true));
         assert!(!filter.auto_scroll);
     }
 

@@ -54,6 +54,20 @@ Test Cases
    over time for heatmaps, and zoom plots with the mouse wheel without panning
    them, unless disabled.
 
+.. test:: Log records are kept by path and shown in a table
+   :id: TEST_BLIP_LOGS
+   :status: implemented
+   :component: blip
+   :verifies: REQ_VIS_LOG
+
+   ``blip/src/app/model/logs.rs`` and ``blip/src/app/view/log_table.rs`` unit
+   tests -- keep records by path in the order of their times, changing the
+   order of a path only when a record arrives before others of it; show the
+   records of the picked paths merged by time, filter only new records unless
+   the filter or the paths change, filter by level, component and message, show
+   the path while several are shown, and show or hide the date and the
+   component as the properties say.
+
 .. test:: Time cursor is set and dragged
    :id: TEST_BLIP_CURSOR
    :status: implemented
