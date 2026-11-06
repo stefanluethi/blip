@@ -6,8 +6,10 @@ settings, and the connections, with their names and addresses. Keep one per
 project, target or test bench and switch between them. One preset is active:
 the views and connections you see are its own, and changing them changes it.
 blip keeps all presets across restarts and starts with the one that was
-active. The first start has one preset, *Default*, with an empty layout and a
-connection to an outpost on this machine.
+active. If the kept presets cannot be read, blip starts with the default
+preset and does not lose them, see :doc:`/help/troubleshooting`. The first
+start has one preset, *Default*, with an empty layout and a connection to an
+outpost on this machine.
 
 Presets menu
 ------------
@@ -47,11 +49,13 @@ In the browser, the file is downloaded. Keep it in a repository next to the
 firmware, share it with the team or generate it, see :doc:`/reference/files`.
 
 **Presets › Import presets…** opens a presets file, as does dropping one onto
-the window or picking one with **File › Open recording**. blip lists the
-presets in the file, all checked: uncheck those to leave out. A preset with
+the window. blip lists the presets in the file, all checked: uncheck those to
+leave out. A preset with
 the name of one you have is marked *replaces the existing one*; importing it
 replaces that preset, with its layout and connections. Replacing the active
-preset shows the imported one at once, so it is disabled while recording.
+preset shows the imported one at once, so it is disabled while recording;
+its choice comes back once recording stops. A file dropped while a dialog of
+the presets is open is not imported: close the dialog and drop it again.
 
 blip opens presets files of its own and of older versions. A file of a newer
 version of blip is refused, see :doc:`/help/troubleshooting`.

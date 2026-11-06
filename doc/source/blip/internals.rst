@@ -282,8 +282,10 @@ the connections.
 version and the presets, as JSON, described for users in
 :doc:`/reference/files`. ``presets::read`` reads the version first and
 brings older versions up to date, one version after another, before reading
-the presets; a file of a newer version is refused, and so are presets without
-a name or with the same name. Format changes must add a migration there, not
+the presets; a file of a newer version is refused, and so are layout files of
+the versions before presets and presets without a name or with the same name.
+The connections read are kept apart as editing keeps them
+(``Connection::sanitized``). Format changes must add a migration there, not
 drop old presets, and a line to the versions in :doc:`/reference/files`.
 
 Actions and the invoker
@@ -313,7 +315,8 @@ Persistence
 eframe's storage keeps the serialised ``App`` (window length, panel state;
 the data, the layout and the connections are skipped) under its app key, the
 JSON of the ``PresetsFile`` under ``presets`` and the name of the active
-preset under ``active preset``. eframe saves every 30 seconds and on exit; on the web,
+preset under ``active preset``. Kept presets of a newer version are not
+overwritten, damaged ones are kept under ``unread presets``. eframe saves every 30 seconds and on exit; on the web,
 ``main.rs`` also saves when the page is hidden or left, as eframe's own save
 on closing does not run there. egui keeps its memory, e.g. the zoom and the
 theme.

@@ -22,8 +22,8 @@ File menu
    starts again with them, so a saved recording has them too.
 
 Recording and presets files can also be **dropped onto the window**; blip
-tells them apart by their contents. A presets file picked with **Open
-recording** or dropped is imported, see :doc:`/blip/presets`.
+tells them apart by their contents. A dropped presets file is imported, see
+:doc:`/blip/presets`.
 
 Recording files are also written by the outpost (``record``, see
 :doc:`/outpost/index`) and by sonde's ``FileSink`` (see :doc:`/sonde/index`),
@@ -33,8 +33,9 @@ and the outpost replays them. Their format is described in
 View menu
 ---------
 
-**Add view** adds a view of the chosen type after the selected view, see
-:doc:`/blip/layout`.
+**Add view** adds a view of the chosen type after the selected view, and
+**Clear layout** removes all views and tabs of the active preset, keeping its
+connections, see :doc:`/blip/layout`.
 
 The zoom buttons zoom the whole UI in and out, also with :kbd:`Ctrl` and :kbd:`+`, :kbd:`-`
 and :kbd:`0` in the native app. In the browser, these keys zoom the page. The

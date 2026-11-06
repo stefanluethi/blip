@@ -188,6 +188,19 @@ fn record_button(ui: &mut egui::Ui, recording: bool, connected: bool) -> bool {
 
 //--------------------------------------------------------------------------------------------------
 
+/// A name that is not `taken`: `base`, else `base` with the first number from 2 that
+/// gives one, or always numbered, from 1, if `numbered`. E.g. for connections and
+/// presets.
+fn unused_name(base: &str, numbered: bool, taken: impl Fn(&str) -> bool) -> String {
+    let plain = (!numbered).then(|| base.to_owned());
+    let from = if numbered { 1 } else { 2 };
+    plain
+        .into_iter()
+        .chain((from..).map(|n| format!("{base} {n}")))
+        .find(|name| !taken(name))
+        .expect("there is always an unused name")
+}
+
 #[derive(serde::Deserialize, serde::Serialize, Default)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct App {
@@ -267,6 +280,9 @@ impl App {
         };
         let mut app: Self = eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
         app.presets = presets::Presets::load(storage);
+        if let Some(problem) = app.presets.take_problem() {
+            app.toasts.warning(problem);
+        }
         app.show_preset();
         app
     }
@@ -357,6 +373,13 @@ impl App {
                         }
                     }
                 });
+                if ui
+                    .button("Clear layout")
+                    .on_hover_text("Remove all views and tabs of the active preset")
+                    .clicked()
+                {
+                    self.layout = layout::Layout::default();
+                }
                 ui.separator();
                 egui::gui_zoom::zoom_menu_buttons(ui);
                 ui.weak(format!("Zoom {:.0} %", ui.ctx().zoom_factor() * 100.0));
@@ -488,7 +511,7 @@ impl App {
             self.state.set_recording(false, false);
         } else if presets::is_presets(&file.bytes) {
             let presets = presets::read(&file.name, &file.bytes)?;
-            self.presets.start_import(file.name, presets);
+            self.presets.start_import(file.name, presets)?;
         } else {
             return Err(format!(
                 "{} is no blip recording or presets file",

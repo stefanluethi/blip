@@ -155,7 +155,10 @@ Test Cases
    ``blip/src/app/presets.rs`` tests -- write presets with their layout and
    connections to a file and read them back unchanged, export the chosen
    presets, import replacing those of the same names, refuse files of a newer
-   version and presets without or with the same names, read the demo presets.
+   version, layout files and presets without or with the same names, keep the
+   connections read apart, refuse an import while a dialog is open, leave out
+   the active preset while recording and take it once recording stops, keep
+   kept presets that cannot be read, read the demo presets.
    ``blip/src/app.rs::a_presets_file_is_imported_as_chosen_in_its_dialog`` --
    opens a presets file, imports it from its dialog and shows the replaced
    active preset.

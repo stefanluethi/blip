@@ -54,6 +54,27 @@ pub struct Connection {
 }
 
 impl Connection {
+    /// `saved` kept apart as editing keeps them: trimmed, without blank addresses, the
+    /// first of connections to the same address, and a name that an earlier
+    /// connection has is cleared.
+    pub fn sanitized(saved: Vec<Self>) -> Vec<Self> {
+        let mut kept: Vec<Self> = Vec::with_capacity(saved.len());
+        for mut connection in saved {
+            connection.name = connection.name.trim().to_owned();
+            connection.address = connection.address.trim().to_owned();
+            let address = &connection.address;
+            if address.is_empty() || kept.iter().any(|c| c.address == *address) {
+                continue;
+            }
+            let name = &connection.name;
+            if !name.is_empty() && kept.iter().any(|c| c.name == *name) {
+                connection.name.clear();
+            }
+            kept.push(connection);
+        }
+        kept
+    }
+
     /// The connections of a new preset: one to an outpost started with its defaults.
     pub fn defaults() -> Vec<Self> {
         vec![Connection {
@@ -188,26 +209,13 @@ impl Connections {
         self.connections.clone()
     }
 
-    /// Replaces the connections with those of a preset, disconnected. Of connections
-    /// to the same address, the first is kept, and a name that an earlier connection
-    /// has is cleared, as editing keeps them.
+    /// Replaces the connections with those of a preset, disconnected, kept apart as
+    /// [`Connection::sanitized`] does.
     pub fn set_saved(&mut self, saved: Vec<Connection>) {
         self.disconnect_all();
         self.failed.clear();
         self.editing = None;
-        self.connections.clear();
-        for mut connection in saved {
-            connection.name = connection.name.trim().to_owned();
-            connection.address = connection.address.trim().to_owned();
-            let address = &connection.address;
-            if address.is_empty() || self.connections.iter().any(|c| c.address == *address) {
-                continue;
-            }
-            if self.is_named(&connection.name) {
-                connection.name.clear();
-            }
-            self.connections.push(connection);
-        }
+        self.connections = Connection::sanitized(saved);
     }
 
     pub fn disconnect_all(&mut self) {
@@ -577,11 +585,7 @@ impl Connections {
                 self.connections[index].address = address.to_owned();
             }
             Edited::New => {
-                let base = name_of(address);
-                let name = std::iter::once(base.to_owned())
-                    .chain((2..).map(|n| format!("{base} {n}")))
-                    .find(|name| !self.is_named(name))
-                    .expect("there is always an unused name");
+                let name = super::unused_name(name_of(address), false, |name| self.is_named(name));
                 self.connections.push(Connection {
                     name,
                     address: address.to_owned(),

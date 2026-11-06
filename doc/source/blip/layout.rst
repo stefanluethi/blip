@@ -5,8 +5,9 @@ The views are arranged in **tabs** in the center. A tab holds its views in
 **groups**, stacked vertically or side by side, or shown as tabs again. blip
 starts with an empty layout that shows the view types (see :doc:`/blip/views`);
 click one to add a view of that type in a new tab. The layout belongs to the
-active preset, see :doc:`/blip/presets`; **Presets › New preset** starts
-another with an empty layout.
+active preset, see :doc:`/blip/presets`. **View › Clear layout** returns to
+the empty layout and keeps the connections; **Presets › New preset** starts
+another preset with an empty layout.
 
 Adding views and tabs
 ---------------------

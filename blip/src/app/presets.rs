@@ -17,6 +17,9 @@ pub const VERSION: u32 = 1;
 const PRESETS_KEY: &str = "presets";
 /// Storage key of the name of the active preset.
 const ACTIVE_KEY: &str = "active preset";
+/// Storage key of kept presets that could not be read, kept aside, see
+/// [`Presets::load`].
+const UNREAD_KEY: &str = "unread presets";
 
 /// The name of the preset blip starts with.
 const DEFAULT_NAME: &str = "Default";
@@ -67,6 +70,16 @@ pub struct PresetsFile {
 #[derive(serde::Deserialize)]
 struct Versioned {
     version: u32,
+    /// The tree of a layout file of the development versions before presets, which
+    /// had a version too.
+    #[serde(default)]
+    root: Option<serde::de::IgnoredAny>,
+}
+
+impl Versioned {
+    fn of(bytes: &[u8]) -> serde_json::Result<Self> {
+        serde_json::from_slice(bytes)
+    }
 }
 
 /// The JSON of a presets file with `presets`.
@@ -78,23 +91,23 @@ pub fn write<'a>(presets: impl IntoIterator<Item = &'a Preset>) -> Vec<u8> {
     serde_json::to_vec_pretty(&file).expect("presets are JSON")
 }
 
-/// Whether `bytes` look like a presets file: a JSON object with a version and presets.
+/// Whether `bytes` look like a presets file: a JSON object with a version, whatever
+/// else the format of that version holds, so that [`read`] can tell what is wrong.
 pub fn is_presets(bytes: &[u8]) -> bool {
-    #[derive(serde::Deserialize)]
-    struct Keys {
-        #[expect(dead_code, reason = "only needs to be there")]
-        version: serde::de::IgnoredAny,
-        #[expect(dead_code, reason = "only needs to be there")]
-        presets: serde::de::IgnoredAny,
-    }
-    serde_json::from_slice::<Keys>(bytes).is_ok()
+    Versioned::of(bytes).is_ok()
 }
 
 /// Reads the presets of the file `name` holding `bytes`, of this or an older version
-/// of the format. They must have names, which differ.
+/// of the format. They must have names, which differ; their connections are kept
+/// apart as editing keeps them.
 pub fn read(name: &str, bytes: &[u8]) -> Result<Vec<Preset>, String> {
-    let Versioned { version } = serde_json::from_slice(bytes)
-        .map_err(|error| format!("{name} is no blip presets file: {error}"))?;
+    let Versioned { version, root } =
+        Versioned::of(bytes).map_err(|error| format!("{name} is no blip presets file: {error}"))?;
+    if root.is_some() {
+        return Err(format!(
+            "{name} is a layout file of an earlier version of blip, which presets replace"
+        ));
+    }
     if version > VERSION {
         return Err(format!("{name} holds presets of a newer version of blip"));
     }
@@ -113,7 +126,9 @@ pub fn read(name: &str, bytes: &[u8]) -> Result<Vec<Preset>, String> {
         if presets[..index].iter().any(|preset| preset.name == trimmed) {
             return Err(format!("{name} holds two presets named {trimmed}"));
         }
-        presets[index].name = trimmed;
+        let preset = &mut presets[index];
+        preset.name = trimmed;
+        preset.connections = Connection::sanitized(std::mem::take(&mut preset.connections));
     }
     Ok(presets)
 }
@@ -162,6 +177,22 @@ enum Outcome {
     Apply(Action),
 }
 
+/// Which of the buttons of a dialog was clicked, see [`buttons_ui`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pressed {
+    Nothing,
+    Cancel,
+    Apply,
+}
+
+/// Why the kept presets were not read, see [`Presets::load`].
+enum Unread {
+    /// They are of a newer version of blip, so they are left as they are.
+    Newer,
+    /// They are damaged, these are kept aside.
+    Damaged(String),
+}
+
 pub struct Presets {
     /// The presets in the order they were added. The active one holds what it held
     /// when it was last stored, see [`Self::store`].
@@ -169,6 +200,10 @@ pub struct Presets {
     /// The index of the active preset in `list`.
     active: usize,
     dialog: Option<Dialog>,
+    /// Why the kept presets were not read, if they were not.
+    unread: Option<Unread>,
+    /// What to tell the user about the kept presets, see [`Self::take_problem`].
+    problem: Option<String>,
 }
 
 impl Default for Presets {
@@ -177,13 +212,17 @@ impl Default for Presets {
             list: vec![Preset::new(DEFAULT_NAME.to_owned())],
             active: 0,
             dialog: None,
+            unread: None,
+            problem: None,
         }
     }
 }
 
 impl Presets {
     /// The presets kept in `storage`, with the one that was active, or the default
-    /// preset if there are none or they are of an unknown version.
+    /// preset if there are none. Kept presets that cannot be read start the default
+    /// preset too, without losing them: those of a newer version of blip are not
+    /// overwritten by [`Self::save`], damaged ones are kept aside.
     pub fn load(storage: &dyn eframe::Storage) -> Self {
         let Some(saved) = storage.get_string(PRESETS_KEY) else {
             return Self::default();
@@ -192,7 +231,25 @@ impl Presets {
             Ok(list) => list,
             Err(error) => {
                 log::warn!("{error}, starting with the default preset");
-                return Self::default();
+                let newer = Versioned::of(saved.as_bytes())
+                    .is_ok_and(|versioned| versioned.version > VERSION);
+                let (unread, problem) = if newer {
+                    let problem = "The kept presets are of a newer version of blip: \
+                                   blip starts with the default preset and keeps them \
+                                   as they are, changes to presets are not kept";
+                    (Unread::Newer, problem.to_owned())
+                } else {
+                    let problem = format!(
+                        "{error}: blip starts with the default preset and keeps the \
+                         unread presets aside"
+                    );
+                    (Unread::Damaged(saved), problem)
+                };
+                return Self {
+                    unread: Some(unread),
+                    problem: Some(problem),
+                    ..Self::default()
+                };
             }
         };
         let active = storage.get_string(ACTIVE_KEY);
@@ -202,15 +259,26 @@ impl Presets {
         Self {
             list,
             active,
-            dialog: None,
+            ..Self::default()
         }
     }
 
-    /// Keeps the presets in `storage`, as last stored.
+    /// Keeps the presets in `storage`, as last stored, unless the kept ones are of a
+    /// newer version of blip. Damaged kept presets are kept aside first.
     pub fn save(&self, storage: &mut dyn eframe::Storage) {
+        match &self.unread {
+            Some(Unread::Newer) => return,
+            Some(Unread::Damaged(json)) => storage.set_string(UNREAD_KEY, json.clone()),
+            None => {}
+        }
         let json = String::from_utf8(write(&self.list)).expect("JSON is UTF-8");
         storage.set_string(PRESETS_KEY, json);
         storage.set_string(ACTIVE_KEY, self.active().name.clone());
+    }
+
+    /// What to tell the user about the kept presets once, e.g. why they were not read.
+    pub fn take_problem(&mut self) -> Option<String> {
+        self.problem.take()
     }
 
     pub fn active(&self) -> &Preset {
@@ -299,30 +367,30 @@ impl Presets {
         write(indices.iter().filter_map(|&index| self.list.get(index)))
     }
 
-    /// Shows the dialog to choose the presets of the file `file` to import.
-    pub fn start_import(&mut self, file: String, presets: Vec<Preset>) {
+    /// Shows the dialog to choose the presets of the file `file` to import, unless a
+    /// dialog is shown, which it would replace.
+    pub fn start_import(&mut self, file: String, presets: Vec<Preset>) -> Result<(), String> {
+        if self.dialog.is_some() {
+            return Err(format!(
+                "{file} is not imported while a dialog of the presets is open"
+            ));
+        }
         let chosen = vec![true; presets.len()];
         self.dialog = Some(Dialog::Import {
             file,
             presets,
             chosen,
         });
+        Ok(())
     }
 
     fn index_of(&self, name: &str) -> Option<usize> {
         self.list.iter().position(|preset| preset.name == name)
     }
 
-    /// `base`, or with the first number from 2 that no preset has in its name, or from
-    /// 1 if `numbered`.
+    /// A name for a new preset that no preset has, see [`super::unused_name`].
     fn unused_name(&self, base: &str, numbered: bool) -> String {
-        let first = (!numbered).then(|| base.to_owned());
-        let from = if numbered { 1 } else { 2 };
-        first
-            .into_iter()
-            .chain((from..).map(|n| format!("{base} {n}")))
-            .find(|name| self.index_of(name).is_none())
-            .expect("there is always an unused name")
+        super::unused_name(base, numbered, |name| self.index_of(name).is_some())
     }
 
     /// Shows the presets to switch between and the menu items to manage them. While
@@ -429,18 +497,21 @@ impl Presets {
         };
         ui.weak(problem.unwrap_or(" "));
         let entered = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        let mut clicked = buttons_ui(ui, "Rename", problem.is_none());
+        let mut pressed = buttons_ui(ui, "Rename", problem.is_none());
         if entered && problem.is_none() {
-            clicked = Some(true);
+            pressed = Pressed::Apply;
         }
-        if clicked == Some(true) {
-            self.list[self.active].name = trimmed.to_owned();
-            return Outcome::Close;
+        match pressed {
+            Pressed::Nothing => Outcome::Open,
+            Pressed::Cancel => Outcome::Close,
+            Pressed::Apply => {
+                self.list[self.active].name = trimmed.to_owned();
+                Outcome::Close
+            }
         }
-        outcome(clicked, || unreachable!("renaming was applied"))
     }
 
-    fn delete_ui(&mut self, ui: &mut egui::Ui, recording: bool) -> Outcome {
+    fn delete_ui(&self, ui: &mut egui::Ui, recording: bool) -> Outcome {
         ui.heading("Delete preset");
         ui.add_space(4.0);
         ui.label(format!(
@@ -451,7 +522,7 @@ impl Presets {
         outcome(buttons_ui(ui, "Delete", !recording), || Action::Delete)
     }
 
-    fn export_ui(&mut self, ui: &mut egui::Ui, chosen: &mut [bool]) -> Outcome {
+    fn export_ui(&self, ui: &mut egui::Ui, chosen: &mut [bool]) -> Outcome {
         ui.heading("Export presets");
         ui.add_space(4.0);
         ui.label("The presets to save to one file:");
@@ -466,12 +537,12 @@ impl Presets {
         let indices: Vec<usize> = (chosen.iter().enumerate())
             .filter_map(|(index, &chosen)| chosen.then_some(index))
             .collect();
-        let clicked = buttons_ui(ui, "Export…", !indices.is_empty());
-        outcome(clicked, || Action::Export(indices))
+        let pressed = buttons_ui(ui, "Export…", !indices.is_empty());
+        outcome(pressed, || Action::Export(indices))
     }
 
     fn import_ui(
-        &mut self,
+        &self,
         ui: &mut egui::Ui,
         file: &str,
         presets: &[Preset],
@@ -481,18 +552,21 @@ impl Presets {
         ui.heading("Import presets");
         ui.add_space(4.0);
         ui.label(format!("The presets to import from {file}:"));
+        // replacing the active preset changes the connections
+        let locked =
+            |preset: &Preset| recording && self.index_of(&preset.name) == Some(self.active);
         egui::ScrollArea::vertical()
             .max_height(240.0)
             .show(ui, |ui| {
                 for (preset, chosen) in presets.iter().zip(chosen.iter_mut()) {
                     let existing = self.index_of(&preset.name);
-                    // replacing the active preset changes the connections
-                    let locked = recording && existing == Some(self.active);
-                    if locked {
-                        *chosen = false;
-                    }
+                    let locked = locked(preset);
+                    // a locked preset shows unchecked, and its choice comes back once
+                    // recording stops
+                    let mut shown = *chosen && !locked;
+                    let checked = if locked { &mut shown } else { chosen };
                     ui.horizontal(|ui| {
-                        ui.add_enabled(!locked, egui::Checkbox::new(chosen, preset.name.as_str()))
+                        ui.add_enabled(!locked, egui::Checkbox::new(checked, preset.name.as_str()))
                             .on_disabled_hover_text("Stop recording to replace the active preset");
                         if existing.is_some() {
                             ui.weak("replaces the existing one");
@@ -501,40 +575,39 @@ impl Presets {
                 }
             });
         ui.add_space(4.0);
-        let any = chosen.iter().any(|&chosen| chosen);
-        outcome(buttons_ui(ui, "Import", any), || {
-            let imported = (presets.iter().zip(chosen.iter()))
-                .filter(|&(_, &chosen)| chosen)
-                .map(|(preset, _)| preset.clone())
-                .collect();
-            Action::Imported(imported)
+        let taken: Vec<&Preset> = (presets.iter().zip(chosen.iter()))
+            .filter(|&(preset, &chosen)| chosen && !locked(preset))
+            .map(|(preset, _)| preset)
+            .collect();
+        let pressed = buttons_ui(ui, "Import", !taken.is_empty());
+        outcome(pressed, || {
+            Action::Imported(taken.into_iter().cloned().collect())
         })
     }
 }
 
 /// The buttons at the bottom of a dialog: Cancel and the one that applies it, named
-/// `apply` and enabled if `enabled`. Returns whether Cancel was clicked, as
-/// `Some(false)`, or the other one, as `Some(true)`.
-fn buttons_ui(ui: &mut egui::Ui, apply: &str, enabled: bool) -> Option<bool> {
-    let mut clicked = None;
+/// `apply` and enabled if `enabled`.
+fn buttons_ui(ui: &mut egui::Ui, apply: &str, enabled: bool) -> Pressed {
+    let mut pressed = Pressed::Nothing;
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         if ui.add_enabled(enabled, egui::Button::new(apply)).clicked() {
-            clicked = Some(true);
+            pressed = Pressed::Apply;
         }
         if ui.button("Cancel").clicked() {
-            clicked = Some(false);
+            pressed = Pressed::Cancel;
         }
     });
-    clicked
+    pressed
 }
 
-/// The outcome of a dialog whose buttons were `clicked`, see [`buttons_ui`], that
-/// asks for `action` when applied.
-fn outcome(clicked: Option<bool>, action: impl FnOnce() -> Action) -> Outcome {
-    match clicked {
-        None => Outcome::Open,
-        Some(false) => Outcome::Close,
-        Some(true) => Outcome::Apply(action()),
+/// The outcome of a dialog whose button `pressed`, that asks for `action` when
+/// applied.
+fn outcome(pressed: Pressed, action: impl FnOnce() -> Action) -> Outcome {
+    match pressed {
+        Pressed::Nothing => Outcome::Open,
+        Pressed::Cancel => Outcome::Close,
+        Pressed::Apply => Outcome::Apply(action()),
     }
 }
 
@@ -588,7 +661,8 @@ mod tests {
         let read = read("presets.json", &bytes).unwrap();
         assert_eq!(write(&read), bytes);
         assert!(is_presets(&bytes));
-        assert!(!is_presets(b"{\"version\": 1}"));
+        assert!(!is_presets(b"{\"presets\": []}"));
+        assert!(!is_presets(b"not json"));
     }
 
     #[test]
@@ -616,6 +690,91 @@ mod tests {
     }
 
     #[test]
+    fn layout_files_of_earlier_versions_are_told_apart() {
+        let layout = br#"{"version": 5, "root": {"name": "", "kind": "Tabs", "children": []}}"#;
+        assert!(is_presets(layout));
+        assert_eq!(
+            refused(layout),
+            "a.json is a layout file of an earlier version of blip, which presets replace"
+        );
+        // a newer file is told as such, whatever else it holds
+        let newer = format!(r#"{{"version": {}, "sets": []}}"#, VERSION + 1);
+        assert!(is_presets(newer.as_bytes()));
+        assert!(refused(newer.as_bytes()).ends_with("of a newer version of blip"));
+    }
+
+    #[test]
+    fn the_connections_of_read_presets_are_kept_apart() {
+        let file = br#"{"version": 1, "presets": [{"name": "A", "connections": [
+            {"name": "a", "address": "ws://a"},
+            {"name": "b", "address": " ws://a "},
+            {"name": "a", "address": "ws://b"},
+            {"address": ""}
+        ]}]}"#;
+        let presets = read("a.json", file).unwrap();
+        let connections: Vec<(&str, &str)> = (presets[0].connections.iter())
+            .map(|c| (c.name.as_str(), c.address.as_str()))
+            .collect();
+        assert_eq!(connections, [("a", "ws://a"), ("", "ws://b")]);
+    }
+
+    #[test]
+    fn importing_while_a_dialog_is_open_is_refused() {
+        let mut presets = Presets::default();
+        assert!(
+            presets
+                .start_import("a.json".to_owned(), vec![preset("A")])
+                .is_ok()
+        );
+        let error = presets.start_import("b.json".to_owned(), vec![preset("B")]);
+        assert_eq!(
+            error.unwrap_err(),
+            "b.json is not imported while a dialog of the presets is open"
+        );
+    }
+
+    /// The presets, whether recording, and the names of the presets imported.
+    type ImportState = (Presets, bool, Option<Vec<String>>);
+
+    /// A harness showing the dialog to import the default preset and a new one.
+    fn importing(recording: bool) -> egui_kittest::Harness<'static, ImportState> {
+        let mut presets = Presets::default();
+        let file = vec![preset(DEFAULT_NAME), preset("New")];
+        presets.start_import("a.json".to_owned(), file).unwrap();
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(600.0, 400.0))
+            .build_ui_state(
+                |ui, (presets, recording, imported): &mut ImportState| {
+                    if let Some(Action::Imported(taken)) = presets.dialog_ui(ui.ctx(), *recording) {
+                        *imported = Some(taken.into_iter().map(|p| p.name).collect());
+                    }
+                },
+                (presets, recording, None),
+            );
+        harness.run();
+        harness
+    }
+
+    #[test]
+    fn the_active_preset_is_not_replaced_while_recording() {
+        use egui_kittest::kittest::Queryable;
+
+        let mut harness = importing(true);
+        harness.get_by_label("Import").click();
+        harness.run();
+        assert_eq!(harness.state().2, Some(vec!["New".to_owned()]));
+
+        // stopping recording brings the choice back
+        let mut harness = importing(true);
+        harness.state_mut().1 = false;
+        harness.run();
+        harness.get_by_label("Import").click();
+        harness.run();
+        let both = vec![DEFAULT_NAME.to_owned(), "New".to_owned()];
+        assert_eq!(harness.state().2, Some(both));
+    }
+
+    #[test]
     fn a_generated_preset_needs_only_a_name() {
         let presets = read("a.json", br#"{"version": 1, "presets": [{"name": "A"}]}"#).unwrap();
         assert!(presets[0].connections.is_empty());
@@ -635,10 +794,34 @@ mod tests {
         let loaded = Presets::load(&storage);
         assert_eq!(loaded.names(), [DEFAULT_NAME, "Preset 1", "Preset 2"]);
         assert_eq!(loaded.active().name, "Preset 1");
+    }
 
-        // kept presets of a newer blip are not read
+    #[test]
+    fn kept_presets_that_cannot_be_read_are_not_lost() {
+        // those of a newer blip are left as they are
+        let mut storage = Memory::default();
         let newer = format!(r#"{{"version": {}, "presets": []}}"#, VERSION + 1);
-        storage.set_string(PRESETS_KEY, newer);
+        storage.set_string(PRESETS_KEY, newer.clone());
+        let mut presets = Presets::load(&storage);
+        assert_eq!(presets.names(), [DEFAULT_NAME]);
+        assert!(presets.take_problem().unwrap().contains("newer version"));
+        assert!(presets.take_problem().is_none());
+        presets.add_new();
+        presets.save(&mut storage);
+        assert_eq!(storage.get_string(PRESETS_KEY), Some(newer));
+
+        // damaged ones are kept aside
+        let mut storage = Memory::default();
+        storage.set_string(PRESETS_KEY, "{".to_owned());
+        let mut presets = Presets::load(&storage);
+        assert!(
+            presets
+                .take_problem()
+                .unwrap()
+                .contains("unread presets aside")
+        );
+        presets.save(&mut storage);
+        assert_eq!(storage.get_string(UNREAD_KEY).as_deref(), Some("{"));
         assert_eq!(Presets::load(&storage).names(), [DEFAULT_NAME]);
     }
 
