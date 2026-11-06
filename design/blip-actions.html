@@ -1,0 +1,747 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>blip action ideas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400&family=Fira+Sans:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<style>
+/* The tokens of blip/src/app/theme.rs. */
+:root, :root[data-theme="dark"] {
+  --canvas:#111217; --panel:#181b1f; --card:#181b1f; --control:#22252b; --hover:#2a2d34;
+  --border:#2a2d33; --border-strong:#3a3e46; --text:#ccccdc; --text-weak:#9a9aab; --text-faint:#6e6e80;
+  --accent:#3d71d9; --accent-text:#6e9fff; --on-accent:#fff;
+  --ok:#3fbf72; --warn:#e3a93a; --error:#f2615b;
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --canvas:#f4f5f5; --panel:#fff; --card:#fff; --control:#f4f5f5; --hover:#eceef0;
+  --border:#dcdee1; --border-strong:#c7cacf; --text:#24292e; --text-weak:#5b6168; --text-faint:#878d95;
+  --accent:#3871dc; --accent-text:#1f62e0; --on-accent:#fff;
+  --ok:#1f9d55; --warn:#c27c0e; --error:#d93a3a;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--canvas); color: var(--text); font: 400 15px/1.5 "Fira Sans", system-ui, sans-serif; }
+.mono { font-family: "Fira Code", ui-monospace, monospace; font-size: .9em; }
+
+.page { max-width: 1240px; margin: 0 auto; padding: 32px 24px 80px; }
+.page > header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 40px; }
+.page h1 { font-size: 26px; font-weight: 500; margin: 0; letter-spacing: -0.01em; }
+.page > header p { margin: 0; color: var(--text-weak); flex: 1 1 320px; max-width: 72ch; }
+section.idea { margin: 0 0 64px; }
+section.idea > h2 { font-size: 20px; font-weight: 500; margin: 0 0 6px; display: flex; gap: 12px; align-items: baseline; }
+section.idea > h2 .n { color: var(--text-faint); font-weight: 400; font-variant-numeric: tabular-nums; }
+section.idea > p, section.idea > ul { margin: 0 0 20px; max-width: 72ch; color: var(--text-weak); }
+section.idea b { color: var(--text); font-weight: 500; }
+section.idea li { margin-bottom: 6px; }
+.compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); gap: 24px 20px; align-items: start; }
+figure { margin: 0; min-width: 0; }
+figcaption { font-size: 13px; color: var(--text-weak); margin: 0 0 8px; }
+figcaption b { color: var(--text); font-weight: 500; }
+figcaption .pick { color: var(--accent-text); }
+.stage { background: var(--canvas); border: 1px solid var(--border); border-radius: 6px; padding: 8px; overflow-x: auto; }
+
+/* the toggles of the page */
+.seg { height: 26px; border: 1px solid var(--border); background: var(--canvas); border-radius: 3px; display: inline-flex; padding: 2px; gap: 2px; }
+.seg button { font: inherit; font-size: 13px; color: var(--text-weak); background: none; border: 1px solid transparent; border-radius: 2px; padding: 0 12px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--control); border-color: var(--border-strong); color: var(--text); }
+.seg button:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 1px; }
+.controls { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; margin: 0 0 12px; font-size: 13px; color: var(--text-weak); }
+.controls label { display: inline-flex; gap: 8px; align-items: center; }
+
+/* ---- the mockup of the app: egui points are CSS pixels ---- */
+.app { font: 400 13px/1 "Fira Sans", sans-serif; font-variant-numeric: tabular-nums; color: var(--text); }
+.card { position: relative; background: var(--card); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; min-width: 0; }
+.card-title { height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 12px; white-space: nowrap; }
+.card-title .ph { color: var(--text-weak); font-size: 14px; }
+.card-title .more { margin-left: auto; color: var(--text-weak); font-size: 16px; }
+.card-body { padding: 8px 16px 16px; min-height: 200px; }
+
+/* the grid of the view: name, input, readback, outcome */
+.grid { display: grid; grid-template-columns: max-content max-content minmax(90px, max-content) 1fr; column-gap: 12px; row-gap: 8px; align-items: center; }
+.grid > .name { white-space: nowrap; cursor: default; }
+.grid > .name, .grid > .sub { align-self: start; line-height: 24px; }
+.grid > .sub { color: var(--text-weak); padding-left: 12px; }
+.cell { display: flex; align-items: center; gap: 8px; min-height: 24px; white-space: nowrap; }
+.span3 { grid-column: 2 / 5; }
+.weak { color: var(--text-weak); }
+.faint { color: var(--text-faint); }
+
+.btn { font: inherit; color: var(--text); height: 24px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border-radius: 3px; background: var(--control); border: 1px solid var(--border-strong); white-space: nowrap; cursor: pointer; }
+.btn:hover { background: var(--hover); }
+.btn:disabled { color: var(--text-faint); cursor: default; background: var(--control); border-color: var(--border); }
+.btn.strong { border-color: var(--text-weak); }
+.btn:focus-visible, .check:focus-visible, .dd:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 1px; }
+
+.check { width: 16px; height: 16px; flex: none; border-radius: 3px; background: var(--control); border: 1px solid var(--border-strong); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; color: var(--text); cursor: pointer; padding: 0; }
+.check:disabled { opacity: .45; cursor: default; }
+.check.requested { border: 1px dashed var(--accent-text); }
+
+.dd { font: inherit; color: var(--text); height: 24px; width: 180px; display: inline-flex; align-items: center; justify-content: space-between; padding: 0 8px; border-radius: 3px; background: var(--control); border: 1px solid var(--border-strong); appearance: none; cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, var(--text) 50%), linear-gradient(135deg, var(--text) 50%, transparent 50%);
+  background-position: calc(100% - 13px) 10px, calc(100% - 8px) 10px; background-size: 5px 5px; background-repeat: no-repeat; }
+.dd:disabled { opacity: .45; }
+.dd.requested { border: 1px dashed var(--accent-text); }
+
+.field { height: 24px; border: 1px solid var(--border-strong); background: var(--control); border-radius: 3px; display: inline-flex; align-items: center; padding: 0 6px; min-width: 64px; justify-content: flex-end; }
+.field.text { width: 180px; justify-content: flex-start; }
+.field.focus { border-color: var(--accent-text); }
+
+/* slider: a range input on a thin track, with the readback drawn onto it */
+.slider { position: relative; width: 120px; height: 24px; flex: none; }
+.slider input { position: absolute; inset: 0; width: 100%; margin: 0; background: none; appearance: none; -webkit-appearance: none; cursor: pointer; z-index: 2; }
+.slider input:disabled { cursor: default; }
+.slider input:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; border-radius: 3px; }
+.slider input::-webkit-slider-runnable-track { height: 24px; background: transparent; }
+.slider input::-moz-range-track { height: 24px; background: transparent; }
+.slider input::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 24px; border-radius: 4px; background: var(--control); border: 1px solid var(--text-weak); }
+.slider input::-moz-range-thumb { width: 14px; height: 22px; border-radius: 4px; background: var(--control); border: 1px solid var(--text-weak); }
+.slider input:disabled::-webkit-slider-thumb { opacity: .45; }
+.slider .track { position: absolute; left: 0; right: 0; top: 9px; height: 6px; border-radius: 3px; background: var(--control); border: 1px solid var(--border); }
+.slider .travel { position: absolute; top: 9px; height: 6px; background: color-mix(in srgb, var(--accent-text) 35%, transparent); border-radius: 3px; }
+.slider .needle { position: absolute; top: 2px; width: 2px; height: 20px; margin-left: -1px; background: var(--accent-text); border-radius: 1px; z-index: 3; pointer-events: none; }
+.slider .needle.stale { background: var(--text-faint); }
+.slider.off .track, .slider.off .travel, .slider.off .needle { opacity: .45; }
+
+.rb { white-space: nowrap; }
+.rb.live { color: var(--accent-text); display: inline-flex; align-items: center; gap: 6px; }
+.rb.live::before { content: ""; width: 2px; height: 12px; border-radius: 1px; background: currentColor; }
+.rb.stale { color: var(--text-faint); }
+.rb .age { color: var(--text-faint); margin-left: 6px; }
+
+.ok { color: var(--ok); } .err { color: var(--error); } .wrn { color: var(--warn); }
+.icon { font-size: 15px; display: inline-flex; }
+.fade { animation: fade 1.5s ease-in forwards; }
+@keyframes fade { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
+.spin { width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid transparent; border-top-color: var(--text-weak); border-right-color: var(--text-weak); animation: spin .8s linear infinite; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.sending { width: 6px; height: 6px; border-radius: 50%; background: var(--text-weak); flex: none; }
+
+.note { grid-column: 2 / 5; font-size: 12px; line-height: 1.35; margin-top: -4px; white-space: normal; max-width: 52ch; }
+.note.err { color: var(--error); } .note.wrn { color: var(--warn); }
+.note .muted { color: var(--text-weak); }
+
+/* confirm in the row */
+.arm { display: flex; flex-direction: column; gap: 6px; }
+.arm .q { font-size: 12px; color: var(--text-weak); white-space: normal; max-width: 40ch; line-height: 1.35; }
+.arm .timer { height: 2px; background: var(--border); border-radius: 1px; overflow: hidden; width: 100%; }
+.arm .timer i { display: block; height: 100%; background: var(--text-weak); transform-origin: left; }
+
+.edited { width: 6px; height: 6px; border-radius: 50%; background: var(--text); display: inline-block; margin-left: 6px; vertical-align: middle; }
+
+/* the modal of egui */
+.scrim { position: absolute; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 10; }
+.modal { background: var(--panel); border: 1px solid var(--border-strong); border-radius: 6px; padding: 14px 16px 12px; width: 320px; max-width: calc(100% - 24px); box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+.modal .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.modal h3 { font: 500 13px/1.3 "Fira Sans", sans-serif; margin: 0 0 6px; }
+.modal p { margin: 0 0 8px; color: var(--text-weak); font-size: 12px; line-height: 1.4; }
+.modal dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0; font-size: 12px; }
+.modal dt { color: var(--text-weak); } .modal dd { margin: 0; }
+.static .scrim { position: relative; inset: auto; padding: 28px 0; background: color-mix(in srgb, #000 35%, var(--card)); }
+
+.try { font-size: 13px; color: var(--text-weak); margin: 10px 0 0; max-width: 80ch; }
+.try b { color: var(--text); font-weight: 500; }
+
+/* grouping study: one grid per action, so the spacing between actions can differ */
+.blocks { display: flex; flex-direction: column; gap: 8px; }
+.blocks.prox { gap: 16px; }
+.blk { display: grid; grid-template-columns: 76px max-content; column-gap: 12px; row-gap: 8px; align-items: center; }
+.blocks.prox .blk { row-gap: 4px; }
+.blk > .name, .blk > .sub { line-height: 24px; align-self: start; white-space: nowrap; }
+.blk > .sub { color: var(--text-weak); padding-left: 12px; }
+.params { display: grid; grid-template-columns: max-content max-content; column-gap: 10px; row-gap: 4px; align-items: center; padding-left: 10px; border-left: 2px solid var(--border-strong); }
+.params > .pl { color: var(--text-weak); line-height: 24px; }
+.inline { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; max-width: 330px; }
+.field .lab { color: var(--text-faint); margin-right: 6px; }
+.field.num { min-width: 70px; }
+.dd.narrow { width: 110px; }
+
+@media (max-width: 720px) { .page { padding: 24px 16px 64px; } }
+@media (prefers-reduced-motion: reduce) { .spin { animation-duration: 3s; } .fade { animation: none; opacity: 0; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <h1>blip action ideas</h1>
+    <p>How an actions view could tell apart what you asked for, what the target agreed to and what it reports back. Built from the colours and fonts in <span class="mono">theme.rs</span>, at the app's size.</p>
+    <div class="seg" role="group" aria-label="Theme">
+      <button type="button" data-theme-choice="dark" aria-pressed="true">Dark</button>
+      <button type="button" data-theme-choice="light" aria-pressed="false">Light</button>
+    </div>
+  </header>
+
+  <section class="idea" id="demo">
+    <h2><span class="n">1</span>Setpoint and readback on one scale</h2>
+    <p>Today the readback is plain text in its own column, styled like the input next to it, so <b>1806 rpm</b> in the slider box and <b>1806 rpm</b> beside it look like the same thing. The proposal draws the readback as a blue needle on the slider track, the way a controller faceplate shows setpoint and process value: the handle is what you asked for, the needle is what the target reports, and the shaded gap is the distance still to go. Blue already means live data in blip.</p>
+    <div class="controls">
+      <label>Behaviour <span class="seg" role="group" aria-label="Behaviour">
+        <button type="button" data-mode="now" aria-pressed="false">Now</button>
+        <button type="button" data-mode="new" aria-pressed="true">Proposed</button>
+      </span></label>
+      <label>Link <span class="seg" role="group" aria-label="Link">
+        <button type="button" data-link="fast" aria-pressed="true">Fast</button>
+        <button type="button" data-link="slow" aria-pressed="false">Slow</button>
+        <button type="button" data-link="lost" aria-pressed="false">Answers lost</button>
+        <button type="button" data-link="down" aria-pressed="false">Down</button>
+      </span></label>
+    </div>
+    <div class="stage" style="max-width: 760px"><div class="card app" id="view">
+      <div class="card-title"><i class="ph ph-sliders-horizontal"></i><span>Actions 1</span><i class="ph ph-dots-three more"></i></div>
+      <div class="card-body"><div class="grid" id="grid"></div></div>
+    </div></div>
+    <p class="try">A simulated motor follows its setpoint in about a second. Try: <b>untick enable and drag speed</b> (the target rejects it), <b>run calibrate</b>, and switch the link to <b>Answers lost</b> or <b>Down</b>, then compare Now with Proposed.</p>
+  </section>
+
+  <section class="idea" id="truth">
+    <h2><span class="n">2</span>An input never shows a value the target refused</h2>
+    <p>When the target rejects a slider value today, the slider stays where you left it and a warning icon appears in the far column, with the reason only on hover. The view then claims a setpoint of 2500 rpm that does not exist. Inputs that send at once should spring back to the last accepted value and say in a line what was refused and why. Forms with a Send button are different: their inputs are a draft, so they keep what you typed and show the reason below.</p>
+    <div class="compare">
+      <figure><figcaption><b>Now</b> the slider keeps the refused value</figcaption>
+        <div class="stage"><div class="card app"><div class="card-body" style="min-height:0">
+          <div class="grid">
+            <span class="name">enable</span><span class="cell"><span class="check"></span></span><span class="rb">false</span><span></span>
+            <span class="name">speed</span><span class="cell"><span class="slider"><span class="track"></span><span class="needle" style="left:83%;background:var(--text-weak);width:16px;height:24px;top:0;margin-left:-8px;border-radius:4px;background:var(--control);border:1px solid var(--text-weak)"></span></span><span class="field">2500 rpm</span></span><span class="rb">0 rpm</span><span class="cell"><i class="ph ph-warning-circle icon err" title="Rejected: the motor is disabled, enable it first"></i></span>
+          </div></div></div></div></figure>
+      <figure><figcaption><b>Proposed</b> <span class="pick">back to the accepted 1500 rpm, reason in words</span></figcaption>
+        <div class="stage"><div class="card app"><div class="card-body" style="min-height:0">
+          <div class="grid">
+            <span class="name">enable</span><span class="cell"><span class="check"></span></span><span></span><span></span>
+            <span class="name">speed</span><span class="cell"><span class="slider"><span class="track"></span><span class="travel" style="left:0;width:50%"></span><span class="needle" style="left:0"></span><span class="needle" style="left:50%;background:var(--control);width:16px;height:24px;top:0;margin-left:-8px;border-radius:4px;border:1px solid var(--text-weak);z-index:2"></span></span><span class="field">1500 rpm</span></span><span class="rb live">0 rpm</span><span class="cell"><i class="ph ph-warning-circle icon err"></i></span>
+            <span class="note err">2500 rpm not set: the motor is disabled, enable it first</span>
+          </div></div></div></div></figure>
+    </div>
+  </section>
+
+  <section class="idea" id="confirm">
+    <h2><span class="n">3</span>Confirm in the row, select before operate</h2>
+    <p>The dialog asks <b>Carry out imu/calibrate?</b> with the raw path, no description and, for actions with parameters, none of the values it is about to send. The row button says Run or Send, the dialog says Run either way. Substation and plant HMIs solve this with <b>select before operate</b>: the first click selects the action in place and the second, on a different spot, carries it out; the selection lapses after a few seconds. Kept in the row, the live readback and the plots stay in view while you decide, and the values being sent are right there.</p>
+    <div class="compare">
+      <figure><figcaption><b>Now</b> a modal over the whole app</figcaption>
+        <div class="stage static"><div class="card app"><div class="scrim"><div class="modal">
+          <div style="margin-bottom:2px">Carry out imu/calibrate?</div>
+          <div class="row"><button class="btn" type="button">Cancel</button><button class="btn" type="button">Run</button></div>
+        </div></div></div></div></figure>
+      <figure><figcaption><b>Proposed</b> <span class="pick">armed in the row; Cancel takes the button's place, so a double click cancels</span></figcaption>
+        <div class="stage"><div class="card app"><div class="card-body" style="min-height:0">
+          <div class="grid">
+            <span class="name">level</span><span class="cell"><span class="dd" style="display:inline-flex">DEBUG</span></span><span></span><span></span>
+            <span class="name">calibrate</span>
+            <span class="cell arm"><span style="display:flex;gap:8px"><button class="btn" type="button">Cancel</button><button class="btn strong" type="button">Run calibrate</button></span>
+              <span class="q">Removes the bias of the gyroscope, takes a moment</span>
+              <span class="timer"><i style="transform:scaleX(.6)"></i></span></span><span></span><span></span>
+          </div></div></div></div></figure>
+      <figure><figcaption><b>Proposed</b> with parameters: the values are the ones in the form above</figcaption>
+        <div class="stage"><div class="card app"><div class="card-body" style="min-height:0">
+          <div class="grid">
+            <span class="name">reboot</span><span></span><span></span><span></span>
+            <span class="sub">mode</span><span class="cell"><span class="dd" style="display:inline-flex">bootloader</span></span><span></span><span></span>
+            <span class="sub">delay</span><span class="cell"><span class="field">2.0 s</span></span><span></span><span></span>
+            <span></span><span class="cell arm"><span style="display:flex;gap:8px"><button class="btn" type="button">Cancel</button><button class="btn strong" type="button">Send reboot</button></span>
+              <span class="q">Restarts the device into the chosen mode</span>
+              <span class="timer"><i style="transform:scaleX(.85)"></i></span></span><span></span><span></span>
+          </div></div></div></div></figure>
+      <figure><figcaption><b>Alternative</b> keep the dialog, but let it say what happens</figcaption>
+        <div class="stage static"><div class="card app"><div class="scrim"><div class="modal">
+          <h3>Reboot</h3>
+          <p>Restarts the device into the chosen mode</p>
+          <dl><dt>mode</dt><dd>bootloader</dd><dt>delay</dt><dd>2.0 s</dd><dt>outpost</dt><dd>simulator</dd></dl>
+          <div class="row"><button class="btn" type="button">Cancel</button><button class="btn strong" type="button">Send reboot</button></div>
+        </div></div></div></div></figure>
+    </div>
+    <p style="margin-top:20px">Either way the row button gets an ellipsis, <b>Run…</b> or <b>Send…</b>, the usual sign that a question follows, and the confirming button repeats the verb with the action's name. Enter should not confirm.</p>
+  </section>
+
+  <section class="idea" id="draft">
+    <h2><span class="n">4</span>Show what has not been sent yet</h2>
+    <p>A form with a Send button, a text field that sends on Enter, an integer field that sends on leaving it: in all three, a typed value that was never sent looks exactly like one that was. A small dot by each changed input, cleared when it is sent, makes the draft visible. The text field also hints at Enter while it holds unsent text.</p>
+    <div class="compare">
+      <figure><figcaption><b>Now</b> edited and sent look the same</figcaption>
+        <div class="stage"><div class="card app"><div class="card-body" style="min-height:0">
+          <div class="grid">
+            <span class="name">message</span><span></span><span></span><span></span>
+            <span class="sub">level</span><span class="cell"><span class="dd" style="display:inline-flex">WARN</span></span><span></span><span></span>
+            <span class="sub">text</span><span class="cell"><span class="field text">pump stalled</span></span><span></span><span></span>
+            <span></span><span class="cell"><button class="btn" type="button">Send</button></span><span></span><span></span>
+            <span class="name">label</span><span class="cell"><span class="field text focus">rig 7</span></span><span></span><span></span>
+          </div></div></div></div></figure>
+      <figure><figcaption><b>Proposed</b> <span class="pick">a dot per unsent change</span></figcaption>
+        <div class="stage"><div class="card app"><div class="card-body" style="min-height:0">
+          <div class="grid">
+            <span class="name">message</span><span></span><span></span><span></span>
+            <span class="sub">level<i class="edited" title="Changed since sent"></i></span><span class="cell"><span class="dd" style="display:inline-flex">WARN</span></span><span></span><span></span>
+            <span class="sub">text<i class="edited" title="Changed since sent"></i></span><span class="cell"><span class="field text">pump stalled</span></span><span></span><span></span>
+            <span></span><span class="cell"><button class="btn" type="button">Send</button></span><span></span><span></span>
+            <span class="name">label<i class="edited"></i></span><span class="cell"><span class="field text focus">rig 7</span><span class="faint" style="font-size:12px">Enter to send</span></span><span></span><span></span>
+          </div></div></div></div></figure>
+    </div>
+  </section>
+
+  <section class="idea" id="states">
+    <h2><span class="n">5</span>Outcomes next to the input, in words when they matter</h2>
+    <p>The outcome icon sits in a fourth column past the readback, far from the input it belongs to, and a refusal or a missing answer is only a coloured glyph. Proposed: the icon follows the readback directly, and anything you need to act on gets a line below the row that stays until the next invocation.</p>
+    <div class="compare">
+      <figure><figcaption><b>Proposed</b> every state of one row</figcaption>
+        <div class="stage"><div class="card app"><div class="card-body" style="min-height:0">
+          <div class="grid" id="states-grid"></div>
+        </div></div></div></figure>
+    </div>
+  </section>
+
+  <section class="idea" id="small">
+    <h2><span class="n">6</span>Smaller fixes found on the way</h2>
+    <ul>
+      <li><b>Late answers are dropped.</b> After five seconds an invocation counts as unanswered and a later answer is ignored, but the outpost only answers once the action returns. An action that takes six seconds and succeeds shows the clock for good. Keep counting and let a late answer settle it.</li>
+      <li><b>Flicker while dragging.</b> Each of the ten sends a second shows a spinner, then a check for 1.5 s, so the outcome column blinks during a drag. Show one steady state while dragging and the outcome of the final value on release.</li>
+      <li><b>Readbacks that stopped.</b> With the connection down the inputs grey out, but the readback keeps its last value at full strength. Dim it and give its age, as in the demo with the link Down.</li>
+      <li><b>Bool and choice readbacks repeat the input.</b> A ticked checkbox next to the text <i>true</i> says the same thing twice. Show the text only while it differs from the control, e.g. <i>reads off</i> right after you tick it.</li>
+      <li><b>Text fields send on Enter only, integer fields also on leaving.</b> Pick one rule for both, or show the hint from idea 4.</li>
+    </ul>
+  </section>
+  <section class="idea" id="grouping">
+    <h2><span class="n">7</span>Actions with several values as one thing</h2>
+    <p>The rows of an action with several parameters are 8 points apart, as are the actions themselves, so nothing holds them together. The parameter names sit in the column of the action names, only indented and greyer: the <b>level</b> of message reads like the action <b>level</b> above it. The name of the action stands alone on an empty row, and Send on another.</p>
+    <div class="compare">
+      <figure><figcaption><b>Now</b> equal spacing, parameters in the name column</figcaption>
+        <div class="stage"><div class="card app"><div class="card-body" style="min-height:0">
+          <div class="blocks">
+            <div class="blk"><span class="name">level</span><span class="cell"><span class="dd">DEBUG</span></span></div>
+            <div class="blk"><span class="name">message</span><span></span>
+              <span class="sub">level</span><span class="cell"><span class="dd">INFO</span></span>
+              <span class="sub">text</span><span class="cell"><span class="field text">hello</span></span>
+              <span></span><span class="cell"><button class="btn" type="button">Send</button></span></div>
+            <div class="blk"><span class="name">pid</span><span></span>
+              <span class="sub">kp</span><span class="cell"><span class="field num">1.20</span></span>
+              <span class="sub">ki</span><span class="cell"><span class="field num">0.05</span></span>
+              <span class="sub">kd</span><span class="cell"><span class="field num">0.30</span></span>
+              <span></span><span class="cell"><button class="btn" type="button">Send</button></span></div>
+            <div class="blk"><span class="name">calibrate</span><span class="cell"><button class="btn" type="button"><i class="ph ph-play"></i>Run…</button></span></div>
+          </div>
+        </div></div></div></figure>
+
+      <figure><figcaption><b>Spacing only</b> 16 points between actions, 4 within</figcaption>
+        <div class="stage"><div class="card app"><div class="card-body" style="min-height:0">
+          <div class="blocks prox">
+            <div class="blk"><span class="name">level</span><span class="cell"><span class="dd">DEBUG</span></span></div>
+            <div class="blk"><span class="name">message</span><span></span>
+              <span class="sub">level</span><span class="cell"><span class="dd">INFO</span></span>
+              <span class="sub">text</span><span class="cell"><span class="field text">hello</span></span>
+              <span></span><span class="cell"><button class="btn" type="button">Send</button></span></div>
+            <div class="blk"><span class="name">pid</span><span></span>
+              <span class="sub">kp</span><span class="cell"><span class="field num">1.20</span></span>
+              <span class="sub">ki</span><span class="cell"><span class="field num">0.05</span></span>
+              <span class="sub">kd</span><span class="cell"><span class="field num">0.30</span></span>
+              <span></span><span class="cell"><button class="btn" type="button">Send</button></span></div>
+            <div class="blk"><span class="name">calibrate</span><span class="cell"><button class="btn" type="button"><i class="ph ph-play"></i>Run…</button></span></div>
+          </div>
+        </div></div></div></figure>
+
+      <figure><figcaption><b>Proposed</b> <span class="pick">a rule from the first value to Send, parameter names beside their inputs</span></figcaption>
+        <div class="stage"><div class="card app"><div class="card-body" style="min-height:0">
+          <div class="blocks prox">
+            <div class="blk"><span class="name">level</span><span class="cell"><span class="dd">DEBUG</span></span></div>
+            <div class="blk"><span class="name">message</span>
+              <span class="params"><span class="pl">level</span><span class="dd">INFO</span>
+                <span class="pl">text</span><span class="field text">hello</span>
+                <span></span><span><button class="btn" type="button">Send</button></span></span></div>
+            <div class="blk"><span class="name">pid</span>
+              <span class="params"><span class="pl">kp</span><span class="field num">1.20</span>
+                <span class="pl">ki</span><span class="field num">0.05</span>
+                <span class="pl">kd</span><span class="field num">0.30</span>
+                <span></span><span><button class="btn" type="button">Send</button></span></span></div>
+            <div class="blk"><span class="name">calibrate</span><span class="cell"><button class="btn" type="button"><i class="ph ph-play"></i>Run…</button></span></div>
+          </div>
+        </div></div></div></figure>
+
+      <figure><figcaption><b>Alternative</b> values in one line, named inside their fields</figcaption>
+        <div class="stage"><div class="card app"><div class="card-body" style="min-height:0">
+          <div class="blocks prox">
+            <div class="blk"><span class="name">level</span><span class="cell"><span class="dd">DEBUG</span></span></div>
+            <div class="blk"><span class="name">message</span>
+              <span class="inline"><span class="dd narrow"><span><span class="faint">level</span>&nbsp; INFO</span></span><span class="field text" style="width:150px"><span class="lab">text</span>hello</span><button class="btn" type="button">Send</button></span></div>
+            <div class="blk"><span class="name">pid</span>
+              <span class="inline"><span class="field num"><span class="lab">kp</span>1.20</span><span class="field num"><span class="lab">ki</span>0.05</span><span class="field num"><span class="lab">kd</span>0.30</span><button class="btn" type="button">Send</button></span></div>
+            <div class="blk"><span class="name">calibrate</span><span class="cell"><button class="btn" type="button"><i class="ph ph-play"></i>Run…</button></span></div>
+          </div>
+        </div></div></div></figure>
+
+    </div>
+    <p style="margin-top:20px">The proposal keeps one value per line, so sliders, units and the dots of unsent values keep their room, and moves the parameter names out of the column of action names. The action name sits on the row of its first value, and the rule runs down to Send, so the group reads as one action from its name to its button. With the spacing of the second sketch it costs no extra height. One line per action is the most compact, but it wraps beyond three short values and hides the names in the fields.</p>
+  </section>
+</div>
+
+<script>
+// theme toggle; the choice is only a convenience, so storage may fail
+(function () {
+  const root = document.documentElement;
+  let saved = null;
+  try { saved = localStorage.getItem('blip-ideas-theme'); } catch (e) {}
+  const set = (t) => {
+    root.dataset.theme = t;
+    document.querySelectorAll('[data-theme-choice]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.themeChoice === t)));
+    try { localStorage.setItem('blip-ideas-theme', t); } catch (e) {}
+  };
+  set(saved === 'light' ? 'light' : 'dark');
+  document.querySelectorAll('[data-theme-choice]').forEach(b => b.addEventListener('click', () => set(b.dataset.themeChoice)));
+})();
+
+// ---- the simulated target, link and blip ----------------------------------
+const TIMEOUT = 5, SHOW_ACCEPTED = 1.5, DRAG_INTERVAL = 0.1, ARM_SECONDS = 6, TAU = 0.8;
+const LEVELS = ['TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR'];
+const LINKS = { fast: 0.06, slow: 0.8, lost: 0.06, down: Infinity };
+let link = 'fast', mode = 'new';
+const now = () => performance.now() / 1000;
+
+// the target
+const target = { enabled: true, sp: 1500, pv: 1500, level: 'DEBUG', calibrating: false };
+// messages in flight: { at, fn }
+let wire = [];
+function deliver(fn, answer = false) {
+  const delay = LINKS[link];
+  if (!isFinite(delay) || (answer && link === 'lost')) return;
+  wire.push({ at: now() + delay, fn });
+}
+
+// blip's side
+const rb = { enable: { v: true, n: 0, t: now() }, speed: { v: 1500, n: 0, t: now() }, level: { v: 'DEBUG', n: 0, t: now() } };
+const latest = {};      // action -> { id, outcome, at, reason, sentAt, args }
+const marks = {};       // action -> readback samples when accepted
+const accepted = { enable: true, speed: 1500, level: 'DEBUG' };
+const inputs = { enable: true, speed: 1500, level: 'DEBUG' };
+const enabledOnTarget = { calibrate: true };
+let nextId = 0, dragging = null, dragSent = null, dragHeld = null, armed = null, modal = null;
+const connected = () => link !== 'down';
+
+function receiveOnTarget(action, args, id) {
+  let result = null;
+  if (action === 'enable') target.enabled = args;
+  else if (action === 'speed') { if (!target.enabled) result = 'the motor is disabled, enable it first'; else target.sp = args; }
+  else if (action === 'level') target.level = args;
+  else if (action === 'calibrate') {
+    if (target.calibrating) result = "'imu/calibrate' is disabled";
+    else {
+      target.calibrating = true;
+      deliver(() => { enabledOnTarget.calibrate = false; });
+      setTimeout(() => {
+        target.calibrating = false;
+        deliver(() => { enabledOnTarget.calibrate = true; });
+        deliver(() => answer(id, null), true);
+      }, 2000);
+      return;
+    }
+  }
+  deliver(() => answer(id, result), true);
+}
+
+function send(action, args) {
+  const id = nextId++;
+  latest[action] = { id, outcome: 'pending', sentAt: now(), args };
+  deliver(() => receiveOnTarget(action, args, id));
+}
+
+function answer(id, reason) {
+  const action = Object.keys(latest).find(a => latest[a].id === id);
+  if (!action) return;
+  const l = latest[action];
+  // today a late answer is ignored; the proposal lets it settle the outcome
+  if (l.outcome === 'unanswered' && mode === 'now') return;
+  if (l.outcome !== 'pending' && l.outcome !== 'unanswered') return;
+  if (reason == null) {
+    l.outcome = 'accepted'; l.at = now();
+    if (rb[action]) marks[action] = rb[action].n;
+    accepted[action] = l.args;
+  } else {
+    l.outcome = 'rejected'; l.reason = reason; l.at = now();
+    // the proposal: an input that sends at once springs back to the accepted value
+    if (mode === 'new' && action in accepted && dragging !== action) inputs[action] = accepted[action];
+  }
+}
+
+function follows(action) {
+  const l = latest[action];
+  if (!l) return true;
+  if (l.outcome === 'pending') return false;
+  if (l.outcome === 'accepted') return marks[action] == null || rb[action].n > marks[action];
+  return true;
+}
+
+// a drag sends at most every DRAG_INTERVAL, and the final value on release
+let lastDragSend = 0;
+function dragTo(action, v) {
+  inputs[action] = v; dragging = action;
+  if (now() - lastDragSend >= DRAG_INTERVAL) { send(action, v); dragSent = v; lastDragSend = now(); dragHeld = null; }
+  else dragHeld = v;
+}
+function release(action) {
+  if (dragging !== action) return;
+  if (inputs[action] !== dragSent) send(action, inputs[action]);
+  dragging = null; dragHeld = null;
+  const l = latest[action];
+  if (mode === 'new' && l && l.outcome === 'rejected') inputs[action] = accepted[action];
+}
+
+// the target's physics and readbacks, ten samples a second
+let lastSample = now();
+function step() {
+  const t = now();
+  // the motor follows its setpoint
+  const goal = target.enabled ? target.sp : 0;
+  target.pv += (goal - target.pv) * Math.min(1, 0.05 / TAU);
+  if (t - lastSample >= 0.1) {
+    lastSample = t;
+    const speed = target.enabled ? Math.max(0, Math.round(target.pv + (Math.random() - .5) * 10)) : Math.max(0, Math.round(target.pv));
+    const en = target.enabled, lv = target.level;
+    deliver(() => {
+      const at = now();
+      rb.speed.v = speed; rb.speed.n++; rb.speed.t = at;
+      rb.enable.v = en; rb.enable.n++; rb.enable.t = at;
+      rb.level.v = lv; rb.level.n++; rb.level.t = at;
+    });
+  }
+  // the link
+  const due = wire.filter(m => m.at <= t);
+  wire = wire.filter(m => m.at > t);
+  due.forEach(m => m.fn());
+  // held drag values and timeouts
+  if (dragging && dragHeld != null && t - lastDragSend >= DRAG_INTERVAL) { send(dragging, dragHeld); dragSent = dragHeld; dragHeld = null; lastDragSend = t; }
+  for (const a in latest) if (latest[a].outcome === 'pending' && t - latest[a].sentAt > TIMEOUT) latest[a].outcome = 'unanswered';
+  if (armed && t - armed.at > ARM_SECONDS) armed = null;
+  // inputs that follow their readback
+  for (const a of ['enable', 'level']) if (follows(a)) inputs[a] = rb[a].v;
+  render();
+}
+
+// ---- rendering --------------------------------------------------------------
+const grid = document.getElementById('grid');
+const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+let ui = {};
+
+function build() {
+  grid.innerHTML = '';
+  ui = {};
+  const row = (name, hover) => { const n = el('span', 'name', name); n.title = hover; grid.append(n); };
+  // enable
+  row('enable', 'Switches the motor on or off\nmotor/enable on simulator');
+  ui.enableCell = el('span', 'cell');
+  ui.enable = el('button', 'check'); ui.enable.type = 'button'; ui.enable.setAttribute('aria-label', 'enable');
+  ui.enable.onclick = () => { inputs.enable = !inputs.enable; send('enable', inputs.enable); };
+  ui.enableCell.append(ui.enable);
+  ui.enableRb = el('span', 'rb'); ui.enableOut = el('span', 'cell');
+  grid.append(ui.enableCell, ui.enableRb, ui.enableOut);
+  ui.enableNote = el('span', 'note'); grid.append(ui.enableNote);
+  // speed
+  row('speed', 'Speed setpoint of the motor\nmotor/speed on simulator');
+  const cell = el('span', 'cell');
+  ui.slider = el('span', 'slider');
+  ui.track = el('span', 'track'); ui.travel = el('span', 'travel'); ui.needle = el('span', 'needle');
+  ui.range = el('input'); ui.range.type = 'range'; ui.range.min = 0; ui.range.max = 3000; ui.range.step = 1; ui.range.setAttribute('aria-label', 'speed');
+  ui.range.addEventListener('input', () => dragTo('speed', +ui.range.value));
+  ui.range.addEventListener('change', () => release('speed'));
+  ui.range.addEventListener('pointerup', () => release('speed'));
+  ui.slider.append(ui.track, ui.travel, ui.needle, ui.range);
+  ui.speedBox = el('span', 'field');
+  cell.append(ui.slider, ui.speedBox);
+  ui.speedRb = el('span', 'rb'); ui.speedOut = el('span', 'cell');
+  grid.append(cell, ui.speedRb, ui.speedOut);
+  ui.speedNote = el('span', 'note'); grid.append(ui.speedNote);
+  // level
+  row('level', 'Lowest level of the log records sent\nlog/level on simulator');
+  const lc = el('span', 'cell');
+  ui.level = el('select', 'dd'); ui.level.setAttribute('aria-label', 'level');
+  LEVELS.forEach(l => ui.level.append(new Option(l, l)));
+  ui.level.onchange = () => { inputs.level = ui.level.value; send('level', inputs.level); };
+  lc.append(ui.level);
+  ui.levelRb = el('span', 'rb'); ui.levelOut = el('span', 'cell');
+  grid.append(lc, ui.levelRb, ui.levelOut);
+  ui.levelNote = el('span', 'note'); grid.append(ui.levelNote);
+  // calibrate
+  row('calibrate', 'Removes the bias of the gyroscope, takes a moment\nimu/calibrate on simulator');
+  ui.calCell = el('span', 'cell');
+  ui.calRb = el('span', 'rb'); ui.calOut = el('span', 'cell');
+  grid.append(ui.calCell, ui.calRb, ui.calOut);
+  ui.calNote = el('span', 'note'); grid.append(ui.calNote);
+  ui.calKey = '';
+  ui.out = {};
+}
+
+const fmt = n => `${n} rpm`;
+function outcomeHtml(action) {
+  const l = latest[action];
+  if (!l) return '';
+  const t = now();
+  if (mode === 'now') {
+    if (l.outcome === 'pending') return '<span class="spin" title="Waiting for the target"></span>';
+    if (l.outcome === 'accepted') return t - l.at > SHOW_ACCEPTED ? '' : '<i class="ph ph-check-circle icon" style="color:var(--text)" title="Carried out"></i>';
+    if (l.outcome === 'rejected') return `<i class="ph ph-warning-circle icon err" title="Rejected: ${l.reason}"></i>`;
+    return '<i class="ph ph-clock-countdown icon wrn" title="The target did not answer"></i>';
+  }
+  if (dragging === action) return '<span class="sending" title="Sending while you drag"></span>';
+  if (l.outcome === 'pending') {
+    const e = t - l.sentAt;
+    return `<span class="spin"></span>${e > 0.8 ? `<span class="weak">${e.toFixed(1)} s</span>` : ''}`;
+  }
+  if (l.outcome === 'accepted') return t - l.at > SHOW_ACCEPTED ? '' : `<i class="ph ph-check-circle icon ok fade" data-at="${l.at}" title="Carried out"></i>`;
+  if (l.outcome === 'rejected') return '<i class="ph ph-warning-circle icon err"></i>';
+  return `<i class="ph ph-clock-countdown icon wrn"></i><span class="wrn">${(t - l.sentAt).toFixed(0)} s</span>`;
+}
+function noteHtml(action, label) {
+  if (mode === 'now') return '';
+  const l = latest[action];
+  if (!l || dragging === action) return '';
+  if (l.outcome === 'rejected') return [`${label(l.args)} not set: ${l.reason}`, 'err'];
+  if (l.outcome === 'unanswered') return [`No answer for ${(now() - l.sentAt).toFixed(0)} s, still listening. <span class="muted">The readback shows whether it took effect.</span>`, 'wrn'];
+  return '';
+}
+function setHtml(node, html, key) {
+  key = key || html;
+  if (node._k !== key) { node.innerHTML = html; node._k = key; }
+}
+function setNote(node, v) {
+  const [html, cls] = v || ['', ''];
+  node.className = 'note ' + cls;
+  node.style.display = html ? '' : 'none';
+  setHtml(node, html);
+}
+function readbackHtml(action, text, hidden) {
+  const r = rb[action];
+  const age = now() - r.t;
+  if (mode === 'now') return [`<span title="Readback">${text}</span>`, 'rb'];
+  if (hidden) return ['', 'rb'];
+  if (age > 2) return [`${text}<span class="age">${age.toFixed(0)} s ago</span>`, 'rb stale'];
+  return [text, 'rb live'];
+}
+function setRb(node, [html, cls]) { node.className = cls; setHtml(node, html); }
+
+function render() {
+  const on = connected();
+  const t = now();
+  // enable
+  ui.enable.disabled = !on;
+  setHtml(ui.enable, inputs.enable ? '<i class="ph ph-check"></i>' : '', String(inputs.enable));
+  ui.enable.classList.toggle('requested', mode === 'new' && !follows('enable'));
+  const enDiffers = rb.enable.v !== inputs.enable;
+  setRb(ui.enableRb, readbackHtml('enable', mode === 'now' ? String(rb.enable.v) : `reads ${rb.enable.v ? 'on' : 'off'}`, mode === 'new' && !enDiffers && t - rb.enable.t <= 2));
+  setHtml(ui.enableOut, outcomeHtml('enable'), (latest.enable || {}).outcome + (latest.enable || {}).id + (mode));
+  setNote(ui.enableNote, noteHtml('enable', v => v ? 'On' : 'Off'));
+
+  // speed
+  ui.range.disabled = !on;
+  if (dragging !== 'speed' && +ui.range.value !== inputs.speed) ui.range.value = inputs.speed;
+  ui.speedBox.textContent = fmt(inputs.speed);
+  ui.slider.classList.toggle('off', !on);
+  const pv = Math.min(3000, Math.max(0, rb.speed.v));
+  const show = mode === 'new';
+  ui.needle.style.display = ui.travel.style.display = show ? '' : 'none';
+  if (show) {
+    // the thumb is 16 px wide: map values onto the range its centre moves in
+    const w = 120, inset = 8, x = v => inset + (v / 3000) * (w - 2 * inset);
+    ui.needle.style.left = x(pv) + 'px';
+    const a = x(Math.min(pv, inputs.speed)), b = x(Math.max(pv, inputs.speed));
+    ui.travel.style.left = a + 'px'; ui.travel.style.width = Math.max(0, b - a) + 'px';
+    ui.needle.classList.toggle('stale', t - rb.speed.t > 2);
+  }
+  setRb(ui.speedRb, readbackHtml('speed', fmt(rb.speed.v)));
+  const ls = latest.speed || {};
+  setHtml(ui.speedOut, outcomeHtml('speed'), ls.outcome + ls.id + mode + (dragging === 'speed') + (ls.outcome === 'pending' || ls.outcome === 'unanswered' ? Math.floor((t - ls.sentAt) * 10) : ''));
+  setNote(ui.speedNote, noteHtml('speed', fmt));
+
+  // level
+  ui.level.disabled = !on;
+  if (ui.level.value !== inputs.level && document.activeElement !== ui.level) ui.level.value = inputs.level;
+  ui.level.classList.toggle('requested', mode === 'new' && !follows('level'));
+  setRb(ui.levelRb, readbackHtml('level', mode === 'now' ? rb.level.v : `reads ${rb.level.v}`, mode === 'new' && rb.level.v === inputs.level && t - rb.level.t <= 2));
+  const ll = latest.level || {};
+  setHtml(ui.levelOut, outcomeHtml('level'), ll.outcome + ll.id + mode);
+  setNote(ui.levelNote, noteHtml('level', v => v));
+
+  // calibrate
+  const lc = latest.calibrate || {};
+  const calOn = on && enabledOnTarget.calibrate;
+  let key, html;
+  if (mode === 'now') {
+    key = `now${calOn}`;
+    html = `<button class="btn" type="button" data-cal="run" ${calOn ? '' : 'disabled title="The outpost cannot carry out the action now"'}><i class="ph ph-play"></i>Run</button>`;
+  } else if (armed) {
+    const left = 1 - (t - armed.at) / ARM_SECONDS;
+    key = `armed${calOn}`;
+    html = `<span class="arm"><span style="display:flex;gap:8px"><button class="btn" type="button" data-cal="cancel">Cancel</button><button class="btn strong" type="button" data-cal="go" ${calOn ? '' : 'disabled'}>Run calibrate</button></span><span class="q">Removes the bias of the gyroscope, takes a moment</span><span class="timer"><i></i></span></span>`;
+    setHtml(ui.calCell, html, key);
+    const bar = ui.calCell.querySelector('.timer i'); if (bar) bar.style.transform = `scaleX(${Math.max(0, left)})`;
+    html = null;
+  } else if (!enabledOnTarget.calibrate && on) {
+    key = 'running';
+    html = `<button class="btn" type="button" disabled>Running…</button>`;
+  } else {
+    key = `new${calOn}`;
+    html = `<button class="btn" type="button" data-cal="arm" ${calOn ? '' : 'disabled'}><i class="ph ph-play"></i>Run…</button>`;
+  }
+  if (html != null) setHtml(ui.calCell, html, key);
+  setHtml(ui.calOut, outcomeHtml('calibrate'), lc.outcome + lc.id + mode + (lc.outcome === 'pending' || lc.outcome === 'unanswered' ? Math.floor((t - lc.sentAt) * 10) : ''));
+  setNote(ui.calNote, noteHtml('calibrate', () => 'Calibrate'));
+
+  // the modal of today
+  const view = document.getElementById('view');
+  let scrim = view.querySelector('.scrim');
+  if (modal && !scrim) {
+    scrim = el('div', 'scrim', `<div class="modal" role="dialog" aria-label="Confirm"><div>Carry out imu/calibrate?</div><div class="row"><button class="btn" type="button" data-cal="mcancel">Cancel</button><button class="btn" type="button" data-cal="mrun">Run</button></div></div>`);
+    view.append(scrim);
+  } else if (!modal && scrim) scrim.remove();
+  if (scrim) scrim.querySelector('[data-cal="mrun"]').disabled = !calOn;
+}
+
+document.getElementById('view').addEventListener('click', e => {
+  const b = e.target.closest('[data-cal]');
+  if (!b || b.disabled) return;
+  const what = b.dataset.cal;
+  if (what === 'run') modal = true;
+  else if (what === 'mcancel') modal = false;
+  else if (what === 'mrun') { modal = false; send('calibrate', null); }
+  else if (what === 'arm') { armed = { at: now() }; }
+  else if (what === 'cancel') armed = null;
+  else if (what === 'go') { armed = null; send('calibrate', null); }
+  render();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { modal = false; armed = null; } });
+
+function setMode(m) {
+  mode = m; armed = null; modal = false;
+  document.querySelectorAll('[data-mode]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === m)));
+  build(); render();
+}
+function setLink(l) {
+  link = l;
+  document.querySelectorAll('[data-link]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.link === l)));
+}
+document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode)));
+document.querySelectorAll('[data-link]').forEach(b => b.addEventListener('click', () => setLink(b.dataset.link)));
+setMode('new');
+setInterval(step, 50);
+
+// ---- the static strip of outcome states -------------------------------------
+(function () {
+  const g = document.getElementById('states-grid');
+  const slider = (sp, pv, stale) => {
+    const x = v => 8 + v / 3000 * 104;
+    const a = x(Math.min(sp, pv)), b = x(Math.max(sp, pv));
+    return `<span class="slider"><span class="track"></span><span class="travel" style="left:${a}px;width:${b - a}px"></span><span class="needle${stale ? ' stale' : ''}" style="left:${x(pv)}px"></span><span class="needle" style="left:${x(sp)}px;width:16px;height:24px;top:0;margin-left:-8px;border-radius:4px;background:var(--control);border:1px solid var(--text-weak);z-index:2"></span></span><span class="field">${sp} rpm</span>`;
+  };
+  const rows = [
+    ['dragging', slider(2200, 1640), '<span class="rb live">1640 rpm</span>', '<span class="sending"></span>', ''],
+    ['waiting', slider(2200, 1712), '<span class="rb live">1712 rpm</span>', '<span class="spin"></span><span class="weak">1.2 s</span>', ''],
+    ['carried out', slider(2200, 1988), '<span class="rb live">1988 rpm</span>', '<i class="ph ph-check-circle icon ok"></i>', ''],
+    ['settled', slider(2200, 2197), '<span class="rb live">2197 rpm</span>', '', ''],
+    ['refused', slider(1500, 0), '<span class="rb live">0 rpm</span>', '<i class="ph ph-warning-circle icon err"></i>', '<span class="note err">2500 rpm not set: the motor is disabled, enable it first</span>'],
+    ['no answer', slider(2200, 2194), '<span class="rb live">2194 rpm</span>', '<i class="ph ph-clock-countdown icon wrn"></i><span class="wrn">7 s</span>', '<span class="note wrn">No answer for 7 s, still listening. <span class="muted">The readback shows whether it took effect.</span></span>'],
+    ['link down', slider(2200, 2196, true).replace('class="slider"', 'class="slider off"'), '<span class="rb stale">2196 rpm<span class="age">12 s ago</span></span>', '', ''],
+  ];
+  g.innerHTML = rows.map(([name, input, readback, out, note]) =>
+    `<span class="name weak">${name}</span><span class="cell">${input}</span>${readback}<span class="cell">${out}</span>${note}`).join('');
+})();
+</script>
+</body>
+</html>
