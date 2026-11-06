@@ -49,7 +49,7 @@ from blip_outpost.schema import (
     SchemaError,
     join,
 )
-from blip_outpost.timing import TargetClock, report_restart
+from blip_outpost.timing import TargetClock
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,7 @@ class Translator:
         self._wall_clock = wall_clock
         # without a timestamp in the schema, the time of this computer
         self.has_timestamps = any(p.timestamp is not None for p in self.plans)
-        self.target_clock = TargetClock(clock, on_restart=lambda t: report_restart(outpost, self.target_clock, t))
+        self.target_clock = TargetClock.reporting_to(outpost, clock)
 
         self.counters: Dict[str, int] = {"frames": 0, "decode_errors": 0}
         if self._root.sequence is not None:
@@ -119,7 +119,7 @@ class Translator:
 
     def restart(self) -> None:
         """The connection to the target was lost: the next sequence number starts over
-        without counting a gap, and an earlier timestamp next is a restart."""
+        without counting a gap, and the target may have restarted."""
         self._expected_seq = None
         self.target_clock.restart()
 
@@ -152,7 +152,7 @@ class Translator:
             return
         if d < 0 or seq == 0:
             self.counters["resets"] += 1
-            self.target_clock.restart()
+            self.target_clock.restart(sure=True)
         else:
             self.counters["seq_gaps"] += d
 

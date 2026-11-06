@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Deque, List, Optional, Union
 
 from blip_outpost.actions import Actions, declared_actions, is_method, mark_action
-from blip_outpost.proto import Data, Message, split_items
+from blip_outpost.proto import Data, Message, frames_of
 from blip_outpost.recording import RecordingWriter
 from blip_outpost.server import OutpostServer
 
@@ -65,6 +65,11 @@ class Outpost:
         # if set, carries out the invocations in place of the actions, e.g. to forward
         # them to a target that knows its actions itself
         self.on_invoke: Optional[InvokeHandler] = None
+        # if set, the time of what is sent without a timestamp, e.g. the time of the
+        # target a link translates, None while it is not known; else the time of this
+        # computer
+        self.target_time: Optional[Callable[[], Optional[int]]] = None
+        self._warned_untimed = False
 
         self._server = OutpostServer(self._invoke, max_queued=max_queued, on_clients=self._clients_changed)
         # the event loop serving, and its thread, while the outpost serves
@@ -205,11 +210,16 @@ class Outpost:
     # Sending
 
     def send_value(self, path: str, value: Data, timestamp_ns: Optional[int] = None) -> None:
-        """Sends a sample of the trace `path`, timestamped now unless given (ns).
+        """Sends a sample of the trace `path`, timestamped now unless given (ns), see
+        `target_time`.
 
         `value` is None, int, float, bool, str, a list of fixed length or a dict with
         str keys, nested freely. Python ints are sent as integers, so pass a float for
         a float trace."""
+        if timestamp_ns is None and self.target_time is not None:
+            timestamp_ns = self._target_now()
+            if timestamp_ns is None:
+                return
         self._send_frame(Message.create_value(path, value, timestamp_ns).encode_cbor())
 
     def send_metadata(self, path: str, unit: str) -> None:
@@ -225,8 +235,13 @@ class Outpost:
         timestamp_ns: Optional[int] = None,
         path: str = "",
     ) -> None:
-        """Sends a log record of a `LogLevel`, timestamped now unless given (ns), at
-        `path` like a value, e.g. ``motor``, or of the target as a whole without one."""
+        """Sends a log record of a `LogLevel`, timestamped now unless given (ns), see
+        `target_time`, at `path` like a value, e.g. ``motor``, or of the target as a
+        whole without one."""
+        if timestamp_ns is None and self.target_time is not None:
+            timestamp_ns = self._target_now()
+            if timestamp_ns is None:
+                return
         self._send_frame(Message.create_log(int(level), message, timestamp_ns, component, path).encode_cbor())
 
     def send(self, message: Union[Message, bytes]) -> None:
@@ -236,15 +251,18 @@ class Outpost:
         if isinstance(message, Message):
             self._send_frame(message.encode_cbor())
             return
-        try:
-            frames, rest = split_items(message)
-        except ValueError as e:
-            logger.error(f"Dropping {len(message)} bytes that are no messages ({e}): {message[:32].hex()}")
-            return
-        if rest:
-            logger.error(f"Dropping {len(rest)} bytes of an incomplete message: {rest[:32].hex()}")
-        for frame in frames:
+        for frame in frames_of(message):
             self._send_frame(frame)
+
+    def _target_now(self) -> Optional[int]:
+        """The time of `target_time` now, `None` with a warning, once, while it is not
+        known: the time of this computer would be far from it."""
+        assert self.target_time is not None
+        t = self.target_time()
+        if t is None and not self._warned_untimed:
+            self._warned_untimed = True
+            logger.warning("Dropping what is sent without a timestamp before the first timestamp of the target")
+        return t
 
     def _send_frame(self, frame: bytes) -> None:
         """Sends the bytes of a single message, unchecked."""

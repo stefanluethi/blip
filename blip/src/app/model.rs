@@ -146,7 +146,7 @@ impl Model {
                 if !self.fits_time_base(timestamp, path) {
                     return None;
                 }
-                self.origin.get_or_insert(timestamp);
+                self.set_origin(timestamp);
                 let generation = self.traces.generation();
                 self.traces.insert(path, timestamp, &self.flat, frame);
                 if self.traces.generation() != generation {
@@ -172,7 +172,7 @@ impl Model {
                 if timestamp > 0 {
                     // not the wall clock of a record without a timestamp, which may be
                     // far from the time domain of the target
-                    self.origin.get_or_insert(timestamp);
+                    self.set_origin(timestamp);
                 }
                 if self.logs.push(entry) {
                     self.paths_version = Version::default();
@@ -211,6 +211,21 @@ impl Model {
             Err(error) => log::warn!("error parsing message: {error}"),
         }
         None
+    }
+
+    /// Makes `timestamp` the origin if there is none yet. The log records before it
+    /// had no timestamp and got the wall clock; if that is not in the time base of
+    /// `timestamp`, e.g. the uptime of a target, they move to `timestamp`, as they
+    /// would be decades away from the data.
+    fn set_origin(&mut self, timestamp: u64) {
+        if self.origin.is_some() {
+            return;
+        }
+        self.origin = Some(timestamp);
+        let base = TimeBase::guess(timestamp);
+        if (self.logs.entries.iter()).any(|entry| TimeBase::guess(entry.time) != base) {
+            self.logs.move_all_to(timestamp);
+        }
     }
 
     /// Whether `timestamp` has the time base of the origin, the Unix epoch or the boot
@@ -593,6 +608,23 @@ mod tests {
         assert_eq!(model.time_span(), Some((5_000_000_000, 6_000_000_000)));
         assert!(model.logs.entries.is_empty());
         assert!(model.traces.get("pc/load").is_none());
+
+        // a record without a timestamp before any data has the wall clock, and moves to
+        // the first timestamp in another time base
+        model.clear();
+        model.receive(
+            "target",
+            &frame(&proto::Message::Log(proto::LogRecord {
+                timestamp: 0,
+                path: String::new(),
+                level: 2,
+                component: String::new(),
+                message: "booting".to_owned(),
+            })),
+        );
+        model.receive("target", &value(2_000_000_000, "rpm", proto::Data::Uint(1)));
+        assert_eq!(model.logs.entries[0].time, 2_000_000_000);
+        assert_eq!(model.time_span(), Some((2_000_000_000, 2_000_000_000)));
 
         // cleared, the next sample sets the time base anew
         model.clear();

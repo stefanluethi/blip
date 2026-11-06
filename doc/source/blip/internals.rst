@@ -149,7 +149,8 @@ What happens to a message on its way into the model:
 * **Log records** are kept, all of them, in the order of their timestamps. A
   record with the timestamp 0 gets the newest time of the data received so
   far (or the wall clock if there is none), so it lines up with the samples
-  of its target. Levels above 4 count as errors, a record without a path is
+  of its target. Should the first timestamp then be in another time base,
+  e.g. an uptime, such records move to it. Levels above 4 count as errors, a record without a path is
   at the path ``log``, and a record without a component shows the component
   ``target``.
 * **Recording versus receiving.** Samples are kept only while recording.

@@ -228,6 +228,18 @@ def test_a_restart_of_the_target_follows_its_time_before(schema):
     assert "restarted" in logs[0]["message"]
 
 
+def test_timestamps_of_the_bridge_are_shifted_like_those_of_the_target(schema):
+    outpost, sent = capture()
+    link = ProtobufLink(outpost, schema, "ws://127.0.0.1:9/ws/robby", "test.link.Up")
+    battery = schema.message_class("test.link.Battery")
+    link._receive(up(schema, seq=0, battery=battery(t_ns=20_000_000_000, voltage_mv=8000)))
+    link._receive(up(schema, seq=0, battery=battery(t_ns=100_000_000, voltage_mv=8000)))
+    offset = link.translator.target_clock.offset
+    assert offset > 0
+    link._receive(json.dumps({"values": {"bridge/rx": 5}, "timestamp": 200_000_000}))
+    assert ("bridge/rx", 5, 200_000_000 + offset) in values(sent)
+
+
 def test_a_reset_sequence_number_makes_a_small_step_back_a_restart(schema):
     clock = Clock(0)
     t, sent = translator(schema, clock=clock)

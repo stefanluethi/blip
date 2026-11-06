@@ -49,18 +49,54 @@ def test_samples_a_little_out_of_order_are_no_restart():
     assert target.restarts == 0
 
 
-def test_after_a_possible_restart_any_earlier_time_is_one():
+def test_after_a_new_connection_a_late_sample_is_no_restart():
     clock = Clock()
     target = TargetClock(clock)
-    target.map(SECOND // 2)
+    target.map(5 * SECOND)
     target.restart()
-    # later: the same run, connected again
-    assert target.map(SECOND) == SECOND
+    # buffered while the connection was lost
+    assert target.map(5 * SECOND - 20_000_000) == 5 * SECOND - 20_000_000
     assert target.restarts == 0
     target.restart()
     clock.now += 10
-    assert target.map(SECOND // 4) == SECOND + 10
+    # more than 100 ms earlier
+    assert target.map(4 * SECOND + 500_000_000) == 5 * SECOND + 10
     assert target.restarts == 1
+
+
+def test_after_a_sure_restart_any_earlier_time_is_one():
+    clock = Clock()
+    target = TargetClock(clock)
+    target.map(5 * SECOND)
+    target.restart(sure=True)
+    clock.now += 10
+    assert target.map(5 * SECOND - 1_000) == 5 * SECOND + 10
+    assert target.restarts == 1
+
+
+def test_a_run_shorter_than_a_second_is_a_restart_too():
+    clock = Clock()
+    target = TargetClock(clock)
+    # a crash loop: runs of half a second
+    target.map(SECOND // 2)
+    clock.now += 100_000_000
+    assert target.map(50_000_000) == SECOND // 2 + 100_000_000
+    assert target.restarts == 1
+    # within a run, a sample a little out of order is none
+    target.map(SECOND // 4)
+    target.map(SECOND // 4 - 5_000_000)
+    assert target.restarts == 1
+
+
+def test_another_clock_is_shifted_like_the_target():
+    clock = Clock()
+    target = TargetClock(clock)
+    target.map(10 * SECOND)
+    target.map(100)
+    assert target.shift(200) == 200 + target.offset
+    # no restart, nor the newest time
+    assert target.restarts == 1
+    assert target.now() == 10 * SECOND + 1
 
 
 def test_the_estimate_follows_the_newest_time_only():
@@ -86,9 +122,21 @@ def test_the_timestamp_of_a_value_or_log_is_changed_in_place():
     assert retime(value, lambda t: t) is value
 
 
-def test_a_timestamp_after_other_fields_is_changed_too():
-    frame = cbor2.dumps({"Value": {"path": "speed", "value": 3, "timestamp": 10}})
-    assert cbor2.loads(retime(frame, lambda t: t * 2)) == {"Value": {"path": "speed", "value": 3, "timestamp": 20}}
+def test_a_timestamp_after_other_fields_is_changed_in_place_too():
+    value = {"a": [1.5, {"b": b"\x00\x01"}], "c": "x"}
+    frame = cbor2.dumps({"Value": {"path": "speed", "value": value, "timestamp": 10}})
+    retimed = retime(frame, lambda t: t * 2)
+    assert cbor2.loads(retimed) == {"Value": {"path": "speed", "value": value, "timestamp": 20}}
+    # the value stays as it was encoded, e.g. a float of 16 bits
+    half = (b"\xa1" + cbor2.dumps("Value") + b"\xa3" + cbor2.dumps("path") + cbor2.dumps("p")
+            + cbor2.dumps("value") + b"\xf9\x3e\x00" + cbor2.dumps("timestamp") + cbor2.dumps(3))
+    assert retime(half, lambda t: t + 1) == half[:-1] + cbor2.dumps(4)
+
+
+def test_a_timestamp_in_a_map_of_indefinite_length_is_found():
+    fields = b"".join(cbor2.dumps(item) for item in ["path", "p", "value", 1, "timestamp", 7])
+    frame = b"\xa1" + cbor2.dumps("Value") + b"\xbf" + fields + b"\xff"
+    assert cbor2.loads(retime(frame, lambda t: t + 1))["Value"]["timestamp"] == 8
 
 
 def test_no_timestamp_and_other_messages_stay_as_they_are():

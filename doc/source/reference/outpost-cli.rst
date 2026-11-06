@@ -73,8 +73,11 @@ For targets that speak the blip protocol themselves, e.g. firmware using
 * When the target restarts and its timestamps start over, the outpost shifts
   them so that they follow the ones before, and logs a warning (component
   ``outpost``). A timestamp more than a second behind the newest one is a
-  restart, after a new TCP connection any earlier one is. A timestamp 0 (no
-  clock) is left as it is.
+  restart, as is one at least 10 ms behind and less than half of it (a run
+  shorter than a second), and after a new TCP connection one more than 100 ms
+  behind. Each host the target sends from has a clock of its own, so targets
+  sending at once are not taken for restarts. A timestamp 0 (no clock) is left
+  as it is.
 * Invocations from blip are forwarded to the target as ``Invoke`` requests; an
   invocation counts as accepted once it is forwarded. The target announces its
   actions itself; ``ActionResult`` messages of the target are dropped, as the
@@ -134,9 +137,10 @@ named after it.
   one serialized message of the ``--uplink`` type; each binary frame to it one
   of the ``--downlink`` type. A text frame from it holds JSON values of its own,
   ``{"values": {"bridge/rx_bytes": 1234}, "units": {"bridge/rx_bytes": "B"}}``,
-  optionally with a ``"timestamp"`` in ns; without one, before the first
-  timestamp of the target, the latest value of each path is held until the
-  time of the target is known. The outpost reconnects every three seconds
+  optionally with a ``"timestamp"`` in ns in the time of the target, shifted
+  like the target's after a restart; without one, before the first timestamp
+  of the target, the latest value of each path is held until the time of the
+  target is known. The outpost reconnects every three seconds
   after an error.
 * The actions are the members of a oneof in the downlink message, see below.
   An invocation sends a downlink message and waits ``--timeout`` seconds for
@@ -202,8 +206,10 @@ The rules:
   as the time of the PC would be far from that of the target. A schema without
   any timestamp has the time of the PC.
 * **Restarts.** A timestamp more than a second behind the newest one is a
-  restart of the target, and so is any earlier one after a sequence number
-  that started over or a new connection. The outpost shifts the timestamps of
+  restart of the target, as is one at least 10 ms behind and less than half
+  of it (a run shorter than a second), one more than 100 ms behind after a new
+  connection, and any earlier one after a sequence number that started over.
+  The outpost shifts the timestamps of
   the new run to follow the ones before, by the time that passed in between,
   and logs a warning (component ``outpost``).
 * **Series.** With ``ROLE_PERIOD`` as well, the repeated fields are samples,

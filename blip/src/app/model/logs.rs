@@ -138,6 +138,14 @@ impl Logs {
         new_path
     }
 
+    /// Moves all entries to `time`, keeping their order.
+    pub fn move_all_to(&mut self, time: u64) {
+        for entry in &mut self.entries {
+            entry.time = time;
+        }
+        self.order = Version::default();
+    }
+
     /// The path to give a record received with `path`, [`DEFAULT_PATH`] if it is empty,
     /// shared with the entries of the same path, so that it is allocated once per path.
     pub fn shared_path(&self, path: &str) -> Arc<str> {
