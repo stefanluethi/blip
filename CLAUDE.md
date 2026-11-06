@@ -56,3 +56,14 @@ changes.
   with the code they describe.
 - Commit messages: a short imperative subject in plain words, then a body that explains
   what changed and why.
+
+## Agents
+
+`.claude/agents` holds the specialist agents: `designer`, `requirements-engineer`,
+`blip-dev`, `sonde-dev`, `outpost-dev`, `docs-writer`, `reviewer` and
+`design-reviewer`. `/orchestrate <change>` (`.claude/skills/orchestrate`) leads a change
+through them: clarify with the user, pick a design for UI changes, write and approve the
+requirements, implement, document, then review until every requirement in scope is
+implemented, tested, traced and documented, and the UI looks right.
+
+`design/DESIGN.md` describes the look of blip and the UI rules; follow it for UI work.

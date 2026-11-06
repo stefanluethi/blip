@@ -22,5 +22,7 @@ doc/_build/
 # Sphinx build output (doc)
 _build/
 
-# Claude Code local state
-.claude/
+# Claude Code local state; the agents and skills are shared
+.claude/*
+!.claude/agents/
+!.claude/skills/
