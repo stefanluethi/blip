@@ -14,7 +14,7 @@ created and used before the outpost serves, e.g. when a module is imported.
 """
 
 import logging
-from typing import TYPE_CHECKING, Any, Callable, ContextManager, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Callable, ContextManager, Mapping, Optional, Sequence
 
 from blip_outpost.proto import Data, LogLevel
 
@@ -107,7 +107,11 @@ class Tracer:
         component. With `args`, the message is formatted with them as `logging` does,
         ``message % args``, e.g. ``log(LogLevel.WARN, "hot: %d °C", t)``."""
         if args:
-            message = message % args
+            # as logging does: a single mapping is the mapping of %(name)s
+            if len(args) == 1 and isinstance(args[0], Mapping) and args[0]:
+                message = message % args[0]
+            else:
+                message = message % args
         self._outpost.log(level, message, path=self._name, component=self._component, timestamp_ns=timestamp_ns)
 
     def debug(self, message: str, *args: Any, timestamp_ns: Optional[int] = None) -> None:

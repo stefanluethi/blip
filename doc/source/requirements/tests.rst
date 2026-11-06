@@ -241,10 +241,12 @@ Test Cases
    traces, actions and readbacks are below its name and its log records at
    its name and of its component, formatted as ``logging`` does; forwarded
    log records carry their own path and component; a dataclass is a record
-   whose units are sent once per path; numpy-like values are sent as lists; a
-   series is sent at its timestamps or its period; a batch is handed over at
-   its end, also when it raises, in one handover from another thread, and
-   with one timestamp; ``LogHandler`` maps the levels of ``logging`` and
+   whose units are sent once per path, also of the fields whose annotations
+   resolve when others do not; numpy-like values are sent as lists; a series
+   is sent at its timestamps or its period; a batch is handed over at its end,
+   also when it raises, in one handover from another thread, and with one
+   timestamp, shared by the batches nested in it; a single mapping formats by
+   name; ``LogHandler`` maps the levels of ``logging`` and
    skips the outpost's own records. ``outpost/tests/test_app.py`` -- the
    example ``app.py`` traces its parts below their names.
 

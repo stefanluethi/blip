@@ -317,8 +317,10 @@ namespace sonde {
 
 /// A named part of the code that traces, on the queue of its context. Any number of them
 /// may share a queue; a child adds its name below the one of its parent, which outlives
-/// it. The full path is joined on the stack, in SONDE_PATH_MAX bytes; a message with a
-/// longer one is dropped as Status::TooLarge.
+/// it, as do the strings of the name and the component (it keeps views of them). The
+/// full path is joined on the stack, in SONDE_PATH_MAX bytes; a message with a longer one
+/// is dropped as Status::TooLarge. A child keeps only the address of its parent, so static
+/// tracers are constant-initialized; the calls are const.
 class Tracer {
 public:
     /// A tracer named `name`, e.g. "motor"; without a name, of the target as a whole.
@@ -330,19 +332,19 @@ public:
 
     // proto: Message::Value of the trace `path` below the tracer
     template <typename T>
-    Status value(std::string_view path, const T& value);
+    Status value(std::string_view path, const T& value) const;
     template <typename T>
-    Status value(Timestamp timestamp, std::string_view path, const T& value);
+    Status value(Timestamp timestamp, std::string_view path, const T& value) const;
 
     // proto: Message::ValueMetadata
-    Status unit(std::string_view path, std::string_view unit);
+    Status unit(std::string_view path, std::string_view unit) const;
 
     // proto: Message::Log at the name of the tracer, of its component
-    Status log(Level level, std::string_view message);
-    Status log(Timestamp timestamp, Level level, std::string_view message);
-    Status logf(Level level, const char* format, ...);
-    Status debug(std::string_view message);  // also info, warn, error
-    Status debugf(const char* format, ...);  // also infof, warnf, errorf
+    Status log(Level level, std::string_view message) const;
+    Status log(Timestamp timestamp, Level level, std::string_view message) const;
+    Status logf(Level level, const char* format, ...) const;
+    Status debug(std::string_view message) const;  // also info, warn, error
+    Status debugf(const char* format, ...) const;  // also infof, warnf, errorf
 
     constexpr Queue& queue() const;
     constexpr std::string_view name() const;

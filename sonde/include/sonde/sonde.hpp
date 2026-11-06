@@ -540,9 +540,13 @@ private:
 ///
 /// A tracer is a few pointers. Any number of them may share a queue, all used from the
 /// producer context of that queue. A child adds its name below the one of its parent,
-/// which has to outlive it. The full path is joined on the stack, in SONDE_PATH_MAX bytes;
-/// a message with a longer one is dropped as Status::TooLarge. The constructors are
-/// constexpr, as the ones of the queue.
+/// which has to outlive it, as do the strings of the name and the component: a tracer
+/// keeps views of them, e.g. of string literals. The full path is joined on the stack, in
+/// SONDE_PATH_MAX bytes; a message with a longer one is dropped as Status::TooLarge.
+///
+/// The constructors are constexpr and a child only keeps the address of its parent, so
+/// static tracers are constant-initialized, also children of tracers that are not
+/// declared constexpr: they are ready before any code runs.
 class Tracer {
 public:
     /// A tracer on `queue` named `name`, a path such as "motor" or "robot/arm"; without a
@@ -554,63 +558,72 @@ public:
     /// A tracer below `parent`, e.g. "motor/left" for "left", with the component of the
     /// parent.
     constexpr Tracer(const Tracer& parent, std::string_view name)
-        : queue_{parent.queue_}, parent_{&parent}, name_{name}, component_{parent.component_} {}
+        : parent_{&parent}, name_{name}, inherits_component_{true} {}
 
     constexpr Tracer(const Tracer& parent, std::string_view name, std::string_view component)
-        : queue_{parent.queue_}, parent_{&parent}, name_{name}, component_{component} {}
+        : parent_{&parent}, name_{name}, component_{component} {}
 
     // proto: Message::Value of the trace `path` below the tracer, timestamped by the
     // clock of the queue or explicitly
     template <typename T>
-    Status value(std::string_view path, const T& value) {
+    Status value(std::string_view path, const T& value) const {
         return value_with(nullptr, path, &Queue::encode_value<T>, &value);
     }
     template <typename T>
-    Status value(Timestamp timestamp, std::string_view path, const T& value) {
+    Status value(Timestamp timestamp, std::string_view path, const T& value) const {
         return value_with(&timestamp, path, &Queue::encode_value<T>, &value);
     }
 
     // proto: Message::ValueMetadata, the unit of the trace `path` below the tracer
-    Status unit(std::string_view path, std::string_view unit);
+    Status unit(std::string_view path, std::string_view unit) const;
 
     // proto: Message::Log at the name of the tracer, of its component
-    Status log(Level level, std::string_view message);
-    Status log(Timestamp timestamp, Level level, std::string_view message);
+    Status log(Level level, std::string_view message) const;
+    Status log(Timestamp timestamp, Level level, std::string_view message) const;
     /// printf-like, formatted into a buffer of SONDE_LOGF_MAX bytes on the stack, longer
     /// messages are cut off.
-    Status logf(Level level, const char* format, ...) SONDE_PRINTF(3, 4);
+    Status logf(Level level, const char* format, ...) const SONDE_PRINTF(3, 4);
 
-    Status debug(std::string_view message) { return log(Level::Debug, message); }
-    Status info(std::string_view message) { return log(Level::Info, message); }
-    Status warn(std::string_view message) { return log(Level::Warn, message); }
-    Status error(std::string_view message) { return log(Level::Error, message); }
-    Status debugf(const char* format, ...) SONDE_PRINTF(2, 3);
-    Status infof(const char* format, ...) SONDE_PRINTF(2, 3);
-    Status warnf(const char* format, ...) SONDE_PRINTF(2, 3);
-    Status errorf(const char* format, ...) SONDE_PRINTF(2, 3);
+    Status debug(std::string_view message) const { return log(Level::Debug, message); }
+    Status info(std::string_view message) const { return log(Level::Info, message); }
+    Status warn(std::string_view message) const { return log(Level::Warn, message); }
+    Status error(std::string_view message) const { return log(Level::Error, message); }
+    Status debugf(const char* format, ...) const SONDE_PRINTF(2, 3);
+    Status infof(const char* format, ...) const SONDE_PRINTF(2, 3);
+    Status warnf(const char* format, ...) const SONDE_PRINTF(2, 3);
+    Status errorf(const char* format, ...) const SONDE_PRINTF(2, 3);
 
-    /// The queue the tracer encodes into, e.g. to commit().
-    constexpr Queue& queue() const { return *queue_; }
+    /// The queue the tracer encodes into, the one of its parent for a child, e.g. to
+    /// commit().
+    constexpr Queue& queue() const { return parent_ != nullptr ? parent_->queue() : *queue_; }
     /// The name of the tracer below its parent.
     constexpr std::string_view name() const { return name_; }
-    constexpr std::string_view component() const { return component_; }
+    /// The component of its log records, the one of its parent unless given.
+    constexpr std::string_view component() const {
+        return inherits_component_ ? parent_->component() : component_;
+    }
     constexpr const Tracer* parent() const { return parent_; }
 
 private:
     Status value_with(const Timestamp* timestamp, std::string_view path,
-                      detail::EncodeFn encode, const void* value);
-    Status logv(Level level, const char* format, std::va_list args);
+                      detail::EncodeFn encode, const void* value) const;
+    Status logv(Level level, const char* format, std::va_list args) const;
+    /// Calls `send` with the full path of `path` below the tracer, joined on the stack;
+    /// drops the message as TooLarge if it does not fit.
+    template <typename F>
+    Status with_path(std::string_view path, F&& send) const;
     /// The full path of `path` below the tracer: in `buffer` if it is joined, false if
     /// it does not fit.
     bool full_path(std::string_view path, char* buffer, std::size_t size,
                    std::string_view& full) const;
     bool write_name(char* buffer, std::size_t size, std::size_t& length) const;
-    Status too_long();
 
-    Queue* queue_;
+    // only of a tracer without a parent; a child asks its parent
+    Queue* queue_ = nullptr;
     const Tracer* parent_;
     std::string_view name_;
     std::string_view component_;
+    bool inherits_component_ = false;
 };
 
 }  // namespace sonde

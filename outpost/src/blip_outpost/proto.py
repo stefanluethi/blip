@@ -6,7 +6,7 @@ import io
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, ClassVar, Dict, List, Optional, Protocol, Tuple, Union
 import cbor2
 
 logger = logging.getLogger(__name__)
@@ -30,12 +30,27 @@ class ValueMetadata:
         return {"path": self.path, "unit": self.unit}
 
 
+class DataclassInstance(Protocol):
+    """An instance of a dataclass, a record of its fields."""
+    __dataclass_fields__: ClassVar[Dict[str, Any]]
+
+
+class SupportsToList(Protocol):
+    """E.g. a numpy array or scalar, sent as what `tolist` returns."""
+    def tolist(self) -> Any: ...
+
+
 # A trace value as sent to blip: None (no value), int, float, bool, str, a list of
 # fixed length or a dict with str keys, nested freely. It is encoded as a plain CBOR
 # item, e.g. a dict becomes a CBOR map. A dataclass is a record like a dict of its
 # fields, and what has a `tolist` method, e.g. a numpy array or scalar, is sent as
 # what it returns.
-Data = Any
+Data = Union[None, int, float, bool, str, list, dict, DataclassInstance, SupportsToList]
+
+
+def encode_value(timestamp_ns: int, path: str, value: Data) -> bytes:
+    """The bytes of a Value message, as `Message.create_value(...).encode_cbor()`."""
+    return cbor2.dumps({"Value": {"timestamp": timestamp_ns, "path": path, "value": value}}, default=encode_default)
 
 
 def encode_default(encoder: Any, value: Any) -> None:

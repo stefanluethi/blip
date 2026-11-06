@@ -82,9 +82,12 @@ constant-initialized and ready before any code runs.
 Tracers
 -------
 
-A ``Tracer`` is a pointer to its queue, one to its parent, its name and its
-component; it owns nothing and holds no state, so any number of them may share
-a queue. Its calls join the full path -- the names of its parents, its own and
+A ``Tracer`` without a parent holds a pointer to its queue, a child one to its
+parent, which gives it the queue and, unless the child has its own, the
+component; both hold views of their name and component. A child's constructor
+only takes the address of its parent, so a static child is constant-initialized
+also when its parent is not ``constexpr``. A tracer owns nothing and its calls
+are ``const``, so any number of them may share a queue. Its calls join the full path -- the names of its parents, its own and
 the path of the call, separated by ``/`` -- into a buffer of ``SONDE_PATH_MAX``
 bytes on the stack and call the queue with it, and with its component for log
 records. A tracer without a parent passes the path on as it is when one of the

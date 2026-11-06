@@ -55,58 +55,49 @@ bool Tracer::full_path(std::string_view path, char* buffer, std::size_t size,
     return true;
 }
 
-Status Tracer::too_long() {
-    queue_->drop(1);
-    return Status::TooLarge;
+template <typename F>
+Status Tracer::with_path(std::string_view path, F&& send) const {
+    char buffer[SONDE_PATH_MAX];
+    std::string_view full;
+    if (!full_path(path, buffer, sizeof buffer, full)) {
+        queue().drop(1);
+        return Status::TooLarge;
+    }
+    return send(queue(), full);
 }
 
 Status Tracer::value_with(const Timestamp* timestamp, std::string_view path,
-                          detail::EncodeFn encode, const void* value) {
-    char buffer[SONDE_PATH_MAX];
-    std::string_view full;
-    if (!full_path(path, buffer, sizeof buffer, full)) {
-        return too_long();
-    }
-    return queue_->value_with(timestamp, full, encode, value);
+                          detail::EncodeFn encode, const void* value) const {
+    return with_path(path, [&](Queue& queue, std::string_view full) {
+        return queue.value_with(timestamp, full, encode, value);
+    });
 }
 
-Status Tracer::unit(std::string_view path, std::string_view unit) {
-    char buffer[SONDE_PATH_MAX];
-    std::string_view full;
-    if (!full_path(path, buffer, sizeof buffer, full)) {
-        return too_long();
-    }
-    return queue_->unit(full, unit);
+Status Tracer::unit(std::string_view path, std::string_view unit) const {
+    return with_path(path, [&](Queue& queue, std::string_view full) {
+        return queue.unit(full, unit);
+    });
 }
 
-Status Tracer::log(Level level, std::string_view message) {
-    char buffer[SONDE_PATH_MAX];
-    std::string_view path;
-    if (!full_path({}, buffer, sizeof buffer, path)) {
-        return too_long();
-    }
-    return queue_->log_with(nullptr, path, level, component_, message);
+Status Tracer::log(Level level, std::string_view message) const {
+    return with_path({}, [&](Queue& queue, std::string_view full) {
+        return queue.log_with(nullptr, full, level, component(), message);
+    });
 }
 
-Status Tracer::log(Timestamp timestamp, Level level, std::string_view message) {
-    char buffer[SONDE_PATH_MAX];
-    std::string_view path;
-    if (!full_path({}, buffer, sizeof buffer, path)) {
-        return too_long();
-    }
-    return queue_->log_with(&timestamp, path, level, component_, message);
+Status Tracer::log(Timestamp timestamp, Level level, std::string_view message) const {
+    return with_path({}, [&](Queue& queue, std::string_view full) {
+        return queue.log_with(&timestamp, full, level, component(), message);
+    });
 }
 
-Status Tracer::logv(Level level, const char* format, std::va_list args) {
-    char buffer[SONDE_PATH_MAX];
-    std::string_view path;
-    if (!full_path({}, buffer, sizeof buffer, path)) {
-        return too_long();
-    }
-    return queue_->logv(path, level, component_, format, args);
+Status Tracer::logv(Level level, const char* format, std::va_list args) const {
+    return with_path({}, [&](Queue& queue, std::string_view full) {
+        return queue.logv(full, level, component(), format, args);
+    });
 }
 
-Status Tracer::logf(Level level, const char* format, ...) {
+Status Tracer::logf(Level level, const char* format, ...) const {
     std::va_list args;
     va_start(args, format);
     const Status status = logv(level, format, args);
@@ -114,13 +105,13 @@ Status Tracer::logf(Level level, const char* format, ...) {
     return status;
 }
 
-#define SONDE_LEVEL_LOGF(name, level)                         \
-    Status Tracer::name(const char* format, ...) {            \
-        std::va_list args;                                    \
-        va_start(args, format);                               \
+#define SONDE_LEVEL_LOGF(name, level)                           \
+    Status Tracer::name(const char* format, ...) const {        \
+        std::va_list args;                                      \
+        va_start(args, format);                                 \
         const Status status = logv(Level::level, format, args); \
-        va_end(args);                                         \
-        return status;                                        \
+        va_end(args);                                           \
+        return status;                                          \
     }
 
 SONDE_LEVEL_LOGF(debugf, Debug)

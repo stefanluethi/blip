@@ -257,3 +257,60 @@ def test_the_log_handler_sends_the_records_of_logging():
         (4, "test_tracer.app", "app", "down"),
         (0, "test_tracer.app", "app", "fine"),
     ]
+
+
+def test_a_nested_batch_shares_the_timestamp_set_in_it():
+    outpost = Outpost()
+    messages = sent(outpost)
+    with outpost.batch():
+        with outpost.batch():
+            outpost.value("a", 1)
+        outpost.value("b", 2)
+        with outpost.batch(timestamp_ns=5):
+            outpost.value("c", 3)
+    a, b, c = (m["Value"]["timestamp"] for m in messages)
+    assert a == b != c == 5
+
+
+def test_a_single_mapping_formats_by_name_as_in_logging():
+    outpost = Outpost()
+    messages = sent(outpost)
+    motor = outpost.get_tracer("motor")
+    motor.info("speed %(rpm)d rpm", {"rpm": 1500}, timestamp_ns=1)
+    motor.info("%s", {}, timestamp_ns=2)
+    assert [m["Log"]["message"] for m in messages] == ["speed 1500 rpm", "{}"]
+
+
+def test_units_of_fields_whose_annotations_resolve_are_sent(caplog):
+    @dataclass
+    class Local:
+        x: float
+
+    @dataclass
+    class Sample:
+        # strings, as with `from __future__ import annotations`
+        speed: "Annotated[float, Unit('rpm')]"
+        local: "Local"
+        temperature: "Annotated[float, Unit('°C')]"
+
+    outpost = Outpost()
+    messages = sent(outpost)
+    with caplog.at_level(logging.WARNING, logger="blip_outpost.records"):
+        outpost.value("s", Sample(1.0, Local(2.0), 3.0), timestamp_ns=1)
+    assert [m["ValueMetadata"] for m in messages if "ValueMetadata" in m] == [
+        {"path": "s.speed", "unit": "rpm"},
+        {"path": "s.temperature", "unit": "°C"},
+    ]
+    assert "local of" in caplog.text
+
+
+def test_a_series_of_dataclasses_sends_their_units_once():
+    outpost = Outpost()
+    messages = sent(outpost)
+    outpost.series("pose", [Pose(1.0, 2.0), Pose(3.0, 4.0)], start_ns=10, period_ns=5)
+    assert messages == [
+        {"ValueMetadata": {"path": "pose.x", "unit": "m"}},
+        {"ValueMetadata": {"path": "pose.y", "unit": "m"}},
+        {"Value": {"timestamp": 10, "path": "pose", "value": {"x": 1.0, "y": 2.0}}},
+        {"Value": {"timestamp": 15, "path": "pose", "value": {"x": 3.0, "y": 4.0}}},
+    ]

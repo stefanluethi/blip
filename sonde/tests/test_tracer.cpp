@@ -36,6 +36,15 @@ sonde::Storage<64, 1> constant_storage;
 static_assert(constant_left.component() == "driver");
 static_assert(constant_left.parent() == &constant_motor);
 
+// a child only keeps the address of its parent, so it is constant-initialized also when
+// the parent is not declared constexpr, e.g. for an ISR that fires before the static
+// constructors
+sonde::Tracer dynamic_parent{constant_queue, "net", "stack"};
+[[maybe_unused]] constexpr sonde::Tracer constant_child{dynamic_parent, "rx"};
+[[maybe_unused]] constexpr sonde::Tracer constant_grandchild{constant_child, "crc", "check"};
+static_assert(constant_child.parent() == &dynamic_parent);
+static_assert(constant_grandchild.component() == "check");
+
 }  // namespace
 
 TEST_CASE("a tracer sends values and units below its name") {
@@ -112,6 +121,13 @@ TEST_CASE("a child is below its parent, with the parent's component unless given
               queue.log("robot/arm/grip", Level::Warn, "gripper", "slipping");
               queue.value("net/rx", 3u);
           }));
+}
+
+TEST_CASE("a static child sends with the queue and component of its parent") {
+    CHECK(&constant_grandchild.queue() == &constant_queue);
+    CHECK(constant_child.component() == "stack");
+    CHECK(constant_child.value("bytes", 1u) == Status::Ok);
+    CHECK(constant_queue.dropped() == 0);
 }
 
 TEST_CASE("a path longer than SONDE_PATH_MAX is dropped as too large") {

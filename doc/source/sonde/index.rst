@@ -115,7 +115,9 @@ nothing written). ``queue.dropped()`` counts the dropped messages.
 
 A tracer is a few pointers: any number of them may share a queue, and a child,
 ``Tracer{parent, "left"}``, has the component of its parent unless given.
-``Tracer{queue}`` without a name sends the paths as they are.
+``Tracer{queue}`` without a name sends the paths as they are. A tracer keeps
+views of its name and component, so their strings have to outlive it, as
+string literals do.
 
 The queue has the same calls with the full path, and log records with their
 path and component, e.g. for a gateway that passes on what other nodes send:

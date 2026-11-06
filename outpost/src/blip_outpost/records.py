@@ -13,11 +13,15 @@ field that is a dataclass itself becomes a nested record, e.g. ``imu.pose.x``.
 
 import dataclasses
 import functools
+import logging
+import sys
 import types
 import typing
 from typing import Any, List, Tuple
 
 from blip_outpost.actions import Unit
+
+logger = logging.getLogger(__name__)
 
 
 @functools.lru_cache(maxsize=None)
@@ -25,18 +29,44 @@ def field_units(cls: type) -> Tuple[Tuple[str, str], ...]:
     """The fields of the dataclass `cls` that declare a `Unit`, also of the dataclasses
     in its fields, as (path after the record, unit), e.g. ``("pose.x", "m")``."""
     units: List[Tuple[str, str]] = []
-    try:
-        hints = typing.get_type_hints(cls, include_extras=True)
-    except Exception:
-        # e.g. a forward reference that does not resolve: no units then
-        hints = {}
-    for f in dataclasses.fields(cls):
-        unit, inner = _unit_of(hints.get(f.name, f.type))
+    for f, hint in zip(dataclasses.fields(cls), _hints(cls)):
+        unit, inner = _unit_of(hint)
         if unit:
             units.append((f.name, unit))
         if isinstance(inner, type) and dataclasses.is_dataclass(inner):
             units.extend((f"{f.name}.{path}", u) for path, u in field_units(inner))
     return tuple(units)
+
+
+def _hints(cls: type) -> List[Any]:
+    """The annotations of the fields of `cls`, resolved where they are strings, e.g.
+    with ``from __future__ import annotations``. A field whose annotation does not
+    resolve, e.g. as it names a class local to a function, is left out with a warning,
+    the others keep their units."""
+    fields = dataclasses.fields(cls)
+    try:
+        hints = typing.get_type_hints(cls, include_extras=True)
+        return [hints.get(f.name, f.type) for f in fields]
+    except Exception:
+        pass
+    module = sys.modules.get(cls.__module__)
+    globals_ = dict(vars(module)) if module is not None else {}
+    resolved: List[Any] = []
+    unresolved: List[str] = []
+    for f in fields:
+        if not isinstance(f.type, str):
+            resolved.append(f.type)
+            continue
+        try:
+            # as get_type_hints does it, field by field
+            resolved.append(eval(f.type, globals_, dict(vars(cls))))
+        except Exception:
+            resolved.append(None)
+            unresolved.append(f.name)
+    if unresolved:
+        logger.warning(f"The units of {', '.join(unresolved)} of {cls.__qualname__} are not sent: "
+                       "their annotations do not resolve")
+    return resolved
 
 
 def _unit_of(hint: Any) -> Tuple[str, Any]:

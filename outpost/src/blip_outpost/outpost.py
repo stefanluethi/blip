@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Deque, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Union
 
 from blip_outpost.actions import Actions, declared_actions, is_method, mark_action
-from blip_outpost.proto import Data, Message, frames_of
+from blip_outpost.proto import Data, Message, encode_value, frames_of
 from blip_outpost.records import field_units
 from blip_outpost.recording import RecordingWriter
 from blip_outpost.server import OutpostServer
@@ -246,7 +246,7 @@ class Outpost:
             return
         if type(value) not in _PLAIN_TYPES:
             self._announce_record_units(path, value)
-        self._send_frame(Message.create_value(path, value, timestamp_ns).encode_cbor())
+        self._send_frame(encode_value(timestamp_ns, path, value))
 
     def series(
         self,
@@ -272,9 +272,9 @@ class Outpost:
             times = [start_ns + int(round(i * period_ns)) for i in range(len(values))]
         else:
             raise TypeError("give timestamps_ns, or start_ns and period_ns")
-        with self.batch():
-            for t, value in zip(times, values):
-                self.value(path, value, int(t))
+        for cls in {type(value) for value in values} - _PLAIN_TYPES:
+            self._announce_record_units(path, next(v for v in values if type(v) is cls))
+        self._send_frames([encode_value(int(t), path, value) for t, value in zip(times, values)])
 
     def unit(self, path: str, unit: str) -> None:
         """Sends the unit of the trace `path`; for a field of a record, the path joined
@@ -324,12 +324,13 @@ class Outpost:
         so in asyncio code the block should not await: what other tasks send meanwhile
         would join it."""
         local = self._local
-        stack: Optional[List[Optional[int]]] = getattr(local, "stack", None)
+        # the timestamp of each open batch, in a list of one: a nested batch without a
+        # timestamp shares the list of the batch around it, also when it is set later
+        stack: Optional[List[List[Optional[int]]]] = getattr(local, "stack", None)
         if stack is None:
             stack = local.stack = []
             local.frames = []
-        # a nested batch without a timestamp shares the one of the batch around it
-        stack.append(timestamp_ns if timestamp_ns is not None or not stack else stack[-1])
+        stack.append([timestamp_ns] if timestamp_ns is not None or not stack else stack[-1])
         try:
             yield
         finally:
@@ -345,9 +346,10 @@ class Outpost:
             return timestamp_ns
         stack = getattr(self._local, "stack", None)
         if stack:
-            if stack[-1] is None:
-                stack[-1] = self._now()
-            return stack[-1]
+            shared = stack[-1]
+            if shared[0] is None:
+                shared[0] = self._now()
+            return shared[0]
         return self._now()
 
     def _now(self) -> Optional[int]:
