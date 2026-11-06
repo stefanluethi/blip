@@ -11,6 +11,7 @@ use crate::app::model::actions::Actions;
 use crate::app::model::logs::{LogEntry, Logs};
 use crate::app::model::recording::Recording;
 use crate::app::model::traces::Traces;
+use crate::app::time::TimeBase;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -45,6 +46,8 @@ pub struct Model {
     flat: decode::Flat,
     /// The timestamp of the first value or log record, from which times count.
     origin: Option<u64>,
+    /// Whether a sample was dropped as its time base is not the one of the origin.
+    warned_time_base: bool,
     /// The latest value of each path, also while not recording, so that actions show
     /// their readbacks without recording. Kept when the data is cleared, as the target
     /// is as it was.
@@ -140,7 +143,10 @@ impl Model {
         }
         match message {
             Ok(decode::Message::Value { timestamp, path }) => {
-                self.origin.get_or_insert(timestamp);
+                if !self.fits_time_base(timestamp, path) {
+                    return None;
+                }
+                self.set_origin(timestamp);
                 let generation = self.traces.generation();
                 self.traces.insert(path, timestamp, &self.flat, frame);
                 if self.traces.generation() != generation {
@@ -155,17 +161,19 @@ impl Model {
                 component,
                 message,
             }) => {
+                if timestamp > 0 && !self.fits_time_base(timestamp, path) {
+                    return None;
+                }
                 // a log without a timestamp happened about when the newest data did, in
                 // the time domain of the device
                 let now = self.time_span().map(|(_, newest)| newest);
-                let path = self.logs.shared_path(path);
-                let entry = LogEntry::new(timestamp, path, level, component, message, now);
+                let entry = LogEntry::new(timestamp, level, component, message, now);
                 if timestamp > 0 {
                     // not the wall clock of a record without a timestamp, which may be
                     // far from the time domain of the target
-                    self.origin.get_or_insert(timestamp);
+                    self.set_origin(timestamp);
                 }
-                if self.logs.push(entry) {
+                if self.logs.push(path, entry) {
                     self.paths_version = Version::default();
                 }
                 self.samples_version = Version::default();
@@ -202,6 +210,49 @@ impl Model {
             Err(error) => log::warn!("error parsing message: {error}"),
         }
         None
+    }
+
+    /// Makes `timestamp` the origin if there is none yet. The log records before it
+    /// had no timestamp and got the wall clock; if that is not in the time base of
+    /// `timestamp`, e.g. the uptime of a target, they move to `timestamp`, as they
+    /// would be decades away from the data.
+    fn set_origin(&mut self, timestamp: u64) {
+        if self.origin.is_some() {
+            return;
+        }
+        self.origin = Some(timestamp);
+        let base = TimeBase::guess(timestamp);
+        if (self.logs.entries()).any(|entry| TimeBase::guess(entry.time) != base) {
+            self.logs.move_all_to(timestamp);
+        }
+    }
+
+    /// Whether `timestamp` has the time base of the origin, the Unix epoch or the boot
+    /// of the device, as the time axis shows only one. Warns of the first sample at
+    /// `path` that does not, which is dropped, e.g. from a source with the time of its
+    /// computer while the target sends its uptime.
+    fn fits_time_base(&mut self, timestamp: u64, path: &str) -> bool {
+        let Some(origin) = self.origin else {
+            return true;
+        };
+        let (base, expected) = (TimeBase::guess(timestamp), TimeBase::guess(origin));
+        if base == expected {
+            return true;
+        }
+        if !self.warned_time_base {
+            self.warned_time_base = true;
+            let counts = |base| match base {
+                TimeBase::Unix => "the Unix epoch (UTC)",
+                TimeBase::SinceBoot => "the boot of the target",
+            };
+            log::warn!(
+                "{path}: dropped a sample timed since {}, as the data is timed since {}, \
+                 and one time axis cannot show both (further ones are dropped silently)",
+                counts(base),
+                counts(expected),
+            );
+        }
+        false
     }
 
     /// The timestamp of the first value or log record in nanoseconds, from which the
@@ -298,16 +349,13 @@ impl Model {
                 from = to;
             }
         }
-        let entries = &self.logs.entries;
-        let first = entries.partition_point(|entry| entry.time < start);
-        for entry in &entries[first..] {
-            let Some(activity) = usize::try_from((entry.time - start) / step)
+        for entry in self.logs.between(start, edge(bins)).flatten() {
+            if let Some(activity) = usize::try_from((entry.time - start) / step)
                 .ok()
                 .and_then(|bin| activity.get_mut(bin))
-            else {
-                break;
-            };
-            activity.logs[entry.level.as_index()] += 1;
+            {
+                activity.logs[entry.level.as_index()] += 1;
+            }
         }
         activity
     }
@@ -370,8 +418,10 @@ mod tests {
         // the same path from several outposts is one trace
         assert_eq!(model.traces.iter().count(), 1);
         assert_eq!(model.traces.get("cpu").unwrap().timestamps.len(), 3);
-        assert_eq!(model.logs.entries[0].component, "motor");
-        assert_eq!(&*model.logs.entries[0].path, "robot/arm");
+        assert_eq!(
+            model.logs.get("robot/arm").unwrap().entries[0].component,
+            "motor"
+        );
         assert_eq!(model.recording.messages(), 4);
     }
 
@@ -396,24 +446,31 @@ mod tests {
         }
         model.receive("", &value(25, "imu", imu.clone()));
         model.receive("", &value(35, "imu", imu));
-        model.receive(
-            "",
-            &frame(&proto::Message::Log(proto::LogRecord {
-                timestamp: 5,
-                path: String::new(),
-                level: 2,
+        // of two paths, the first with a record after the bins of the second
+        let log = |timestamp, path: &str, level| {
+            frame(&proto::Message::Log(proto::LogRecord {
+                timestamp,
+                path: path.to_owned(),
+                level,
                 component: String::new(),
                 message: "hi".to_owned(),
-            })),
-        );
+            }))
+        };
+        for (timestamp, path, level) in [(5, "", 2), (30, "", 2), (2, "motor", 3), (15, "motor", 4)]
+        {
+            model.receive("", &log(timestamp, path, level));
+        }
         let values = |activity: Vec<Activity>| -> Vec<u32> {
             activity.iter().map(|bin| bin.values).collect()
         };
         // [0, 20), [20, 40)
         let halves = model.activity(0, 20, 2);
         assert_eq!(values(halves.clone()), [3, 4]);
-        assert_eq!(halves[0].logs, [0, 0, 1, 0, 0]);
-        assert_eq!(halves[1].log_count(), 0);
+        assert_eq!(halves[0].logs, [0, 0, 1, 1, 1]);
+        assert_eq!(halves[1].logs, [0, 0, 1, 0, 0]);
+        let tens = model.activity(0, 10, 2);
+        assert_eq!(tens[0].logs, [0, 0, 1, 1, 0]);
+        assert_eq!(tens[1].logs, [0, 0, 0, 0, 1]);
         assert_eq!(values(model.activity(0, 10, 4)), [1, 2, 2, 2]);
         assert_eq!(values(model.activity(10, 10, 1)), [2]);
         assert!(model.activity(0, 10, 0).is_empty());
@@ -534,6 +591,52 @@ mod tests {
         assert_eq!(model.origin(), Some(5_000_000_000));
     }
 
+    #[test]
+    fn samples_of_another_time_base_than_the_origin_are_dropped() {
+        let utc = 1_700_000_000_000_000_000;
+        let mut model = Model::default();
+        model.receive("target", &value(5_000_000_000, "rpm", proto::Data::Uint(1)));
+        // e.g. from a source with the time of its computer
+        model.receive("pc", &value(utc, "rpm", proto::Data::Uint(2)));
+        model.receive("pc", &value(utc, "pc/load", proto::Data::Uint(3)));
+        model.receive(
+            "pc",
+            &frame(&proto::Message::Log(proto::LogRecord {
+                timestamp: utc,
+                path: String::new(),
+                level: 2,
+                component: String::new(),
+                message: "hi".to_owned(),
+            })),
+        );
+        model.receive("target", &value(6_000_000_000, "rpm", proto::Data::Uint(4)));
+        assert_eq!(model.time_span(), Some((5_000_000_000, 6_000_000_000)));
+        assert_eq!(model.logs.paths().next(), None);
+        assert!(model.traces.get("pc/load").is_none());
+
+        // a record without a timestamp before any data has the wall clock, and moves to
+        // the first timestamp in another time base
+        model.clear();
+        model.receive(
+            "target",
+            &frame(&proto::Message::Log(proto::LogRecord {
+                timestamp: 0,
+                path: String::new(),
+                level: 2,
+                component: String::new(),
+                message: "booting".to_owned(),
+            })),
+        );
+        model.receive("target", &value(2_000_000_000, "rpm", proto::Data::Uint(1)));
+        assert_eq!(model.logs.entries().next().unwrap().time, 2_000_000_000);
+        assert_eq!(model.time_span(), Some((2_000_000_000, 2_000_000_000)));
+
+        // cleared, the next sample sets the time base anew
+        model.clear();
+        model.receive("pc", &value(utc, "rpm", proto::Data::Uint(5)));
+        assert_eq!(model.time_span(), Some((utc, utc)));
+    }
+
     fn value(timestamp: u64, path: &str, value: proto::Data) -> Vec<u8> {
         frame(&proto::Message::Value(proto::Value {
             timestamp,
@@ -647,7 +750,7 @@ mod tests {
         model.receive_unrecorded("b", &actions);
         assert_eq!(model.receive_unrecorded("b", &answer), Some(result));
         assert_eq!(model.time_span(), None);
-        assert!(model.logs.entries.is_empty());
+        assert_eq!(model.logs.paths().next(), None);
         // nothing is recorded, a recording starts with the kept units and actions
         assert_eq!(model.recording.messages(), 0);
         model.clear();

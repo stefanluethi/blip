@@ -117,7 +117,10 @@ What a frame costs follows what is shown, not how much data there is:
   about two points per pixel of its width.
 * Views find the sample at a time by a binary search of integer timestamps.
 * The traces tree lays out only the rows in sight, the log view only the rows
-  in sight and filters only the records that arrived since the last frame.
+  in sight and filters only the records of its paths that arrived since the
+  last frame, merging them by time with those it shows. When a record arrives
+  before others of its path, it filters that path again; it filters all of them
+  again only when its filter changes or a path is no longer shown.
 * The timeline counts what arrived at most ten times a second, a heatmap
   uploads its image only when it changes.
 
@@ -144,12 +147,18 @@ What happens to a message on its way into the model:
   newest (e.g. from a second outpost) is moved into place. One older than the
   newest 65 536 values of its path is dropped with a warning, as moving all of
   them for each value of a clock minutes behind would stall blip.
+* **Time base.** The first timestamp fixes the time base, UTC or time since
+  boot, and the origin the views count from. A value or log record of the
+  other base is dropped with a single warning, as it would land decades away
+  from the others.
 * **Units** come from ``ValueMetadata`` and are kept by path, also before the
   first sample.
-* **Log records** are kept, all of them, in the order of their timestamps. A
+* **Log records** are kept, all of them, by path, in the order of their
+  timestamps. A
   record with the timestamp 0 gets the newest time of the data received so
   far (or the wall clock if there is none), so it lines up with the samples
-  of its target. Levels above 4 count as errors, a record without a path is
+  of its target. Should the first timestamp then be in another time base,
+  e.g. an uptime, such records move to it. Levels above 4 count as errors, a record without a path is
   at the path ``log``, and a record without a component shows the component
   ``target``.
 * **Recording versus receiving.** Samples are kept only while recording.
@@ -181,8 +190,10 @@ The model
   fit a float. It keeps the lowest and highest value of each block of 256
   rows. ``Traces::series`` gives views the numbers of a trace or of an array
   element as a ``Series``, whose ``extent`` reads the blocks.
-* ``Logs``: all log records in the order of their times, and their paths,
-  each kept once and shared by its records.
+* ``Logs``: the log records by path, those of each path in the order of their
+  times, so that a log view reads only the records of the paths it shows. A
+  record put before others of its path changes the order ``Version`` of that
+  path only. The timeline counts the records of all paths.
 * ``Actions``: the latest list of actions of each source.
 * ``Recording``: the received messages, with the source names written in
   between where the source changes, compressed fast as they arrive, a gzip

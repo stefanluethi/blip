@@ -16,7 +16,11 @@ The rules, in short (see doc/source/reference/outpost-cli.rst):
   name of its annotation; with `record`, the value fields of a message are one record
   value at the path of the message.
 - A message's timestamp field times its values and those of the messages in it; without
-  one, the outpost estimates the time of the target from the latest timestamp.
+  one, the outpost estimates the time of the target from the latest timestamp, and drops
+  the values before the first timestamp. A schema without timestamps has the time of
+  this computer.
+- When the target restarts and its timestamps start over, they are shifted to follow the
+  ones before, see `blip_outpost.timing.TargetClock`.
 - With a period, the repeated fields are series: one value per sample.
 """
 
@@ -45,6 +49,7 @@ from blip_outpost.schema import (
     SchemaError,
     join,
 )
+from blip_outpost.timing import TargetClock
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +71,9 @@ class Translator:
     `outpost`. Answers to actions go to `on_action_result(id, error)`.
 
     Counts the messages and their problems in `counters`: `frames`, `decode_errors`,
-    and with a sequence field `seq_gaps` and `resets`."""
+    and with a sequence field `seq_gaps` and `resets`. A reset of the sequence number,
+    `restart` or a timestamp that jumps back is a restart of the target, see
+    `target_clock`."""
 
     def __init__(
         self,
@@ -85,38 +92,36 @@ class Translator:
         # reads every annotation now, so mistakes show at the start
         self.plans = list(schema.reachable(uplink))
         self.has_action_results = any(p.kind == KIND_ACTION_RESULT for p in self.plans)
-        self._clock = clock
         self._wall_clock = wall_clock
+        # without a timestamp in the schema, the time of this computer
+        self.has_timestamps = any(p.timestamp is not None for p in self.plans)
+        self.target_clock = TargetClock.reporting_to(outpost, clock)
 
         self.counters: Dict[str, int] = {"frames": 0, "decode_errors": 0}
         if self._root.sequence is not None:
             self.counters.update(seq_gaps=0, resets=0)
         self._expected_seq: Optional[int] = None
-        # the newest time of the target, and the clock when it arrived
-        self._last_time: Optional[Tuple[int, int]] = None
         # paths whose unit was sent
         self._units: set = set()
         self._warned: set = set()
 
     # Time
 
-    def target_time_ns(self) -> int:
-        """The estimated time of the target now: its newest timestamp plus the time
-        since; the time of this computer (since the Unix epoch) before the first."""
-        if self._last_time is None:
+    def target_time_ns(self) -> Optional[int]:
+        """The estimated time of the target now, as sent to blip: its newest timestamp
+        plus the time since, `None` before the first. Without timestamps in the
+        schema, the time of this computer (since the Unix epoch)."""
+        if not self.has_timestamps:
             return self._wall_clock()
-        t, at = self._last_time
-        return t + (self._clock() - at)
-
-    def _seen(self, t: int) -> None:
-        self._last_time = (t, self._clock())
+        return self.target_clock.now()
 
     # Messages
 
     def restart(self) -> None:
         """The connection to the target was lost: the next sequence number starts over
-        without counting a gap."""
+        without counting a gap, and the target may have restarted."""
         self._expected_seq = None
+        self.target_clock.restart()
 
     def feed(self, payload: bytes) -> None:
         """Translates one serialized uplink message."""
@@ -147,19 +152,26 @@ class Translator:
             return
         if d < 0 or seq == 0:
             self.counters["resets"] += 1
+            self.target_clock.restart(sure=True)
         else:
             self.counters["seq_gaps"] += d
 
-    def _walk(self, message: Any, plan: MessagePlan, parent_path: str, t: int) -> None:
+    def _walk(self, message: Any, plan: MessagePlan, parent_path: str, t: Optional[int]) -> None:
         path = self._render(plan.template, message) if plan.template is not None else parent_path
         if plan.timestamp is not None:
             t = self._timestamp(message, plan.timestamp)
 
-        if plan.kind == KIND_LOG:
-            self._log(message, plan, path, t)
-        elif plan.kind == KIND_ACTION_RESULT:
+        if plan.kind == KIND_ACTION_RESULT:
             self._action_result(message, plan)
-        elif plan.kind != KIND_INVOKE and plan.values:
+        elif plan.kind != KIND_LOG and (plan.kind == KIND_INVOKE or not plan.values):
+            pass
+        elif t is None:
+            # before the first timestamp the time of the target is not known, and the
+            # time of this computer would be far from it
+            self._warn_once(("untimed",), "Dropping what the target sends before its first timestamp")
+        elif plan.kind == KIND_LOG:
+            self._log(message, plan, path, t)
+        else:
             if plan.period is not None:
                 self._series(message, plan, path, t)
             else:
@@ -187,8 +199,7 @@ class Translator:
     def _timestamp(self, message: Any, f: FieldPlan) -> int:
         raw = getattr(message, f.name)
         t = int(round(raw * f.scale)) if f.scale is not None else int(raw)
-        self._seen(t)
-        return t
+        return self.target_clock.map(t)
 
     def _render(self, template: List[Tuple[str, Optional[str]]], message: Any) -> str:
         parts = []
@@ -305,7 +316,7 @@ class Translator:
                 for i, value in enumerate(values):
                     send(field_path, value, t + int(round(i * period)))
         if plan.timestamp is not None:
-            self._seen(t + int(round((n - 1) * period)))
+            self.target_clock.seen(t + int(round((n - 1) * period)))
 
     def _log(self, message: Any, plan: MessagePlan, path: str, t: int) -> None:
         level = DEFAULT_LEVEL

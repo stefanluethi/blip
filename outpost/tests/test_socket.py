@@ -3,6 +3,8 @@
 import asyncio
 import socket
 
+import cbor2
+
 import blip_outpost.passthrough as socket_protocol
 from blip_outpost import Outpost
 from blip_outpost.passthrough import SocketPassthrough
@@ -151,3 +153,48 @@ async def test_failing_udp_endpoints_are_retried(monkeypatch):
         assert len(attempts) >= 2
     finally:
         task.cancel()
+
+
+async def test_a_target_that_restarts_continues_after_its_time_before():
+    protocol, frames = passthrough()
+    first = Message.create_value("speed", 1, timestamp_ns=5_000_000_000).encode_cbor()
+    await protocol._forward(Reads(first))
+    # connected again, the uptime started over
+    again = Message.create_value("speed", 2, timestamp_ns=1_000_000).encode_cbor()
+    await protocol._forward(Reads(again))
+    sent = [cbor2.loads(frame) for frame in frames]
+    assert frames[0] == first
+    times = [m["Value"]["timestamp"] for m in sent if "Value" in m]
+    assert times[1] > times[0]
+    assert any("restarted" in m["Log"]["message"] for m in sent if "Log" in m)
+
+
+def test_the_messages_of_a_datagram_are_retimed():
+    protocol, frames = passthrough()
+    late = Message.create_value("speed", 1, timestamp_ns=9_000_000_000).encode_cbor()
+    early = Message.create_value("speed", 2, timestamp_ns=1_000).encode_cbor()
+    protocol._datagram(late + early, "10.0.0.7")
+    times = [cbor2.loads(frame)["Value"]["timestamp"] for frame in frames if b"Value" in frame]
+    assert times[0] == 9_000_000_000
+    assert times[1] > times[0]
+
+
+def test_each_host_has_a_clock_of_its_own():
+    protocol, frames = passthrough()
+    protocol._datagram(Message.create_value("a", 1, timestamp_ns=9_000_000_000).encode_cbor(), "10.0.0.1")
+    protocol._datagram(Message.create_value("b", 2, timestamp_ns=1_000_000).encode_cbor(), "10.0.0.2")
+    times = [cbor2.loads(frame)["Value"]["timestamp"] for frame in frames]
+    # no restart: another target with a clock of its own
+    assert times == [9_000_000_000, 1_000_000]
+
+
+def test_what_the_script_sends_untimed_has_the_time_of_the_target():
+    protocol, frames = passthrough()
+    outpost = protocol.outpost
+    # before the target sent a timestamp: dropped, not at the time of this computer
+    outpost.send_value("pc/load", 0.5)
+    assert frames == []
+    protocol._datagram(Message.create_value("speed", 1, timestamp_ns=3_000_000_000).encode_cbor(), "10.0.0.1")
+    outpost.send_value("pc/load", 0.5)
+    t = cbor2.loads(frames[-1])["Value"]["timestamp"]
+    assert 3_000_000_000 <= t < 4_000_000_000

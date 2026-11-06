@@ -54,6 +54,20 @@ Test Cases
    over time for heatmaps, and zoom plots with the mouse wheel without panning
    them, unless disabled.
 
+.. test:: Log records are kept by path and shown in a table
+   :id: TEST_BLIP_LOGS
+   :status: implemented
+   :component: blip
+   :verifies: REQ_VIS_LOG
+
+   ``blip/src/app/model/logs.rs`` and ``blip/src/app/view/log_table.rs`` unit
+   tests -- keep records by path in the order of their times, changing the
+   order of a path only when a record arrives before others of it; show the
+   records of the picked paths merged by time, filter only new records unless
+   the filter or the paths change, filter by level, component and message, show
+   the path while several are shown, and show or hide the date and the
+   component as the properties say.
+
 .. test:: Time cursor is set and dragged
    :id: TEST_BLIP_CURSOR
    :status: implemented
@@ -131,6 +145,25 @@ Test Cases
    warn when a recording is opened in part; ``blip/src/app/model/traces.rs``
    tests -- put the samples of a path in the order of their timestamps,
    also when several connections send it.
+
+.. test:: Samples stay on one timeline
+   :id: TEST_TIMELINE
+   :status: implemented
+   :component: blip, outpost
+   :verifies: REQ_CONN_TIMELINE
+
+   ``blip/src/app/model.rs`` tests -- drop values and log records of another
+   time base than the first sample, move records without a timestamp to a
+   first timestamp in another time base, and start afresh when cleared;
+   ``outpost/tests/test_timing.py`` -- keep the time of a target, shift a run
+   after a jump back, a short run, or an earlier time after a new connection
+   or a sequence reset to follow the newest time plus the time since, but not
+   a late or a little out of order sample, shift timestamps of another clock
+   alike, and change the timestamp of a message in place wherever it is in
+   the map; ``test_protobuf.py`` and ``test_socket.py`` -- shift the times
+   after a restart of a protobuf or socket target and those of the bridge,
+   log it, keep a clock per host, and drop untimed values, also of the script,
+   before the first timestamp.
 
 .. test:: Recordings are saved and opened
    :id: TEST_BLIP_RECORDING

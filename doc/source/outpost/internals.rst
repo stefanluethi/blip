@@ -145,6 +145,28 @@ rest arrives (at most 16 MiB) and forwards each complete message; data that is
 no CBOR is dropped and reading starts afresh with the next chunk. Over UDP each
 datagram is a CBOR sequence of complete messages.
 
+Target time
+-----------
+
+``TargetClock`` keeps the time of a target going forward: a timestamp is a
+restart if it is more than a second behind the newest one, or at least 10 ms
+behind and less than half of it (a run shorter than a second, e.g. in a crash
+loop); after a new connection, if it is more than 100 ms behind (less is a
+sample that was late); after a sequence number that started over, if it is
+behind at all. From then on the outpost
+adds an offset, so the new run continues at the newest time sent plus the time
+since it arrived, and sends a warning to the log. The protobuf link maps each
+timestamp field through it; the passthrough changes the timestamp of a
+``Value`` or ``Log`` in place (``retime``), wherever it is in the map, and
+forwards a frame unchanged until the first restart. It keeps a clock per host,
+so that targets sending at once are not taken for restarts of each other.
+
+The outpost does not time what a target sends with the time of its computer:
+before the first timestamp of the target it drops, holds or skips what has no
+timestamp of its own. While a link runs, ``Outpost.target_time`` gives what a
+script sends without a timestamp the time of the target, and such messages
+are dropped before it is known.
+
 Recording and replay
 --------------------
 

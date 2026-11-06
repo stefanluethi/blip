@@ -20,7 +20,8 @@ Visualisation
    :satisfies: STK_LIVE_OBSERVE
 
    blip shall display received ``Log`` messages in a table showing timestamp,
-   level, component and message.
+   level, component and message. The date of the timestamp and the component
+   can be shown or hidden.
 
 .. req:: Show states over time
    :id: REQ_VIS_STATES
@@ -117,6 +118,20 @@ Connectivity
    for connecting again those that broke. A connection opening while no other is
    open shall start afresh, without the data, traces and actions received or
    opened before; blip shall ask before while a recording is not saved.
+
+.. req:: One timeline
+   :id: REQ_CONN_TIMELINE
+   :status: implemented
+   :component: blip, outpost
+   :satisfies: STK_LIVE_OBSERVE
+
+   blip shall show all samples on one time axis in the time base of the first,
+   UTC or the time since the target booted, and drop samples of the other base
+   with a warning. The outpost shall keep the timestamps of a target going
+   forward when the target restarts and its clock starts over, shifting those
+   of the new run to follow the ones before, log the restart, and not time
+   what it forwards with the time of its computer while the target sends its
+   own.
 
 .. req:: Notify errors
    :id: REQ_CONN_ERRORS

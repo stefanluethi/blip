@@ -116,11 +116,23 @@ Timestamps
 
 Each target stamps its own samples in nanoseconds: either the time of day
 (UTC since 1970) or the time since the target booted. A sample sent without a
-timestamp gets the time it is sent: by the outpost, the time of the PC; by
+timestamp gets the time it is sent: by the outpost, the time of the PC, or the
+time of the target while the outpost passes one through or translates it; by
 sonde, the time of the tracer's clock. blip shows timestamps that are too small
 to be a date (before 2001) as time since boot, e.g. ``0:01:23.456``, and others
 as local time of day. Targets with different time bases or clocks line up only
 as far as their clocks agree.
+
+The first sample sets the time base of the data: samples of the other base,
+e.g. at the time of day while the target sends its uptime, are dropped, with a
+warning, as one time axis cannot show both. Clearing the data starts afresh.
+Log records without a timestamp that arrive before any data get the time of
+the computer, and move to the first timestamp if it is an uptime.
+
+When a target restarts, its uptime starts over. The outpost shifts the
+timestamps of the new run so that they follow the ones before, by the time
+that passed in between, and logs a warning at the restart; the samples of the
+two runs do not overlap.
 
 Actions
 -------

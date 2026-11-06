@@ -223,7 +223,12 @@ column headers and are kept with the view:
   that is no valid regular expression is searched as it is.
 
 Below the table, the arrow button follows the newest records, the count says
-how many of all records are shown, and **Clear filters** shows all again.
+how many of the records of the shown paths are shown, and **Clear filters**
+shows all again.
+
+Properties: **Columns** -- **Date** shows the date with the time (of times in
+Unix time, not of times since boot), and **Component** shows the component
+column. While it is hidden, so is its filter, which then hides nothing.
 
 Actions
 -------

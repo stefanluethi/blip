@@ -8,22 +8,24 @@ On the WebSocket of the target:
 - a text frame from the target holds JSON values of its own, e.g. counters of a bridge
   that forwards the messages of a microcontroller:
   ``{"values": {"bridge/rx_bytes": 1234}, "units": {"bridge/rx_bytes": "B"}}``,
-  optionally with a ``"timestamp"`` in ns; without one, they have the outpost's estimate
-  of the time of the target.
+  optionally with a ``"timestamp"`` in ns in the time of the target, which is shifted
+  like the target's after a restart; without one, they have the outpost's estimate of
+  the time of the target. Before the first timestamp of the target, the latest value of
+  each path is held and sent once the time of the target is known.
 
 A target that sends nothing for `idle_timeout` seconds counts as lost, and the outpost
 connects again: a target that restarted without closing the connection would otherwise
 never be noticed, as the outpost sends it nothing but actions.
 
-The outpost publishes its own counters once per second: `outpost/frames`,
-`outpost/decode_errors`, and with a sequence field `outpost/seq_gaps` and
-`outpost/resets`.
+The outpost publishes its own counters once per second, from the first timestamp of the
+target on: `outpost/frames`, `outpost/decode_errors`, and with a sequence field
+`outpost/seq_gaps` and `outpost/resets`.
 """
 
 import asyncio
 import json
 import logging
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed, ConnectionClosedOK
@@ -63,8 +65,13 @@ class ProtobufLink:
         self.stats_prefix = stats_prefix
         self.stats_period = stats_period
         self._ws: Optional[ClientConnection] = None
+        # the latest value of each path of the text frames before the time of the
+        # target is known
+        self._held: Dict[str, Any] = {}
         self.invoker: Optional[Invoker] = None
         self.translator = Translator(schema, uplink, outpost, on_action_result=self._on_action_result)
+        # what the script sends without a timestamp has the time of the target
+        outpost.target_time = self.translator.target_time_ns
         if downlink is not None:
             self.invoker = Invoker(
                 schema,
@@ -138,6 +145,8 @@ class ProtobufLink:
     def _receive(self, frame: Any) -> None:
         if isinstance(frame, bytes):
             self.translator.feed(frame)
+            if self._held:
+                self._send_held()
         else:
             self._json(frame)
 
@@ -158,9 +167,23 @@ class ProtobufLink:
             return
         for path, unit in units.items():
             self.outpost.send_metadata(str(path), str(unit))
-        t = timestamp if timestamp is not None else self.translator.target_time_ns()
+        if timestamp is not None:
+            t: Optional[int] = self.translator.target_clock.shift(timestamp)
+        else:
+            t = self.translator.target_time_ns()
+        if t is None:
+            self._held.update((str(path), value) for path, value in values.items())
+            return
         for path, value in values.items():
             self.outpost.send_value(str(path), value, t)
+
+    def _send_held(self) -> None:
+        t = self.translator.target_time_ns()
+        if t is None:
+            return
+        for path, value in self._held.items():
+            self.outpost.send_value(path, value, t)
+        self._held.clear()
 
     def _on_action_result(self, id: int, error: str) -> None:
         if self.invoker is not None:
@@ -183,5 +206,7 @@ class ProtobufLink:
             next_at += self.stats_period
             await asyncio.sleep(max(0.0, next_at - loop.time()))
             t = self.translator.target_time_ns()
+            if t is None:
+                continue
             for name, value in self.translator.counters.items():
                 self.outpost.send_value(self.stats_prefix + name, value, t)

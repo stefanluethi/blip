@@ -107,7 +107,9 @@ Sending to blip
    * - ``send_value(path, value, timestamp_ns=None)``
      - a sample; ``value`` is ``None``, ``int``, ``float``, ``bool``,
        ``str``, a ``list`` of fixed length or a ``dict`` with ``str`` keys,
-       nested freely. Timestamped now (UTC) unless given.
+       nested freely. Timestamped now (UTC) unless given; while the outpost
+       passes a target through or translates it, with the time of the target
+       instead, and dropped before the target sent its first timestamp.
    * - ``send_metadata(path, unit)``
      - the unit of a trace; for a record field, the path joined with ``.``,
        e.g. ``imu.acc``

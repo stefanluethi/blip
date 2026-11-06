@@ -184,7 +184,9 @@ there, e.g. in an ISR. Hosted builds default to ``sonde::system_clock_ns``
 (UTC); on targets, pass your own. Without a clock, messages traced without a
 timestamp get 0.
 
-blip shows uptimes as time since boot, see :doc:`/overview/concepts`.
+blip shows uptimes as time since boot, see :doc:`/overview/concepts`. When the
+target restarts and its uptime starts over, the outpost shifts the new
+timestamps to follow the ones before.
 
 Sending from firmware
 ---------------------
