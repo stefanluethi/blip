@@ -322,7 +322,7 @@ async def test_answers_sent_by_the_script_are_dropped():
             await receive(ws, "Actions")
             # e.g. a target answering a forwarded invocation with its own id
             outpost.send(Message.create_action_result(0, "not yours"))
-            outpost.send_value("after", 1)
+            outpost.value("after", 1)
             message = cbor2.loads(await receive_message(ws, 2.0))
             assert "Value" in message
 

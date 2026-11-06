@@ -19,8 +19,15 @@ Everything a script needs is exported by the ``blip_outpost`` package:
      - Purpose
    * - ``start``, ``stop``, ``wait``
      - serve blip from a thread of its own, stop, block until :kbd:`Ctrl+C`
-   * - ``send_value``, ``send_metadata``, ``send_log``, ``send``
-     - send to blip, from any thread
+   * - ``value``, ``series``, ``unit``, ``log``, ``send``
+     - send to blip, from any thread, each message with its full path
+   * - ``batch``
+     - hand what a thread sends in a block over at once, with one timestamp
+   * - ``get_tracer``, ``Tracer``
+     - a tracer by name, for a program that traces itself: paths below its
+       name, log records of its component, ``debug`` … ``error``
+   * - ``LogHandler``
+     - sends the records of Python's ``logging`` to blip
    * - ``action``, ``register``
      - make a function an action, add the action methods of an object
    * - ``drain``, ``wait_for_client``
@@ -38,7 +45,8 @@ Everything a script needs is exported by the ``blip_outpost`` package:
      - the registry of actions: ``add``, ``remove``, ``clear``,
        ``set_enabled``, ``is_enabled``, ``batch``, ``invoke``
    * - ``Range``, ``Unit``
-     - ``Annotated`` metadata of action parameters
+     - ``Annotated`` metadata of action parameters; ``Unit`` also of the
+       fields of a dataclass record
    * - ``ActionError``
      - raised by an action to reject an invocation
    * - ``LogLevel``
@@ -60,10 +68,13 @@ The functions of the module use one outpost of the script, see `get_outpost`.
 .. autofunction:: stop
 .. autofunction:: wait
 .. autofunction:: serve
-.. autofunction:: send_value
-.. autofunction:: send_metadata
-.. autofunction:: send_log
+.. autofunction:: value
+.. autofunction:: series
+.. autofunction:: unit
+.. autofunction:: log
 .. autofunction:: send
+.. autofunction:: batch
+.. autofunction:: get_tracer
 .. autofunction:: drain
 .. autofunction:: wait_for_client
 .. autofunction:: action
@@ -76,6 +87,14 @@ Outpost
 
 .. autoclass:: Outpost
    :members:
+
+Tracers
+-------
+
+.. autoclass:: Tracer
+   :members:
+
+.. autoclass:: LogHandler
 
 Actions
 -------
@@ -100,4 +119,6 @@ Messages
 .. py:data:: Data
 
    The type of a value: ``None``, ``int``, ``float``, ``bool``, ``str``, a
-   ``list`` of ``Data`` or a ``dict`` of ``str`` to ``Data``.
+   ``list`` of ``Data``, a ``dict`` of ``str`` to ``Data`` or a dataclass whose
+   fields are ``Data``; what has a ``tolist`` method, e.g. a numpy array, is
+   sent as what it returns.

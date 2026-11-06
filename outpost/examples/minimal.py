@@ -28,25 +28,25 @@ def set_amplitude(volts: Annotated[float, Range(0.0, 5.0, step=0.1), Unit("V")] 
     """Amplitude of the sensor signal"""
     global amplitude
     amplitude = volts
-    outpost.send_value("sensor/amplitude", volts)
-    outpost.send_log(LogLevel.INFO, f"amplitude set to {volts} V", component="sensor")
+    outpost.value("sensor/amplitude", volts)
+    outpost.log(LogLevel.INFO, f"amplitude set to {volts} V", component="sensor")
 
 
 def main() -> None:
     outpost.start()
     print("Serving blip on ws://127.0.0.1:3000/ws/outpost, Ctrl+C to stop")
-    outpost.send_metadata("sensor/voltage", "V")
-    outpost.send_metadata("sensor/amplitude", "V")
-    outpost.send_value("sensor/amplitude", amplitude)
+    outpost.unit("sensor/voltage", "V")
+    outpost.unit("sensor/amplitude", "V")
+    outpost.value("sensor/amplitude", amplitude)
 
     start = time.monotonic()
     count = 0
     try:
         while True:
-            outpost.send_value("sensor/voltage", read_sensor(time.monotonic() - start))
+            outpost.value("sensor/voltage", read_sensor(time.monotonic() - start))
             count += 1
             if count % 100 == 0:
-                outpost.send_log(LogLevel.DEBUG, f"{count} samples sent", component="main")
+                outpost.log(LogLevel.DEBUG, f"{count} samples sent", component="main")
             time.sleep(0.01)
     except KeyboardInterrupt:
         pass

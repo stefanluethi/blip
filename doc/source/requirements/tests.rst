@@ -231,6 +231,23 @@ Test Cases
    recording on stop; and makes functions actions right away and methods those
    of registered objects.
 
+.. test:: Tracers, batches and records
+   :id: TEST_OUTPOST_TRACERS
+   :status: implemented
+   :component: outpost
+   :verifies: REQ_OUTPOST_BATCH, REQ_OUTPOST_TRACERS
+
+   ``outpost/tests/test_tracer.py`` -- the same name gives the same tracer, its
+   traces, actions and readbacks are below its name and its log records at
+   its name and of its component, formatted as ``logging`` does; forwarded
+   log records carry their own path and component; a dataclass is a record
+   whose units are sent once per path; numpy-like values are sent as lists; a
+   series is sent at its timestamps or its period; a batch is handed over at
+   its end, also when it raises, in one handover from another thread, and
+   with one timestamp; ``LogHandler`` maps the levels of ``logging`` and
+   skips the outpost's own records. ``outpost/tests/test_app.py`` -- the
+   example ``app.py`` traces its parts below their names.
+
 .. test:: Simulator actions change what it sends
    :id: TEST_OUTPOST_SIM_ACTIONS
    :status: implemented

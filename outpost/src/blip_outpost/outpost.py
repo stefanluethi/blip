@@ -4,9 +4,11 @@ Your script owns the link to the target. It starts the outpost, which serves bli
 a thread of its own, and sends what it decodes from the target, from any thread::
 
     outpost = Outpost().start()
-    outpost.send_metadata("motor/speed_rpm", "rpm")
+    outpost.unit("motor/speed_rpm", "rpm")
     while True:
-        outpost.send_value("motor/speed_rpm", read_speed())
+        outpost.value("motor/speed_rpm", read_speed())
+
+A program that traces itself gets named tracers instead, see `Outpost.get_tracer`.
 
 In asyncio code the outpost serves from the running event loop instead::
 
@@ -17,20 +19,34 @@ In asyncio code the outpost serves from the running event loop instead::
 import asyncio
 import atexit
 import collections
+import contextlib
+import dataclasses
 import logging
 import threading
+import time
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Deque, List, Optional, Union
+from typing import Any, Awaitable, Callable, Deque, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Union
 
 from blip_outpost.actions import Actions, declared_actions, is_method, mark_action
 from blip_outpost.proto import Data, Message, frames_of
+from blip_outpost.records import field_units
 from blip_outpost.recording import RecordingWriter
 from blip_outpost.server import OutpostServer
+from blip_outpost.tracer import Tracer
 
 logger = logging.getLogger(__name__)
 
 # Carries out an invocation of blip in place of the actions: the path and the arguments
 InvokeHandler = Callable[[str, Any], Awaitable[None]]
+
+# The types of values that are no dataclass, for a quick check
+_PLAIN_TYPES = frozenset((int, float, bool, str, type(None), list, dict))
+
+
+def _as_list(values: Any) -> list:
+    """`values` as a list, e.g. of a numpy array."""
+    tolist = getattr(values, "tolist", None)
+    return tolist() if callable(tolist) else list(values)
 
 
 class Outpost:
@@ -39,10 +55,10 @@ class Outpost:
     actions.
 
     `start` serves from a thread of its own, `async with` from the running event loop.
-    The `send_*` methods may be called from any thread, before, while and after the
-    outpost serves; they never block. Units and actions are kept and sent to each blip
-    when it connects, so they may be sent once at any time. Other messages are passed
-    on while the outpost serves, and dropped otherwise.
+    `value`, `series`, `unit`, `log` and `send` may be called from any thread, before,
+    while and after the outpost serves; they never block. Units and actions are kept
+    and sent to each blip when it connects, so they may be sent once at any time. Other
+    messages are passed on while the outpost serves, and dropped otherwise.
 
     Messages for a blip that does not keep up are dropped, with a warning, once more
     than `max_queued` are waiting for it; see `drain` to wait for it instead.
@@ -78,8 +94,15 @@ class Outpost:
         # the thread of `start`, and the event that ends it
         self._thread: Optional[threading.Thread] = None
         self._stop: Optional[asyncio.Event] = None
-        # messages sent from other threads, passed to the server in its event loop
-        self._pending: Deque[bytes] = collections.deque()
+        # messages sent from other threads, passed to the server in its event loop: a
+        # single one, or the list of a batch
+        self._pending: Deque[Union[bytes, List[bytes]]] = collections.deque()
+        # the open batches of each thread: their timestamps and the messages sent
+        self._local = threading.local()
+        # the paths and dataclasses whose units are sent
+        self._record_units: Set[Tuple[str, type]] = set()
+        self._tracers: Dict[Tuple[str, str], Tracer] = {}
+        self._tracers_lock = threading.Lock()
         self._flush_scheduled = False
         # set while a blip is connected
         self._has_client = threading.Event()
@@ -209,39 +232,72 @@ class Outpost:
 
     # Sending
 
-    def send_value(self, path: str, value: Data, timestamp_ns: Optional[int] = None) -> None:
-        """Sends a sample of the trace `path`, timestamped now unless given (ns), see
-        `target_time`.
+    def value(self, path: str, value: Data, timestamp_ns: Optional[int] = None) -> None:
+        """Sends a sample of the trace `path`, levels separated by "/", timestamped now
+        unless given (ns), see `target_time` and `batch`.
 
-        `value` is None, int, float, bool, str, a list of fixed length or a dict with
-        str keys, nested freely. Python ints are sent as integers, so pass a float for
-        a float trace."""
-        if timestamp_ns is None and self.target_time is not None:
-            timestamp_ns = self._target_now()
-            if timestamp_ns is None:
-                return
+        `value` is None, int, float, bool, str, a list of fixed length or a record: a
+        dict with str keys or a dataclass, nested freely. Each field of a record is a
+        trace of its own, its path joined with ".", e.g. ``imu.acc``; the units that the
+        fields of a dataclass declare with `Unit` are sent with its first sample at
+        `path`. Python ints are sent as integers, so pass a float for a float trace."""
+        timestamp_ns = self._resolve(timestamp_ns)
+        if timestamp_ns is None:
+            return
+        if type(value) not in _PLAIN_TYPES:
+            self._announce_record_units(path, value)
         self._send_frame(Message.create_value(path, value, timestamp_ns).encode_cbor())
 
-    def send_metadata(self, path: str, unit: str) -> None:
+    def series(
+        self,
+        path: str,
+        values: Sequence[Data],
+        *,
+        timestamps_ns: Optional[Sequence[int]] = None,
+        start_ns: Optional[int] = None,
+        period_ns: Optional[float] = None,
+    ) -> None:
+        """Sends the samples `values` of the trace `path` at once, e.g. a block read
+        from an ADC: at `timestamps_ns`, one for each, or the first at `start_ns` and
+        then one every `period_ns`. `values` and `timestamps_ns` are sequences, e.g.
+        lists or numpy arrays; a sample is what `value` sends."""
+        values = _as_list(values)
+        if timestamps_ns is not None:
+            if start_ns is not None or period_ns is not None:
+                raise TypeError("give timestamps_ns, or start_ns and period_ns, not both")
+            times = _as_list(timestamps_ns)
+            if len(times) != len(values):
+                raise ValueError(f"{len(values)} values but {len(times)} timestamps")
+        elif start_ns is not None and period_ns is not None:
+            times = [start_ns + int(round(i * period_ns)) for i in range(len(values))]
+        else:
+            raise TypeError("give timestamps_ns, or start_ns and period_ns")
+        with self.batch():
+            for t, value in zip(times, values):
+                self.value(path, value, int(t))
+
+    def unit(self, path: str, unit: str) -> None:
         """Sends the unit of the trace `path`; for a field of a record, the path joined
         with ".", e.g. ``imu.acc``. Sent once, it reaches every blip."""
         self._send_frame(Message.create_metadata(path, unit).encode_cbor())
 
-    def send_log(
+    def log(
         self,
         level: int,
         message: str,
+        *,
+        path: str = "",
         component: str = "",
         timestamp_ns: Optional[int] = None,
-        path: str = "",
     ) -> None:
-        """Sends a log record of a `LogLevel`, timestamped now unless given (ns), see
-        `target_time`, at `path` like a value, e.g. ``motor``, or of the target as a
-        whole without one."""
-        if timestamp_ns is None and self.target_time is not None:
-            timestamp_ns = self._target_now()
-            if timestamp_ns is None:
-                return
+        """Sends a log record of a `LogLevel`, or its number, timestamped now unless
+        given (ns), see `target_time` and `batch`: at `path` like a trace, e.g.
+        ``motor``, or of the target as a whole without one, and of `component`, the
+        part of the software that wrote it, e.g. ``driver``. The message is sent as it
+        is."""
+        timestamp_ns = self._resolve(timestamp_ns)
+        if timestamp_ns is None:
+            return
         self._send_frame(Message.create_log(int(level), message, timestamp_ns, component, path).encode_cbor())
 
     def send(self, message: Union[Message, bytes]) -> None:
@@ -251,8 +307,53 @@ class Outpost:
         if isinstance(message, Message):
             self._send_frame(message.encode_cbor())
             return
-        for frame in frames_of(message):
-            self._send_frame(frame)
+        self._send_frames(frames_of(message))
+
+    @contextlib.contextmanager
+    def batch(self, timestamp_ns: Optional[int] = None) -> Iterator[None]:
+        """Hands what this thread sends in the block over at once, at its end, e.g. the
+        samples of one frame of the target::
+
+            with outpost.batch(timestamp_ns=frame.t_ns):
+                outpost.value("motor/speed", frame.speed)
+                outpost.value("battery/voltage", frame.vbat)
+
+        What is sent without a timestamp in the block shares one: `timestamp_ns`, or
+        the time it is first needed. Batches nest, the outermost hands over. What was
+        sent is handed over also when the block raises. A batch belongs to its thread,
+        so in asyncio code the block should not await: what other tasks send meanwhile
+        would join it."""
+        local = self._local
+        stack: Optional[List[Optional[int]]] = getattr(local, "stack", None)
+        if stack is None:
+            stack = local.stack = []
+            local.frames = []
+        # a nested batch without a timestamp shares the one of the batch around it
+        stack.append(timestamp_ns if timestamp_ns is not None or not stack else stack[-1])
+        try:
+            yield
+        finally:
+            stack.pop()
+            if not stack:
+                frames, local.frames = local.frames, []
+                self._send_frames(frames)
+
+    def _resolve(self, timestamp_ns: Optional[int]) -> Optional[int]:
+        """The timestamp of what is sent with `timestamp_ns`: it, the one of the open
+        batch, or now; `None` to drop it, while the time of the target is not known."""
+        if timestamp_ns is not None:
+            return timestamp_ns
+        stack = getattr(self._local, "stack", None)
+        if stack:
+            if stack[-1] is None:
+                stack[-1] = self._now()
+            return stack[-1]
+        return self._now()
+
+    def _now(self) -> Optional[int]:
+        if self.target_time is None:
+            return time.time_ns()
+        return self._target_now()
 
     def _target_now(self) -> Optional[int]:
         """The time of `target_time` now, `None` with a warning, once, while it is not
@@ -264,14 +365,45 @@ class Outpost:
             logger.warning("Dropping what is sent without a timestamp before the first timestamp of the target")
         return t
 
+    def _announce_record_units(self, path: str, value: Any) -> None:
+        """Sends the units of the fields of the dataclass `value` with its first sample
+        at `path`."""
+        cls = type(value)
+        if not dataclasses.is_dataclass(cls) or (path, cls) in self._record_units:
+            return
+        self._record_units.add((path, cls))
+        for field, unit in field_units(cls):
+            self.unit(f"{path}.{field}", unit)
+
     def _send_frame(self, frame: bytes) -> None:
         """Sends the bytes of a single message, unchecked."""
+        if getattr(self._local, "stack", None):
+            self._local.frames.append(frame)
+            return
         loop = self._loop
         if loop is None or threading.get_ident() == self._loop_thread:
             self._server.broadcast(frame)
             return
         # from another thread: passed on in the event loop, many at once
         self._pending.append(frame)
+        self._schedule_flush(loop)
+
+    def _send_frames(self, frames: List[bytes]) -> None:
+        """Sends the bytes of several messages, handed over together."""
+        if not frames:
+            return
+        if getattr(self._local, "stack", None):
+            self._local.frames.extend(frames)
+            return
+        loop = self._loop
+        if loop is None or threading.get_ident() == self._loop_thread:
+            for frame in frames:
+                self._server.broadcast(frame)
+            return
+        self._pending.append(frames)
+        self._schedule_flush(loop)
+
+    def _schedule_flush(self, loop: asyncio.AbstractEventLoop) -> None:
         if not self._flush_scheduled:
             self._flush_scheduled = True
             try:
@@ -283,8 +415,14 @@ class Outpost:
         # cleared first, so a message added meanwhile schedules another flush
         self._flush_scheduled = False
         pending = self._pending
+        broadcast = self._server.broadcast
         while pending:
-            self._server.broadcast(pending.popleft())
+            item = pending.popleft()
+            if isinstance(item, bytes):
+                broadcast(item)
+            else:
+                for frame in item:
+                    broadcast(frame)
 
     def drain(self) -> None:
         """Blocks until every blip has room for more messages. A script sending faster
@@ -325,6 +463,20 @@ class Outpost:
             self._has_client.clear()
             if self._client_event is not None:
                 self._client_event.clear()
+
+    # Tracers
+
+    def get_tracer(self, name: str = "", component: str = "") -> "Tracer":
+        """The tracer `name` of this outpost, a path such as ``motor`` or
+        ``robot/arm``, whose log records are of `component`: the same tracer for the
+        same name and component, from anywhere in the program. See `Tracer`."""
+        name = name.strip("/")
+        key = (name, component)
+        with self._tracers_lock:
+            tracer = self._tracers.get(key)
+            if tracer is None:
+                tracer = self._tracers[key] = Tracer(self, name, component)
+        return tracer
 
     # Actions
 

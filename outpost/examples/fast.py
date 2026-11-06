@@ -9,7 +9,7 @@ reports what it sends every second, in its log and as traces under ``fast/stats`
 
 Unlike the simulator it encodes its messages from templates, ten times as fast as
 `Message`, and sends them with the internal `_send_frame`, so it measures blip rather
-than the encoding in Python. Your own scripts use `send_value`.
+than the encoding in Python. Your own scripts use `value`.
 
     python examples/fast.py [--traces 100] [--rate-hz 1000] [--history-s 600] ...
 """
@@ -354,7 +354,7 @@ class Fast:
 
     def _send_units(self) -> None:
         for path, unit in UNITS.items():
-            self.outpost.send_metadata(path, unit)
+            self.outpost.unit(path, unit)
 
     def _send_stats(self, interval_s: float, messages: int, size: int, lag_s: float) -> None:
         """What was sent in the last `interval_s`, and how far behind real time it is."""
@@ -364,9 +364,9 @@ class Fast:
             f"Sent {per_second:,.0f} messages/s, {megabytes:.2f} MB/s, {lag_s:.2f} s behind"
         )
         now = time.time_ns()
-        self.outpost.send_value("fast/stats/messages_per_s", per_second, now)
-        self.outpost.send_value("fast/stats/megabytes_per_s", megabytes, now)
-        self.outpost.send_value("fast/stats/lag_s", lag_s, now)
+        self.outpost.value("fast/stats/messages_per_s", per_second, now)
+        self.outpost.value("fast/stats/megabytes_per_s", megabytes, now)
+        self.outpost.value("fast/stats/lag_s", lag_s, now)
 
 
 async def main(args: argparse.Namespace) -> None:

@@ -35,13 +35,23 @@ Structure
      - Responsibility
    * - ``__init__.py``
      - The public API, and functions that use one ``Outpost`` of the program:
-       ``start``, ``send_value``, ``action``, … for scripts that need only one.
+       ``start``, ``value``, ``get_tracer``, ``action``, … for scripts that
+       need only one.
    * - ``outpost.py``
      - ``Outpost``: serves from a thread of its own (``start``) or from the
-       running event loop (``async with``); ``send_*`` from any thread; the
-       ``actions`` and the ``action`` decorator and ``register``; ``drain`` and
-       ``wait_for_client``; ``on_invoke`` to carry out invocations in place of
-       the actions.
+       running event loop (``async with``); ``value``, ``series``, ``unit``,
+       ``log`` and ``send`` from any thread, and ``batch``, which collects what
+       a thread sends and hands it over at once; the tracers of
+       ``get_tracer``; the ``actions`` and the ``action`` decorator and
+       ``register``; ``drain`` and ``wait_for_client``; ``on_invoke`` to carry
+       out invocations in place of the actions.
+   * - ``tracer.py``
+     - ``Tracer``: adds its name to the paths and its component to the log
+       records, and sends with its outpost. ``LogHandler``: a handler of
+       Python's ``logging`` that sends the records.
+   * - ``records.py``
+     - The units of the fields of dataclass records, from ``Unit`` in their
+       annotations.
    * - ``actions.py``
      - ``Range``, ``Unit``, ``ActionError`` and ``Actions``: derives the
        parameters of an action from the signature, converts and checks

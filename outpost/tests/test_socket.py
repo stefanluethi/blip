@@ -192,9 +192,9 @@ def test_what_the_script_sends_untimed_has_the_time_of_the_target():
     protocol, frames = passthrough()
     outpost = protocol.outpost
     # before the target sent a timestamp: dropped, not at the time of this computer
-    outpost.send_value("pc/load", 0.5)
+    outpost.value("pc/load", 0.5)
     assert frames == []
     protocol._datagram(Message.create_value("speed", 1, timestamp_ns=3_000_000_000).encode_cbor(), "10.0.0.1")
-    outpost.send_value("pc/load", 0.5)
+    outpost.value("pc/load", 0.5)
     t = cbor2.loads(frames[-1])["Value"]["timestamp"]
     assert 3_000_000_000 <= t < 4_000_000_000

@@ -4,9 +4,10 @@ outpost
 The outpost is a Python library, the package ``blip-outpost``, to send the
 traces, log records and actions of a target to blip. Your script talks to the
 target in whatever way it needs -- a serial port, a socket, a CAN bus, a vendor
-library -- decodes what it receives and passes it on with ``send_value``. The
-outpost serves blip over a WebSocket, records the messages if asked, and calls
-your **actions** when blip invokes them.
+library -- decodes what it receives and passes it on with ``value`` and ``log``.
+A Python program that traces itself gets tracers by name, as it gets loggers.
+The outpost serves blip over a WebSocket, records the messages if asked, and
+calls your **actions** when blip invokes them.
 
 .. admonition:: Before you begin
 
@@ -40,9 +41,9 @@ Start the outpost, then send from your own loop:
    import blip_outpost as outpost
 
    outpost.start()
-   outpost.send_metadata("room/temperature", "°C")
+   outpost.unit("room/temperature", "°C")
    while True:
-       outpost.send_value("room/temperature", 21.0 + random.random())
+       outpost.value("room/temperature", 21.0 + random.random())
        time.sleep(0.1)
 
 ``start`` serves ``ws://127.0.0.1:3000/ws/outpost`` from a thread of its own
@@ -79,15 +80,15 @@ passes it on. Its actions are functions that write to the target:
 
    def main() -> None:
        outpost.start(record="run.blip")
-       outpost.send_metadata("motor/speed_rpm", "rpm")
+       outpost.unit("motor/speed_rpm", "rpm")
        while True:
            line = link.readline().decode().strip()   # e.g. "speed=1432 fault=0"
            if not line:
                continue
            fields = dict(item.split("=") for item in line.split())
-           outpost.send_value("motor/speed_rpm", int(fields["speed"]))
+           outpost.value("motor/speed_rpm", int(fields["speed"]))
            if fields["fault"] != "0":
-               outpost.send_log(LogLevel.ERROR, f"fault {fields['fault']}", component="motor")
+               outpost.log(LogLevel.ERROR, f"fault {fields['fault']}", component="motor")
 
 
    main()
@@ -98,24 +99,35 @@ Run it as any Python script, ``python my_target.py``. It stops with
 Sending to blip
 ~~~~~~~~~~~~~~~
 
+Each call carries all of a message: the full path, and for a log record the
+level, the path and the component, as the target sent them. Nothing needs to be
+declared first.
+
 .. list-table::
    :header-rows: 1
    :widths: 45 55
 
    * - Function
      - Sends
-   * - ``send_value(path, value, timestamp_ns=None)``
+   * - ``value(path, value, timestamp_ns=None)``
      - a sample; ``value`` is ``None``, ``int``, ``float``, ``bool``,
-       ``str``, a ``list`` of fixed length or a ``dict`` with ``str`` keys,
-       nested freely. Timestamped now (UTC) unless given; while the outpost
-       passes a target through or translates it, with the time of the target
-       instead, and dropped before the target sent its first timestamp.
-   * - ``send_metadata(path, unit)``
+       ``str``, a ``list`` of fixed length or a record: a ``dict`` with
+       ``str`` keys or a dataclass, nested freely. Timestamped now (UTC)
+       unless given; while the outpost passes a target through or translates
+       it, with the time of the target instead, and dropped before the target
+       sent its first timestamp.
+   * - ``series(path, values, timestamps_ns=…)``,
+       ``series(path, values, start_ns=…, period_ns=…)``
+     - many samples of one trace at once, e.g. a block read from an ADC: at
+       their timestamps, or the first at ``start_ns`` and then one every
+       ``period_ns``
+   * - ``unit(path, unit)``
      - the unit of a trace; for a record field, the path joined with ``.``,
        e.g. ``imu.acc``
-   * - ``send_log(level, message, component="", timestamp_ns=None, path="")``
-     - a log record of a ``LogLevel``, at ``path`` like a trace, e.g.
-       ``motor``, or without one of the target as a whole
+   * - ``log(level, message, path="", component="", timestamp_ns=None)``
+     - a log record of a ``LogLevel`` or its number, at ``path`` like a trace,
+       e.g. ``motor``, or without one of the target as a whole, and of
+       ``component``, the part of the software that wrote it
    * - ``send(message)``
      - a ``Message``, or the bytes of complete messages, e.g. as received
        from a target that speaks the blip protocol
@@ -123,7 +135,8 @@ Sending to blip
 They may be called from any thread and never block: the outpost passes the
 messages on from its own thread. Python ints are sent as CBOR integers, so pass
 a float for a float trace. Timestamps are nanoseconds, either UTC or the time
-since the target booted; see :doc:`/overview/concepts`.
+since the target booted; see :doc:`/overview/concepts`. What has a ``tolist``
+method, e.g. a numpy array or scalar, is sent as what it returns.
 
 The units and the actions are kept and sent to each blip when it connects, so
 a script sends them once, also before ``start``. Other messages reach the blips
@@ -136,6 +149,35 @@ calls ``drain()`` every thousand messages or so: it blocks until every blip's
 queue is at most half full, so the script slows down to the slowest blip
 instead of losing messages. ``wait_for_client(timeout=None)`` blocks until a
 blip is connected, e.g. to send a history only then.
+
+Records and batches
+~~~~~~~~~~~~~~~~~~~
+
+Values that belong together, e.g. the fields of one frame of the target, go in
+a record: one message, one timestamp, and a trace per field, its path joined
+with ``.``. blip shows records as rows of a table, see :doc:`/blip/views`.
+
+.. code-block:: python
+
+   outpost.value("motor", {"speed": 1432, "current": 2.1})   # motor.speed, motor.current
+
+Separate traces that should be sent together go in a ``batch``: what the
+thread sends in the block is handed over at its end, at once. What is sent
+without a timestamp in the block shares one, ``timestamp_ns`` or the time it is
+first needed:
+
+.. code-block:: python
+
+   for frame in link.frames():
+       with outpost.batch(timestamp_ns=frame.t_us * 1000):
+           outpost.value("motor", {"speed": frame.speed, "current": frame.current})
+           outpost.value("battery/voltage", frame.vbat)
+           for record in frame.logs:
+               outpost.log(record.level, record.text, path=record.node, component=record.module)
+
+Batches nest, the outermost one hands over. What was sent is handed over also
+when the block raises. A batch belongs to its thread: in asyncio code, don't
+``await`` inside the block, or what other tasks send meanwhile joins it.
 
 .. _outpost-actions:
 
@@ -228,7 +270,7 @@ on different ports, create an ``Outpost`` each; it has the same methods:
 
    left = Outpost(port=3001).start()
    right = Outpost(port=3002).start()
-   left.send_value("wheel/speed", 1.5)
+   left.value("wheel/speed", 1.5)
 
    @right.action("wheel/brake")
    def brake() -> None: ...
@@ -259,7 +301,7 @@ that talks to the target:
                await writer.drain()
 
            while line := await reader.readline():
-               outpost.send_value("motor/speed_rpm", int(line))
+               outpost.value("motor/speed_rpm", int(line))
 
 
    asyncio.run(main())
@@ -269,6 +311,74 @@ outpost.wait_for_client_async()`` take the place of ``drain`` and
 ``wait_for_client``. ``sleep_until(deadline)`` sleeps until a
 ``time.perf_counter()`` deadline, also on Windows, whose timers fire up to 16 ms
 early; for sampling at a steady rate. The simulator example is such a script.
+
+.. _outpost-tracers:
+
+Tracing a Python program
+------------------------
+
+A program that traces itself, e.g. a service on a Linux machine, gets
+**tracers** by name, as it gets loggers. The name is a path; the traces of a
+tracer are below it, and its log records are at it and of its component. The
+same name gives the same tracer anywhere in the program, so each module gets
+its own when it is imported, also before the outpost serves:
+
+.. code-block:: python
+
+   import blip_outpost as outpost
+
+   motor = outpost.get_tracer("motor", component="driver")
+   left = motor.child("left")                     # motor/left
+
+   motor.unit("speed", "rpm")
+   motor.value("speed", 1432)                     # the trace motor/speed
+   motor.info("homed")                            # a log record at motor, of driver
+   motor.warn("hot: %d °C", temperature)          # formatted as logging does
+   left.series("current", block, start_ns=t0, period_ns=50_000)
+
+   with motor.batch():                            # one timestamp for all of it
+       motor.value("speed", speed)
+       motor.value("current", current)
+
+A tracer has ``value``, ``series``, ``unit`` and ``batch`` as above, with paths
+below its name, and ``log(level, message, *args)`` with ``debug``, ``info``,
+``warn`` (or ``warning``) and ``error``. ``@motor.action("speed",
+readback="speed_rpm")`` makes the action ``motor/speed`` with the readback
+``motor/speed_rpm``. ``outpost.get_tracer()`` without a name is of the target
+as a whole.
+
+A dataclass is a record, its fields the fields of the record. The units of its
+fields are declared with ``Unit`` and sent with its first sample at a path:
+
+.. code-block:: python
+
+   from dataclasses import dataclass
+   from typing import Annotated
+
+   from blip_outpost import Unit
+
+
+   @dataclass
+   class HeaterState:
+       power: Annotated[float, Unit("W")]
+       duty: Annotated[float, Unit("%")]
+       on: bool
+
+
+   heater.value("state", HeaterState(power=750.0, duty=50.0, on=True))
+   # heater/state.power in W, heater/state.duty in %, heater/state.on
+
+The records of Python's ``logging`` reach blip with a ``LogHandler``, the name
+of the logger as the component, at ``path`` if given:
+
+.. code-block:: python
+
+   import logging
+
+   logging.getLogger().addHandler(outpost.LogHandler())
+
+The records of the outpost itself and of the libraries it uses are not sent.
+The example ``app.py`` is such a program, see :doc:`examples`.
 
 Recording
 ---------
@@ -302,8 +412,8 @@ Next steps
 ----------
 
 * :doc:`/blip/connecting` -- connect blip to the outpost.
-* :doc:`examples` -- the example scripts: the smallest, a simulator and a
-  stress test.
+* :doc:`examples` -- the example scripts: the smallest, a program that traces
+  itself, a simulator and a stress test.
 * :doc:`/reference/outpost-api` -- all functions and classes of ``blip_outpost``.
 * :doc:`/help/limits` -- before serving the outpost on a network.
 * :doc:`/help/troubleshooting` -- when blip shows nothing.

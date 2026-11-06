@@ -5,6 +5,8 @@ import logging
 import time
 from typing import Any, Callable, Optional, Tuple
 
+from blip_outpost.proto import LogLevel
+
 logger = logging.getLogger(__name__)
 
 # A timestamp this far behind the newest one of the target means the target restarted
@@ -127,4 +129,4 @@ def report_restart(outpost: Any, clock: TargetClock, mapped: int) -> None:
             "from now on, to follow the ones before")
     logger.warning(text)
     # a warning of the target as a whole
-    outpost.send_log(3, text, "outpost", mapped)
+    outpost.log(LogLevel.WARN, text, component="outpost", timestamp_ns=mapped)

@@ -52,7 +52,7 @@ def test_a_started_outpost_serves_from_its_own_thread():
 
 def send_from_another_thread(outpost: Outpost) -> None:
     for i in range(100):
-        outpost.send_value("count", i)
+        outpost.value("count", i)
 
 
 def test_a_port_in_use_is_reported_by_start():
@@ -67,17 +67,17 @@ def test_a_port_in_use_is_reported_by_start():
 async def test_units_and_actions_reach_blips_connecting_later():
     outpost = Outpost(port=3972)
     # before serving: the units and the actions are kept, the samples dropped
-    outpost.send_metadata("motor/speed_rpm", "rpm")
-    outpost.send_value("motor/speed_rpm", 1)
-    outpost.send_metadata("imu.acc", "g")
-    outpost.send_metadata("imu.acc", "m/s²")
+    outpost.unit("motor/speed_rpm", "rpm")
+    outpost.value("motor/speed_rpm", 1)
+    outpost.unit("imu.acc", "g")
+    outpost.unit("imu.acc", "m/s²")
 
     @outpost.action("motor/stop")
     def stop() -> None:
         pass
 
     async with outpost:
-        outpost.send_value("motor/speed_rpm", 2)
+        outpost.value("motor/speed_rpm", 2)
         async with connect(3972) as ws:
             first = [cbor2.loads(await receive(ws, 2.0)) for _ in range(3)]
     assert first == [
@@ -90,10 +90,10 @@ async def test_units_and_actions_reach_blips_connecting_later():
 async def test_the_recording_starts_with_the_units_and_actions_sent_before(tmp_path):
     path = tmp_path / "run.blip"
     outpost = Outpost(port=3973, record=path)
-    outpost.send_metadata("speed", "rpm")
+    outpost.unit("speed", "rpm")
     outpost.actions.add("stop", lambda: None)
     async with outpost:
-        outpost.send_value("speed", 1500, timestamp_ns=1)
+        outpost.value("speed", 1500, timestamp_ns=1)
     recorded = [cbor2.loads(frame) for frame in read_frames(path)]
     assert [next(iter(message)) for message in recorded] == ["ValueMetadata", "Actions", "Value"]
 
@@ -144,6 +144,6 @@ def test_stop_finishes_the_recording_of_a_started_outpost(tmp_path):
     path = tmp_path / "run.blip"
     outpost = Outpost(port=3977, record=path).start()
     # sent right before stopping, still recorded
-    outpost.send_value("speed", 1500)
+    outpost.value("speed", 1500)
     outpost.stop()
     assert [next(iter(cbor2.loads(frame))) for frame in read_frames(path)] == ["Value"]

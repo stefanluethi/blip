@@ -166,7 +166,7 @@ class ProtobufLink:
             logger.warning(f"Dropping a text frame that is no values ({e}): {text[:80]!r}")
             return
         for path, unit in units.items():
-            self.outpost.send_metadata(str(path), str(unit))
+            self.outpost.unit(str(path), str(unit))
         if timestamp is not None:
             t: Optional[int] = self.translator.target_clock.shift(timestamp)
         else:
@@ -175,14 +175,14 @@ class ProtobufLink:
             self._held.update((str(path), value) for path, value in values.items())
             return
         for path, value in values.items():
-            self.outpost.send_value(str(path), value, t)
+            self.outpost.value(str(path), value, t)
 
     def _send_held(self) -> None:
         t = self.translator.target_time_ns()
         if t is None:
             return
         for path, value in self._held.items():
-            self.outpost.send_value(path, value, t)
+            self.outpost.value(path, value, t)
         self._held.clear()
 
     def _on_action_result(self, id: int, error: str) -> None:
@@ -209,4 +209,4 @@ class ProtobufLink:
             if t is None:
                 continue
             for name, value in self.translator.counters.items():
-                self.outpost.send_value(self.stats_prefix + name, value, t)
+                self.outpost.value(self.stats_prefix + name, value, t)

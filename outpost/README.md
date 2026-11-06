@@ -30,18 +30,48 @@ import time
 import blip_outpost as outpost
 
 outpost.start()                                  # ws://127.0.0.1:3000/ws/outpost
-outpost.send_metadata("room/temperature", "°C")  # units reach every blip, also later ones
+outpost.unit("room/temperature", "°C")           # units reach every blip, also later ones
 while True:
-    outpost.send_value("room/temperature", 21.0 + random.random())
+    outpost.value("room/temperature", 21.0 + random.random())
     time.sleep(0.1)
 ```
 
 `start` serves from a thread of its own and returns, so the script keeps its own loop.
 Add the address in blip's **Connections** panel.
 
-`send_value`, `send_metadata`, `send_log` and `send` may be called from any thread and
+Each call carries all of a message, as a script forwarding a target needs it:
+
+```python
+outpost.value("motor", {"speed": 1432, "current": 2.1})      # a record: motor.speed, motor.current
+outpost.series("adc/raw", block, start_ns=t0, period_ns=50_000)
+outpost.log(LogLevel.WARN, "hot", path="node3/motor", component="driver")
+
+with outpost.batch(timestamp_ns=frame.t_ns):                 # handed over at once, one timestamp
+    outpost.value("motor/speed", frame.speed)
+    outpost.value("battery/voltage", frame.vbat)
+```
+
+`value`, `series`, `unit`, `log`, `send` and `batch` may be called from any thread and
 never block. A value is `None`, `int`, `float`, `bool`, `str`, a `list` of fixed length
-or a `dict` with `str` keys, nested freely, timestamped now unless given.
+or a record, a `dict` with `str` keys or a dataclass, nested freely, timestamped now
+unless given. What has a `tolist` method, e.g. a numpy array, is sent as what it returns.
+
+## Trace a Python program
+
+A program that traces itself gets tracers by name, as it gets loggers. Its traces are
+below the name, its log records at the name and of its component:
+
+```python
+motor = outpost.get_tracer("motor", component="driver")     # the same one for the same name
+motor.unit("speed", "rpm")
+motor.value("speed", 1432)                                  # motor/speed
+motor.warn("hot: %d °C", temperature)                       # a log record at motor, of driver
+motor.child("left").value("current", 2.1)                   # motor/left/current
+
+logging.getLogger().addHandler(outpost.LogHandler())        # Python's logging, too
+```
+
+A dataclass is a record; `Annotated[float, Unit("W")]` on a field sends its unit.
 
 ## Actions
 
@@ -146,6 +176,8 @@ uv run python examples/minimal.py
 ```
 
 - `minimal.py`: a sine wave from a made-up sensor and an action, in plain blocking code.
+- `app.py`: a Python program that traces itself, with tracers, a dataclass record, blocks
+  of samples, Python's logging and an action.
 - `simulator.py`: CPU load, simulated sensors at different rates, records, arrays,
   frames, log records and demo actions; written with asyncio and actions as methods.
 - `fast.py`: a stress test of blip's ingest and rendering, by default about 100 000

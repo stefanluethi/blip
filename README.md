@@ -111,7 +111,7 @@ import blip_outpost as outpost
 
 outpost.start()
 while True:
-    outpost.send_value("motor/speed_rpm", read_speed())
+    outpost.value("motor/speed_rpm", read_speed())
 ```
 
 A target that speaks the blip protocol itself, e.g. with sonde, needs no script:

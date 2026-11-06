@@ -28,7 +28,7 @@
         <mxCell id="rec" value="&lt;b&gt;Recorder&lt;/b&gt; (--record)" style="fontColor=#24292e;fontFamily=Fira Sans,Helvetica,Arial,sans-serif;rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#785ef0;fontSize=12;" vertex="1" parent="op">
           <mxGeometry x="25" y="225" width="200" height="40" as="geometry"/>
         </mxCell>
-        <mxCell id="e_proto_srv" value="send_value · send_log · …" style="strokeColor=#5b6168;fontColor=#24292e;labelBackgroundColor=#ffffff;fontFamily=Fira Sans,Helvetica,Arial,sans-serif;edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;fontSize=10;startArrow=block;startFill=1;" edge="1" parent="op" source="proto" target="srv">
+        <mxCell id="e_proto_srv" value="value · log · get_tracer · …" style="strokeColor=#5b6168;fontColor=#24292e;labelBackgroundColor=#ffffff;fontFamily=Fira Sans,Helvetica,Arial,sans-serif;edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;fontSize=10;startArrow=block;startFill=1;" edge="1" parent="op" source="proto" target="srv">
           <mxGeometry relative="1" as="geometry"/>
         </mxCell>
         <mxCell id="e_srv_rec" style="strokeColor=#5b6168;fontColor=#24292e;labelBackgroundColor=#ffffff;fontFamily=Fira Sans,Helvetica,Arial,sans-serif;edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;" edge="1" parent="op" source="srv" target="rec">

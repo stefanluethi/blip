@@ -1,5 +1,6 @@
 """Protocol serialization and schema definition matching Rust proto crate."""
 
+import dataclasses
 import enum
 import io
 import logging
@@ -31,8 +32,24 @@ class ValueMetadata:
 
 # A trace value as sent to blip: None (no value), int, float, bool, str, a list of
 # fixed length or a dict with str keys, nested freely. It is encoded as a plain CBOR
-# item, e.g. a dict becomes a CBOR map.
-Data = Union[None, int, float, bool, str, list, dict]
+# item, e.g. a dict becomes a CBOR map. A dataclass is a record like a dict of its
+# fields, and what has a `tolist` method, e.g. a numpy array or scalar, is sent as
+# what it returns.
+Data = Any
+
+
+def encode_default(encoder: Any, value: Any) -> None:
+    """Encodes what cbor2 does not know itself: a dataclass as a map of its fields, and
+    e.g. numpy arrays and scalars as what their `tolist` returns."""
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        # not `asdict`, which copies nested values; cbor2 comes back for them
+        encoder.encode({f.name: getattr(value, f.name) for f in dataclasses.fields(value)})
+        return
+    tolist = getattr(value, "tolist", None)
+    if callable(tolist):
+        encoder.encode(tolist())
+        return
+    raise cbor2.CBOREncodeTypeError(f"cannot send a value of type {type(value).__name__}")
 
 
 @dataclass
@@ -79,7 +96,7 @@ class Message:
 
     def encode_cbor(self) -> bytes:
         """Encode message to CBOR binary format."""
-        return cbor2.dumps(self.to_dict())
+        return cbor2.dumps(self.to_dict(), default=encode_default)
 
     @classmethod
     def create_value(cls, path: str, value: Data, timestamp_ns: Optional[int] = None) -> "Message":

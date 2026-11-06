@@ -221,7 +221,7 @@ class Translator:
     def _unit(self, path: str, unit: str) -> None:
         if unit and path not in self._units:
             self._units.add(path)
-            self.outpost.send_metadata(path, unit)
+            self.outpost.unit(path, unit)
 
     def _convert(self, f: FieldPlan, raw: Any) -> Any:
         if not f.repeated:
@@ -265,14 +265,14 @@ class Translator:
                 return
             for f in fields:
                 self._unit(f"{path}.{f.key}", f.unit)
-            self.outpost.send_value(path, {f.key: self._convert(f, getattr(message, f.name)) for f in fields}, t)
+            self.outpost.value(path, {f.key: self._convert(f, getattr(message, f.name)) for f in fields}, t)
             return
         for f in fields:
             field_path = self._field_path(f, message, path)
             if not field_path:
                 continue
             self._unit(field_path, f.unit)
-            self.outpost.send_value(field_path, self._convert(f, getattr(message, f.name)), t)
+            self.outpost.value(field_path, self._convert(f, getattr(message, f.name)), t)
 
     def _series(self, message: Any, plan: MessagePlan, path: str, t: int) -> None:
         period_field = plan.period
@@ -288,7 +288,7 @@ class Translator:
         n = max((len(values) for _, values in columns), default=0)
         if n == 0:
             return
-        send = self.outpost.send_value
+        send = self.outpost.value
 
         if plan.record:
             if not path:
@@ -328,7 +328,7 @@ class Translator:
             raw = getattr(message, f.name)
             component = f.enum_names.get(raw, str(raw)) if f.enum_names is not None else str(raw)
         text = str(getattr(message, plan.message.name)) if plan.message is not None else ""
-        self.outpost.send_log(level, text, component, t, path)
+        self.outpost.log(level, text, path=path, component=component, timestamp_ns=t)
 
     def _action_result(self, message: Any, plan: MessagePlan) -> None:
         if plan.action_id is None:

@@ -20,6 +20,21 @@ the functions of the module from plain, blocking code:
    :language: python
    :start-at: import math
 
+app
+---
+
+``examples/app.py``: a Python program that traces itself, a room heater with a
+controller. Each part has a tracer of its own; the controller sends its state
+as a dataclass record with units, a fast sensor sends blocks of samples with
+``series``, Python's ``logging`` reaches blip through a ``LogHandler``, and the
+action ``room/setpoint`` sets the setpoint. See
+:ref:`outpost-tracers`.
+
+.. literalinclude:: /../../outpost/examples/app.py
+   :language: python
+   :start-at: # the program's own logging
+   :end-before: def read_block
+
 simulator
 ---------
 

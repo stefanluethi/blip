@@ -167,18 +167,18 @@ class Simulator:
         units = dict(UNITS)
         units.update({f"sysinfo/cpu/cpu{idx}": CPU_UNIT for idx in range(self._cpu_count)})
         for path, unit in units.items():
-            self.outpost.send_metadata(path, unit)
+            self.outpost.unit(path, unit)
         self._send_log_level()
 
     def _send_accelerometer(self) -> None:
         self._accel = random.uniform(-10.0, 10.0)
-        self.outpost.send_value("accelerometer", self._accel)
+        self.outpost.value("accelerometer", self._accel)
 
     def _send_cpu(self) -> None:
         """The load (percent) of each core, and a log record when it changes range."""
         cpu_percentages = psutil.cpu_percent(percpu=True)
         for idx, cpu_val in enumerate(cpu_percentages):
-            self.outpost.send_value(f"sysinfo/cpu/cpu{idx}", float(cpu_val))
+            self.outpost.value(f"sysinfo/cpu/cpu{idx}", float(cpu_val))
         self._log_cpu_transitions(cpu_percentages)
 
     def _send_temperature(self) -> None:
@@ -186,7 +186,7 @@ class Simulator:
         temperature = None
         if random.random() >= SENSOR_DROPOUT_PROBABILITY:
             temperature = 25.0 + random.gauss(0.0, 0.2)
-        self.outpost.send_value("sensor/temperature", temperature)
+        self.outpost.value("sensor/temperature", temperature)
 
     async def _send_random_logs(self) -> None:
         """Random background logs, at a jittered rate."""
@@ -260,7 +260,7 @@ class Simulator:
 
     def _send_log_level(self) -> None:
         """The log level as a trace, the readback of the log/level action."""
-        self.outpost.send_value("simulator/log_level", self._log_level.name)
+        self.outpost.value("simulator/log_level", self._log_level.name)
 
     # The actions, offered to blip in this order
 
@@ -296,7 +296,7 @@ class Simulator:
         """Sends a log record"""
         if not text.strip():
             raise ActionError("the text is empty")
-        self.outpost.send_log(level, text, component="user")
+        self.outpost.log(level, text, component="user")
 
     @action("imu/calibrate", confirm=True)
     async def calibrate_imu(self) -> None:
@@ -316,7 +316,7 @@ class Simulator:
         """Sends a single log record, unless below the log level."""
         if level < self._log_level:
             return
-        self.outpost.send_log(level, message, component=component)
+        self.outpost.log(level, message, component=component)
 
     def _log_cpu_transitions(self, cpu_percentages: list[float]) -> None:
         """Log when a core's smoothed load enters or leaves the high-load range."""

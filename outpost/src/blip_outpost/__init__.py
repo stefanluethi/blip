@@ -9,22 +9,31 @@ Your script talks to the target and passes on what it decodes::
         link.write_setpoint(rpm)
 
     outpost.start()                      # serves ws://127.0.0.1:3000/ws/outpost
-    outpost.send_metadata("motor/speed_rpm", "rpm")
+    outpost.unit("motor/speed_rpm", "rpm")
     while True:
         frame = link.read()
-        outpost.send_value("motor/speed_rpm", frame.speed)
+        with outpost.batch(timestamp_ns=frame.t_ns):
+            outpost.value("motor/speed_rpm", frame.speed)
+            outpost.value("battery", {"voltage": frame.vbat, "current": frame.ibat})
+
+A Python program that traces itself gets tracers by name, as loggers::
+
+    motor = outpost.get_tracer("motor", component="driver")
+    motor.value("speed", 1432)           # the trace motor/speed
+    motor.info("homed")                  # a log record at motor, of driver
 
 The functions of this module use one outpost of the program, see `get_outpost`; create
 an `Outpost` for another one, e.g. on another port or in asyncio code.
 """
 
 from pathlib import Path
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, ContextManager, Optional, Sequence, Union
 
 from blip_outpost.actions import ActionError, Actions, Range, Unit
 from blip_outpost.outpost import Outpost
 from blip_outpost.proto import Data, LogLevel, Message
 from blip_outpost.timing import sleep_until
+from blip_outpost.tracer import LogHandler, Tracer
 
 __version__ = "0.1.0"
 
@@ -32,23 +41,28 @@ __all__ = [
     "ActionError",
     "Actions",
     "Data",
+    "LogHandler",
     "LogLevel",
     "Message",
     "Outpost",
     "Range",
+    "Tracer",
     "Unit",
     "action",
+    "batch",
     "drain",
     "get_outpost",
+    "get_tracer",
+    "log",
     "register",
     "send",
-    "send_log",
-    "send_metadata",
-    "send_value",
     "serve",
+    "series",
     "sleep_until",
     "start",
     "stop",
+    "unit",
+    "value",
     "wait",
     "wait_for_client",
 ]
@@ -104,29 +118,58 @@ def wait() -> None:
     _outpost.wait()
 
 
-def send_value(path: str, value: Data, timestamp_ns: Optional[int] = None) -> None:
+def value(path: str, value: Data, timestamp_ns: Optional[int] = None) -> None:
     """Sends a sample of the trace `path`, timestamped now unless given (ns), see
-    `Outpost.send_value`."""
-    _outpost.send_value(path, value, timestamp_ns)
+    `Outpost.value`."""
+    _outpost.value(path, value, timestamp_ns)
 
 
-def send_metadata(path: str, unit: str) -> None:
-    """Sends the unit of the trace `path`; sent once, it reaches every blip."""
-    _outpost.send_metadata(path, unit)
-
-
-def send_log(
-    level: int, message: str, component: str = "", timestamp_ns: Optional[int] = None, path: str = ""
+def series(
+    path: str,
+    values: Sequence[Data],
+    *,
+    timestamps_ns: Optional[Sequence[int]] = None,
+    start_ns: Optional[int] = None,
+    period_ns: Optional[float] = None,
 ) -> None:
-    """Sends a log record of a `LogLevel`, timestamped now unless given (ns), at `path`
-    or of the target as a whole, see `Outpost.send_log`."""
-    _outpost.send_log(level, message, component, timestamp_ns, path)
+    """Sends many samples of the trace `path` at once, see `Outpost.series`."""
+    _outpost.series(path, values, timestamps_ns=timestamps_ns, start_ns=start_ns, period_ns=period_ns)
+
+
+def unit(path: str, unit: str) -> None:
+    """Sends the unit of the trace `path`; sent once, it reaches every blip."""
+    _outpost.unit(path, unit)
+
+
+def log(
+    level: int,
+    message: str,
+    *,
+    path: str = "",
+    component: str = "",
+    timestamp_ns: Optional[int] = None,
+) -> None:
+    """Sends a log record of a `LogLevel` at `path` and of `component`, timestamped now
+    unless given (ns), see `Outpost.log`."""
+    _outpost.log(level, message, path=path, component=component, timestamp_ns=timestamp_ns)
 
 
 def send(message: Union[Message, bytes]) -> None:
     """Sends a `Message`, or the bytes of complete messages as a target that speaks the
     blip protocol sends them."""
     _outpost.send(message)
+
+
+def batch(timestamp_ns: Optional[int] = None) -> ContextManager[None]:
+    """Hands what this thread sends in the block over at once, see `Outpost.batch`."""
+    return _outpost.batch(timestamp_ns)
+
+
+def get_tracer(name: str = "", component: str = "") -> Tracer:
+    """The tracer `name` of the outpost of the module, a path such as ``motor``, whose
+    log records are of `component`; the same name gives the same tracer. See
+    `Tracer`."""
+    return _outpost.get_tracer(name, component)
 
 
 def drain() -> None:

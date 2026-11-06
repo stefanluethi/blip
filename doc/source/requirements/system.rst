@@ -310,6 +310,32 @@ Outpost
    Python functions whose parameters are taken from their type hints, and may
    change them at runtime.
 
+.. req:: Sending many at once
+   :id: REQ_OUTPOST_BATCH
+   :status: implemented
+   :component: outpost
+   :satisfies: STK_DEVICE_IF, STK_LIVE_OBSERVE
+
+   Each call of the outpost to send shall carry all of a message, its full
+   path and, for a log record, its level, path and component, so a script
+   forwards what a target sends without declaring anything first. The
+   outpost shall send many samples of one trace at once, at their timestamps
+   or at a fixed period, and hand all that a thread sends in a block over at
+   once, with one timestamp for what is sent without one.
+
+.. req:: Tracers for Python programs
+   :id: REQ_OUTPOST_TRACERS
+   :status: implemented
+   :component: outpost
+   :satisfies: STK_DEVICE_IF, STK_LIVE_OBSERVE
+
+   A Python program that traces itself shall get tracers by name, as it gets
+   loggers: the same name gives the same tracer anywhere in the program, its
+   traces are below its name, and its log records are at its name and of its
+   component, with the levels as methods. A dataclass shall be sent as a
+   record, with the units its fields declare, and the records of Python's
+   ``logging`` shall reach blip with the name of the logger as the component.
+
 .. req:: Socket outpost
    :id: REQ_OUTPOST_SOCKET
    :status: implemented
