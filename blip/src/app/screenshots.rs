@@ -7,7 +7,9 @@
 //!
 //! which runs `TZ=UTC cargo test -p blip --release --features screenshots -- --ignored
 //! screenshots` (a release build, so that the menu bar does not warn of a debug build). The PNGs go to `doc/source/screenshots`, `name.png` in the light theme
-//! and `name-dark.png` in the dark one. The times are shown in UTC, so they do not
+//! and `name-dark.png` in the dark one. `BLIP_SCREENSHOTS_DIR` (`make screenshots
+//! SCREENSHOTS_DIR=…`) writes them to another directory instead, e.g. to compare them
+//! with the committed ones. The times are shown in UTC, so they do not
 //! depend on the time zone of the machine.
 //!
 //! The recording `tests/data/demo.blip` is 30 s of the outpost's simulator while a
@@ -38,8 +40,14 @@ const VIEW: egui::Vec2 = egui::vec2(720.0, 380.0);
 /// The messages per second the menu bar shows, about those of the simulator.
 const RATE: f64 = 312.0;
 
+/// `doc/source/screenshots`, or the directory in `BLIP_SCREENSHOTS_DIR`.
 fn output_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../doc/source/screenshots")
+    std::env::var_os("BLIP_SCREENSHOTS_DIR")
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../doc/source/screenshots")
+        })
 }
 
 /// The messages of the recording, one after another.

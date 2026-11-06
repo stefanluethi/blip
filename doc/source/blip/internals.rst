@@ -355,4 +355,6 @@ The screenshots of this documentation are tests too (``app/screenshots.rs``,
 behind the ``screenshots`` feature and ignored by default): they render the
 app with wgpu from the recording ``tests/data/demo.blip`` and the preset
 ``tests/data/demo-presets.json``, the window connected to a WebSocket server in
-the test as to an outpost. ``make screenshots`` in ``doc`` runs them.
+the test as to an outpost. ``make screenshots`` in ``doc`` runs them;
+``make screenshots SCREENSHOTS_DIR=…`` writes them to another directory, so
+they can be compared with the committed ones.

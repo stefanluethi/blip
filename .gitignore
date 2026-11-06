@@ -22,7 +22,9 @@ doc/_build/
 # Sphinx build output (doc)
 _build/
 
-# Claude Code local state; the agents and skills are shared
+# Claude Code local state; the agents, skills, hooks and shared settings are shared
 .claude/*
 !.claude/agents/
 !.claude/skills/
+!.claude/hooks/
+!.claude/settings.json

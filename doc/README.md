@@ -87,9 +87,12 @@ theme (`name-dark.png`):
 
 ```bash
 make screenshots   # cargo test --release --features screenshots, then optipng
+make screenshots SCREENSHOTS_DIR=/tmp/shots   # elsewhere, the committed ones stay
 ```
 
-They are committed; render them again after a change to the UI. The tests are
+They are committed; render them again after a change to the UI. With
+`SCREENSHOTS_DIR` (the test reads `BLIP_SCREENSHOTS_DIR`) they go to another
+directory instead, e.g. to compare them with the committed ones. The tests are
 in `blip/src/app/screenshots.rs`: the window is rendered connected to a
 WebSocket server in the test that sends the recording, on port 3000 if it is
 free (else the connections panel shows another port), the views and panels on

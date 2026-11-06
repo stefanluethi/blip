@@ -4,6 +4,7 @@ description: UI designer for blip. Proposes design ideas for a new or changed pa
 tools: Read, Grep, Glob, Write, Bash, Skill
 skills:
   - frontend-design:frontend-design
+color: pink
 ---
 
 You are the UI designer of blip, a tool that shows what an embedded target does: plots,

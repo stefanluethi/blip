@@ -51,10 +51,13 @@ diagrams: $(DIAGRAMS:.drawio=.svg) $(DIAGRAMS:.drawio=-dark.svg)
 # blip/src/app/screenshots.rs. Times show in UTC. optipng, if installed, makes the
 # PNGs smaller.
 OPTIPNG ?= $(shell command -v optipng)
+# Where the PNGs go; set it to render them elsewhere, e.g. to compare them with the
+# committed ones without changing them.
+SCREENSHOTS_DIR ?= $(SOURCEDIR)/screenshots
 
 screenshots:
-	cd .. && TZ=UTC cargo test -p blip --release --features screenshots -- --ignored --test-threads 1 screenshots
-	$(if $(OPTIPNG),$(OPTIPNG) -quiet -o2 $(SOURCEDIR)/screenshots/*.png)
+	cd .. && TZ=UTC BLIP_SCREENSHOTS_DIR="$(abspath $(SCREENSHOTS_DIR))" cargo test -p blip --release --features screenshots -- --ignored --test-threads 1 screenshots
+	$(if $(OPTIPNG),$(OPTIPNG) -quiet -o2 "$(abspath $(SCREENSHOTS_DIR))"/*.png)
 
 # Catch-all: forward other targets (latexpdf, linkcheck, ...) to sphinx-build.
 %:

@@ -1,6 +1,8 @@
 ---
 name: orchestrate
-description: Lead a feature or change in blip from idea to reviewed code. Clarify with the user, get design options from the designer for UI changes, have the requirements engineer write the requirements, get them approved, hand the work to the specialist agents (blip-dev, sonde-dev, outpost-dev, docs-writer) and loop with the reviewer and, for blip UI changes, the design-reviewer until requirements, code and look agree. Use when the user runs /orchestrate or asks to build a feature with the agent team.
+description: Lead a feature or change in blip from idea to reviewed code. Clarify with the user, get design options from the designer for UI changes, have the requirements engineer write the requirements, get them approved, hand the work to the specialist agents (blip-dev, sonde-dev, outpost-dev, docs-writer) and loop with the reviewer and, for blip UI changes, the design-reviewer until requirements, code and look agree. Runs only when the user types /orchestrate.
+argument-hint: <change>
+disable-model-invocation: true
 ---
 
 # Orchestrate a change
@@ -85,25 +87,36 @@ likely affected. It updates the guides, internals, reference, `ARCH_*` items and
 1. Spawn `reviewer` with the requirement IDs in scope and a summary of the change. If
    the change touches `blip/src`, spawn `design-reviewer` in the same message, with the
    requirement IDs, the chosen design option and the views and panels that changed.
-   (Subagents cannot start other agents, so the reviewer cannot call the design
-   reviewer; you run both.)
+   The design reviewer renders its screenshots into a scratch directory, so the two do
+   not get in each other's way. (The specialists have no Agent tool, so the reviewer
+   cannot start the design reviewer; you run both.)
 2. For each finding, send it to the specialist the reviewer named; design findings go
    to `blip-dev`, missing screenshots to `blip-dev` (`screenshots.rs`) and then
-   `docs-writer`. Use SendMessage to
-   the agent that did the work, so it keeps its context. Run fixes for different parts
-   in parallel.
+   `docs-writer`. Use SendMessage to the agent that did the work, so it keeps its
+   context. Run fixes for different parts in parallel.
 3. Spawn the reviewers again (or send them a message) to check the fixes.
 4. Stop after three rounds that still fail, and ask the user how to go on.
 
-When the reviewer passes and the design reviewer says it looks good, set the `:status:` of the requirements and test cases in scope
-to `implemented`. Leave `verified` to the user.
+When the reviewer passes and the design reviewer says it looks good, set the `:status:`
+of the requirements and test cases in scope to `implemented`. Leave `verified` to the
+user.
 
 ## 8. Finish
 
-Run the checks for every part that changed (`./check.sh`, `cd outpost && uv run pytest`,
-the sonde ctest, `cd doc && make html`) and make sure they pass.
+The reviewer's last pass ran the checks on the finished change; trust its results and
+do not run them again. Setting the statuses changed only the requirements, so run
+`cd doc && make html` once more. If anything else changed after the reviewer's last
+pass, send it back to the reviewer instead.
 
-Report to the user: what was built, per requirement ID, the reviewer's coverage table, the design reviewer's verdict,
-the check results, and anything left open (e.g. diagrams that need the draw.io app).
-Do not commit unless the user asks. If they do, use a short imperative subject and a
-body that explains what changed and why, as `CLAUDE.md` says.
+Look back at the review rounds. If the reviewers flagged the same kind of problem more
+than once, in this change or one before it, propose a rule that would have prevented it
+and where it goes: the agent file of the specialist that made it (`.claude/agents`),
+`design/DESIGN.md` for a design rule, or `CLAUDE.md` for one every agent needs. Show the
+user the exact text and add it only when they agree. The agents have no memory of their
+own, so these files are where their lessons live.
+
+Report to the user: what was built, per requirement ID, the reviewer's coverage table,
+the design reviewer's verdict, the reviewer's check results, and anything left open
+(e.g. diagrams that need the draw.io app). Do not commit unless the user asks. If they
+do, use a short imperative subject and a body that explains what changed and why, as
+`CLAUDE.md` says.
