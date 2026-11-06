@@ -25,6 +25,7 @@ option(SONDE_BUILD_TESTS "Fetch Catch2 and build the tests" ${sonde_tests_defaul
 option(SONDE_BUILD_EXAMPLES "Build the examples" ${sonde_top_level})
 option(SONDE_WERROR "Treat the warnings of sonde as errors" OFF)
 set(SONDE_LOGF_MAX 128 CACHE STRING "Bytes of a logf message")
+set(SONDE_PATH_MAX 96 CACHE STRING "Bytes of the full path of a message of a Tracer")
 
 # --- tinycbor --------------------------------------------------------------------------
 
@@ -74,6 +75,7 @@ endif()
 
 add_library(sonde
     src/encoder.cpp
+    src/queue.cpp
     src/tracer.cpp
     $<$<BOOL:${SONDE_HOSTED}>:src/file_sink.cpp>
 )
@@ -86,7 +88,7 @@ if(SONDE_HOSTED)
 else()
     target_compile_definitions(sonde PUBLIC SONDE_HOSTED=0)
 endif()
-target_compile_definitions(sonde PRIVATE SONDE_LOGF_MAX=${SONDE_LOGF_MAX})
+target_compile_definitions(sonde PRIVATE SONDE_LOGF_MAX=${SONDE_LOGF_MAX} SONDE_PATH_MAX=${SONDE_PATH_MAX})
 if(MSVC)
     target_compile_options(sonde PRIVATE /W4 /permissive-)
     target_compile_definitions(sonde PRIVATE _CRT_SECURE_NO_WARNINGS)

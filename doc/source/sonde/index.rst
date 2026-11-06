@@ -58,6 +58,9 @@ CMake's FetchContent. Firmware that vendors tinycbor sets
    * - ``SONDE_LOGF_MAX``
      - ``128``
      - bytes of a ``logf`` message
+   * - ``SONDE_PATH_MAX``
+     - ``96``
+     - bytes of the full path of a message of a ``Tracer``
 
 Cross-compile the library and the bare-metal example for a Cortex-M::
 
@@ -67,42 +70,64 @@ Cross-compile the library and the bare-metal example for a Cortex-M::
 First trace
 -----------
 
+A **queue** holds the batches of one context that traces. **Tracers** on it are
+the named parts of the code, as loggers: the traces of a tracer are below its
+name, its log records at its name and of its component.
+
 .. code-block:: cpp
 
    #include <sonde/sonde.hpp>
 
    static sonde::Storage<512, 2> storage;              // 2 batches of 512 bytes
-   static sonde::Tracer tracer{storage, &uptime_ns};   // your clock, in ns
+   static sonde::Queue queue{storage, &uptime_ns};     // your clock, in ns
+   static sonde::Tracer motor{queue, "motor", "driver"};
+   static sonde::Tracer left{motor, "left"};           // motor/left, of driver
 
-   tracer.metadata("motor/speed", "rpm");
-   tracer.value("motor/speed", 1500u);
-   tracer.value("cpu_load", 12.5f);
-   tracer.value("sensor/temperature", sonde::null);    // failed measurement, a gap in the plot
-   tracer.log(sonde::Level::Info, "motor", "started");
-   tracer.logf(sonde::Level::Warn, "motor", "overcurrent: %d mA", current_ma);
+   motor.unit("speed", "rpm");
+   motor.value("speed", 1500u);                        // the trace motor/speed
+   motor.value("temperature", sonde::null);            // failed measurement, a gap in the plot
+   motor.info("started");                              // a log record at motor, of driver
+   motor.warnf("overcurrent: %d mA", current_ma);
+   left.value("current", 1.2f);                        // motor/left/current
 
 Each call encodes one message and returns a ``sonde::Status``: ``Ok``,
 ``Full`` (no free batch, dropped), ``TooLarge`` (does not fit into an empty
-batch, dropped), ``SinkError`` or ``Invalid`` (e.g. a record with fewer fields
-than announced; nothing written). ``tracer.dropped()`` counts the dropped
-messages.
+batch, or its full path is longer than ``SONDE_PATH_MAX``; dropped),
+``SinkError`` or ``Invalid`` (e.g. a record with fewer fields than announced;
+nothing written). ``queue.dropped()`` counts the dropped messages.
 
-.. list-table:: Calls and the messages they send
+.. list-table:: Calls of a tracer and the messages they send
    :header-rows: 1
    :widths: 45 55
 
    * - Call
      - Message
    * - ``value(path, value)``, ``value(timestamp, path, value)``
-     - ``Value``, timestamped by the clock or explicitly
-   * - ``metadata(path, unit)``
+     - ``Value`` of the trace ``path`` below the tracer, timestamped by the
+       clock or explicitly
+   * - ``unit(path, unit)``
      - ``ValueMetadata``
-   * - ``log(level, component, message)``, ``log(path, level, component,
-       message)``, ``log(timestamp, …)``, ``logf(…)``
-     - ``Log``, of the target as a whole or at ``path``; an empty path or
-       component is left out
-   * - ``commit()``
-     - none: makes the open batch ready to send
+   * - ``log(level, message)``, ``log(timestamp, level, message)``,
+       ``logf(level, format, …)``, ``debug`` … ``error(message)``,
+       ``debugf`` … ``errorf(format, …)``
+     - ``Log`` at the name of the tracer, of its component; without a name,
+       of the target as a whole
+
+A tracer is a few pointers: any number of them may share a queue, and a child,
+``Tracer{parent, "left"}``, has the component of its parent unless given.
+``Tracer{queue}`` without a name sends the paths as they are.
+
+The queue has the same calls with the full path, and log records with their
+path and component, e.g. for a gateway that passes on what other nodes send:
+
+.. code-block:: cpp
+
+   queue.value(sonde::Timestamp{t}, "node3/motor/speed", speed);
+   queue.log(sonde::Timestamp{t}, "node3/motor", sonde::Level::Warn, "driver", "hot");
+   queue.unit("node3/motor/speed", "rpm");
+
+It also has ``commit()``, which makes the open batch ready to send, and the
+calls of the consumer, see `Sending from firmware`_.
 
 .. _sonde-values:
 
@@ -135,19 +160,21 @@ Values
      - ``sonde::record(n, fill)``, your types with an ``encode`` function
 
 Records and computed arrays are built by a fill function; the number of fields
-or elements is given up front, as CBOR encodes it before them:
+or elements is given up front, as CBOR encodes it before them. Each field of a
+record is a trace, its path joined with ``.``. With the tracers ``imu`` and
+``adc``:
 
 .. code-block:: cpp
 
    float acc[3] = {0.5f, -1.0f, 9.81f};
-   tracer.value("imu/acc", acc);                       // [0.5, -1.0, 9.81]
+   imu.value("acc", acc);                              // [0.5, -1.0, 9.81]
 
-   tracer.value("imu", sonde::record(2, [&](sonde::Record& r) {
+   imu.value("state", sonde::record(2, [&](sonde::Record& r) {
        r.field("acc", acc);
        r.field("valid", true);
-   }));                                                // {"acc": [...], "valid": true}
+   }));                                                // imu/state.acc, imu/state.valid
 
-   tracer.value("adc/scaled", sonde::array(64, [&](sonde::Array& a) {
+   adc.value("scaled", sonde::array(64, [&](sonde::Array& a) {
        for (auto s : samples) a.add(s * 0.1f);
    }));
 
@@ -169,7 +196,7 @@ Your own types become values with an ``encode`` function next to the type:
        });
    }
 
-   tracer.value("motor", motor);
+   drive.value("motor", motor);                        // drive/motor.speed_rpm, …
 
 A message that does not fit into the open batch is encoded again into the
 next one, so fill and ``encode`` functions should have no side effects.
@@ -177,7 +204,7 @@ next one, so fill and ``encode`` functions should have no side effects.
 Timestamps and clocks
 ---------------------
 
-A timestamp is nanoseconds in the time of the tracer's clock: the uptime of the
+A timestamp is nanoseconds in the time of the queue's clock: the uptime of the
 target, or UTC since 1970, e.g. on a desktop. The clock is a plain function
 ``std::uint64_t (*)()`` called in the tracing context, so it must be safe
 there, e.g. in an ISR. Hosted builds default to ``sonde::system_clock_ns``
@@ -191,9 +218,10 @@ timestamps to follow the ones before.
 Sending from firmware
 ---------------------
 
-Each context that traces has its **own tracer** with its own storage, e.g. one
-for the control task and one for an ISR. A tracer is never shared between
-contexts; sonde has no global tracer.
+Each context that traces has its **own queue** with its own storage, e.g. one
+for the control task and one for an ISR. A queue is never shared between
+contexts, and the tracers on a queue are used in its context only; sonde has no
+global queue.
 
 The context that traces (the **producer**) encodes into the open batch. When a
 message does not fit, or on ``commit()``, the batch becomes ready. The context
@@ -208,7 +236,7 @@ no batch is free it drops the message.
          consumer takes ready batches, sends them and releases them back to
          free.
 
-   The batches of a tracer.
+   The batches of a queue.
 
 Trace in the control task, send one UDP datagram per batch in the network
 task:
@@ -216,13 +244,14 @@ task:
 .. code-block:: cpp
 
    static sonde::Storage<1400, 4> control_storage;     // a batch fits the Ethernet MTU
-   static sonde::Tracer control_traces{control_storage, &uptime_ns};
+   static sonde::Queue control_traces{control_storage, &uptime_ns};
+   static sonde::Tracer motor{control_traces, "motor"};
 
    void control_task() {                               // producer
        for (;;) {
            wait_for_cycle();
-           control_traces.value("motor/speed", read_speed());
-           control_traces.value("motor/current", read_current());
+           motor.value("speed", read_speed());
+           motor.value("current", read_current());
            control_traces.commit();                    // one batch per cycle at most
        }
    }
@@ -242,7 +271,7 @@ Trace in an ISR, send by DMA over a UART:
 .. code-block:: cpp
 
    static sonde::Storage<256, 3> adc_storage;
-   static sonde::Tracer adc_traces{adc_storage, &uptime_ns};
+   static sonde::Queue adc_traces{adc_storage, &uptime_ns};
 
    void ADC_IRQHandler() {                             // producer
        adc_traces.value("adc/raw", ADC1->DR);
@@ -267,15 +296,16 @@ Trace in an ISR, send by DMA over a UART:
 * The consumer cannot close the open batch, as the producer may be encoding
   into it; ``request_commit()`` asks the producer to commit at its next message
   or ``commit()``. Producers that trace rarely call ``commit()`` themselves.
-* One consumer may serve several tracers.
+* One consumer may serve several queues.
 * Batch size and count are yours: e.g. the MTU for UDP, more batches for bursts.
   Add framing where the link needs it, e.g. COBS on a UART.
 * A batch only ever holds whole messages, a CBOR sequence, so each datagram or
   write decodes on its own. Receive it with ``blip-outpost tcp`` or ``udp``,
   see :doc:`/outpost/index`.
 
-The constructors are ``constexpr``: a static tracer is ready before any code
-runs, e.g. for an ISR that fires before the static constructors.
+The constructors are ``constexpr``: a static queue and its static tracers are
+ready before any code runs, e.g. for an ISR that fires before the static
+constructors.
 
 Desktop apps and unit tests
 ---------------------------
@@ -293,14 +323,16 @@ to the sink right away. ``sonde/file_sink.hpp`` (hosted builds) has two:
 
    sonde::FileSink file{"run.blip"};
    sonde::Storage<4096, 1> storage;
-   sonde::Tracer tracer{storage, file};                // UTC from the system clock
+   sonde::Queue queue{storage, file};                  // UTC from the system clock
+   sonde::Tracer solver{queue, "solver"};
 
-   tracer.value("solver/residual", residual);
+   solver.value("residual", residual);                 // solver/residual
    // ...
-   tracer.commit();                                    // before the file closes
+   queue.commit();                                     // before the file closes
 
 A unit test can write a recording per test, to open in blip when it fails; a
-fixed clock keeps the timestamps reproducible:
+fixed clock keeps the timestamps reproducible. The code under test takes a
+``sonde::Tracer&``:
 
 .. code-block:: cpp
 
@@ -315,13 +347,14 @@ fixed clock keeps the timestamps reproducible:
    TEST_CASE("speed controller settles") {
        sonde::FileSink file{"traces/speed_controller_settles.blip"};
        sonde::Storage<4096, 1> storage;
-       sonde::Tracer tracer{storage, file, &test_clock};
+       sonde::Queue queue{storage, file, &test_clock};
+       sonde::Tracer tracer{queue, "controller"};
 
        SpeedController controller{tracer};
        for (steps = 0; steps < 500; ++steps) {
            controller.step(1500.0);
        }
-       tracer.commit();
+       queue.commit();
 
        CHECK(controller.speed() == Catch::Approx(1500.0).margin(5.0));
    }

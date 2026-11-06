@@ -1,6 +1,7 @@
-// A sketch of a firmware: the control task traces, the network task sends one UDP
-// datagram per batch, and an ADC interrupt traces with its own tracer, sent over a UART
-// by DMA. The hardware access is declared, not defined, so this only compiles.
+// A sketch of a firmware: the control task traces into its queue, the network task
+// sends one UDP datagram per batch, and an ADC interrupt traces into a queue of its
+// own, sent over a UART by DMA. The hardware access is declared, not defined, so this
+// only compiles.
 
 #include <sonde/sonde.hpp>
 
@@ -37,18 +38,26 @@ void encode(sonde::Encoder& encoder, const Pid& pid) {
 namespace {
 // one UDP datagram per batch, the batch size fits the Ethernet MTU
 sonde::Storage<1400, 4> control_storage;
-sonde::Tracer control_traces{control_storage, &uptime_ns};
+sonde::Queue control_traces{control_storage, &uptime_ns};
+// the parts of the control task, each with a tracer of its own on its queue
+sonde::Tracer motor{control_traces, "motor", "driver"};
+sonde::Tracer pid{motor, "pid", "control"};  // motor/pid
 Pid pid_state{};
 }  // namespace
 
 void control_task() {  // producer
-    control_traces.metadata("motor/speed", "rpm");
-    control_traces.metadata("motor/current", "A");
+    motor.unit("speed", "rpm");  // motor/speed
+    motor.unit("current", "A");
+    motor.info("started");
     for (;;) {
         wait_for_cycle();
-        control_traces.value("motor/speed", read_speed());
-        control_traces.value("motor/current", read_current());
-        control_traces.value("pid", pid_state);
+        const double current = read_current();
+        motor.value("speed", read_speed());
+        motor.value("current", current);
+        pid.value("state", pid_state);  // motor/pid/state
+        if (current > 10.0) {
+            motor.warnf("overcurrent: %d mA", static_cast<int>(current * 1000.0));
+        }
         control_traces.commit();  // one batch per cycle at most
     }
 }
@@ -67,11 +76,11 @@ void network_task() {  // consumer
 
 namespace {
 sonde::Storage<256, 3> adc_storage;
-sonde::Tracer adc_traces{adc_storage, &uptime_ns};
+sonde::Queue adc_traces{adc_storage, &uptime_ns};
 }  // namespace
 
 extern "C" void ADC_IRQHandler() {  // producer
-    adc_traces.value("adc/raw", read_adc());
+    adc_traces.value("adc/raw", read_adc());  // the queue takes full paths as well
 }
 
 void comm_task() {  // consumer

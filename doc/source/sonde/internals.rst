@@ -6,7 +6,7 @@ How sonde is built, for those who change it. How to use it is in
 
 sonde (``sonde/``) is a C++17 library built with CMake: ``include/sonde`` has
 the API (``sonde.hpp``, and ``file_sink.hpp`` for hosted builds), ``src`` the
-tracer, the encoder and the file sinks. It encodes with `tinycbor
+queue, the tracer, the encoder and the file sinks. It encodes with `tinycbor
 <https://github.com/intel/tinycbor>`_. The API is listed in
 :doc:`/reference/sonde-api`; ``sonde/README.md`` has the design decisions.
 
@@ -22,10 +22,10 @@ Goals
 * The output is exactly what the outpost and blip read: messages as a CBOR
   sequence, byte for byte the encoding of the ``proto`` crate.
 
-The tracer and its batches
---------------------------
+The queue and its batches
+-------------------------
 
-A ``Tracer`` encodes messages into the batches of its ``Storage<BatchBytes,
+A ``Queue`` encodes messages into the batches of its ``Storage<BatchBytes,
 Batches>``, slots the user owns (static or on the stack). A batch is a CBOR
 sequence of whole messages, ready to be one UDP datagram or one write.
 
@@ -36,7 +36,7 @@ sequence of whole messages, ready to be one UDP datagram or one write.
          ready (committed), taken (the consumer sends it) and back to free on
          release.
 
-   The batches of a tracer form a single-producer single-consumer queue.
+   The batches of a queue form a single-producer single-consumer queue.
 
 * **Single producer, single consumer.** The producer (the context that traces)
   and the consumer (the context that sends) share two indices,
@@ -61,7 +61,7 @@ Encoding
 
 Each message is encoded by a fresh tinycbor encoder into the free part of the
 open batch, so messages are atomic: if one does not fit, the batch keeps its
-size, the tracer commits it and encodes the message again into the next free
+size, the queue commits it and encodes the message again into the next free
 batch. tinycbor reports how many bytes were missing, so a message larger than a
 whole batch is dropped as ``TooLarge`` without committing. The clock is read
 only once a message has a batch, so tracing into a full queue costs no clock
@@ -76,8 +76,20 @@ decides its CBOR major type -- both as in the ``proto`` crate. Record and array
 sizes are given up front and checked by tinycbor when closing; a mismatch ends
 the message as ``Invalid`` and leaves the batch unchanged.
 
-The constructors are ``constexpr``, so static tracers are constant-initialized
-and ready before any code runs.
+The constructors are ``constexpr``, so static queues and tracers are
+constant-initialized and ready before any code runs.
+
+Tracers
+-------
+
+A ``Tracer`` is a pointer to its queue, one to its parent, its name and its
+component; it owns nothing and holds no state, so any number of them may share
+a queue. Its calls join the full path -- the names of its parents, its own and
+the path of the call, separated by ``/`` -- into a buffer of ``SONDE_PATH_MAX``
+bytes on the stack and call the queue with it, and with its component for log
+records. A tracer without a parent passes the path on as it is when one of the
+two is empty, without copying it. A full path longer than the buffer drops the
+message as ``TooLarge``, counted in ``dropped()`` of the queue.
 
 File output
 -----------
@@ -92,7 +104,8 @@ Tests and CI
 The Catch2 tests compare the encoding of each message and kind of value byte
 for byte with the ``proto`` crate, check the batch rules (whole messages,
 ``Full``, ``TooLarge``, commits, drops), run a producer and a consumer on two
-threads (also under ThreadSanitizer), and check that ``FileSink`` writes the
+threads (also under ThreadSanitizer), check that tracers send what the queue
+sends with their full paths and components, and check that ``FileSink`` writes the
 fixture ``tests/data/recording.blip``, which a Rust test in ``proto`` decodes
 and the outpost reads. CI also builds the library with ``-fno-exceptions
 -fno-rtti`` and for Cortex-M0 and M4 with ``arm-none-eabi-gcc``.

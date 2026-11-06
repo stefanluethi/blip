@@ -26,6 +26,8 @@ in the documentation: [sonde](https://stefanluethi.github.io/blip/docs/sonde/ind
   enabled when the platform has a file system.
 - **API close to `proto`**: one call per `Message` variant, with the same fields in the
   same order.
+- **API close to the outpost**: tracers named like loggers, with the same calls as the
+  tracers of the outpost (`value`, `unit`, `log`, `debug` … `error`).
 - **Batches**: several messages go into one batch as a CBOR sequence (RFC 8742), i.e.
   CBOR items one after another. A batch only ever holds complete messages.
 - **Encoding with [tinycbor](https://github.com/intel/tinycbor)**.
@@ -37,10 +39,11 @@ in the documentation: [sonde](https://stefanluethi.github.io/blip/docs/sonde/ind
 
 | Concept   | Meaning |
 |-----------|---------|
-| `Tracer`  | Encodes messages into batches. One tracer per context that traces. |
+| `Queue`   | Encodes messages into batches, each with its full path. One queue per context that traces. |
+| `Tracer`  | A named part of the code on a queue, as a logger: its traces are below its name, its log records at its name and of its component. Any number per queue. |
 | batch     | A slot of the storage holding complete messages, a CBOR sequence ready to send or write. |
-| `Storage` | The batches of a tracer, provided by the user: `Batches` slots of `BatchBytes` bytes each. |
-| producer  | The context that traces with a tracer: a task, a thread or an ISR. |
+| `Storage` | The batches of a queue, provided by the user: `Batches` slots of `BatchBytes` bytes each. |
+| producer  | The context that traces into a queue: a task, a thread or an ISR. |
 | consumer  | The context that takes the finished batches and sends them. |
 | `Sink`    | Where batches go when producer and consumer are one context, e.g. a file in a unit test. |
 | encodable | A C++ value that maps to `proto::Data`: scalars, strings, arrays, records, user types. |
@@ -49,9 +52,9 @@ in the documentation: [sonde](https://stefanluethi.github.io/blip/docs/sonde/ind
 
 | `proto::Message`      | sonde call |
 |-----------------------|------------|
-| `Value { timestamp, path, value }` | `tracer.value(path, value)` / `tracer.value(timestamp, path, value)` |
-| `ValueMetadata { path, unit }`     | `tracer.metadata(path, unit)` |
-| `Log { timestamp, path, level, component, message }` | `tracer.log(level, component, message)` / `tracer.log(path, level, component, message)` / `tracer.log(timestamp, …)` |
+| `Value { timestamp, path, value }` | `queue.value(path, value)` / `queue.value(timestamp, path, value)`; `tracer.value(…)` with the path below the tracer |
+| `ValueMetadata { path, unit }`     | `queue.unit(path, unit)`, `tracer.unit(…)` |
+| `Log { timestamp, path, level, component, message }` | `queue.log(level, component, message)` / `queue.log(path, level, component, message)` / `queue.log(timestamp, …)`; `tracer.log(level, message)`, `tracer.info(message)`, … at the tracer's name, of its component |
 | `Actions`, `ActionResult`, `Request::Invoke` | later, see [Actions](#later-actions) |
 
 | `proto::Data` | C++ |
@@ -90,12 +93,13 @@ per packet commits after each message.
 
 ## Contexts
 
-Each context that traces has its **own tracer** with its own storage, e.g. one for the
-control task, one for an ISR and one for the communication task. A tracer is never shared
-between producers; sonde has no global tracer, since a global one would be used from
+Each context that traces has its **own queue** with its own storage, e.g. one for the
+control task, one for an ISR and one for the communication task. A queue is never shared
+between producers, and the tracers on a queue are used in its context only; sonde has no
+global queue, since a global one would be used from
 several contexts.
 
-Within a tracer, the storage is a **single-producer single-consumer queue of batches**:
+Within a queue, the storage is a **single-producer single-consumer queue of batches**:
 
 ```
             producer                                  consumer
@@ -127,8 +131,8 @@ Within a tracer, the storage is a **single-producer single-consumer queue of bat
   It can ask with `request_commit()`, and the producer commits at its next message or
   `commit()`. Producers that trace rarely call `commit()` themselves, e.g. at the end of
   their cycle.
-- One consumer may serve several tracers, e.g. a communication task that takes the
-  batches of all tracers in turn.
+- One consumer may serve several queues, e.g. a communication task that takes the
+  batches of all queues in turn.
 
 With a **sink**, producer and consumer are one context: a ready batch goes to the sink
 right away, in the producer's context. That is for desktop apps and unit tests, writing to
@@ -146,7 +150,7 @@ All of it is in namespace `sonde`. Headers:
 
 | Header                  | Contents | Availability |
 |-------------------------|----------|--------------|
-| `sonde/sonde.hpp`       | `Tracer`, `Storage`, `Sink`, the types and the encoding of values | everywhere |
+| `sonde/sonde.hpp`       | `Queue`, `Tracer`, `Storage`, `Sink`, the types and the encoding of values | everywhere |
 | `sonde/file_sink.hpp`   | `FileSink`, `MemorySink` | hosted builds (`SONDE_HOSTED`) |
 
 ### Types
@@ -211,8 +215,8 @@ struct Batch {
 ```cpp
 namespace sonde {
 
-/// The batches of one tracer: Batches slots of BatchBytes bytes, plus their sizes.
-/// Static or on the stack, owned by the user, outlives the tracer.
+/// The batches of one queue: Batches slots of BatchBytes bytes, plus their sizes.
+/// Static or on the stack, owned by the user, outlives the queue.
 template <std::size_t BatchBytes, std::size_t Batches = 2>
 class Storage;
 
@@ -224,7 +228,7 @@ class Storage;
 ```cpp
 namespace sonde {
 
-/// Takes the batches of a tracer whose producer and consumer are one context.
+/// Takes the batches of a queue whose producer and consumer are one context.
 class Sink {
 public:
     /// Takes a batch of complete messages, a CBOR sequence. Returns false on failure.
@@ -237,25 +241,25 @@ protected:
 }  // namespace sonde
 ```
 
-### Tracer
+### Queue
 
 ```cpp
 namespace sonde {
 
-class Tracer {
+class Queue {
 public:
     /// Producer and consumer: the consumer takes the batches.
     template <std::size_t BatchBytes, std::size_t Batches>
-    constexpr explicit Tracer(Storage<BatchBytes, Batches>& storage,
+    constexpr explicit Queue(Storage<BatchBytes, Batches>& storage,
                               Clock clock = default_clock());
 
     /// One context: each ready batch goes to the sink right away.
     template <std::size_t BatchBytes, std::size_t Batches>
-    constexpr Tracer(Storage<BatchBytes, Batches>& storage, Sink& sink,
+    constexpr Queue(Storage<BatchBytes, Batches>& storage, Sink& sink,
                      Clock clock = default_clock());
 
-    Tracer(const Tracer&) = delete;
-    Tracer& operator=(const Tracer&) = delete;
+    Queue(const Queue&) = delete;
+    Queue& operator=(const Queue&) = delete;
 
     // --- Producer: only from the context that traces --------------------------------
 
@@ -265,8 +269,9 @@ public:
     template <typename T>
     Status value(Timestamp timestamp, std::string_view path, const T& value);
 
-    // proto: Message::ValueMetadata
-    Status metadata(std::string_view path, std::string_view unit);
+    // proto: Message::ValueMetadata, the unit of the trace `path`; for a field of a
+    // record, the path joined with ".", e.g. "imu.acc"
+    Status unit(std::string_view path, std::string_view unit);
 
     // proto: Message::Log, at `path` like a value, e.g. "motor", or without one of the
     // target as a whole; an empty path or component is left out on the wire
@@ -305,11 +310,58 @@ public:
 }  // namespace sonde
 ```
 
+### Tracer
+
+```cpp
+namespace sonde {
+
+/// A named part of the code that traces, on the queue of its context. Any number of them
+/// may share a queue; a child adds its name below the one of its parent, which outlives
+/// it. The full path is joined on the stack, in SONDE_PATH_MAX bytes; a message with a
+/// longer one is dropped as Status::TooLarge.
+class Tracer {
+public:
+    /// A tracer named `name`, e.g. "motor"; without a name, of the target as a whole.
+    constexpr explicit Tracer(Queue& queue, std::string_view name = {},
+                              std::string_view component = {});
+    /// A tracer below `parent`, e.g. "motor/left", with the parent's component unless given.
+    constexpr Tracer(const Tracer& parent, std::string_view name);
+    constexpr Tracer(const Tracer& parent, std::string_view name, std::string_view component);
+
+    // proto: Message::Value of the trace `path` below the tracer
+    template <typename T>
+    Status value(std::string_view path, const T& value);
+    template <typename T>
+    Status value(Timestamp timestamp, std::string_view path, const T& value);
+
+    // proto: Message::ValueMetadata
+    Status unit(std::string_view path, std::string_view unit);
+
+    // proto: Message::Log at the name of the tracer, of its component
+    Status log(Level level, std::string_view message);
+    Status log(Timestamp timestamp, Level level, std::string_view message);
+    Status logf(Level level, const char* format, ...);
+    Status debug(std::string_view message);  // also info, warn, error
+    Status debugf(const char* format, ...);  // also infof, warnf, errorf
+
+    constexpr Queue& queue() const;
+    constexpr std::string_view name() const;
+    constexpr std::string_view component() const;
+    constexpr const Tracer* parent() const;
+};
+
+}  // namespace sonde
+```
+
+The queue is the API for messages that carry their own path and component, e.g. what a
+gateway passes on for other nodes; a tracer is the API for code that traces itself, as
+the tracers of the outpost are for a Python program.
+
 `Encoder`, `Record` and `Array` refer to the item being encoded, so they cannot be
 copied; a copy would outlive it.
 
 Messages are atomic: each message is encoded by a fresh tinycbor encoder into the free part
-of the open batch. If it does not fit, the batch keeps its size; the tracer commits it and
+of the open batch. If it does not fit, the batch keeps its size; the queue commits it and
 encodes the message into the next free batch, or drops it if there is none. tinycbor counts
 the bytes a message needs beyond the free part, so a message larger than a batch is dropped
 as `TooLarge` without committing the open batch. A message that moves to the next batch is
@@ -321,7 +373,7 @@ The clock is read once a message has a batch, so tracing into a full queue costs
 reading of the clock. Without a clock (`nullptr`), messages traced without a timestamp get
 the timestamp 0.
 
-The constructors are `constexpr`, so a static tracer is constant-initialized: it is ready
+The constructors are `constexpr`, so a static queue or tracer is constant-initialized: it is ready
 before any code runs, e.g. an ISR that fires before the static constructors, or the
 constructor of a static object in another file.
 
@@ -409,7 +461,7 @@ public:
 
 ## Timestamps
 
-A timestamp is nanoseconds in the time domain of the tracer's clock: the **uptime** of a
+A timestamp is nanoseconds in the time domain of the queue's clock: the **uptime** of a
 target, or **UTC** since the Unix epoch, e.g. on a desktop or a target with a synchronized
 clock. sonde does not convert between them.
 
@@ -420,37 +472,41 @@ with correct distances between them.
 
 ## Usage
 
-### Values, metadata and logs
+### Values, units and logs
 
 ```cpp
 #include <sonde/sonde.hpp>
 
 static sonde::Storage<512, 2> storage;
-static sonde::Tracer tracer{storage, &uptime_ns};
+static sonde::Queue queue{storage, &uptime_ns};
+static sonde::Tracer motor{queue, "motor", "driver"};
+static sonde::Tracer arm{queue, "robot/arm", "driver"};
 
-tracer.metadata("motor/speed", "rpm");
-tracer.value("motor/speed", 1500u);
-tracer.value("cpu_load", 12.5f);
-tracer.value("sensor/temperature", sonde::null);  // failed measurement, a gap in the plot
-tracer.value(sonde::Timestamp{t_ns}, "adc/raw", raw);
-tracer.log(sonde::Level::Info, "motor", "started");
-tracer.logf(sonde::Level::Warn, "motor", "overcurrent: %d mA", current_ma);
-tracer.log("robot/arm", sonde::Level::Info, "driver", "homed");  // logs of a path
+motor.unit("speed", "rpm");
+motor.value("speed", 1500u);                       // motor/speed
+motor.value("temperature", sonde::null);           // failed measurement, a gap in the plot
+motor.value(sonde::Timestamp{t_ns}, "current", current);
+motor.info("started");                             // a log record at motor, of driver
+motor.warnf("overcurrent: %d mA", current_ma);
+arm.info("homed");                                 // at robot/arm
+
+queue.value("cpu_load", 12.5f);                    // the queue takes full paths
+queue.log("node3/motor", sonde::Level::Warn, "driver", "hot");  // and log records as they are
 ```
 
 ### Arrays, records and user types
 
 ```cpp
 float acc[3] = {0.5f, -1.0f, 9.81f};
-tracer.value("imu/acc", acc);  // [0.5, -1.0, 9.81]
+imu.value("acc", acc);  // [0.5, -1.0, 9.81]
 
-tracer.value("imu", sonde::record(2, [&](sonde::Record& r) {
+imu.value("state", sonde::record(2, [&](sonde::Record& r) {
     r.field("acc", acc);
     r.field("valid", true);
 }));  // {"acc": [0.5, -1.0, 9.81], "valid": true}
 
 std::uint16_t samples[64];
-tracer.value("adc/scaled", sonde::array(64, [&](sonde::Array& a) {
+adc.value("scaled", sonde::array(64, [&](sonde::Array& a) {
     for (auto s : samples) a.add(s * 0.1f);
 }));
 ```
@@ -470,7 +526,7 @@ void encode(sonde::Encoder& encoder, const Motor& motor) {
     });
 }
 
-tracer.value("motor", motor);  // {"speed_rpm": 1500, "enabled": true, "state": "running"}
+drive.value("motor", motor);  // {"speed_rpm": 1500, "enabled": true, "state": "running"}
 ```
 
 ### Microcontroller: trace in the control task, send in the network task
@@ -479,14 +535,16 @@ One UDP datagram per batch, the batch size fits the Ethernet MTU:
 
 ```cpp
 static sonde::Storage<1400, 4> control_storage;
-static sonde::Tracer control_traces{control_storage, &uptime_ns};
+static sonde::Queue control_traces{control_storage, &uptime_ns};
+static sonde::Tracer motor{control_traces, "motor"};
+static sonde::Tracer pid{motor, "pid"};  // motor/pid
 
 void control_task() {  // producer
     for (;;) {
         wait_for_cycle();
-        control_traces.value("motor/speed", read_speed());
-        control_traces.value("motor/current", read_current());
-        control_traces.value("pid", pid_state);
+        motor.value("speed", read_speed());
+        motor.value("current", read_current());
+        pid.value("state", pid_state);
         control_traces.commit();  // one batch per cycle at most
     }
 }
@@ -504,11 +562,11 @@ void network_task() {  // consumer
 
 ### Microcontroller: trace in an ISR, send by DMA over UART
 
-The ISR has its own tracer. The DMA-complete interrupt releases the batch:
+The ISR has its own queue. The DMA-complete interrupt releases the batch:
 
 ```cpp
 static sonde::Storage<256, 3> adc_storage;
-static sonde::Tracer adc_traces{adc_storage, &uptime_ns};
+static sonde::Queue adc_traces{adc_storage, &uptime_ns};
 
 void ADC_IRQHandler() {  // producer
     adc_traces.value("adc/raw", ADC1->DR);
@@ -538,11 +596,12 @@ void DMA_TxComplete_IRQHandler() {
 
 sonde::FileSink file{"run.blip"};
 sonde::Storage<4096, 1> storage;
-sonde::Tracer tracer{storage, file};  // UTC from the system clock
+sonde::Queue queue{storage, file};  // UTC from the system clock
+sonde::Tracer solver{queue, "solver"};
 
-tracer.value("solver/residual", residual);
+solver.value("residual", residual);  // solver/residual
 // ...
-tracer.commit();  // before the file closes; then open run.blip in blip
+queue.commit();  // before the file closes; then open run.blip in blip
 ```
 
 ### Unit test with Catch2
@@ -562,13 +621,14 @@ std::uint64_t test_clock() { return steps * 1'000'000; }  // 1 ms per step, an "
 TEST_CASE("speed controller settles") {
     sonde::FileSink file{"traces/speed_controller_settles.blip"};
     sonde::Storage<4096, 1> storage;
-    sonde::Tracer tracer{storage, file, &test_clock};
+    sonde::Queue queue{storage, file, &test_clock};
+    sonde::Tracer tracer{queue, "controller"};
 
     SpeedController controller{tracer};
     for (steps = 0; steps < 500; ++steps) {
         controller.step(1500.0);
     }
-    tracer.commit();
+    queue.commit();
 
     CHECK(controller.speed() == Catch::Approx(1500.0).margin(5.0));
 }
@@ -580,11 +640,12 @@ TEST_CASE("speed controller settles") {
 TEST_CASE("controller traces its state each step") {
     sonde::MemorySink memory;
     sonde::Storage<512, 1> storage;
-    sonde::Tracer tracer{storage, memory, &test_clock};
+    sonde::Queue queue{storage, memory, &test_clock};
+    sonde::Tracer tracer{queue, "controller"};
 
     SpeedController controller{tracer};
     controller.step(1500.0);
-    tracer.commit();
+    queue.commit();
 
     CHECK(count_values(memory.bytes(), "controller/error") == 1);  // a test helper
 }
@@ -597,7 +658,7 @@ sonde/
   CMakeLists.txt
   cmake/               toolchain file for arm-none-eabi-gcc
   include/sonde/       sonde.hpp, file_sink.hpp
-  src/                 tracer.cpp, encoder.cpp, file_sink.cpp
+  src/                 queue.cpp, tracer.cpp, encoder.cpp, file_sink.cpp
   tests/               Catch2 tests, data/recording.blip
   examples/            desktop and a bare-metal sketch
 ```
@@ -625,6 +686,7 @@ cmake --build build-m0
 | `SONDE_BUILD_EXAMPLES` | `ON` if top-level project | build the examples |
 | `SONDE_WERROR`         | `OFF`   | treat the warnings of sonde as errors |
 | `SONDE_LOGF_MAX`       | `128`   | bytes of a `logf` message |
+| `SONDE_PATH_MAX`       | `96`    | bytes of the full path of a message of a `Tracer` |
 
 tinycbor is pinned to the release v7.0 and built with its own CMake build, only the
 library: without its tools, examples, tests and conversion to JSON, and with
@@ -646,6 +708,8 @@ target_link_libraries(firmware PRIVATE sonde::sonde)
 - Batches: messages stay whole when a batch is full, the next batch opens, `Full` when none
   is free, `TooLarge`, `commit()`, `request_commit()`, `dropped()`.
 - Wrong field and element counts give `Invalid` and leave the batch unchanged.
+- Tracers send what the queue sends with the full path and their component, also as
+  children of other tracers; a full path longer than `SONDE_PATH_MAX` is `TooLarge`.
 - Producer and consumer on two threads for a while (also under ThreadSanitizer): every
   batch the consumer takes decodes, and the messages taken plus `dropped()` add up to
   the messages traced.
@@ -675,24 +739,28 @@ sonde::Action actions[] = {
     {"motor/speed", "Speed setpoint", {sonde::Param::float_("rpm", 0, 3000)}, "motor/speed"},
     {"reboot", "Restart the target", {}, nullptr, /*confirm=*/true},
 };
-tracer.announce(actions);  // proto: Message::Actions
+queue.announce(actions);  // proto: Message::Actions
 
 // a Request from the outpost, decoded with tinycbor's parser
 sonde::Invocation invocation;
 if (sonde::decode_request(rx, rx_size, invocation)) {
     auto result = dispatch(invocation);   // the firmware's handler
-    tracer.action_result(invocation.id, result);  // proto: Message::ActionResult
+    queue.action_result(invocation.id, result);  // proto: Message::ActionResult
 }
 ```
 
 ## Decisions
 
-1. **No global tracer, no macros.** A global tracer would be shared by several contexts;
-   each context gets its own tracer instance instead.
+1. **No global queue, no macros.** A global queue would be shared by several contexts;
+   each context gets its own queue instance instead.
 2. **Timestamps are uptime or UTC**, as the clock gives them; `proto` is updated later to
    tell them apart.
 3. **Field names on the wire stay** (about 25 bytes per `Value`); a compact encoding would
    be a protocol change of all three components.
-4. **Contexts are managed by the user** with tracer instances; a tracer is a lock-free
+4. **Contexts are managed by the user** with queue instances; a queue is a lock-free
    single-producer single-consumer queue of batches.
 5. **Recordings are uncompressed.**
+6. **Tracers name the parts of the code.** A `Tracer` holds a name and a component on a
+   queue, as a logger does, and has the calls of the tracers of the outpost; the queue
+   keeps the calls with full paths for messages forwarded from elsewhere. Joining the
+   path on the stack costs a copy of at most `SONDE_PATH_MAX` bytes per message.

@@ -15,13 +15,14 @@ int main(int argc, char** argv) {
         return 1;
     }
     sonde::Storage<4096, 1> storage;
-    sonde::Tracer tracer{storage, file};  // UTC from the system clock
+    sonde::Queue queue{storage, file};  // UTC from the system clock
+    sonde::Tracer oscillator{queue, "oscillator", "model"};
 
     // simulated time, 1 ms per step from now on
     const std::uint64_t start = sonde::default_clock()();
-    tracer.metadata("oscillator/position", "m");
-    tracer.metadata("oscillator/velocity", "m/s");
-    tracer.log(sonde::Timestamp{start}, sonde::Level::Info, "oscillator", "started");
+    oscillator.unit("position", "m");
+    oscillator.unit("velocity", "m/s");
+    oscillator.log(sonde::Timestamp{start}, sonde::Level::Info, "started");
 
     double position = 1.0;
     double velocity = 0.0;
@@ -31,20 +32,20 @@ int main(int argc, char** argv) {
         position += velocity * dt;
 
         const sonde::Timestamp now{start + static_cast<std::uint64_t>(step) * 1'000'000};
-        tracer.value(now, "oscillator/position", position);
-        tracer.value(now, "oscillator/velocity", velocity);
-        tracer.value(now, "oscillator/state", sonde::record(2, [&](sonde::Record& record) {
-                         record.field("energy", 20.0 * position * position +
-                                                    0.5 * velocity * velocity);
-                         record.field("moving_up", velocity > 0);
-                     }));
+        oscillator.value(now, "position", position);  // oscillator/position
+        oscillator.value(now, "velocity", velocity);
+        oscillator.value(now, "state", sonde::record(2, [&](sonde::Record& record) {
+                             record.field("energy", 20.0 * position * position +
+                                                        0.5 * velocity * velocity);
+                             record.field("moving_up", velocity > 0);
+                         }));
         if (step % 1000 == 0) {
             char message[64];
             std::snprintf(message, sizeof message, "step %d: x = %.3f", step, position);
-            tracer.log(now, sonde::Level::Debug, "oscillator", message);
+            oscillator.log(now, sonde::Level::Debug, message);
         }
     }
-    tracer.commit();  // before the file closes
-    std::printf("wrote %s, %u messages dropped\n", path, static_cast<unsigned>(tracer.dropped()));
+    queue.commit();  // before the file closes
+    std::printf("wrote %s, %u messages dropped\n", path, static_cast<unsigned>(queue.dropped()));
     return 0;
 }

@@ -1,4 +1,4 @@
-// The batches of a tracer: whole messages, the queue between producer and consumer and
+// The batches of a queue: whole messages, the queue between producer and consumer and
 // the sinks.
 
 #include "cbor.hpp"
@@ -42,179 +42,179 @@ struct FailingSink final : sonde::Sink {
 TEST_CASE("a message takes the expected bytes") {
     sonde::MemorySink sink;
     sonde::Storage<64, 1> storage;
-    sonde::Tracer tracer{storage, sink, nullptr};
-    tracer.value("a", 1u);
-    tracer.commit();
+    sonde::Queue queue{storage, sink, nullptr};
+    queue.value("a", 1u);
+    queue.commit();
     CHECK(sink.bytes().size() == message_bytes);
 }
 
 TEST_CASE("batches are ready on commit") {
     sonde::Storage<256, 2> storage;
-    sonde::Tracer tracer{storage, nullptr};
+    sonde::Queue queue{storage, nullptr};
 
-    CHECK(!tracer.take());
-    CHECK(tracer.commit() == Status::Ok);  // nothing to commit
-    CHECK(!tracer.take());
+    CHECK(!queue.take());
+    CHECK(queue.commit() == Status::Ok);  // nothing to commit
+    CHECK(!queue.take());
 
-    tracer.value("a", 1u);
-    tracer.value("a", 2u);
-    CHECK(!tracer.take());
-    CHECK(tracer.commit() == Status::Ok);
+    queue.value("a", 1u);
+    queue.value("a", 2u);
+    CHECK(!queue.take());
+    CHECK(queue.commit() == Status::Ok);
 
-    const sonde::Batch batch = tracer.take();
+    const sonde::Batch batch = queue.take();
     CHECK(batch.size == 2 * message_bytes);
     CHECK(values(batch) == Values{1, 2});
-    CHECK(tracer.take().data == batch.data);  // the same until released
-    tracer.release();
-    CHECK(!tracer.take());
-    tracer.release();  // nothing taken, nothing to release
-    CHECK(!tracer.take());
+    CHECK(queue.take().data == batch.data);  // the same until released
+    queue.release();
+    CHECK(!queue.take());
+    queue.release();  // nothing taken, nothing to release
+    CHECK(!queue.take());
 }
 
 TEST_CASE("a message that does not fit goes to the next batch") {
     sonde::Storage<2 * message_bytes + 10, 2> storage;
-    sonde::Tracer tracer{storage, nullptr};
+    sonde::Queue queue{storage, nullptr};
 
-    CHECK(tracer.value("a", 1u) == Status::Ok);
-    CHECK(tracer.value("a", 2u) == Status::Ok);
-    CHECK(tracer.value("a", 3u) == Status::Ok);  // commits the first batch
-    CHECK(tracer.value("a", 4u) == Status::Ok);
-    CHECK(tracer.value("a", 5u) == Status::Full);  // commits the second, none is free
-    CHECK(tracer.value("a", 6u) == Status::Full);
-    CHECK(tracer.commit() == Status::Ok);
-    CHECK(tracer.dropped() == 2);
+    CHECK(queue.value("a", 1u) == Status::Ok);
+    CHECK(queue.value("a", 2u) == Status::Ok);
+    CHECK(queue.value("a", 3u) == Status::Ok);  // commits the first batch
+    CHECK(queue.value("a", 4u) == Status::Ok);
+    CHECK(queue.value("a", 5u) == Status::Full);  // commits the second, none is free
+    CHECK(queue.value("a", 6u) == Status::Full);
+    CHECK(queue.commit() == Status::Ok);
+    CHECK(queue.dropped() == 2);
 
-    CHECK(values(tracer.take()) == Values{1, 2});
-    tracer.release();
-    CHECK(tracer.value("a", 7u) == Status::Ok);  // into the released batch
-    CHECK(values(tracer.take()) == Values{3, 4});
-    tracer.release();
-    CHECK(!tracer.take());
-    CHECK(tracer.commit() == Status::Ok);
-    CHECK(values(tracer.take()) == Values{7});
-    tracer.release();
-    CHECK(tracer.dropped() == 2);
+    CHECK(values(queue.take()) == Values{1, 2});
+    queue.release();
+    CHECK(queue.value("a", 7u) == Status::Ok);  // into the released batch
+    CHECK(values(queue.take()) == Values{3, 4});
+    queue.release();
+    CHECK(!queue.take());
+    CHECK(queue.commit() == Status::Ok);
+    CHECK(values(queue.take()) == Values{7});
+    queue.release();
+    CHECK(queue.dropped() == 2);
 }
 
 TEST_CASE("a message larger than a batch is dropped") {
     sonde::Storage<message_bytes + 4, 2> storage;
-    sonde::Tracer tracer{storage, nullptr};
+    sonde::Queue queue{storage, nullptr};
 
-    CHECK(tracer.value("a", 1u) == Status::Ok);
-    CHECK(tracer.value("a", std::string(64, 'x')) == Status::TooLarge);
-    CHECK(tracer.dropped() == 1);
-    CHECK(!tracer.take());  // the open batch is kept
-    CHECK(tracer.commit() == Status::Ok);
-    CHECK(values(tracer.take()) == Values{1});
+    CHECK(queue.value("a", 1u) == Status::Ok);
+    CHECK(queue.value("a", std::string(64, 'x')) == Status::TooLarge);
+    CHECK(queue.dropped() == 1);
+    CHECK(!queue.take());  // the open batch is kept
+    CHECK(queue.commit() == Status::Ok);
+    CHECK(values(queue.take()) == Values{1});
 }
 
 TEST_CASE("a message as large as a batch fits") {
     sonde::Storage<message_bytes, 2> storage;
-    sonde::Tracer tracer{storage, nullptr};
-    CHECK(tracer.value("a", 1u) == Status::Ok);
-    CHECK(tracer.value("a", 2u) == Status::Ok);
-    CHECK(tracer.value("a", 3u) == Status::Full);
-    CHECK(values(tracer.take()) == Values{1});
+    sonde::Queue queue{storage, nullptr};
+    CHECK(queue.value("a", 1u) == Status::Ok);
+    CHECK(queue.value("a", 2u) == Status::Ok);
+    CHECK(queue.value("a", 3u) == Status::Full);
+    CHECK(values(queue.take()) == Values{1});
 }
 
 TEST_CASE("the consumer requests a commit") {
     sonde::Storage<256, 2> storage;
-    sonde::Tracer tracer{storage, nullptr};
+    sonde::Queue queue{storage, nullptr};
 
-    tracer.value("a", 1u);
-    tracer.request_commit();
-    CHECK(!tracer.take());  // the producer commits at its next message
-    tracer.value("a", 2u);
-    CHECK(values(tracer.take()) == Values{1, 2});
-    tracer.release();
+    queue.value("a", 1u);
+    queue.request_commit();
+    CHECK(!queue.take());  // the producer commits at its next message
+    queue.value("a", 2u);
+    CHECK(values(queue.take()) == Values{1, 2});
+    queue.release();
 
-    tracer.value("a", 3u);  // the request is done
-    CHECK(!tracer.take());
+    queue.value("a", 3u);  // the request is done
+    CHECK(!queue.take());
 
-    tracer.request_commit();
-    CHECK(tracer.commit() == Status::Ok);  // also does the request
-    tracer.value("a", 4u);
-    CHECK(values(tracer.take()) == Values{3});
-    tracer.release();
-    CHECK(!tracer.take());
+    queue.request_commit();
+    CHECK(queue.commit() == Status::Ok);  // also does the request
+    queue.value("a", 4u);
+    CHECK(values(queue.take()) == Values{3});
+    queue.release();
+    CHECK(!queue.take());
 }
 
 TEST_CASE("the indices wrap around") {
     sonde::Storage<256, 3> storage;
-    sonde::Tracer tracer{storage, nullptr};
+    sonde::Queue queue{storage, nullptr};
     std::uint64_t next = 0;
     for (int round = 0; round < 100; ++round) {
         // a varying number of batches in flight
         const int batches = round % 3 + 1;
         for (int i = 0; i < batches; ++i) {
-            tracer.value("a", next % 20);
-            tracer.value("a", (next + 1) % 20);
-            tracer.commit();
+            queue.value("a", next % 20);
+            queue.value("a", (next + 1) % 20);
+            queue.commit();
             next += 2;
         }
-        CHECK(tracer.value("a", 0u) == (batches == 3 ? Status::Full : Status::Ok));
+        CHECK(queue.value("a", 0u) == (batches == 3 ? Status::Full : Status::Ok));
         if (batches < 3) {
-            tracer.commit();
+            queue.commit();
             ++next;
         }
         std::uint64_t expected = next - static_cast<std::uint64_t>(batches) * 2 -
                                  (batches < 3 ? 1 : 0);
         for (int i = 0; i < batches; ++i) {
-            CHECK(values(tracer.take()) == Values{expected % 20, (expected + 1) % 20});
-            tracer.release();
+            CHECK(values(queue.take()) == Values{expected % 20, (expected + 1) % 20});
+            queue.release();
             expected += 2;
         }
         if (batches < 3) {
-            CHECK(values(tracer.take()) == Values{0});
-            tracer.release();
+            CHECK(values(queue.take()) == Values{0});
+            queue.release();
         }
-        CHECK(!tracer.take());
+        CHECK(!queue.take());
     }
 }
 
 TEST_CASE("a sink takes the batches") {
     sonde::MemorySink sink;
     sonde::Storage<2 * message_bytes + 10, 1> storage;
-    sonde::Tracer tracer{storage, sink, nullptr};
+    sonde::Queue queue{storage, sink, nullptr};
 
-    tracer.value("a", 1u);
-    tracer.value("a", 2u);
+    queue.value("a", 1u);
+    queue.value("a", 2u);
     CHECK(sink.bytes().empty());
-    CHECK(tracer.value("a", 3u) == Status::Ok);  // writes the first batch
+    CHECK(queue.value("a", 3u) == Status::Ok);  // writes the first batch
     CHECK(sink.bytes().size() == 2 * message_bytes);
-    CHECK(tracer.commit() == Status::Ok);
+    CHECK(queue.commit() == Status::Ok);
     CHECK(sink.bytes().size() == 3 * message_bytes);
-    CHECK(!tracer.take());  // nothing for a consumer
+    CHECK(!queue.take());  // nothing for a consumer
 
     const auto items = test::items(sink.bytes());
     REQUIRE(items);
     CHECK(items->size() == 3);
 
-    tracer.value("a", 4u);
-    tracer.request_commit();
-    tracer.value("a", 5u);
+    queue.value("a", 4u);
+    queue.request_commit();
+    queue.value("a", 5u);
     CHECK(sink.bytes().size() == 5 * message_bytes);
 }
 
 TEST_CASE("the messages of a batch the sink fails to take are dropped") {
     FailingSink sink;
     sonde::Storage<2 * message_bytes + 10, 1> storage;
-    sonde::Tracer tracer{storage, sink, nullptr};
+    sonde::Queue queue{storage, sink, nullptr};
 
-    tracer.value("a", 1u);
-    tracer.value("a", 2u);
-    CHECK(tracer.value("a", 3u) == Status::SinkError);
-    CHECK(tracer.dropped() == 2);
-    CHECK(tracer.commit() == Status::SinkError);
-    CHECK(tracer.dropped() == 3);
-    CHECK(tracer.commit() == Status::Ok);
+    queue.value("a", 1u);
+    queue.value("a", 2u);
+    CHECK(queue.value("a", 3u) == Status::SinkError);
+    CHECK(queue.dropped() == 2);
+    CHECK(queue.commit() == Status::SinkError);
+    CHECK(queue.dropped() == 3);
+    CHECK(queue.commit() == Status::Ok);
 }
 
-// A static tracer is constant-initialized: its constructor works in a constant expression.
+// A static queue is constant-initialized: its constructor works in a constant expression.
 namespace {
 sonde::Storage<64, 2> constant_storage;
-[[maybe_unused]] constexpr sonde::Tracer constant_tracer{constant_storage, nullptr};
-[[maybe_unused]] constexpr sonde::Tracer constant_tracer_with_default_clock{constant_storage};
+[[maybe_unused]] constexpr sonde::Queue constant_tracer{constant_storage, nullptr};
+[[maybe_unused]] constexpr sonde::Queue constant_tracer_with_default_clock{constant_storage};
 }  // namespace
 
 namespace changing {
@@ -242,29 +242,29 @@ void encode(sonde::Encoder& encoder, const Samples& samples) {
 
 TEST_CASE("a message that encodes differently in the next batch is checked again") {
     sonde::Storage<2 * message_bytes + 10, 2> storage;
-    sonde::Tracer tracer{storage, nullptr};
+    sonde::Queue queue{storage, nullptr};
 
     SECTION("too large the second time") {
         changing::encodings = 0;
-        tracer.value("a", 1u);
+        queue.value("a", 1u);
         // 53 bytes, which do not fit after the first message, then 234 bytes
-        CHECK(tracer.value("a", changing::Samples{20, 200}) == Status::TooLarge);
-        CHECK(tracer.dropped() == 1);
+        CHECK(queue.value("a", changing::Samples{20, 200}) == Status::TooLarge);
+        CHECK(queue.dropped() == 1);
     }
     SECTION("invalid the second time") {
         changing::encodings = 0;
-        tracer.value("a", 1u);
-        CHECK(tracer.value("a", changing::Samples{20, -2}) == Status::Invalid);
-        CHECK(tracer.dropped() == 0);
+        queue.value("a", 1u);
+        CHECK(queue.value("a", changing::Samples{20, -2}) == Status::Invalid);
+        CHECK(queue.dropped() == 0);
     }
 
-    CHECK(values(tracer.take()) == Values{1});
-    tracer.release();
-    CHECK(tracer.commit() == Status::Ok);  // the open batch is empty
-    CHECK(!tracer.take());
-    CHECK(tracer.value("a", 2u) == Status::Ok);
-    CHECK(tracer.commit() == Status::Ok);
-    CHECK(values(tracer.take()) == Values{2});
+    CHECK(values(queue.take()) == Values{1});
+    queue.release();
+    CHECK(queue.commit() == Status::Ok);  // the open batch is empty
+    CHECK(!queue.take());
+    CHECK(queue.value("a", 2u) == Status::Ok);
+    CHECK(queue.commit() == Status::Ok);
+    CHECK(values(queue.take()) == Values{2});
 }
 
 namespace {
@@ -277,14 +277,14 @@ std::uint64_t counting_clock() {
 
 TEST_CASE("the clock is not read for a message without a batch") {
     sonde::Storage<message_bytes, 1> storage;
-    sonde::Tracer tracer{storage, &counting_clock};
+    sonde::Queue queue{storage, &counting_clock};
     clock_reads = 0;
-    CHECK(tracer.value("a", 1u) == Status::Ok);
-    CHECK(tracer.value("a", 2u) == Status::Full);  // commits the first batch
+    CHECK(queue.value("a", 1u) == Status::Ok);
+    CHECK(queue.value("a", 2u) == Status::Full);  // commits the first batch
     CHECK(clock_reads == 2);
-    CHECK(tracer.value("a", 3u) == Status::Full);
-    CHECK(tracer.log(sonde::Level::Info, "", "x") == Status::Full);
+    CHECK(queue.value("a", 3u) == Status::Full);
+    CHECK(queue.log(sonde::Level::Info, "", "x") == Status::Full);
     CHECK(clock_reads == 2);
-    CHECK(tracer.value(sonde::Timestamp{0}, "a", 4u) == Status::Full);
+    CHECK(queue.value(sonde::Timestamp{0}, "a", 4u) == Status::Full);
     CHECK(clock_reads == 2);
 }

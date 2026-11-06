@@ -15,13 +15,16 @@ Summary
 
    * - Name
      - Purpose
+   * - ``Queue``
+     - encodes values and log records into batches, each with its full path;
+       one per context that traces
    * - ``Tracer``
-     - encodes values and log records into batches; one per context that
-       traces
+     - a named part of the code on a queue: paths below its name, log records
+       at its name and of its component
    * - ``Storage<BatchBytes, Batches = 2>``
-     - the batches of one tracer, static or on the stack, owned by you
+     - the batches of one queue, static or on the stack, owned by you
    * - ``Sink``
-     - takes the batches of a tracer whose producer and consumer are one
+     - takes the batches of a queue whose producer and consumer are one
        context: implement ``write(data, size)``
    * - ``FileSink``, ``MemorySink``
      - sinks of hosted builds (``sonde/file_sink.hpp``): a recording file, or
@@ -37,7 +40,7 @@ Summary
    * - ``Timestamp``, ``Clock``
      - nanoseconds, and the function that returns the current time
    * - ``system_clock_ns``, ``default_clock``
-     - UTC from the system clock (hosted builds), the clock a tracer uses by
+     - UTC from the system clock (hosted builds), the clock a queue uses by
        default
    * - ``record(n, fill)``, ``array(n, fill)``, ``Span<T>``, ``null``
      - values built by a fill function, a view of elements, a null value;
@@ -46,6 +49,16 @@ Summary
      - passed to fill functions and to ``encode`` functions of your own types
 
 The CMake options are listed in :doc:`/sonde/index`.
+
+Queue
+-----
+
+From ``sonde/sonde.hpp``:
+
+.. literalinclude:: /../../sonde/include/sonde/sonde.hpp
+   :language: cpp
+   :start-after: // --- Queue
+   :end-before: private:
 
 Tracer
 ------
@@ -81,5 +94,5 @@ The interface of a sink of your own, from ``sonde/sonde.hpp``:
 
 .. literalinclude:: /../../sonde/include/sonde/sonde.hpp
    :language: cpp
-   :start-at: /// Takes the batches of a tracer whose producer and consumer are one context.
+   :start-at: /// Takes the batches of a queue whose producer and consumer are one context.
    :end-before: // --- Tracer

@@ -26,17 +26,17 @@ template <typename F>
 Bytes traced(F&& trace) {
     sonde::MemorySink sink;
     sonde::Storage<1024, 1> storage;
-    sonde::Tracer tracer{storage, sink, nullptr};
-    trace(tracer);
-    REQUIRE(tracer.commit() == Status::Ok);
+    sonde::Queue queue{storage, sink, nullptr};
+    trace(queue);
+    REQUIRE(queue.commit() == Status::Ok);
     return sink.bytes();
 }
 
 /// The bytes of `value` as the Data of a Value message.
 template <typename T>
 Bytes encoded(const T& value) {
-    const Bytes message = traced([&](sonde::Tracer& tracer) {
-        REQUIRE(tracer.value("a", value) == Status::Ok);
+    const Bytes message = traced([&](sonde::Queue& queue) {
+        REQUIRE(queue.value("a", value) == Status::Ok);
     });
     const Bytes prefix = test::value_prefix();
     REQUIRE(message.size() > prefix.size());
@@ -178,23 +178,23 @@ TEST_CASE("user types encode with an encode function next to them") {
 
 TEST_CASE("values are the messages of proto") {
     // the fixtures of proto/src/data.rs, of the outpost
-    const auto motor = traced([](sonde::Tracer& tracer) {
-        tracer.value(sonde::Timestamp{1}, "motor", motors::Motor{1500, true, "running"});
+    const auto motor = traced([](sonde::Queue& queue) {
+        queue.value(sonde::Timestamp{1}, "motor", motors::Motor{1500, true, "running"});
     });
     CHECK(motor == hex("a16556616c7565a36974696d657374616d70016470617468656d6f746f726576616c7565a3"
                        "6973706565645f72706d1905dc67656e61626c6564f56573746174656772756e6e696e67"));
 
-    const auto temperature = traced([](sonde::Tracer& tracer) {
-        tracer.value(sonde::Timestamp{3}, "sensor/temperature", sonde::null);
+    const auto temperature = traced([](sonde::Queue& queue) {
+        queue.value(sonde::Timestamp{3}, "sensor/temperature", sonde::null);
     });
     CHECK(temperature ==
           hex("a16556616c7565a36974696d657374616d700364706174687273656e736f722f74656d"
               "70657261747572656576616c7565f6"));
 
     // the IMU fixture with floats in their shortest width, as serde_cbor writes them
-    const auto imu = traced([](sonde::Tracer& tracer) {
+    const auto imu = traced([](sonde::Queue& queue) {
         const double acc[3] = {0.5, -1.0, 9.81};
-        tracer.value(sonde::Timestamp{2}, "imu", sonde::record(1, [&](sonde::Record& record) {
+        queue.value(sonde::Timestamp{2}, "imu", sonde::record(1, [&](sonde::Record& record) {
                          record.field("acc", acc);
                      }));
     });
@@ -205,37 +205,37 @@ TEST_CASE("values are the messages of proto") {
 TEST_CASE("timestamps come from the clock") {
     sonde::MemorySink sink;
     sonde::Storage<256, 1> storage;
-    sonde::Tracer tracer{storage, sink, [] { return std::uint64_t{1}; }};
-    tracer.value("motor", motors::Motor{1500, true, "running"});
-    tracer.commit();
+    sonde::Queue queue{storage, sink, [] { return std::uint64_t{1}; }};
+    queue.value("motor", motors::Motor{1500, true, "running"});
+    queue.commit();
     CHECK(sink.bytes() ==
           hex("a16556616c7565a36974696d657374616d70016470617468656d6f746f726576616c7565a3"
               "6973706565645f72706d1905dc67656e61626c6564f56573746174656772756e6e696e67"));
 }
 
 TEST_CASE("metadata") {
-    CHECK(traced([](sonde::Tracer& tracer) { tracer.metadata("speed", "rpm"); }) ==
+    CHECK(traced([](sonde::Queue& queue) { queue.unit("speed", "rpm"); }) ==
           hex("a16d56616c75654d65746164617461"  // {"ValueMetadata":
               "a2" "6470617468" "657370656564"  // {"path": "speed",
               "64756e6974" "6372706d"));            // "unit": "rpm"}}
 }
 
 TEST_CASE("logs leave out an empty path and component") {
-    CHECK(traced([](sonde::Tracer& tracer) {
-              tracer.log(sonde::Timestamp{3}, sonde::Level::Warn, "motor", "hot");
+    CHECK(traced([](sonde::Queue& queue) {
+              queue.log(sonde::Timestamp{3}, sonde::Level::Warn, "motor", "hot");
           }) == hex("a1634c6f67"                                // {"Log":
                     "a4" "6974696d657374616d70" "03"          // {"timestamp": 3,
                     "656c6576656c" "03"                        // "level": 3,
                     "69636f6d706f6e656e74" "656d6f746f72"      // "component": "motor",
                     "676d657373616765" "63686f74"));            // "message": "hot"}}
-    CHECK(traced([](sonde::Tracer& tracer) {
-              tracer.log(sonde::Level::Error, "", "hot");
+    CHECK(traced([](sonde::Queue& queue) {
+              queue.log(sonde::Level::Error, "", "hot");
           }) == hex("a1634c6f67"
                     "a3" "6974696d657374616d70" "00"
                     "656c6576656c" "04"
                     "676d657373616765" "63686f74"));
-    CHECK(traced([](sonde::Tracer& tracer) {
-              tracer.log(sonde::Timestamp{3}, "arm", sonde::Level::Warn, "", "hot");
+    CHECK(traced([](sonde::Queue& queue) {
+              queue.log(sonde::Timestamp{3}, "arm", sonde::Level::Warn, "", "hot");
           }) == hex("a1634c6f67"                                // {"Log":
                     "a4" "6974696d657374616d70" "03"          // {"timestamp": 3,
                     "6470617468" "6361726d"                    // "path": "arm",
@@ -244,31 +244,31 @@ TEST_CASE("logs leave out an empty path and component") {
 }
 
 TEST_CASE("logf formats into a message") {
-    CHECK(traced([](sonde::Tracer& tracer) {
-              tracer.logf(sonde::Level::Info, "", "%d mA", 12);
-          }) == traced([](sonde::Tracer& tracer) {
-              tracer.log(sonde::Level::Info, "", "12 mA");
+    CHECK(traced([](sonde::Queue& queue) {
+              queue.logf(sonde::Level::Info, "", "%d mA", 12);
+          }) == traced([](sonde::Queue& queue) {
+              queue.log(sonde::Level::Info, "", "12 mA");
           }));
-    CHECK(traced([](sonde::Tracer& tracer) {
-              tracer.logf("arm", sonde::Level::Info, "", "%d mA", 12);
-          }) == traced([](sonde::Tracer& tracer) {
-              tracer.log("arm", sonde::Level::Info, "", "12 mA");
+    CHECK(traced([](sonde::Queue& queue) {
+              queue.logf("arm", sonde::Level::Info, "", "%d mA", 12);
+          }) == traced([](sonde::Queue& queue) {
+              queue.log("arm", sonde::Level::Info, "", "12 mA");
           }));
 }
 
 TEST_CASE("logf cuts off long messages before a UTF-8 sequence") {
     // 126 bytes and a 2-byte sequence, of which the buffer of 128 bytes keeps 127
     const std::string text = std::string(126, 'x') + "\xc3\xa4" "x";
-    CHECK(traced([&](sonde::Tracer& tracer) {
-              tracer.logf(sonde::Level::Info, "", "%s", text.c_str());
-          }) == traced([](sonde::Tracer& tracer) {
-              tracer.log(sonde::Level::Info, "", std::string(126, 'x'));
+    CHECK(traced([&](sonde::Queue& queue) {
+              queue.logf(sonde::Level::Info, "", "%s", text.c_str());
+          }) == traced([](sonde::Queue& queue) {
+              queue.log(sonde::Level::Info, "", std::string(126, 'x'));
           }));
     const std::string ascii(200, 'y');
-    CHECK(traced([&](sonde::Tracer& tracer) {
-              tracer.logf(sonde::Level::Info, "", "%s", ascii.c_str());
-          }) == traced([](sonde::Tracer& tracer) {
-              tracer.log(sonde::Level::Info, "", std::string(127, 'y'));
+    CHECK(traced([&](sonde::Queue& queue) {
+              queue.logf(sonde::Level::Info, "", "%s", ascii.c_str());
+          }) == traced([](sonde::Queue& queue) {
+              queue.log(sonde::Level::Info, "", std::string(127, 'y'));
           }));
 }
 
@@ -277,26 +277,26 @@ TEST_CASE("logf cuts off long messages before a UTF-8 sequence") {
 TEST_CASE("wrong counts are invalid and leave the batch unchanged") {
     sonde::MemorySink sink;
     sonde::Storage<256, 1> storage;
-    sonde::Tracer tracer{storage, sink, nullptr};
-    REQUIRE(tracer.value("a", 1u) == Status::Ok);
+    sonde::Queue queue{storage, sink, nullptr};
+    REQUIRE(queue.value("a", 1u) == Status::Ok);
 
-    CHECK(tracer.value("a", sonde::record(2, [](sonde::Record& record) {
+    CHECK(queue.value("a", sonde::record(2, [](sonde::Record& record) {
               record.field("x", 1);
           })) == Status::Invalid);
-    CHECK(tracer.value("a", sonde::record(1, [](sonde::Record& record) {
+    CHECK(queue.value("a", sonde::record(1, [](sonde::Record& record) {
               record.field("x", 1);
               record.field("y", 2);
           })) == Status::Invalid);
-    CHECK(tracer.value("a", sonde::array(3, [](sonde::Array& array) {
+    CHECK(queue.value("a", sonde::array(3, [](sonde::Array& array) {
               array.add(1);
           })) == Status::Invalid);
-    CHECK(tracer.value("a", sonde::array(1, [](sonde::Array& array) {
+    CHECK(queue.value("a", sonde::array(1, [](sonde::Array& array) {
               array.add(sonde::array(2, [](sonde::Array& inner) { inner.add(2); }));
           })) == Status::Invalid);
 
-    CHECK(tracer.commit() == Status::Ok);
+    CHECK(queue.commit() == Status::Ok);
     Bytes expected = test::value_prefix();
     expected.push_back(0x01);
     CHECK(sink.bytes() == expected);
-    CHECK(tracer.dropped() == 0);
+    CHECK(queue.dropped() == 0);
 }

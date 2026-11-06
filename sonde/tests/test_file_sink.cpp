@@ -47,28 +47,28 @@ void encode(sonde::Encoder& encoder, const Motor& motor) {
 }
 
 /// The messages of the fixture, in batches of up to 128 bytes.
-void trace(sonde::Tracer& tracer) {
+void trace(sonde::Queue& queue) {
     steps = 0;
-    tracer.metadata("motor/speed", "rpm");
-    tracer.value(sonde::Timestamp{1'000'000}, "motor/speed", 1500u);
+    queue.unit("motor/speed", "rpm");
+    queue.value(sonde::Timestamp{1'000'000}, "motor/speed", 1500u);
     steps = 2;
-    tracer.value("cpu_load", 12.5f);
-    tracer.value("sensor/temperature", sonde::null);
+    queue.value("cpu_load", 12.5f);
+    queue.value("sensor/temperature", sonde::null);
     const float acc[3] = {0.5f, -1.0f, 9.81f};
-    tracer.value("imu", sonde::record(2, [&](sonde::Record& record) {
+    queue.value("imu", sonde::record(2, [&](sonde::Record& record) {
                      record.field("acc", acc);
                      record.field("valid", true);
                  }));
-    tracer.commit();
+    queue.commit();
     steps = 3;
-    tracer.value("motor", Motor{1500, true, "running"});
-    tracer.value("offset", -42);
-    tracer.value("ratio", 0.1);
-    tracer.log("robot/arm", sonde::Level::Info, "motor", "started");
-    tracer.log(sonde::Level::Warn, "", "no component");
-    tracer.logf(sonde::Level::Error, "adc", "overrun %d", 3);
-    tracer.value("adc/samples", std::array<std::uint16_t, 4>{0, 1023, 2048, 4095});
-    tracer.commit();
+    queue.value("motor", Motor{1500, true, "running"});
+    queue.value("offset", -42);
+    queue.value("ratio", 0.1);
+    queue.log("robot/arm", sonde::Level::Info, "motor", "started");
+    queue.log(sonde::Level::Warn, "", "no component");
+    queue.logf(sonde::Level::Error, "adc", "overrun %d", 3);
+    queue.value("adc/samples", std::array<std::uint16_t, 4>{0, 1023, 2048, 4095});
+    queue.commit();
 }
 
 }  // namespace
@@ -81,11 +81,11 @@ TEST_CASE("a file sink writes a recording") {
         sonde::FileSink file{path.string().c_str()};  // creates the directory
         REQUIRE(file.is_open());
         sonde::Storage<128, 1> file_storage;
-        sonde::Tracer to_file{file_storage, file, &test_clock};
+        sonde::Queue to_file{file_storage, file, &test_clock};
         trace(to_file);
 
         sonde::Storage<128, 1> memory_storage;
-        sonde::Tracer to_memory{memory_storage, memory, &test_clock};
+        sonde::Queue to_memory{memory_storage, memory, &test_clock};
         trace(to_memory);
     }
 
@@ -111,8 +111,8 @@ TEST_CASE("the recording fixture is what sonde writes") {
         sonde::FileSink file{path.string().c_str()};
         REQUIRE(file.is_open());
         sonde::Storage<128, 1> storage;
-        sonde::Tracer tracer{storage, file, &test_clock};
-        trace(tracer);
+        sonde::Queue queue{storage, file, &test_clock};
+        trace(queue);
     }
     CHECK(read(path) == read(fixture));
 }
@@ -125,10 +125,10 @@ TEST_CASE("a file sink that cannot open its file fails") {
     CHECK(!file.write(&byte, 1));
 
     sonde::Storage<64, 1> storage;
-    sonde::Tracer tracer{storage, file, nullptr};
-    tracer.value("a", 1u);
-    CHECK(tracer.commit() == sonde::Status::SinkError);
-    CHECK(tracer.dropped() == 1);
+    sonde::Queue queue{storage, file, nullptr};
+    queue.value("a", 1u);
+    CHECK(queue.commit() == sonde::Status::SinkError);
+    CHECK(queue.dropped() == 1);
 }
 
 TEST_CASE("a memory sink clears") {

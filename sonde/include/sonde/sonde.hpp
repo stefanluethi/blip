@@ -117,7 +117,7 @@ public:
     void array(std::size_t elements, F&& fill);
 
 private:
-    friend class Tracer;
+    friend class Queue;
     friend class Record;
     friend class Array;
 
@@ -347,21 +347,21 @@ void Encoder::elements(It begin, std::size_t size) {
 
 // --- Storage and sinks --------------------------------------------------------------
 
-/// The batches of one tracer: Batches slots of BatchBytes bytes, plus their sizes.
-/// Static or on the stack, owned by the user, outlives the tracer.
+/// The batches of one queue: Batches slots of BatchBytes bytes, plus their sizes.
+/// Static or on the stack, owned by the user, outlives the queue.
 template <std::size_t BatchBytes, std::size_t Batches = 2>
 class Storage {
     static_assert(BatchBytes > 0, "a batch needs bytes");
-    static_assert(Batches >= 1, "a tracer needs a batch");
+    static_assert(Batches >= 1, "a queue needs a batch");
     // the indices of the queue count up to 2 * Batches
     static_assert(Batches <= (std::uint32_t{1} << 30), "too many batches");
 
-    friend class Tracer;
+    friend class Queue;
     std::uint8_t bytes_[Batches * BatchBytes];
     std::size_t sizes_[Batches];
 };
 
-/// Takes the batches of a tracer whose producer and consumer are one context.
+/// Takes the batches of a queue whose producer and consumer are one context.
 class Sink {
 public:
     /// Takes a batch of complete messages, a CBOR sequence. Returns false on failure.
@@ -371,32 +371,36 @@ protected:
     ~Sink() = default;
 };
 
-// --- Tracer -------------------------------------------------------------------------
+// --- Queue --------------------------------------------------------------------------
 
-/// Encodes messages into batches. One tracer per context that traces.
+/// Encodes messages into batches. One queue per context that traces.
 ///
 /// The batches are a single-producer single-consumer queue: the producer traces, the
 /// consumer takes the ready batches and releases them once they are sent. With a sink,
 /// producer and consumer are one context and each ready batch goes to the sink.
 ///
-/// The constructors are constexpr, so a static tracer is initialized before any code
+/// Each message carries its full path, and a log record its component, e.g. to forward
+/// the messages of other nodes. A `Queue` on the queue adds its name and its component
+/// instead, for code that traces itself.
+///
+/// The constructors are constexpr, so a static queue is initialized before any code
 /// runs, e.g. an ISR that fires before the static constructors.
-class Tracer {
+class Queue {
 public:
     /// Producer and consumer: the consumer takes the batches.
     template <std::size_t BatchBytes, std::size_t Batches>
-    constexpr explicit Tracer(Storage<BatchBytes, Batches>& storage,
+    constexpr explicit Queue(Storage<BatchBytes, Batches>& storage,
                               Clock clock = default_clock())
-        : Tracer{storage.bytes_, BatchBytes, Batches, storage.sizes_, nullptr, clock} {}
+        : Queue{storage.bytes_, BatchBytes, Batches, storage.sizes_, nullptr, clock} {}
 
     /// One context: each ready batch goes to the sink right away.
     template <std::size_t BatchBytes, std::size_t Batches>
-    constexpr Tracer(Storage<BatchBytes, Batches>& storage, Sink& sink,
+    constexpr Queue(Storage<BatchBytes, Batches>& storage, Sink& sink,
                      Clock clock = default_clock())
-        : Tracer{storage.bytes_, BatchBytes, Batches, storage.sizes_, &sink, clock} {}
+        : Queue{storage.bytes_, BatchBytes, Batches, storage.sizes_, &sink, clock} {}
 
-    Tracer(const Tracer&) = delete;
-    Tracer& operator=(const Tracer&) = delete;
+    Queue(const Queue&) = delete;
+    Queue& operator=(const Queue&) = delete;
 
     // --- Producer: only from the context that traces --------------------------------
 
@@ -410,8 +414,9 @@ public:
         return value_with(&timestamp, path, &encode_value<T>, &value);
     }
 
-    // proto: Message::ValueMetadata
-    Status metadata(std::string_view path, std::string_view unit);
+    // proto: Message::ValueMetadata, the unit of the trace `path`; for a field of a
+    // record, the path joined with ".", e.g. "imu.acc"
+    Status unit(std::string_view path, std::string_view unit);
 
     // proto: Message::Log, at `path` like a value, e.g. "motor", or without one of the
     // target as a whole; an empty path or component is left out on the wire
@@ -448,12 +453,14 @@ public:
     std::uint32_t dropped() const;
 
 private:
+    friend class Tracer;
+
     template <typename T>
     static void encode_value(Encoder& encoder, const void* value) {
         encoder.encode(*static_cast<const T*>(value));
     }
 
-    constexpr Tracer(std::uint8_t* bytes, std::size_t batch_bytes, std::size_t batches,
+    constexpr Queue(std::uint8_t* bytes, std::size_t batch_bytes, std::size_t batches,
                      std::size_t* sizes, Sink* sink, Clock clock)
         : bytes_{bytes},
           batch_bytes_{batch_bytes},
@@ -523,6 +530,87 @@ private:
 #endif
     static_assert(std::atomic<std::uint32_t>::is_always_lock_free || word_loads_and_stores,
                   "sonde needs lock-free loads and stores of 32-bit atomics");
+};
+
+// --- Tracer -------------------------------------------------------------------------
+
+/// A named part of the code that traces, on the queue of its context, e.g. "motor": its
+/// traces are below its name, e.g. "motor/speed", and its log records are at its name
+/// and of its component, the part of the software that writes them.
+///
+/// A tracer is a few pointers. Any number of them may share a queue, all used from the
+/// producer context of that queue. A child adds its name below the one of its parent,
+/// which has to outlive it. The full path is joined on the stack, in SONDE_PATH_MAX bytes;
+/// a message with a longer one is dropped as Status::TooLarge. The constructors are
+/// constexpr, as the ones of the queue.
+class Tracer {
+public:
+    /// A tracer on `queue` named `name`, a path such as "motor" or "robot/arm"; without a
+    /// name, of the target as a whole.
+    constexpr explicit Tracer(Queue& queue, std::string_view name = {},
+                              std::string_view component = {})
+        : queue_{&queue}, parent_{nullptr}, name_{name}, component_{component} {}
+
+    /// A tracer below `parent`, e.g. "motor/left" for "left", with the component of the
+    /// parent.
+    constexpr Tracer(const Tracer& parent, std::string_view name)
+        : queue_{parent.queue_}, parent_{&parent}, name_{name}, component_{parent.component_} {}
+
+    constexpr Tracer(const Tracer& parent, std::string_view name, std::string_view component)
+        : queue_{parent.queue_}, parent_{&parent}, name_{name}, component_{component} {}
+
+    // proto: Message::Value of the trace `path` below the tracer, timestamped by the
+    // clock of the queue or explicitly
+    template <typename T>
+    Status value(std::string_view path, const T& value) {
+        return value_with(nullptr, path, &Queue::encode_value<T>, &value);
+    }
+    template <typename T>
+    Status value(Timestamp timestamp, std::string_view path, const T& value) {
+        return value_with(&timestamp, path, &Queue::encode_value<T>, &value);
+    }
+
+    // proto: Message::ValueMetadata, the unit of the trace `path` below the tracer
+    Status unit(std::string_view path, std::string_view unit);
+
+    // proto: Message::Log at the name of the tracer, of its component
+    Status log(Level level, std::string_view message);
+    Status log(Timestamp timestamp, Level level, std::string_view message);
+    /// printf-like, formatted into a buffer of SONDE_LOGF_MAX bytes on the stack, longer
+    /// messages are cut off.
+    Status logf(Level level, const char* format, ...) SONDE_PRINTF(3, 4);
+
+    Status debug(std::string_view message) { return log(Level::Debug, message); }
+    Status info(std::string_view message) { return log(Level::Info, message); }
+    Status warn(std::string_view message) { return log(Level::Warn, message); }
+    Status error(std::string_view message) { return log(Level::Error, message); }
+    Status debugf(const char* format, ...) SONDE_PRINTF(2, 3);
+    Status infof(const char* format, ...) SONDE_PRINTF(2, 3);
+    Status warnf(const char* format, ...) SONDE_PRINTF(2, 3);
+    Status errorf(const char* format, ...) SONDE_PRINTF(2, 3);
+
+    /// The queue the tracer encodes into, e.g. to commit().
+    constexpr Queue& queue() const { return *queue_; }
+    /// The name of the tracer below its parent.
+    constexpr std::string_view name() const { return name_; }
+    constexpr std::string_view component() const { return component_; }
+    constexpr const Tracer* parent() const { return parent_; }
+
+private:
+    Status value_with(const Timestamp* timestamp, std::string_view path,
+                      detail::EncodeFn encode, const void* value);
+    Status logv(Level level, const char* format, std::va_list args);
+    /// The full path of `path` below the tracer: in `buffer` if it is joined, false if
+    /// it does not fit.
+    bool full_path(std::string_view path, char* buffer, std::size_t size,
+                   std::string_view& full) const;
+    bool write_name(char* buffer, std::size_t size, std::size_t& length) const;
+    Status too_long();
+
+    Queue* queue_;
+    const Tracer* parent_;
+    std::string_view name_;
+    std::string_view component_;
 };
 
 }  // namespace sonde

@@ -105,14 +105,14 @@ Times show as ``0:01:23.456`` instead of a time of day
    nanoseconds since 1970: a timestamp in milliseconds or microseconds is too
    small, and shows as time since boot.
 
-All values of a sonde tracer are at 0
-   The tracer has no clock. Pass one to the tracer, see :doc:`/sonde/index`.
+All values of a sonde queue are at 0
+   The queue has no clock. Pass one to the queue, see :doc:`/sonde/index`.
 
 Two targets do not line up
    Each target stamps its own samples. Targets that send their uptime line up
    only as far as they were started at the same time. Send the time of day
    from both, or let a script stamp the values as they arrive:
-   ``send_value`` without ``timestamp_ns`` uses the time of the PC, unless
+   ``value`` without ``timestamp_ns`` uses the time of the PC, unless
    the outpost passes a target through or translates it, which gives them the
    time of that target.
 

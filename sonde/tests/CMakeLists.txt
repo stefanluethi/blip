@@ -12,6 +12,7 @@ add_executable(sonde_tests
     test_encoding.cpp
     test_file_sink.cpp
     test_threads.cpp
+    test_tracer.cpp
 )
 target_link_libraries(sonde_tests PRIVATE sonde::sonde Catch2::Catch2WithMain Threads::Threads)
 target_compile_definitions(sonde_tests PRIVATE

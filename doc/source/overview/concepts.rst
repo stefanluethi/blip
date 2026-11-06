@@ -37,13 +37,13 @@ Everything a target sends is one of five messages, encoded in CBOR:
      - Sent by the outpost with / by sonde with
    * - ``Value``
      - A sample of a trace: a timestamp, a path and a value.
-     - ``send_value`` / ``value``
+     - ``value`` / ``value``
    * - ``ValueMetadata``
      - The unit of a trace, e.g. ``rpm``. Sent once or now and then.
-     - ``send_metadata`` / ``metadata``
+     - ``unit`` / ``unit``
    * - ``Log``
      - A log record: timestamp, path, level, component and message text.
-     - ``send_log`` / ``log``, ``logf``
+     - ``log`` / ``log``, ``logf``
    * - ``Actions``
      - The list of all actions the target can carry out now.
      - the ``@action`` functions / --
@@ -118,7 +118,7 @@ Each target stamps its own samples in nanoseconds: either the time of day
 (UTC since 1970) or the time since the target booted. A sample sent without a
 timestamp gets the time it is sent: by the outpost, the time of the PC, or the
 time of the target while the outpost passes one through or translates it; by
-sonde, the time of the tracer's clock. blip shows timestamps that are too small
+sonde, the time of the queue's clock. blip shows timestamps that are too small
 to be a date (before 2001) as time since boot, e.g. ``0:01:23.456``, and others
 as local time of day. Targets with different time bases or clocks line up only
 as far as their clocks agree.

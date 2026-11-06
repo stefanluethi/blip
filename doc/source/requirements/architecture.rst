@@ -44,15 +44,18 @@ satisfies. How each is built is described on the internals page of its part.
    :id: ARCH_OUTPOST
    :status: implemented
    :component: outpost
-   :satisfies: REQ_OUTPOST_SOCKET, REQ_OUTPOST_SIM, REQ_OUTPOST_PROTOCOL, REQ_CONN_WS, REQ_CTRL_ANNOUNCE, REQ_CTRL_ACTION, REQ_CTRL_FEEDBACK
+   :satisfies: REQ_OUTPOST_SOCKET, REQ_OUTPOST_SIM, REQ_OUTPOST_PROTOCOL, REQ_OUTPOST_BATCH, REQ_OUTPOST_TRACERS, REQ_CONN_WS, REQ_CTRL_ANNOUNCE, REQ_CTRL_ACTION, REQ_CTRL_FEEDBACK
 
    Python library ``blip-outpost`` (``outpost/src/blip_outpost``) managed
    with ``uv``, see :doc:`/outpost/internals`. The user's script talks to the target and
    calls the public API exported by ``blip_outpost/__init__.py``.
 
    * ``outpost.py`` -- ``Outpost``, which serves blip from a thread of its own
-     or from the running event loop, takes messages from any thread, and holds
-     the actions declared with ``@action``.
+     or from the running event loop, takes messages from any thread, alone or
+     in batches, and holds the tracers and the actions declared with
+     ``@action``.
+   * ``tracer.py``, ``records.py`` -- ``Tracer``, named like a logger, the
+     bridge from Python's ``logging``, and the units of dataclass records.
    * ``actions.py`` -- the ``Actions`` registry, which takes the parameters of
      actions from the type hints of their functions, checks the arguments and
      runs the invocations of an action one after another.
@@ -65,8 +68,9 @@ satisfies. How each is built is described on the internals page of its part.
    * ``main.py`` -- ``click`` based command line (``blip-outpost``) for the
      passthrough and the replay.
 
-   The ``minimal`` and ``simulator`` scripts (the simulator also the
-   reference) and ``fast`` (the stress test) are examples in
+   The ``minimal``, ``app`` (a program that traces itself) and ``simulator``
+   scripts (the simulator also the reference) and ``fast`` (the stress test)
+   are examples in
    ``outpost/examples``, outside the library.
 
 .. arch:: sonde
@@ -77,15 +81,16 @@ satisfies. How each is built is described on the internals page of its part.
 
    C++17 library (``sonde``) for firmware and unit tests, see :doc:`/sonde/internals`.
    Encodes ``proto`` messages with tinycbor into batches of whole messages, a
-   lock-free single-producer single-consumer queue per tracer, for the
+   lock-free single-producer single-consumer queue per context, for the
    firmware to send to the outpost's socket passthrough, or for a sink to
    write as a recording file.
 
-   * ``include/sonde/sonde.hpp`` -- ``Tracer``, ``Storage``, ``Sink`` and the
-     encoding of values.
+   * ``include/sonde/sonde.hpp`` -- ``Queue``, ``Tracer`` (a named part of the
+     code on a queue, as the tracers of the outpost), ``Storage``, ``Sink`` and
+     the encoding of values.
    * ``include/sonde/file_sink.hpp`` -- ``FileSink`` and ``MemorySink``
      (hosted builds).
-   * ``src/`` -- ``tracer.cpp``, ``encoder.cpp``, ``file_sink.cpp``.
+   * ``src/`` -- ``queue.cpp``, ``tracer.cpp``, ``encoder.cpp``, ``file_sink.cpp``.
 
 Component traceability
 ----------------------
