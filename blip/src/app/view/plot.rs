@@ -351,6 +351,14 @@ impl Plot {
         })
     }
 
+    /// The y range the plot shows: the one panned or zoomed to, else the one of `y_min`
+    /// and `y_max` with the ends not set fitted to all values of the shown traces.
+    /// `None` if neither is known.
+    pub fn shown_y(&self, model: &Model) -> Option<(f64, f64)> {
+        self.y_view
+            .or_else(|| y_bounds(self.y_min, self.y_max, self.range_y(model)))
+    }
+
     /// The shown paths with their names in the legend and their indices, which pick
     /// their colors.
     fn selected_path_iter(&self) -> impl Iterator<Item = (&str, &str, usize)> {
@@ -471,9 +479,7 @@ impl Plot {
         }
 
         let visuals = ui.visuals().clone();
-        let shown_y = self
-            .y_view
-            .or_else(|| y_bounds(self.y_min, self.y_max, self.range_y(model)));
+        let shown_y = self.shown_y(model);
         let this = &*self;
         let response = time_axis::show(id, plot, ui, time, true, |plot_ui, axis| {
             if let Some((min_y, max_y)) = shown_y {
@@ -876,6 +882,7 @@ mod tests {
                         invoker: &mut state.invoker,
                         formats: &super::super::NO_FORMATS,
                         titled: false,
+                        plots: &super::super::NO_PLOTS,
                     };
                     state.plot.view(ui, &mut context);
                 },
@@ -938,6 +945,7 @@ mod tests {
                         invoker: &mut state.invoker,
                         formats: &super::super::NO_FORMATS,
                         titled: true,
+                        plots: &super::super::NO_PLOTS,
                     };
                     ui.horizontal(|ui| state.plot.title_ui(ui, &mut context));
                 },
@@ -964,10 +972,7 @@ mod tests {
 
     /// The y range of `plot`, the panned or zoomed one or else the fitted one.
     fn shown_y(state: &State) -> (f64, f64) {
-        let plot = &state.plot;
-        plot.y_view
-            .or_else(|| y_bounds(plot.y_min, plot.y_max, plot.range_y(&state.model)))
-            .unwrap()
+        state.plot.shown_y(&state.model).unwrap()
     }
 
     fn drag(harness: &mut egui_kittest::Harness<'_, State>, from: egui::Pos2, to: egui::Pos2) {

@@ -1069,6 +1069,7 @@ mod tests {
                         invoker: &mut state.invoker,
                         formats: &super::super::NO_FORMATS,
                         titled: false,
+                        plots: &super::super::NO_PLOTS,
                     };
                     state.xy.view(ui, &mut context);
                 },

@@ -319,10 +319,9 @@ pub fn segmented<T: PartialEq + Copy>(
             ui.spacing_mut().interact_size.y = height;
             ui.spacing_mut().button_padding = egui::vec2(4.0, 0.0);
             ui.spacing_mut().item_spacing.x = 2.0;
-            let count = options.len().max(1) as f32;
-            let width = ((ui.available_width() - 2.0 * (count - 1.0)) / count).max(0.0);
+            let widths = segment_widths(ui, options);
             ui.horizontal(|ui| {
-                for &(option, name) in options {
+                for (&(option, name), &width) in options.iter().zip(&widths) {
                     let chosen = *value == option;
                     let color = if chosen { t.text } else { t.text_weak };
                     let text = egui::RichText::new(name).size(12.0).color(color);
@@ -332,7 +331,8 @@ pub fn segmented<T: PartialEq + Copy>(
                             .fill(t.control)
                             .stroke(Stroke::new(1.0, t.border_strong));
                     }
-                    let button = hover_frame(button).selected(chosen);
+                    // a name too long for a narrow panel is cut off
+                    let button = hover_frame(button.truncate()).selected(chosen);
                     let response = ui
                         .allocate_ui_with_layout(
                             egui::vec2(width, height),
@@ -348,6 +348,55 @@ pub fn segmented<T: PartialEq + Copy>(
             });
         });
     changed
+}
+
+/// The widths of the buttons of [`segmented`] for `options` in the room `ui` has left,
+/// see [`share_widths`].
+fn segment_widths<T>(ui: &egui::Ui, options: &[(T, &str)]) -> Vec<f32> {
+    let count = options.len().max(1) as f32;
+    let room = (ui.available_width() - 2.0 * (count - 1.0)).max(0.0);
+    let font = FontId::proportional(12.0);
+    let padding = 2.0 * (ui.spacing().button_padding.x + 1.0);
+    let needed: Vec<f32> = options
+        .iter()
+        .map(|(_, name)| {
+            let galley = (ui.painter()).layout_no_wrap(
+                (*name).to_owned(),
+                font.clone(),
+                Color32::PLACEHOLDER,
+            );
+            galley.size().x + padding
+        })
+        .collect();
+    share_widths(&needed, room)
+}
+
+/// Widths of buttons that `needed` these widths, sharing `room`: all equal while the
+/// widest fits so, else the buttons that need more get their width and the others
+/// share the rest equally. If they need more than the room, all are equal and cut off.
+fn share_widths(needed: &[f32], room: f32) -> Vec<f32> {
+    let equal = room / needed.len().max(1) as f32;
+    if needed.iter().sum::<f32>() > room {
+        return vec![equal; needed.len()];
+    }
+    let mut wide = vec![false; needed.len()];
+    loop {
+        let narrow = wide.iter().filter(|&&wide| !wide).count().max(1) as f32;
+        let taken: f32 = (needed.iter().zip(&wide))
+            .filter(|(_, wide)| **wide)
+            .map(|(width, _)| width)
+            .sum();
+        let share = (room - taken) / narrow;
+        let more: Vec<bool> = (needed.iter().zip(&wide))
+            .map(|(&width, &wide)| wide || width > share)
+            .collect();
+        if more == wide {
+            return (needed.iter().zip(&wide))
+                .map(|(&width, &wide)| if wide { width } else { share })
+                .collect();
+        }
+        wide = more;
+    }
 }
 
 /// A row with the title of a section of a panel, and the buttons added by `add` on the
@@ -527,6 +576,12 @@ pub fn tint(visuals: &Visuals, color: Color32) -> Color32 {
     t.card.lerp_to_gamma(color, t.tint)
 }
 
+/// `color` at the opacity of [`tint`], to wash over a card where it may overlap other
+/// washes, which stay visible through it, e.g. the bars of histograms.
+pub fn wash(visuals: &Visuals, color: Color32) -> Color32 {
+    color.gamma_multiply(tokens(visuals).tint)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -579,6 +634,49 @@ mod tests {
         }]);
         let pressed = frame(vec![]);
         [resting, hovered, pressed]
+    }
+
+    #[test]
+    fn choices_share_their_row_equally_unless_a_long_one_needs_more() {
+        // all fit equally
+        assert_eq!(share_widths(&[30.0, 40.0, 45.0], 150.0), [50.0; 3]);
+        // the long one gets its width, the others share the rest equally
+        assert_eq!(share_widths(&[30.0, 40.0, 70.0], 150.0), [40.0, 40.0, 70.0]);
+        // and a short one that then needs more too
+        assert_eq!(share_widths(&[30.0, 42.0, 70.0], 150.0), [38.0, 42.0, 70.0]);
+        // in a panel too narrow for them, all are equal and cut off
+        assert_eq!(share_widths(&[30.0, 40.0, 70.0], 120.0), [40.0; 3]);
+
+        // measured in a ui
+        let ctx = egui::Context::default();
+        install(&ctx);
+        let mut widths = vec![];
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(400.0, 300.0),
+            )),
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(input, |ui| {
+            for room in [180.0, 60.0] {
+                ui.allocate_ui(egui::vec2(room, 24.0), |ui| {
+                    let long = [(0, "Off"), (1, "Mean"), (2, "Mean ±σ")];
+                    widths.push(segment_widths(ui, &long));
+                });
+            }
+        });
+        let [wide, narrow] = [&widths[0], &widths[1]];
+        assert!(wide[2] > wide[1] && wide[1] == wide[0], "{wide:?}");
+        assert!(
+            (wide.iter().sum::<f32>() - (180.0 - 4.0)).abs() < 0.5,
+            "{wide:?}"
+        );
+        assert!(narrow.iter().all(|&width| width == narrow[0]), "{narrow:?}");
+        assert!(
+            (narrow.iter().sum::<f32>() - (60.0 - 4.0)).abs() < 0.5,
+            "{narrow:?}"
+        );
     }
 
     #[test]

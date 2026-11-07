@@ -1597,6 +1597,7 @@ mod tests {
                         invoker: &mut state.invoker,
                         formats: &super::super::NO_FORMATS,
                         titled: false,
+                        plots: &super::super::NO_PLOTS,
                     };
                     state.view.view(ui, &mut context);
                 },
@@ -2053,6 +2054,7 @@ mod tests {
                     let context = PropertiesContext {
                         model,
                         connected: &connected,
+                        plots: &super::super::NO_PLOTS,
                     };
                     view.properties_ui(ui, &context);
                 },

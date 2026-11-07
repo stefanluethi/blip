@@ -7,6 +7,11 @@ use egui_tiles::{Tile, TileId};
 
 impl Layout {
     pub fn properties_ui(&mut self, ui: &mut egui::Ui, context: &PropertiesContext<'_>) {
+        let plots = self.plots(context.model);
+        let context = &PropertiesContext {
+            plots: &plots,
+            ..*context
+        };
         theme::section_header(ui, "Properties", |_| {});
         let Some(tile_id) = self
             .selected
@@ -141,6 +146,7 @@ mod tests {
                     let context = PropertiesContext {
                         model: &model,
                         connected: &connected,
+                        plots: &crate::app::view::NO_PLOTS,
                     };
                     layout.properties_ui(ui, &context);
                 },

@@ -1,5 +1,6 @@
 pub mod actions;
 pub mod heatmap;
+pub mod histogram;
 pub mod log_table;
 pub mod plot;
 pub mod states;
@@ -29,6 +30,8 @@ pub struct ViewContext<'a> {
     pub formats: &'a Formats,
     /// Whether the shown view has a title row, see [`Viewable::title_ui`].
     pub titled: bool,
+    /// The plot views of the layout, which a histogram can follow.
+    pub plots: &'a Plots,
 }
 
 /// The display formats of the traces of a view by their paths, the default format for
@@ -58,6 +61,37 @@ pub struct PropertiesContext<'a> {
     pub model: &'a Model,
     /// The names of the open connections.
     pub connected: &'a HashSet<String>,
+    /// The plot views of the layout, which a histogram can follow.
+    pub plots: &'a Plots,
+}
+
+/// A view of the layout that another view refers to, by its tile in the tree of the
+/// layout. In a saved layout it is the number of the view in the saved order, see
+/// `layout::file`.
+#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct ViewId(pub u64);
+
+/// A plot view of the layout, as a histogram following it sees it.
+#[derive(Clone, PartialEq, Debug)]
+pub struct PlotInfo {
+    pub id: ViewId,
+    pub name: String,
+    /// The y range it shows, see [`plot::Plot::shown_y`].
+    pub y_range: Option<(f64, f64)>,
+}
+
+/// The plot views of the layout, in the order of the layout. A sideways histogram can
+/// follow the y range of one of them, the only link between views.
+#[derive(Clone, Default, PartialEq, Debug)]
+pub struct Plots(pub Vec<PlotInfo>);
+
+/// The plots of a layout without plots.
+pub static NO_PLOTS: Plots = Plots(Vec::new());
+
+impl Plots {
+    pub fn get(&self, id: ViewId) -> Option<&PlotInfo> {
+        self.0.iter().find(|plot| plot.id == id)
+    }
 }
 
 pub trait Viewable {
@@ -229,6 +263,7 @@ views! {
     States: states::States,
     Table: table::Table,
     Xy: xy::Xy,
+    Histogram: histogram::Histogram,
     Heatmap: heatmap::Heatmap,
     Logs: log_table::LogTable,
     Actions: actions::Actions,
@@ -449,6 +484,14 @@ impl View {
         self.kind.view_type()
     }
 
+    /// Changes the views this view refers to by `map`, dropping those it maps to
+    /// `None`, e.g. when a view is deleted or a layout saved or loaded.
+    pub fn relink(&mut self, map: impl Fn(ViewId) -> Option<ViewId>) {
+        if let ViewKind::Histogram(histogram) = &mut self.kind {
+            histogram.follow = histogram.follow.and_then(map);
+        }
+    }
+
     /// Whether the view shows traces, actions or logs chosen in the tree of the left
     /// panel.
     pub fn has_selection(&self) -> bool {
@@ -491,6 +534,7 @@ impl Viewable for View {
             invoker: context.invoker,
             formats: &self.formats,
             titled: context.titled,
+            plots: context.plots,
         };
         self.kind.viewable().view(ui, context);
     }
@@ -506,6 +550,7 @@ impl Viewable for View {
             invoker: context.invoker,
             formats: &self.formats,
             titled: context.titled,
+            plots: context.plots,
         };
         self.kind.viewable_ref().title_ui(ui, context);
     }

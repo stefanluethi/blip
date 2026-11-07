@@ -35,6 +35,11 @@ oscilloscope, not like a web app.
   names in state bands take the same colours.
 - State bands: a quiet tint (`tint`, 0.16 dark / 0.14 light) with a 2 pt top edge in the
   full colour; false bools are empty.
+- Histograms use the same look for overlapping traces: a translucent wash
+  (`theme::wash`, the trace colour at the `tint` opacity, so overlaps stay visible) under a
+  1.5 pt outline in the full colour; all washes first, then all outlines, then markers.
+  Mean and ±σ sit in a whisker strip above the bars (a row per trace: dot at the mean,
+  whisker over ±σ), not as lines across the data.
 - The time cursor has its own colour (`cursor_color`) and is drawn at 35 % opacity while
   it follows the end of the window.
 - Keep it calm: the user found per-pixel bins and confetti-coloured log ticks in the
@@ -55,7 +60,7 @@ oscilloscope, not like a web app.
   `theme::paint_caret`, icon buttons `theme::icon_button`, tables `theme::table`. Icons
   are Phosphor.
 - Left panel: the traces tree of the selected view, with a search field. Checked traces
-  of plots and XY plots fill their checkbox with the trace colour; type icons sit in a
+  of plots, XY plots and histograms fill their checkbox with the trace colour; type icons sit in a
   faint right column. A check on a folder is a wildcard for new traces.
 - Right panel: the properties of the selected view or group. Controls live there, not in
   the views; only the Logs view keeps its own search, filter and autoscroll.
@@ -65,6 +70,9 @@ oscilloscope, not like a web app.
   arranged by dragging. There is no layout panel.
 - Plot legends sit in the view's title row (dot, name, value at the cursor, the shared
   unit once at the end). Stats are chips below the plot, coloured by their trace.
+- Histogram legends are a dot and name per trace in the title row, no cursor value. A
+  sideways histogram can follow a Plot's y range (its only link between views); its
+  value axis is on the left by default, like a plot, or on the right.
 
 ## Words
 

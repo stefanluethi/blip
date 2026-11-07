@@ -26,6 +26,9 @@ on the right and are saved with the layout.
    * - XY
      - traces against other traces, or arrays over their indices
      - numbers and bools; one-dimensional arrays
+   * - Histogram
+     - how the values spread over the shown time range, as bars
+     - numbers, elements of arrays of up to 16 elements
    * - Heatmap
      - an array as colours, over time or at the cursor
      - one array of one or two dimensions
@@ -37,7 +40,7 @@ on the right and are saved with the layout.
      - actions, see :doc:`/blip/actions`
 
 Every view's properties start with its **Name**. Views that write values as
-text (plot, states, table, heatmap) also have a **Number format** section:
+text (plot, states, table, histogram, heatmap) also have a **Number format** section:
 for each trace how its numbers are written -- decimal, hex, binary or
 scientific -- next to its unit as sent by the target. Hex and binary apply to
 whole numbers only; strings and bools have no format.
@@ -180,6 +183,108 @@ Properties:
 * **Lines** -- **Points** as for plots, and **Fade**: how far the oldest part of
   the trail fades out.
 * **Line styles** -- as for plots.
+
+Histogram
+---------
+
+.. figure:: /screenshots/view-histogram.png
+   :target: ../_images/view-histogram.png
+   :class: screenshot
+   :alt: A histogram of the robot's x and y position, the bars of both drawn over each other, with the mean and σ of each as whiskers above them and the legend at the top right.
+
+How often each value occurs in the shown time range: the samples of the
+checked traces are counted in bins of their values, drawn as bars. The
+histogram counts anew as the range is moved, zoomed or moves on while live.
+It takes integer and float traces and the elements of arrays of up to 16
+elements; ``null`` samples are not counted.
+
+The traces are counted in the same bins and drawn over each other, each as a
+light area under an outline in its colour. The legend shows a dot and the name
+of each trace in the title row. Without a title row it is a box at the top
+right, with the unit in a faint line below the names; upright, the names of
+many traces wrap into right-aligned lines across the top of the plot. The bars keep clear
+of the legend. The value axis, the bin edges and the legend show the unit only if all
+traces share one.
+
+Samples that lie outside the bins are not binned but counted, and their counts
+shown faintly at the end they lie beyond, e.g. *‹ 232* and *36 ›* (*↓* and *↑*
+sideways): those outside a fixed range or the range of a plot followed, and
+infinite samples, whatever the range.
+
+* **Hover** a bin to highlight it and read its range of values and the count
+  of each trace in it.
+* **Scroll the mouse wheel** to zoom the value axis, and **drag** to pan it;
+  the bins are magnified, not counted anew. **Double-click** to fit it again.
+  None of them changes the time range or the time cursor.
+* Without checked traces it asks to check them in the tree; without samples
+  in the shown range it shows *No samples in the shown window*; with only
+  infinite samples it shows their counts at the ends of empty axes. If all
+  samples have the same value, it shows one bar centred on it.
+
+The counts axis shows numbers of samples. It fits the tallest bin in view: it
+grows at once, and shrinks only once that bin is well below its top, so it
+does not jump while live. The bars leave room at its far end for the legend
+box, the markers and the counts outside the bins.
+
+Properties:
+
+.. list-table::
+   :widths: 25 75
+
+   * - **Bins**
+     - **Mode**: *Auto*, about the square root of the number of samples, at
+       least 8 and at most 64, of a round width (1, 2 or 5 times a power of
+       ten) that changes only once the ideal width is clearly past a step, so
+       it does not flip between two widths while live; *Number*, a fixed
+       number of bins split evenly over the range of the values; or *Width*,
+       bins of a fixed width in the unit of the traces. Automatic and
+       fixed-width bins start at multiples of their width, so the bars stay
+       put as the range moves. Over integer traces, bins of a whole-number
+       width start half a unit below those multiples instead, so no integer
+       lies on an edge and each bin holds the same number of integers; with a
+       width of 1, the bar of 5 runs from 4.5 to 5.5. Switching to *Number* or *Width* starts from the bins shown.
+       **Range**: *Auto* bins the values shown with 5 % room on each side;
+       *Fixed* bins only those between **Min** and **Max**, and counts the
+       others at the ends.
+   * - **Counts**
+     - **Scale**: *Linear* or *Log*. The logarithmic scale has a tick at each
+       power of ten and starts half a decade below 1, so a bin of one sample
+       shows as a short bar and an empty bin shows nothing.
+   * - **Bars**
+     - **Orientation**: *Upright*, the values along the bottom and the bars
+       growing up, or *Sideways*, the values up the side and the bars growing
+       to the right, e.g. beside a plot of the same traces. **Axis side** of a
+       sideways histogram: the value axis on the *Left*, as in a plot, or on
+       the *Right*. **Follow**: a plot of the layout whose y range a sideways
+       histogram shows, see below. **Markers**: *Off*, *Mean*, or *Mean ±σ*
+       for all traces, in a strip above the bars (to the right of them
+       sideways), a row per trace: a dot at the mean and a whisker from the
+       mean −σ to the mean +σ. Unlike the stats of a plot, each sample counts
+       once, however long it lasts; σ is the population standard deviation.
+
+Follow a plot
+~~~~~~~~~~~~~
+
+.. figure:: /screenshots/view-histogram-sideways.png
+   :target: ../_images/view-histogram-sideways.png
+   :class: screenshot
+   :alt: A plot of the motor speed and, beside it, a sideways histogram of the same speed following the plot, so its bars line up with the heights of the line.
+
+A sideways histogram beside a plot of the same traces shows their spread at
+the heights of the plot. Choose the plot in **Follow**: the value axis then
+shows the y range the plot shows, as it is zoomed, panned or fixed. The bins
+cover that range, and the samples outside it are counted at its ends, as for
+a fixed range. While it follows, the histogram's own **Range** is greyed
+(*Set by the plot followed*), and zooming and panning of the values are off,
+also before the plot shows a y range. Plots of the same name are numbered in
+the menu, e.g. *Speed (1)* and *Speed (2)*.
+
+Switched to upright, the histogram keeps the link, greyed, until it is
+sideways again. Deleting the plot drops the link.
+
+Without the link, an automatic sideways histogram fits the samples in the
+shown time range, while the plot fits all data of its traces, so the two line
+up only while the range holds all values; follow the plot to line them up.
 
 Heatmap
 -------

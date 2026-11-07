@@ -19,7 +19,7 @@
 //! looks for an outpost by default (or another port while an outpost runs there); the
 //! views and panels are rendered on their own.
 
-use super::view::{NO_FORMATS, View, ViewContext, Viewable};
+use super::view::{NO_FORMATS, NO_PLOTS, View, ViewContext, Viewable};
 use super::*;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
@@ -244,6 +244,7 @@ fn view_shot(name: &str, json: &str) {
                             invoker: &mut shot.invoker,
                             formats: &NO_FORMATS,
                             titled: false,
+                            plots: &NO_PLOTS,
                         };
                         shot.view.view(ui, &mut context);
                     });
@@ -276,6 +277,10 @@ fn screenshots_views() {
             r#"{"name": "Robot", "kind": {"Xy": {"traces": ["robot/pose.x", "robot/pose.y"], "xs": ["robot/pose.x"], "against": {"robot/pose.y": "robot/pose.x"}, "equal_axes": true}}}"#,
         ),
         (
+            "view-histogram",
+            r#"{"name": "Pose spread", "kind": {"Histogram": {"traces": ["robot/pose.x", "robot/pose.y"], "markers": "MeanSigma"}}}"#,
+        ),
+        (
             "view-heatmap-grid",
             r#"{"name": "Thermal", "kind": {"Heatmap": {"traces": ["thermal/frame"]}}}"#,
         ),
@@ -291,6 +296,78 @@ fn screenshots_views() {
     for (name, json) in views {
         view_shot(name, json);
     }
+}
+
+/// What a layout is shown with.
+struct LayoutShot {
+    model: model::Model,
+    time: time::TimeRange,
+    invoker: model::actions::Invoker,
+    layout: layout::Layout,
+}
+
+/// Renders the layout of `json`, the saved form of a layout, `size` large, with the
+/// last 20 s of the recording and the cursor 6 s before its end.
+fn layout_shot(name: &str, size: egui::Vec2, json: &str) {
+    let model = demo_model();
+    let mut time = time::TimeRange::default();
+    time.fit(&model);
+    let latest = time.latest().expect("the recording has data");
+    time.pan_zoom(latest - 20.0, latest);
+    time.set_cursor(latest - 6.0);
+    let saved = serde_json::from_str(json).expect("a layout");
+    let shot = LayoutShot {
+        model,
+        time,
+        invoker: model::actions::Invoker::default(),
+        layout: layout::Layout::from_saved(saved),
+    };
+    let mut harness = Harness::builder()
+        .with_size(size)
+        .with_pixels_per_point(PIXELS_PER_POINT)
+        .wgpu()
+        .build_ui_state(
+            |ui, shot: &mut LayoutShot| {
+                let now = ui.input(|input| input.time);
+                shot.time.update(&shot.model, now);
+                paint_background(ui, theme::tokens(ui.visuals()).canvas);
+                egui::Frame::NONE
+                    .inner_margin(egui::Margin {
+                        top: 2,
+                        ..egui::Margin::same(theme::GAP as i8)
+                    })
+                    .show(ui, |ui| {
+                        let mut context = ViewContext {
+                            model: &shot.model,
+                            time: &mut shot.time,
+                            invoker: &mut shot.invoker,
+                            formats: &NO_FORMATS,
+                            titled: false,
+                            plots: &NO_PLOTS,
+                        };
+                        shot.layout.ui(ui, &mut context);
+                    });
+            },
+            shot,
+        );
+    theme::install(&harness.ctx);
+    harness.run_steps(4);
+    save_both(&mut harness, name);
+}
+
+#[test]
+#[ignore = "renders the screenshots of the documentation, see the module"]
+fn screenshots_layouts() {
+    // a sideways histogram beside the plot it follows, the plot being view 0
+    layout_shot(
+        "view-histogram-sideways",
+        egui::vec2(1000.0, 380.0),
+        r#"{"name": "", "kind": "Tabs", "active": 0, "children": [{"Group": {
+            "name": "Motor", "kind": "Horizontal", "shares": [1.8, 1.0], "children": [
+                {"View": {"name": "Motor speed", "kind": {"Plot": {"traces": ["motor.speed_rpm"]}}}},
+                {"View": {"name": "Speed spread", "kind": {"Histogram": {"traces": ["motor.speed_rpm"], "orientation": "Sideways", "follow": 0}}}}
+            ]}}]}"#,
+    );
 }
 
 #[test]

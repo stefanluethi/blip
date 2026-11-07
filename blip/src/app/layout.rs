@@ -8,8 +8,9 @@ mod properties;
 
 pub use file::{Group, GroupKind};
 
+use crate::app::model::Model;
 use crate::app::theme;
-use crate::app::view::{View, ViewContext, ViewType, Viewable};
+use crate::app::view::{PlotInfo, Plots, View, ViewContext, ViewId, ViewKind, ViewType, Viewable};
 use egui_tiles::{Container, ContainerKind, Tile, TileId, Tree};
 use std::collections::{HashMap, HashSet};
 
@@ -343,6 +344,13 @@ impl Layout {
         self.tree.remove_recursively(tile_id);
         self.group_names
             .retain(|&id, _| self.tree.tiles.get(id).is_some());
+        // links to the removed views are dropped
+        let kept: HashSet<ViewId> = self.tree.tiles.tile_ids().map(view_id).collect();
+        for tile in self.tree.tiles.tiles_mut() {
+            if let Tile::Pane(view) = tile {
+                view.relink(|id| kept.contains(&id).then_some(id));
+            }
+        }
         if self
             .selected
             .is_some_and(|id| self.tree.tiles.get(id).is_none())
@@ -478,6 +486,30 @@ impl Layout {
         }
     }
 
+    /// The plot views of the layout in its order, with the y ranges they show.
+    pub fn plots(&self, model: &Model) -> Plots {
+        let mut plots = vec![];
+        let mut below = vec![self.root()];
+        while let Some(tile_id) = below.pop() {
+            match self.tree.tiles.get(tile_id) {
+                Some(Tile::Pane(View {
+                    name,
+                    kind: ViewKind::Plot(plot),
+                    ..
+                })) => plots.push(PlotInfo {
+                    id: view_id(tile_id),
+                    name: name.clone(),
+                    y_range: plot.shown_y(model),
+                }),
+                Some(Tile::Container(container)) => {
+                    below.extend(container.children_vec().into_iter().rev());
+                }
+                _ => {}
+            }
+        }
+        Plots(plots)
+    }
+
     /// Shows the views in the center pane.
     pub fn ui(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         if self.container(self.root()).is_none_or(Container::is_empty) {
@@ -508,6 +540,16 @@ impl Layout {
         let dragged = egui::DragAndDrop::payload::<TileId>(ui.ctx())
             .map(|dragged| *dragged)
             .filter(|&dragged| self.tree.tiles.get(dragged).is_some());
+        let model = context.model;
+        let plots = self.plots(model);
+        let context = &mut ViewContext {
+            model,
+            time: &mut *context.time,
+            invoker: &mut *context.invoker,
+            formats: context.formats,
+            titled: context.titled,
+            plots: &plots,
+        };
         let mut behavior = Behavior {
             context,
             root: self.root(),
@@ -535,6 +577,10 @@ impl Layout {
         };
         let rename_ended = behavior.rename_ended;
         let mut actions = std::mem::take(&mut behavior.actions);
+        if self.plots(model) != plots {
+            // the views that follow a plot shown before it show its range in the next frame
+            ui.ctx().request_repaint();
+        }
         actions.extend(self.empty_groups_ui(ui));
         if let Some(keep) = rename_ended {
             self.end_rename(keep);
@@ -578,6 +624,11 @@ impl Layout {
             Action::Remove(tile_id) => self.remove(tile_id),
         }
     }
+}
+
+/// The id by which views refer to the view at `tile_id`.
+fn view_id(tile_id: TileId) -> ViewId {
+    ViewId(tile_id.0)
 }
 
 /// Size of a button of [`view_picker`].
@@ -1148,7 +1199,6 @@ fn paint_tab_underline(painter: &egui::Painter, rect: egui::Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::model::Model;
     use crate::app::time::TimeRange;
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
@@ -1316,6 +1366,7 @@ mod tests {
                 invoker: &mut invoker,
                 formats: &crate::app::view::NO_FORMATS,
                 titled: false,
+                plots: &crate::app::view::NO_PLOTS,
             };
             layout.ui(ui, &mut context);
             *renamed.borrow_mut() = layout.renaming.as_ref().map(|renaming| renaming.tile_id);
@@ -1344,6 +1395,7 @@ mod tests {
                     invoker: &mut invoker,
                     formats: &crate::app::view::NO_FORMATS,
                     titled: false,
+                    plots: &crate::app::view::NO_PLOTS,
                 };
                 layout.borrow_mut().ui(ui, &mut context);
             })
@@ -1638,5 +1690,89 @@ mod tests {
         layout.remove(tab);
         assert!(children(&layout, layout.root()).is_empty());
         assert!(layout.view(plot).is_none());
+    }
+
+    /// The histogram at `tile_id` of `layout`.
+    fn histogram(
+        layout: &mut Layout,
+        tile_id: TileId,
+    ) -> &mut crate::app::view::histogram::Histogram {
+        match layout.tree.tiles.get_mut(tile_id) {
+            Some(Tile::Pane(View {
+                kind: ViewKind::Histogram(histogram),
+                ..
+            })) => histogram,
+            _ => panic!("{tile_id:?} is no histogram"),
+        }
+    }
+
+    /// The plot at `tile_id` of `layout`.
+    fn plot(layout: &mut Layout, tile_id: TileId) -> &mut crate::app::view::plot::Plot {
+        match layout.tree.tiles.get_mut(tile_id) {
+            Some(Tile::Pane(View {
+                kind: ViewKind::Plot(plot),
+                ..
+            })) => plot,
+            _ => panic!("{tile_id:?} is no plot"),
+        }
+    }
+
+    #[test]
+    fn the_plots_of_the_layout_are_listed_with_the_y_ranges_they_show() {
+        let (mut layout, tab, first, _) = default_layout();
+        let histogram = layout.add_view_into(tab, ViewType::Histogram);
+        layout.add_view_into(tab, ViewType::Plot);
+        let model = Model::default();
+        let names = |plots: &Plots| -> Vec<String> {
+            plots.0.iter().map(|plot| plot.name.clone()).collect()
+        };
+        // only plots, in the order of the layout
+        let plots = layout.plots(&model);
+        assert_eq!(names(&plots), ["Plot 1", "Plot 2"]);
+        assert_eq!(plots.0[0].id, view_id(first));
+        assert!(plots.get(view_id(histogram)).is_none());
+        assert_eq!(plots.0[0].y_range, None);
+        // fixed, then zoomed or panned
+        (
+            plot(&mut layout, first).y_min,
+            plot(&mut layout, first).y_max,
+        ) = (Some(-1.0), Some(4.0));
+        assert_eq!(layout.plots(&model).0[0].y_range, Some((-1.0, 4.0)));
+        plot(&mut layout, first).y_view = Some((0.5, 2.0));
+        assert_eq!(layout.plots(&model).0[0].y_range, Some((0.5, 2.0)));
+    }
+
+    #[test]
+    fn deleting_a_plot_drops_the_links_to_it() {
+        let (mut layout, tab, plot, logs) = default_layout();
+        let shown = layout.add_view_into(tab, ViewType::Histogram);
+        histogram(&mut layout, shown).follow = Some(view_id(plot));
+        layout.remove(logs);
+        assert_eq!(histogram(&mut layout, shown).follow, Some(view_id(plot)));
+        layout.remove(plot);
+        assert_eq!(histogram(&mut layout, shown).follow, None);
+    }
+
+    #[test]
+    fn links_between_views_survive_saving_and_loading() {
+        let (mut layout, tab, first, _) = default_layout();
+        let second = layout.add_view_into(tab, ViewType::Plot);
+        let shown = layout.add_view_into(tab, ViewType::Histogram);
+        // the tiles no longer count from the first
+        layout.remove(first);
+        histogram(&mut layout, shown).follow = Some(view_id(second));
+        let saved = layout.to_saved();
+        let json = serde_json::to_string(&saved).unwrap();
+        // the plot is the second view saved, after the logs
+        assert!(json.contains(r#""follow":1"#), "{json}");
+
+        let mut loaded = Layout::from_saved(serde_json::from_str(&json).unwrap());
+        let tab = children(&loaded, loaded.root())[0];
+        let [_, plot, shown] = children(&loaded, tab)[..] else {
+            panic!("three views");
+        };
+        assert_eq!(loaded.view(plot).unwrap().name, "Plot 2");
+        assert_eq!(histogram(&mut loaded, shown).follow, Some(view_id(plot)));
+        assert_eq!(serde_json::to_string(&loaded.to_saved()).unwrap(), json);
     }
 }

@@ -12,8 +12,11 @@ change, e.g. in scripts, schemas, layout or recording files.
 The first release.
 
 blip
-   * Plots, states, tables, XY plots, heatmaps, logs and actions views,
-     arranged in tabs and groups.
+   * Plots, states, tables, XY plots, histograms, heatmaps, logs and actions
+     views, arranged in tabs and groups.
+   * Histograms of how the values spread over the shown time range, upright
+     or sideways, with the mean and σ of each trace; a sideways histogram can
+     follow the y range of a plot beside it.
    * Presets: layouts with their connections, to switch between, exported to
      and imported from JSON files.
    * One time range for all views: live, paused or playing, with a time cursor

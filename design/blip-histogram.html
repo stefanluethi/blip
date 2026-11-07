@@ -1,0 +1,591 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>blip histogram view</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400&family=Fira+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<style>
+/* The tokens of blip/src/app/theme.rs. --q is theme.tint as an opacity. */
+:root, :root[data-theme="dark"] {
+  --canvas:#111217; --panel:#181b1f; --card:#181b1f; --control:#22252b; --hover:#2a2d34; --popup:#22252b;
+  --border:#2a2d33; --border-strong:#3a3e46; --text:#ccccdc; --text-weak:#9a9aab; --text-faint:#6e6e80;
+  --accent:#3d71d9; --accent-text:#6e9fff; --on-accent:#fff; --cursor:#ececf4;
+  --t0:#648fff; --t1:#fe6100; --t2:#dc267f; --t3:#ffb000; --t4:#785ef0; --t5:#9aa0a6;
+  --q:.16; --shadow:rgba(0,0,0,.47);
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --canvas:#f4f5f5; --panel:#fff; --card:#fff; --control:#f4f5f5; --hover:#eceef0; --popup:#fff;
+  --border:#dcdee1; --border-strong:#c7cacf; --text:#24292e; --text-weak:#5b6168; --text-faint:#878d95;
+  --accent:#3871dc; --accent-text:#1f62e0; --on-accent:#fff; --cursor:#3a3f46;
+  --t5:#6b7280;
+  --q:.14; --shadow:rgba(0,0,0,.11);
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--canvas); color: var(--text); font: 400 15px/1.5 "Fira Sans", system-ui, sans-serif; }
+.mono { font-family: "Fira Code", ui-monospace, monospace; }
+
+/* the page around the mockups */
+.page { max-width: 1240px; margin: 0 auto; padding: 32px 24px 80px; }
+.page > header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 40px; }
+.page > header img { width: 32px; height: 32px; }
+.page h1 { font-size: 26px; font-weight: 500; margin: 0; letter-spacing: -0.01em; }
+.page > header p { margin: 0; color: var(--text-weak); flex: 1 1 320px; max-width: 72ch; }
+section.idea { margin: 0 0 64px; }
+section.idea > h2 { font-size: 20px; font-weight: 500; margin: 0 0 6px; }
+section.idea > p { margin: 0 0 16px; max-width: 76ch; color: var(--text-weak); }
+section.idea > p b, .notes b { color: var(--text); font-weight: 500; }
+.compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 24px 20px; align-items: start; }
+.compare.narrow-cards { grid-template-columns: repeat(auto-fit, minmax(280px, 300px)); }
+.compare.one { grid-template-columns: minmax(0, 1fr); }
+figure { margin: 0; min-width: 0; }
+figcaption { font-size: 13px; color: var(--text-weak); margin: 0 0 8px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+figcaption b { color: var(--text); font-weight: 500; }
+figcaption .pick { color: var(--accent-text); }
+.notes { font-size: 13px; color: var(--text-weak); margin: 10px 2px 0; padding: 0; list-style: none; }
+.notes li { margin: 0 0 4px; padding-left: 14px; position: relative; }
+.notes li::before { content: ""; position: absolute; left: 2px; top: .62em; width: 5px; height: 1px; background: var(--text-faint); }
+.controls { display: flex; flex-wrap: wrap; gap: 10px 22px; margin: 0 0 18px; font-size: 13px; color: var(--text-weak); }
+.controls label { display: inline-flex; gap: 8px; align-items: center; }
+
+.seg { height: 26px; border: 1px solid var(--border); background: var(--canvas); border-radius: 3px; display: inline-flex; padding: 2px; gap: 2px; }
+.seg button { font: inherit; font-size: 13px; color: var(--text-weak); background: none; border: 1px solid transparent; border-radius: 2px; padding: 0 12px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--control); border-color: var(--border-strong); color: var(--text); }
+.seg button:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 1px; }
+
+/* The mockup of the app: egui points are CSS pixels. */
+.app { font: 400 13px/1 "Fira Sans", sans-serif; font-variant-numeric: tabular-nums; color: var(--text); }
+.stage { background: var(--canvas); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; min-width: 0; }
+.card-title { height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 12px; white-space: nowrap; }
+.card-title .ph { color: var(--text-weak); font-size: 14px; }
+.card-title .more { margin-left: auto; color: var(--text-weak); font-size: 16px; flex: none; }
+.legend { display: flex; gap: 12px; overflow: hidden; margin-left: 8px; min-width: 0; flex: 0 1 auto; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; color: var(--text-weak); }
+.legend i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+.legend .unit { color: var(--text-weak); }
+.card-body { padding: 0 8px 8px; }
+.card-body.untitled { padding-top: 8px; }
+.plotbox { position: relative; width: 100%; }
+.plotbox svg { display: block; }
+.tk { fill: var(--text-weak); font-size: 12px; font-family: "Fira Sans", sans-serif; font-variant-numeric: tabular-nums; }
+.tk.faint { fill: var(--text-faint); }
+.hint { fill: var(--text-faint); font-size: 13px; font-family: "Fira Sans", sans-serif; }
+.pair { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(0, 1fr); gap: 8px; }
+
+/* the tooltip of a bin */
+.tip { position: absolute; pointer-events: none; background: var(--popup); border: 1px solid var(--border); border-radius: 4px; box-shadow: 0 4px 12px var(--shadow); padding: 6px 8px; font-size: 13px; white-space: nowrap; display: none; z-index: 3; }
+.tip .th { color: var(--text-weak); margin-bottom: 4px; }
+.tip .tr { display: grid; grid-template-columns: 8px auto minmax(36px, auto); gap: 6px; align-items: center; height: 18px; }
+.tip .tr i { width: 8px; height: 8px; border-radius: 50%; }
+.tip .tr b { font-weight: 500; text-align: right; }
+.tip .tr.zero b, .tip .tr.zero span { color: var(--text-faint); font-weight: 400; }
+/* the legend in a corner, as egui_plot draws it for a view without a title row */
+.lbox { position: absolute; top: 14px; right: 18px; background: var(--card); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 13px; }
+.lbox div { display: flex; gap: 6px; justify-content: flex-end; align-items: center; height: 18px; color: var(--text-weak); }
+.lbox i { width: 8px; height: 8px; border-radius: 50%; }
+
+/* properties panel */
+.props { background: var(--panel); padding: 4px 10px 10px; width: 300px; max-width: 100%; }
+.props .head { height: 30px; display: flex; align-items: center; font-size: 11px; font-weight: 500; color: var(--text-weak); letter-spacing: .02em; }
+.props .vt { display: flex; align-items: center; gap: 8px; height: 30px; }
+.props .vt .ph { color: var(--accent-text); }
+.props .vt .kind { margin-left: auto; font-size: 12px; color: var(--text-weak); border: 1px solid var(--border); border-radius: 3px; padding: 3px 6px; }
+.props .sec { height: 30px; display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 500; color: var(--text-weak); border-top: 1px solid var(--border); margin-top: 4px; letter-spacing: .02em; }
+.props .sec .ph { font-size: 10px; }
+.props .pr { min-height: 30px; display: grid; grid-template-columns: 84px 1fr; gap: 8px; align-items: center; }
+.props .pr > span:first-child { color: var(--text-weak); }
+.props .pr.sub > span:first-child { padding-left: 10px; }
+.field { height: 24px; border: 1px solid var(--border); background: var(--canvas); border-radius: 3px; display: flex; align-items: center; padding: 0 6px; gap: 6px; }
+.field .h { color: var(--text-faint); }
+.field.drag { width: 90px; background: var(--control); justify-content: center; }
+.sg { height: 24px; border: 1px solid var(--border); background: var(--canvas); border-radius: 3px; display: flex; padding: 2px; gap: 2px; }
+.sg span { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--text-weak); border-radius: 2px; border: 1px solid transparent; }
+.sg span.on { background: var(--control); border-color: var(--border-strong); color: var(--text); }
+.combo { height: 24px; width: 110px; border: 1px solid var(--border); background: var(--control); border-radius: 3px; display: flex; align-items: center; justify-content: space-between; padding: 0 6px; }
+.unitw { color: var(--text-weak); }
+.whyrow { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 28px; align-items: start; }
+.whyrow .notes { margin-top: 0; }
+
+.reco { border-left: 2px solid var(--accent); padding: 4px 0 4px 16px; max-width: 80ch; }
+.reco p { margin: 0 0 10px; color: var(--text-weak); }
+.reco p b { color: var(--text); font-weight: 500; }
+
+@media (max-width: 720px) {
+  .pair, .whyrow { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <img src="icon/blip-standard.svg" alt="">
+    <h1>Histogram view</h1>
+    <p>How the values of the checked traces spread over the shown window: bars on shared bins, in the trace colours. Built from the tokens in <span class="mono">theme.rs</span> at the app's size, with traces from the demo recording. Hover a bin to see its counts.</p>
+    <div class="seg" role="group" aria-label="Theme">
+      <button type="button" data-theme-choice="dark">Dark</button>
+      <button type="button" data-theme-choice="light">Light</button>
+    </div>
+  </header>
+
+  <section class="idea" id="bars">
+    <h2>Bars of overlaid traces</h2>
+    <p>The same window of <b>robot/pose</b> drawn three ways: <b>heading</b> spreads over the whole circle, <b>x</b> and <b>y</b> swing like sines and pile up at their turning points. All three share one set of bins, so a bin means the same value range for each trace.</p>
+    <div class="controls">
+      <label>Traces <span class="seg" role="group" data-ctl="n"><button type="button" data-v="1">1</button><button type="button" data-v="3">3</button><button type="button" data-v="6">6</button></span></label>
+      <label>Counts <span class="seg" role="group" data-ctl="log"><button type="button" data-v="0">Linear</button><button type="button" data-v="1">Log</button></span></label>
+      <label>Markers <span class="seg" role="group" data-ctl="mk"><button type="button" data-v="off">Off</button><button type="button" data-v="on">Mean ±σ</button></span></label>
+      <label>Card <span class="seg" role="group" data-ctl="narrow"><button type="button" data-v="0">Wide</button><button type="button" data-v="1">Narrow</button></span></label>
+    </div>
+    <div class="compare" id="bars-compare">
+      <figure><figcaption><b>A. Quiet bands</b> <span class="pick">a light wash under an outline, like the state bands</span></figcaption>
+        <div class="stage app"><div class="card"><div class="card-title" data-legend></div><div class="card-body"><div class="plotbox" id="fa"></div></div></div></div>
+        <ul class="notes">
+          <li><b>Fill</b> the trace colour at the opacity of <span class="mono">tint</span> (0.16 dark, 0.14 light), so overlaps add up a little and stay quiet; the 1.5 pt outline in the full colour carries the trace.</li>
+          <li>All washes are drawn first, then all outlines, so no trace hides another's shape.</li>
+          <li>Markers: mean as a solid line, ±σ as dashed lines, across the bars.</li>
+        </ul>
+      </figure>
+      <figure><figcaption><b>B. Outlines and whiskers</b> <span class="pick">only the skyline of each trace, markers in a strip on top</span></figcaption>
+        <div class="stage app"><div class="card"><div class="card-title" data-legend></div><div class="card-body"><div class="plotbox" id="fb"></div></div></div></div>
+        <ul class="notes">
+          <li><b>No fill</b>: the lightest, and any number of traces stay apart. One trace alone looks thin.</li>
+          <li>Markers sit in a strip above the bars, a row per trace: a dot at the mean and a whisker over ±σ. They never cross a bar.</li>
+        </ul>
+      </figure>
+      <figure><figcaption><b>C. Side by side</b> <span class="pick">each bin split into a slot per trace</span></figcaption>
+        <div class="stage app"><div class="card"><div class="card-title" data-legend></div><div class="card-body"><div class="plotbox" id="fc"></div></div></div></div>
+        <ul class="notes">
+          <li><b>Solid bars</b>, a slot per trace in each bin, with a gap between bins. Clear for two traces and few bins, e.g. integer counters.</li>
+          <li>With 6 traces or a narrow card the slots turn into slivers and the view gets loud.</li>
+        </ul>
+      </figure>
+    </div>
+  </section>
+
+  <section class="idea" id="markers">
+    <h2>Mean and ±σ markers</h2>
+    <p>Off by default, turned on for all traces at once. Mean and σ are those of the <b>samples</b> in the window, the same samples the bars count; Plot's stats weigh each value by the time it holds, so they can differ for traces with irregular samples. Shown here on the bars of A.</p>
+    <div class="controls">
+      <label>Traces <span class="seg" role="group" data-ctl="mn"><button type="button" data-v="1">1</button><button type="button" data-v="3">3</button></span></label>
+    </div>
+    <div class="compare">
+      <figure><figcaption><b>Lines</b> <span class="pick">mean solid, ±σ dashed</span></figcaption>
+        <div class="stage app"><div class="card"><div class="card-title" data-legend2></div><div class="card-body"><div class="plotbox" id="ma"></div></div></div></div>
+        <ul class="notes"><li>Reads like the cursors of a scope. Three traces make nine lines.</li></ul>
+      </figure>
+      <figure><figcaption><b>Band</b> <span class="pick">mean line over a faint ±σ band</span></figcaption>
+        <div class="stage app"><div class="card"><div class="card-title" data-legend2></div><div class="card-body"><div class="plotbox" id="mb"></div></div></div></div>
+        <ul class="notes"><li>Calm for one trace; bands of several traces pile onto the washes of the bars.</li></ul>
+      </figure>
+      <figure><figcaption><b>Whiskers</b> <span class="pick">a strip on top, a row per trace</span></figcaption>
+        <div class="stage app"><div class="card"><div class="card-title" data-legend2></div><div class="card-body"><div class="plotbox" id="mc"></div></div></div></div>
+        <ul class="notes"><li>Nothing crosses the bars and spreads compare at a glance. Takes 10 px per trace from the height.</li></ul>
+      </figure>
+    </div>
+  </section>
+
+  <section class="idea" id="sideways">
+    <h2>Sideways, next to a plot</h2>
+    <p>With the bars turned sideways the values run up the vertical axis, so the histogram can sit beside a plot of the same trace. Its count axis takes the place of the time axis, so with both cards in one row the plot areas start and end at the same height. <b>motor.speed_rpm</b> holds at 2400, 800 and 1800 rpm; each plateau becomes a peak.</p>
+    <div class="compare one">
+      <figure><figcaption><b>Value axis on the left</b> <span class="pick">as in every other plot</span></figcaption>
+        <div class="stage app"><div class="pair">
+          <div class="card"><div class="card-title"><i class="ph ph-chart-line"></i><span>Motor speed</span><span class="legend"><span><i style="background:var(--t0)"></i>speed_rpm</span><span class="unit">rpm</span></span><i class="ph ph-dots-three more"></i></div><div class="card-body"><div class="plotbox" id="sp1"></div></div></div>
+          <div class="card"><div class="card-title"><i class="ph ph-chart-bar"></i><span>Speed spread</span><span class="legend"><span><i style="background:var(--t0)"></i>speed_rpm</span><span class="unit">rpm</span></span><i class="ph ph-dots-three more"></i></div><div class="card-body"><div class="plotbox" id="sh1"></div></div></div>
+        </div></div>
+      </figure>
+      <figure><figcaption><b>Value axis on the right</b> <span class="pick">bars grow away from the plot, as a margin of it</span></figcaption>
+        <div class="stage app"><div class="pair">
+          <div class="card"><div class="card-title"><i class="ph ph-chart-line"></i><span>Motor speed</span><span class="legend"><span><i style="background:var(--t0)"></i>speed_rpm</span><span class="unit">rpm</span></span><i class="ph ph-dots-three more"></i></div><div class="card-body"><div class="plotbox" id="sp2"></div></div></div>
+          <div class="card"><div class="card-title"><i class="ph ph-chart-bar"></i><span>Speed spread</span><span class="legend"><span><i style="background:var(--t0)"></i>speed_rpm</span><span class="unit">rpm</span></span><i class="ph ph-dots-three more"></i></div><div class="card-body"><div class="plotbox" id="sh2"></div></div></div>
+        </div></div>
+      </figure>
+      <figure><figcaption><b>Idea, not agreed: follow a plot's value range</b> <span class="pick">the plot is zoomed to 1700–2500 rpm and the histogram keeps up</span></figcaption>
+        <div class="stage app"><div class="pair">
+          <div class="card"><div class="card-title"><i class="ph ph-chart-line"></i><span>Motor speed</span><span class="legend"><span><i style="background:var(--t0)"></i>speed_rpm</span><span class="unit">rpm</span></span><i class="ph ph-dots-three more"></i></div><div class="card-body"><div class="plotbox" id="sp3"></div></div></div>
+          <div class="card"><div class="card-title"><i class="ph ph-chart-bar"></i><span>Speed spread</span><span class="legend"><span><i style="background:var(--t0)"></i>speed_rpm</span><span class="unit">rpm</span></span><i class="ph ph-dots-three more"></i></div><div class="card-body"><div class="plotbox" id="sh3"></div></div></div>
+        </div></div>
+        <ul class="notes">
+          <li>Without any link, an auto histogram already lines up with an auto plot of the same trace, if it fits its values with the same 5 % margin egui_plot gives a plot's y.</li>
+          <li>A link ("Values: same as Motor speed") would only matter once the plot is zoomed or has a fixed y range. It ties two views together, which nothing else in blip does.</li>
+        </ul>
+      </figure>
+    </div>
+  </section>
+
+  <section class="idea" id="log">
+    <h2>Log counts and empty bins</h2>
+    <p>Linear counts hide the few samples of the speed changes between the plateaus. On a log scale a bin of one sample must still show, and an empty bin must not pretend to be one.</p>
+    <div class="compare">
+      <figure><figcaption><b>Linear</b></figcaption>
+        <div class="stage app"><div class="card"><div class="card-title"><i class="ph ph-chart-bar"></i><span>Speed spread</span><span class="legend"><span><i style="background:var(--t0)"></i>speed_rpm</span><span class="unit">rpm</span></span><i class="ph ph-dots-three more"></i></div><div class="card-body"><div class="plotbox" id="l1"></div></div></div></div>
+      </figure>
+      <figure><figcaption><b>Log, bars from 1</b> <span class="pick">a bin of one sample has no height</span></figcaption>
+        <div class="stage app"><div class="card"><div class="card-title"><i class="ph ph-chart-bar"></i><span>Speed spread</span><span class="legend"><span><i style="background:var(--t0)"></i>speed_rpm</span><span class="unit">rpm</span></span><i class="ph ph-dots-three more"></i></div><div class="card-body"><div class="plotbox" id="l2"></div></div></div></div>
+      </figure>
+      <figure><figcaption><b>Log, bars from below 1</b> <span class="pick">the axis starts half a decade under 1</span></figcaption>
+        <div class="stage app"><div class="card"><div class="card-title"><i class="ph ph-chart-bar"></i><span>Speed spread</span><span class="legend"><span><i style="background:var(--t0)"></i>speed_rpm</span><span class="unit">rpm</span></span><i class="ph ph-dots-three more"></i></div><div class="card-body"><div class="plotbox" id="l3"></div></div></div></div>
+        <ul class="notes"><li>Ticks at 1, 10, 100, 1k. A single sample is a short bar; an empty bin draws nothing and its outline drops to the floor.</li></ul>
+      </figure>
+    </div>
+  </section>
+
+  <section class="idea" id="edges">
+    <h2>Empty, single and crowded</h2>
+    <p>What the view shows before there is anything to count, when all values are the same, with a fixed range that cuts values off, and in a narrow card with long names.</p>
+    <div class="compare narrow-cards">
+      <figure><figcaption><b>Nothing checked</b></figcaption>
+        <div class="stage app"><div class="card"><div class="card-title"><i class="ph ph-chart-bar"></i><span>Histogram 1</span><i class="ph ph-dots-three more"></i></div><div class="card-body"><div class="plotbox" id="e1"></div></div></div></div>
+      </figure>
+      <figure><figcaption><b>No samples in the window</b> <span class="pick">e.g. paused on a gap</span></figcaption>
+        <div class="stage app"><div class="card"><div class="card-title"><i class="ph ph-chart-bar"></i><span>Histogram 1</span><span class="legend"><span><i style="background:var(--t0)"></i>temperature</span><span class="unit">°C</span></span><i class="ph ph-dots-three more"></i></div><div class="card-body"><div class="plotbox" id="e2"></div></div></div></div>
+      </figure>
+      <figure><figcaption><b>All samples the same</b> <span class="pick">one bar, centred</span></figcaption>
+        <div class="stage app"><div class="card"><div class="card-title"><i class="ph ph-chart-bar"></i><span>Histogram 1</span><span class="legend"><span><i style="background:var(--t0)"></i>temperature</span><span class="unit">°C</span></span><i class="ph ph-dots-three more"></i></div><div class="card-body"><div class="plotbox" id="e3"></div></div></div></div>
+        <ul class="notes"><li>The bin is 1 wide for integers, else a 1-2-5 step near 1 % of the value. Its tooltip says "All 40 samples are 23.4 °C". σ is 0, so only the mean line shows.</li></ul>
+      </figure>
+      <figure><figcaption><b>Fixed range cuts values off</b></figcaption>
+        <div class="stage app"><div class="card"><div class="card-title"><i class="ph ph-chart-bar"></i><span>Speed spread</span><span class="legend"><span><i style="background:var(--t0)"></i>speed_rpm</span><span class="unit">rpm</span></span><i class="ph ph-dots-three more"></i></div><div class="card-body"><div class="plotbox" id="e4"></div></div></div></div>
+        <ul class="notes"><li>Range 1500 to 2500: the samples below and above are counted in faint text at the ends, so none vanish without a trace.</li></ul>
+      </figure>
+      <figure><figcaption><b>Long names, narrow card</b></figcaption>
+        <div class="stage app"><div class="card"><div class="card-title"><i class="ph ph-chart-bar"></i><span>Joint errors</span><span class="legend"><span><i style="background:var(--t0)"></i>shoulder.position_error</span><span><i style="background:var(--t1)"></i>elbow.position_error</span><span><i style="background:var(--t2)"></i>wrist.position_error</span></span><i class="ph ph-dots-three more"></i></div><div class="card-body"><div class="plotbox" id="e5"></div></div></div></div>
+        <ul class="notes"><li>The legend is cut at the ⋯ like Plot's; the full paths are in the tooltips. Fewer, wider bins: auto bins are at least 4 px wide.</li></ul>
+      </figure>
+      <figure><figcaption><b>Alone in a tab</b> <span class="pick">no title row, legend top right</span></figcaption>
+        <div class="stage app"><div class="card"><div class="card-body untitled"><div class="plotbox" id="e6"></div></div></div></div>
+      </figure>
+    </div>
+  </section>
+
+  <section class="idea" id="properties">
+    <h2>Properties</h2>
+    <p>Sections named after what they hold, not after x and y, because turning the bars swaps the axes.</p>
+    <div class="whyrow">
+      <div class="stage app" style="padding:0;overflow:hidden;width:fit-content;max-width:100%"><div class="props">
+        <div class="head">PROPERTIES</div>
+        <div class="vt"><i class="ph ph-chart-bar"></i><span>Pose spread</span><span class="kind">Histogram</span></div>
+        <div class="sec"><i class="ph ph-caret-down"></i>VIEW</div>
+        <div class="pr"><span>Name</span><span class="field">Pose spread</span></div>
+        <div class="sec"><i class="ph ph-caret-down"></i>BINS</div>
+        <div class="pr"><span>Bins</span><span class="sg"><span class="on">Auto</span><span>Number</span><span>Width</span></span></div>
+        <div class="pr"><span>Range</span><span class="sg"><span class="on">Auto</span><span>Fixed</span></span></div>
+        <div class="sec"><i class="ph ph-caret-down"></i>COUNTS</div>
+        <div class="pr"><span>Scale</span><span class="sg"><span class="on">Linear</span><span>Log</span></span></div>
+        <div class="sec"><i class="ph ph-caret-down"></i>BARS</div>
+        <div class="pr"><span>Orientation</span><span class="sg"><span class="on">Upright</span><span>Sideways</span></span></div>
+        <div class="pr"><span>Markers</span><span class="sg"><span class="on">Off</span><span>Mean</span><span>Mean ±σ</span></span></div>
+        <div class="sec"><i class="ph ph-caret-down"></i>NUMBER FORMAT</div>
+        <div class="pr"><span>heading</span><span style="display:flex;gap:8px;align-items:center"><span class="combo">Default <i class="ph ph-caret-down"></i></span><span class="unitw">rad</span></span></div>
+        <div class="pr"><span>x</span><span style="display:flex;gap:8px;align-items:center"><span class="combo">Default <i class="ph ph-caret-down"></i></span><span class="unitw">m</span></span></div>
+        <div class="pr"><span>y</span><span style="display:flex;gap:8px;align-items:center"><span class="combo">Default <i class="ph ph-caret-down"></i></span><span class="unitw">m</span></span></div>
+      </div></div>
+      <div class="stage app" style="padding:0;overflow:hidden;width:fit-content;max-width:100%"><div class="props">
+        <div class="head">PROPERTIES</div>
+        <div class="vt"><i class="ph ph-chart-bar"></i><span>Speed spread</span><span class="kind">Histogram</span></div>
+        <div class="sec"><i class="ph ph-caret-down"></i>BINS</div>
+        <div class="pr"><span>Bins</span><span class="sg"><span>Auto</span><span>Number</span><span class="on">Width</span></span></div>
+        <div class="pr sub"><span>Width</span><span style="display:flex;gap:8px;align-items:center"><span class="field" style="flex:1">50</span><span class="unitw">rpm</span></span></div>
+        <div class="pr"><span>Range</span><span class="sg"><span>Auto</span><span class="on">Fixed</span></span></div>
+        <div class="pr sub"><span>Min</span><span class="field drag">1500</span></div>
+        <div class="pr sub"><span>Max</span><span class="field drag">2500</span></div>
+        <div class="sec"><i class="ph ph-caret-down"></i>COUNTS</div>
+        <div class="pr"><span>Scale</span><span class="sg"><span>Linear</span><span class="on">Log</span></span></div>
+        <div class="sec"><i class="ph ph-caret-down"></i>BARS</div>
+        <div class="pr"><span>Orientation</span><span class="sg"><span>Upright</span><span class="on">Sideways</span></span></div>
+        <div class="pr"><span>Markers</span><span class="sg"><span>Off</span><span>Mean</span><span class="on">Mean ±σ</span></span></div>
+      </div></div>
+    </div>
+    <ul class="notes" style="max-width:80ch;margin-top:14px">
+      <li><b>Bins</b>: <span class="mono">choice_row</span> Auto, Number or Width; Number and Width open one field below (an integer, or a width in the unit of the traces). Range is <span class="mono">range_rows</span>, starting from the fitted range when it becomes Fixed.</li>
+      <li><b>Counts</b>: only the scale; the count axis always fits the tallest bin in view.</li>
+      <li><b>Bars</b>: Orientation and Markers, one choice each for all traces. No bar style choice: the chosen option is the style.</li>
+      <li><b>Number format</b> comes for free (<span class="mono">WRITES_VALUES</span>): it writes the bin edges in the tooltip and the value ticks.</li>
+    </ul>
+  </section>
+
+  <section class="idea" id="reco">
+    <h2>Recommendation</h2>
+    <div class="reco">
+      <p><b>A, quiet bands, with the whisker strip of B for the markers.</b> The wash under an outline is the state bands' look turned on its side: blip already says "a quiet tint with an edge in the full colour", so a histogram drawn that way belongs to the app on sight. One trace reads as a solid shape, three still read as three outlines, and overlaps only darken a little. Side by side bars are the loud option the brief warns about.</p>
+      <p>The whisker strip keeps the mean and spread off the bars, so turning markers on adds three short rows instead of nine lines across the data.</p>
+      <p><b>Sideways with the value axis on the left</b>, the same 50 px numbers column as Plot, so a histogram alone or beside a plot reads like any plot. Fit auto values with Plot's 5 % margin so a sideways histogram beside an auto plot of the same trace lines up without a link. <b>Log counts from half a decade below 1</b>, so single samples show and empty bins stay empty.</p>
+    </div>
+  </section>
+</div>
+
+<script>
+// theme toggle; the choice is only a convenience, so storage may fail
+(function () {
+  const root = document.documentElement;
+  let saved = null;
+  try { saved = localStorage.getItem('blip-ideas-theme'); } catch (e) {}
+  saved = new URLSearchParams(location.search).get('theme') || saved;
+  const set = (t) => {
+    root.dataset.theme = t;
+    document.querySelectorAll('[data-theme-choice]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.themeChoice === t)));
+    try { localStorage.setItem('blip-ideas-theme', t); } catch (e) {}
+  };
+  set(saved === 'light' ? 'light' : 'dark');
+  document.querySelectorAll('[data-theme-choice]').forEach(b => b.addEventListener('click', () => set(b.dataset.themeChoice)));
+})();
+
+// ---- data: 20 s of the demo at 50 Hz, seeded so it is the same on every load ----
+function rng(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const rnd = rng(11);
+const gauss = () => { let u = 0, v = 0; while (!u) u = rnd(); v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+const N = 1000, times = Array.from({ length: N }, (_, i) => i * 0.02);
+const wrap = a => { a = (a + Math.PI) % (2 * Math.PI); if (a < 0) a += 2 * Math.PI; return a - Math.PI; };
+const TAU = 2 * Math.PI;
+const D = {
+  heading: times.map(t => wrap(-1.5 + t / 20 * TAU * 1.1 + 0.9 * Math.sin(TAU * t / 9)) + 0.01 * gauss()),
+  x: times.map(t => 2 * Math.sin(TAU * (t - 6.5) / 23) + 0.02 * gauss()),
+  y: times.map(t => Math.sin(TAU * t / 13 + 3.3) + 0.02 * gauss()),
+  tx: times.map(t => 1.7 * Math.sin(TAU * (t - 5.5) / 23) + 0.02 * gauss()),
+  ty: times.map(t => 0.8 * Math.sin(TAU * t / 13 + 3.0) + 0.02 * gauss()),
+  err: times.map(() => 0.35 * gauss()),
+  speed: times.map(t => {
+    let v;
+    if (t < 7) v = 2400;
+    else if (t < 10) v = 800 + 1600 * Math.exp(-(t - 7) / 0.55);
+    else if (t < 11.6) v = 800;
+    else v = 1800 - 1000 * Math.exp(-(t - 11.6) / 0.45);
+    return v + 9 * gauss();
+  }),
+  shoulder: times.map(() => 0.004 * gauss() + 0.001),
+  elbow: times.map(() => 0.007 * gauss() - 0.002),
+  wrist: times.map(() => 0.011 * gauss()),
+};
+const S = (name, ci, vals) => ({ name, ci, vals });
+const poseTraces = n => n === 1 ? [S('x', 0, D.x)]
+  : n === 3 ? [S('heading', 0, D.heading), S('x', 1, D.x), S('y', 2, D.y)]
+  : [S('error', 0, D.err), S('heading', 1, D.heading), S('pose.x', 2, D.x), S('pose.y', 3, D.y), S('target.x', 4, D.tx), S('target.y', 5, D.ty)];
+const poseUnit = n => n === 1 ? 'm' : null;
+
+// ---- numbers ----
+function nice(x) { const p = Math.pow(10, Math.floor(Math.log10(x))); const m = x / p; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p; }
+function niceNear(x) { const p = Math.pow(10, Math.floor(Math.log10(x))); const m = x / p; return (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * p; }
+function decimals(step) { return Math.max(0, -Math.floor(Math.log10(step) + 1e-9)); }
+function fmt(v, step) { const d = decimals(step); const s = v.toFixed(d); return s === '-' + (0).toFixed(d) ? (0).toFixed(d) : s; }
+function ticks(lo, hi, max) { const step = niceNear((hi - lo) / Math.max(1, max)); const out = []; for (let v = Math.ceil(lo / step - 1e-9) * step; v <= hi + 1e-9; v += step) out.push(+v.toFixed(10)); return { out, step }; }
+const stats = vals => { const m = vals.reduce((a, b) => a + b, 0) / vals.length; const sd = Math.sqrt(vals.reduce((a, b) => a + (b - m) ** 2, 0) / vals.length); return { m, sd }; };
+
+// Shared bins: about sqrt(n) bins over the values of all traces (8 to 64), the width a
+// 1-2-5 step and at least 4 px, starting on a multiple of the width so that bins keep
+// their place while the window moves. One value gets one bin centred on it.
+function binsFor(series, px, o) {
+  const all = series.flatMap(s => s.vals);
+  let lo = Math.min(...all), hi = Math.max(...all);
+  if (o.range) [lo, hi] = o.range;
+  let h;
+  if (o.width) h = o.width;
+  else if (hi === lo) h = nice(Math.abs(lo) * 0.01 || 1);
+  else {
+    const target = Math.min(64, Math.max(8, Math.sqrt(Math.max(...series.map(s => s.vals.length)))));
+    h = niceNear((hi - lo) / target);
+    while ((hi - lo) / h > px / 4) h = nice(h * 1.5);
+  }
+  if (hi === lo) return { start: lo - h / 2, h, n: 1, lo, hi };
+  const start = Math.floor(lo / h) * h;
+  let n = Math.max(1, Math.ceil((hi - start) / h - 1e-9));
+  if (start + n * h <= hi) n++;
+  if (o.range) n = Math.round((hi - start) / h);
+  return { start, h, n, lo, hi };
+}
+
+// ---- the histogram ----
+const LOG_FLOOR = Math.log10(0.5);
+function drawHist(el, o) {
+  const w = Math.max(160, Math.floor(el.clientWidth)), H = o.h || 240;
+  const side = o.orient === 'side', right = o.axis === 'right';
+  const series = o.series || [];
+  const M = side ? { l: right ? 10 : 50, r: right ? 50 : 12, t: 8, b: 24 } : { l: 46, r: 12, t: 8, b: o.unit ? 38 : 24 };
+  const x0 = M.l, x1 = w - M.r, y0 = M.t, y1 = H - M.b;
+  let s = `<svg width="${w}" height="${H}" viewBox="0 0 ${w} ${H}" role="img" aria-label="histogram">`;
+  const frame = `<rect x="${x0 + .5}" y="${y0 + .5}" width="${x1 - x0 - 1}" height="${y1 - y0 - 1}" fill="none" style="stroke:var(--border)"/>`;
+  if (!series.length || o.noSamples) {
+    if (o.noSamples) {
+      s += frame;
+      const vt = ticks(18, 26, 4);
+      for (const v of vt.out) { const X = x0 + (v - 18) / 8 * (x1 - x0); s += `<line x1="${X}" x2="${X}" y1="${y0}" y2="${y1}" style="stroke:var(--border)"/><text class="tk faint" x="${X}" y="${y1 + 15}" text-anchor="middle">${fmt(v, vt.step)}</text>`; }
+    }
+    const lines = o.noSamples ? ['No samples in the shown window'] : ['Check the traces to show', 'in the tree on the left'];
+    lines.forEach((t, i) => { s += `<text class="hint" x="${(x0 + x1) / 2}" y="${(y0 + y1) / 2 + (i - (lines.length - 1) / 2) * 18}" text-anchor="middle">${t}</text>`; });
+    s += `</svg>`;
+    el.innerHTML = s; return;
+  }
+  const valLen = side ? y1 - y0 : x1 - x0;
+  const B = binsFor(series, valLen, o);
+  const counts = series.map(sr => { const c = new Array(B.n).fill(0); let below = 0, above = 0; for (const v of sr.vals) { const i = Math.floor((v - B.start) / B.h + 1e-9); if (v < B.start) below++; else if (i >= B.n) above++; else c[i]++; } return { c, below, above }; });
+  const maxC = Math.max(1, ...counts.flatMap(k => k.c));
+  // the value range: the values with a 5 % margin, as egui_plot fits a plot's y
+  let vlo, vhi;
+  if (o.vrange) [vlo, vhi] = o.vrange;
+  else if (B.hi === B.lo) { vlo = B.lo - B.h * 2.5; vhi = B.lo + B.h * 2.5; }
+  else { const pad = (B.hi - B.lo) * 0.05; vlo = B.lo - pad; vhi = B.hi + pad; }
+  const log = !!o.log, floorC = log ? (o.logFrom1 ? 0 : LOG_FLOOR) : 0;
+  const ct = c => log ? (c > 0 ? Math.log10(c) : floorC) : c;
+  const cTop = log ? Math.log10(maxC) + 0.12 * (Math.log10(maxC) - floorC) : maxC * 1.08;
+  const lane = o.markers === 'lane' ? series.length * 10 + 8 : 0;
+  const V = v => side ? y1 - (v - vlo) / (vhi - vlo) * (y1 - y0) : x0 + (v - vlo) / (vhi - vlo) * (x1 - x0);
+  const C = c => side ? x0 + (c - floorC) / (cTop - floorC) * (x1 - x0 - lane) : y1 - (c - floorC) / (cTop - floorC) * (y1 - y0 - lane);
+  const P = (v, c) => side ? [C(c), V(v)] : [V(v), C(c)];
+  const R = (va, vb, ca, cb) => { const [ax, ay] = P(va, ca), [bx, by] = P(vb, cb); return `x="${Math.min(ax, bx)}" y="${Math.min(ay, by)}" width="${Math.abs(bx - ax)}" height="${Math.abs(by - ay)}"`; };
+  s += `<defs><clipPath id="clip-${el.id}"><rect x="${x0}" y="${y0}" width="${x1 - x0}" height="${y1 - y0}"/></clipPath></defs>`;
+  // grid and ticks
+  const vt = ticks(vlo, vhi, Math.max(2, Math.floor(valLen / (side ? 48 : 55))));
+  for (const v of vt.out) {
+    if (v < vlo || v > vhi) continue;
+    const p = V(v), label = o.vfmt ? o.vfmt(v) : fmt(v, vt.step);
+    if (side) { s += `<line x1="${x0}" x2="${x1}" y1="${p}" y2="${p}" style="stroke:var(--border)"/>`; s += right ? `<text class="tk" x="${x1 + 6}" y="${p + 4}">${label}</text>` : `<text class="tk" x="${x0 - 6}" y="${p + 4}" text-anchor="end">${label}</text>`; }
+    else { s += `<line x1="${p}" x2="${p}" y1="${y0}" y2="${y1}" style="stroke:var(--border)"/><text class="tk" x="${p}" y="${y1 + 15}" text-anchor="middle">${label}</text>`; }
+  }
+  const cLen = side ? x1 - x0 - lane : y1 - y0 - lane;
+  const cticks = log ? Array.from({ length: Math.floor(Math.log10(maxC)) + 1 }, (_, k) => ({ v: k, label: k >= 3 ? 10 ** (k - 3) + 'k' : String(10 ** k) }))
+    : (t => t.out.map(v => ({ v, label: String(v) })))(ticks(0, cTop, Math.max(2, Math.floor(cLen / (side ? 60 : 45)))));
+  for (const { v, label } of cticks) {
+    if (v > cTop) continue;
+    const p = C(v);
+    if (side) s += `<line x1="${p}" x2="${p}" y1="${y0}" y2="${y1}" style="stroke:var(--border)"/><text class="tk" x="${p}" y="${y1 + 15}" text-anchor="middle">${label}</text>`;
+    else s += `<line x1="${x0}" x2="${x1}" y1="${p}" y2="${p}" style="stroke:var(--border)"/><text class="tk" x="${x0 - 6}" y="${p + 4}" text-anchor="end">${label}</text>`;
+  }
+  if (o.unit && !side) s += `<text class="tk" x="${(x0 + x1) / 2}" y="${y1 + 31}" text-anchor="middle">${o.unit}</text>`;
+  s += `<g clip-path="url(#clip-${el.id})">`;
+  s += `<rect class="hov" x="0" y="0" width="0" height="0" style="fill:var(--hover)"/>`;
+  const col = i => `var(--t${Math.min(i, 5)})`;
+  const edge = i => B.start + i * B.h;
+  if (o.style === 'side') {
+    const k = series.length, inner = B.h * 0.84, sub = inner / k;
+    series.forEach((sr, j) => counts[j].c.forEach((c, i) => { if (!c) return; const a = edge(i) + B.h * 0.08 + j * sub; s += `<rect ${R(a, a + sub, floorC, ct(c))} style="fill:${col(sr.ci)}" fill-opacity=".85"/>`; }));
+  } else {
+    if (o.style !== 'outline') series.forEach((sr, j) => counts[j].c.forEach((c, i) => { if (!c) return; s += `<rect ${R(edge(i), edge(i + 1), floorC, ct(c))} style="fill:${col(sr.ci)}" fill-opacity="var(--q)" shape-rendering="crispEdges"/>`; }));
+    series.forEach((sr, j) => {
+      const pts = [P(edge(0), floorC)];
+      counts[j].c.forEach((c, i) => { pts.push(P(edge(i), ct(c)), P(edge(i + 1), ct(c))); });
+      pts.push(P(edge(B.n), floorC));
+      s += `<polyline points="${pts.map(p => p.join(',')).join(' ')}" fill="none" style="stroke:${col(sr.ci)}" stroke-width="1.5" stroke-linejoin="miter"/>`;
+    });
+  }
+  // markers
+  if (o.markers && o.markers !== 'off') {
+    series.forEach((sr, j) => {
+      const { m, sd } = stats(sr.vals), c = col(sr.ci);
+      const line = (v, extra) => { const [ax, ay] = P(v, floorC), [bx, by] = P(v, cTop); return `<line x1="${ax}" y1="${ay}" x2="${bx}" y2="${by}" style="stroke:${c}" ${extra}/>`; };
+      if (o.markers === 'lines') { s += line(m, 'stroke-width="1.5"'); if (sd > 0 && !o.meanOnly) { s += line(m - sd, 'stroke-width="1" stroke-dasharray="4 3" stroke-opacity=".8"'); s += line(m + sd, 'stroke-width="1" stroke-dasharray="4 3" stroke-opacity=".8"'); } }
+      else if (o.markers === 'band') { if (sd > 0) s += `<rect ${R(m - sd, m + sd, floorC, cTop)} style="fill:${c}" fill-opacity=".09"/>`; s += line(m, 'stroke-width="1.5"'); }
+      else if (o.markers === 'lane') {
+        const at = (side ? x1 - 9 : y0 + 9) - j * 10 * (side ? 1 : -1);
+        const a = V(m - sd), b = V(m + sd), mm = V(m);
+        if (side) s += `<line x1="${at}" x2="${at}" y1="${a}" y2="${b}" style="stroke:${c}" stroke-width="1.5"/><line x1="${at - 3}" x2="${at + 3}" y1="${a}" y2="${a}" style="stroke:${c}" stroke-width="1.5"/><line x1="${at - 3}" x2="${at + 3}" y1="${b}" y2="${b}" style="stroke:${c}" stroke-width="1.5"/><circle cx="${at}" cy="${mm}" r="3" style="fill:${c}"/>`;
+        else s += `<line y1="${at}" y2="${at}" x1="${a}" x2="${b}" style="stroke:${c}" stroke-width="1.5"/><line y1="${at - 3}" y2="${at + 3}" x1="${a}" x2="${a}" style="stroke:${c}" stroke-width="1.5"/><line y1="${at - 3}" y2="${at + 3}" x1="${b}" x2="${b}" style="stroke:${c}" stroke-width="1.5"/><circle cx="${mm}" cy="${at}" r="3" style="fill:${c}"/>`;
+      }
+    });
+  }
+  s += `</g>`;
+  if (o.range) {
+    const below = counts.reduce((a, k) => a + k.below, 0), above = counts.reduce((a, k) => a + k.above, 0);
+    if (below) s += `<text class="tk faint" x="${x0 + 6}" y="${y0 + 16}">‹ ${below}</text>`;
+    if (above) s += `<text class="tk faint" x="${x1 - 6}" y="${y0 + 16}" text-anchor="end">${above} ›</text>`;
+  }
+  s += frame + `</svg>`;
+  el.innerHTML = s + `<div class="tip"></div>` + (o.legendBox ? `<div class="lbox">${series.map(sr => `<div>${sr.name}<i style="background:${col(sr.ci)}"></i></div>`).join('')}</div>` : '');
+  // hover a bin: its column lights up and the tooltip lists the counts of each trace
+  const svg = el.querySelector('svg'), hov = el.querySelector('.hov'), tip = el.querySelector('.tip');
+  const unitText = o.unit ? ' ' + o.unit : '';
+  svg.addEventListener('mousemove', ev => {
+    const r = svg.getBoundingClientRect(), px = ev.clientX - r.left, py = ev.clientY - r.top;
+    if (px < x0 || px > x1 || py < y0 || py > y1) { hov.setAttribute('width', 0); tip.style.display = 'none'; return; }
+    const v = side ? vlo + (y1 - py) / (y1 - y0) * (vhi - vlo) : vlo + (px - x0) / (x1 - x0) * (vhi - vlo);
+    const i = Math.floor((v - B.start) / B.h);
+    if (i < 0 || i >= B.n) { hov.setAttribute('width', 0); tip.style.display = 'none'; return; }
+    const a = V(edge(i)), b = V(edge(i + 1));
+    if (side) { hov.setAttribute('x', x0); hov.setAttribute('width', x1 - x0); hov.setAttribute('y', Math.min(a, b)); hov.setAttribute('height', Math.abs(b - a)); }
+    else { hov.setAttribute('y', y0); hov.setAttribute('height', y1 - y0); hov.setAttribute('x', a); hov.setAttribute('width', b - a); }
+    const one = B.hi === B.lo;
+    const head = one ? `All ${series[0].vals.length} samples are ${fmt(B.lo, B.h / 10)}${unitText}` : `${fmt(edge(i), B.h)} to ${fmt(edge(i + 1), B.h)}${unitText}`;
+    tip.innerHTML = `<div class="th">${head}</div>` + series.map((sr, j) => { const c = counts[j].c[i]; return `<div class="tr${c ? '' : ' zero'}"><i style="background:${col(sr.ci)}"></i><span>${sr.name}</span><b>${c}</b></div>`; }).join('');
+    tip.style.display = 'block';
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    let tx = px + 14, ty = py + 14;
+    if (tx + tw > el.clientWidth) tx = px - tw - 10;
+    if (ty + th > H) ty = py - th - 10;
+    tip.style.left = Math.max(0, tx) + 'px'; tip.style.top = Math.max(0, ty) + 'px';
+  });
+  svg.addEventListener('mouseleave', () => { hov.setAttribute('width', 0); tip.style.display = 'none'; });
+}
+
+// the motor speed over time, as Plot draws it
+function drawSpeedPlot(el, o) {
+  const w = Math.max(200, Math.floor(el.clientWidth)), H = o.h;
+  const x0 = 50, x1 = w - 12, y0 = 8, y1 = H - 24;
+  const [lo, hi] = o.yrange;
+  const X = t => x0 + t / 20 * (x1 - x0), Y = v => y1 - (v - lo) / (hi - lo) * (y1 - y0);
+  let s = `<svg width="${w}" height="${H}" viewBox="0 0 ${w} ${H}" role="img" aria-label="plot"><defs><clipPath id="clip-${el.id}"><rect x="${x0}" y="${y0}" width="${x1 - x0}" height="${y1 - y0}"/></clipPath></defs>`;
+  const vt = ticks(lo, hi, Math.floor((y1 - y0) / 48));
+  for (const v of vt.out) s += `<line x1="${x0}" x2="${x1}" y1="${Y(v)}" y2="${Y(v)}" style="stroke:var(--border)"/><text class="tk" x="${x0 - 6}" y="${Y(v) + 4}" text-anchor="end">${fmt(v, vt.step)}</text>`;
+  for (const [t, label] of [[5.5, '17:15:32'], [15.5, '17:15:42']]) s += `<line x1="${X(t)}" x2="${X(t)}" y1="${y0}" y2="${y1}" style="stroke:var(--border)"/><text class="tk" x="${X(t)}" y="${y1 + 15}" text-anchor="middle">${label}</text>`;
+  s += `<text class="tk" transform="translate(12 ${(y0 + y1) / 2}) rotate(-90)" text-anchor="middle">rpm</text>`;
+  s += `<polyline clip-path="url(#clip-${el.id})" points="${D.speed.map((v, i) => X(times[i]).toFixed(1) + ',' + Y(v).toFixed(1)).join(' ')}" fill="none" style="stroke:var(--t0)" stroke-width="1.5"/>`;
+  s += `<rect x="${x0 + .5}" y="${y0 + .5}" width="${x1 - x0 - 1}" height="${y1 - y0 - 1}" fill="none" style="stroke:var(--border)"/></svg>`;
+  el.innerHTML = s;
+}
+
+// ---- the figures ----
+const state = { n: '3', log: '0', mk: 'off', narrow: '0', mn: '3' };
+const speedAll = [S('speed_rpm', 0, D.speed)];
+const autoRange = vals => { const lo = Math.min(...vals), hi = Math.max(...vals), p = (hi - lo) * 0.05; return [lo - p, hi + p]; };
+const figures = [
+  ['fa', () => ({ series: poseTraces(+state.n), unit: poseUnit(+state.n), style: 'bands', log: state.log === '1', markers: state.mk === 'on' ? 'lines' : 'off' })],
+  ['fb', () => ({ series: poseTraces(+state.n), unit: poseUnit(+state.n), style: 'outline', log: state.log === '1', markers: state.mk === 'on' ? 'lane' : 'off' })],
+  ['fc', () => ({ series: poseTraces(+state.n), unit: poseUnit(+state.n), style: 'side', log: state.log === '1', markers: state.mk === 'on' ? 'lines' : 'off' })],
+  ['ma', () => ({ series: poseTraces(+state.mn), unit: poseUnit(+state.mn), style: 'bands', markers: 'lines' })],
+  ['mb', () => ({ series: poseTraces(+state.mn), unit: poseUnit(+state.mn), style: 'bands', markers: 'band' })],
+  ['mc', () => ({ series: poseTraces(+state.mn), unit: poseUnit(+state.mn), style: 'bands', markers: 'lane' })],
+  ['sh1', () => ({ series: speedAll, style: 'bands', orient: 'side', axis: 'left', h: 260, width: 50 })],
+  ['sh2', () => ({ series: speedAll, style: 'bands', orient: 'side', axis: 'right', h: 260, width: 50 })],
+  ['sh3', () => ({ series: speedAll, style: 'bands', orient: 'side', axis: 'right', h: 260, width: 50, vrange: [1700, 2500] })],
+  ['l1', () => ({ series: speedAll, unit: 'rpm', style: 'bands', width: 50 })],
+  ['l2', () => ({ series: speedAll, unit: 'rpm', style: 'bands', width: 50, log: true, logFrom1: true })],
+  ['l3', () => ({ series: speedAll, unit: 'rpm', style: 'bands', width: 50, log: true })],
+  ['e1', () => ({ series: [], h: 200 })],
+  ['e2', () => ({ series: [S('temperature', 0, [1])], noSamples: true, unit: '°C', h: 200 })],
+  ['e3', () => ({ series: [S('temperature', 0, Array(40).fill(23.4))], unit: '°C', style: 'bands', markers: 'lines', h: 200 })],
+  ['e4', () => ({ series: speedAll, unit: 'rpm', style: 'bands', range: [1500, 2500], width: 50, h: 200 })],
+  ['e5', () => ({ series: [S('shoulder.position_error', 0, D.shoulder), S('elbow.position_error', 1, D.elbow), S('wrist.position_error', 2, D.wrist)], unit: 'rad', style: 'bands', h: 200 })],
+  ['e6', () => ({ series: poseTraces(3), style: 'bands', h: 230, legendBox: true })],
+];
+const plots = [['sp1', () => ({ h: 260, yrange: autoRange(D.speed) })], ['sp2', () => ({ h: 260, yrange: autoRange(D.speed) })], ['sp3', () => ({ h: 260, yrange: [1700, 2500] })]];
+// the sideways histograms fit their values as the plot beside them does
+figures.forEach(f => { if (f[0] === 'sh1' || f[0] === 'sh2') { const g = f[1]; f[1] = () => ({ ...g(), vrange: autoRange(D.speed) }); } });
+
+function legendHtml(series, unit) {
+  return `<i class="ph ph-chart-bar"></i><span>Pose spread</span><span class="legend">${series.map(sr => `<span><i style="background:var(--t${Math.min(sr.ci, 5)})"></i>${sr.name}</span>`).join('')}${unit ? `<span class="unit">${unit}</span>` : ''}</span><i class="ph ph-dots-three more"></i>`;
+}
+function renderAll() {
+  document.querySelectorAll('[data-legend]').forEach(e => e.innerHTML = legendHtml(poseTraces(+state.n), poseUnit(+state.n)));
+  document.querySelectorAll('[data-legend2]').forEach(e => e.innerHTML = legendHtml(poseTraces(+state.mn), poseUnit(+state.mn)));
+  document.getElementById('bars-compare').classList.toggle('narrow-cards', state.narrow === '1');
+  for (const [id, f] of figures) drawHist(document.getElementById(id), f());
+  for (const [id, f] of plots) drawSpeedPlot(document.getElementById(id), f());
+}
+document.querySelectorAll('[data-ctl]').forEach(g => {
+  const key = g.dataset.ctl;
+  const sync = () => g.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === state[key])));
+  g.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { state[key] = b.dataset.v; sync(); renderAll(); }));
+  sync();
+});
+let resizeTimer;
+window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderAll, 80); });
+document.fonts && document.fonts.ready.then(renderAll);
+renderAll();
+</script>
+</body>
+</html>

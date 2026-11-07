@@ -85,7 +85,8 @@ the same format.
      - The title of the view.
    * - View ``kind``
      - The type of view, one of ``Plot``, ``States``, ``Table``, ``Xy``,
-       ``Heatmap``, ``Logs`` and ``Actions``, with its settings, e.g.
+       ``Histogram``, ``Heatmap``, ``Logs`` and ``Actions``, with its
+       settings, e.g.
        ``{"Plot": {"traces": ["motor.speed_rpm"]}}``.
    * - View ``formats``
      - The display format of traces by path: ``Hex``, ``Binary`` or
@@ -100,6 +101,25 @@ of a plot, ``xs``, ``against`` and ``equal_axes`` of an XY view, ``mode`` of
 a heatmap, ``layout`` of a table, ``shown`` of an actions view. A setting
 left out takes its default, so a generated preset only needs what differs.
 To find the key of a setting, change it in blip and export the preset.
+
+A view refers to another by its number in the file: the views counted in the
+order they appear, from 0, across all groups. A sideways histogram that
+follows the y range of a plot saves the number of that plot as ``follow``;
+here it follows the plot, view 0:
+
+.. code-block:: json
+
+   {"View": {"name": "Speed spread",
+             "kind": {"Histogram": {"traces": ["motor.speed_rpm"],
+                                    "orientation": "Sideways", "follow": 0}}}}
+
+The settings of a histogram are ``bins`` (``Auto``, ``Number`` or
+``Width``), ``bin_count``, ``bin_width``, ``range`` (``[min, max]``, or
+``null`` for auto), ``counts`` (``Linear`` or ``Log``), ``orientation``
+(``Upright`` or ``Sideways``), ``axis_side`` (``Left`` or ``Right``),
+``follow`` and ``markers`` (``Off``, ``Mean`` or ``MeanSigma``). A ``follow``
+that is not the number of a plot follows nothing. Moving views changes their
+numbers, so edit ``follow`` along with them.
 
 Versions
 ~~~~~~~~

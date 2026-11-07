@@ -698,6 +698,8 @@ impl eframe::App for App {
                 let context = view::PropertiesContext {
                     model: &self.state.model,
                     connected: &self.state.invoker.connected,
+                    // the layout lists its plots
+                    plots: &view::NO_PLOTS,
                 };
                 rest_frame.show(ui, |ui| self.layout.properties_ui(ui, &context));
             });
@@ -721,6 +723,8 @@ impl eframe::App for App {
                     invoker: &mut self.state.invoker,
                     formats: &view::NO_FORMATS,
                     titled: false,
+                    // the layout lists its plots
+                    plots: &view::NO_PLOTS,
                 };
                 self.layout.ui(ui, &mut context);
             });

@@ -123,6 +123,8 @@ What a frame costs follows what is shown, not how much data there is:
   again only when its filter changes or a path is no longer shown.
 * The timeline counts what arrived at most ten times a second, a heatmap
   uploads its image only when it changes.
+* A histogram counts the samples of the shown range again in each frame, in
+  one pass over the samples found by binary search.
 
 Receiving
 ---------
@@ -265,7 +267,9 @@ tree). The state of each type implements ``Viewable``, how it is shown, and
    }
 
 ``ViewContext`` gives a view the model, the time range (mutable, to pan and
-set the cursor), the invoker (to queue invocations) and its formats.
+set the cursor), the invoker (to queue invocations), its formats and the
+``Plots`` of the layout; ``PropertiesContext`` gives the properties the
+``Plots`` too.
 ``selectable`` decides per trace what a view type can show -- the trace, its
 elements, the whole array, or nothing with a reason -- which the traces tree
 uses to enable checkboxes and to filter.
@@ -276,6 +280,26 @@ To add a view type: add its struct with ``Default``, ``Viewable`` and
 dispatch. The name of the line is saved in presets. Its settings are saved
 with the layout through serde; give new fields defaults (``#[serde(default)]``)
 so older presets still load.
+
+Links between views
+~~~~~~~~~~~~~~~~~~~
+
+A sideways histogram can follow the y range of a plot, the only link between
+views. A view refers to another by a ``ViewId``, the id of its tile in the
+tree. Each frame, ``Layout::plots`` lists the plot views in the order of the
+layout as ``Plots``: the ``ViewId``, the name and the y range each shows
+(``Plot::shown_y``: the range panned or zoomed to, else the fixed min and max,
+with the ends not set fitted to all its data). The layout takes the list before
+it draws the views and passes it to all of them, so a plot zoomed or panned in
+a frame shows its new range to the histograms in the next; the layout repaints
+when a range changed during the frame.
+
+``View::relink`` maps the links of a view to other ids and drops those it maps
+to none. Deleting views drops the links to them. In the saved form a link is
+the number of the view in the saved order, e.g. ``"follow": 0`` for the first
+view of the layout: ``Group::save`` numbers the views as it saves them and
+``Group::load`` turns the numbers back into the tiles it inserts. A new kind
+of link is mapped in ``View::relink`` too.
 
 Presets
 ~~~~~~~

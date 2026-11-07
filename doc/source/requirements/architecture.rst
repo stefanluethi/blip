@@ -8,7 +8,7 @@ satisfies. How each is built is described on the internals page of its part.
    :id: ARCH_BLIP
    :status: implemented
    :component: blip
-   :satisfies: REQ_VIS_PLOT, REQ_VIS_LOG, REQ_VIS_STATES, REQ_VIS_TABLE, REQ_VIS_XY, REQ_VIS_HEATMAP, REQ_VIS_CURSOR, REQ_CONN_WS, REQ_PLAT_WEB, REQ_PLAT_NATIVE, REQ_PERSIST_STATE, REQ_PRESETS, REQ_CTRL_ACTION, REQ_CTRL_FEEDBACK, REQ_CTRL_VIEW, REQ_CTRL_SAFE
+   :satisfies: REQ_VIS_PLOT, REQ_VIS_LOG, REQ_VIS_STATES, REQ_VIS_TABLE, REQ_VIS_XY, REQ_VIS_HEATMAP, REQ_VIS_HIST, REQ_VIS_HIST_BINS, REQ_VIS_HIST_COUNTS, REQ_VIS_HIST_MARKERS, REQ_VIS_HIST_ORIENT, REQ_VIS_HIST_FOLLOW, REQ_VIS_HIST_HOVER, REQ_VIS_HIST_EMPTY, REQ_VIS_HIST_SAVED, REQ_VIS_CURSOR, REQ_CONN_WS, REQ_PLAT_WEB, REQ_PLAT_NATIVE, REQ_PERSIST_STATE, REQ_PRESETS, REQ_CTRL_ACTION, REQ_CTRL_FEEDBACK, REQ_CTRL_VIEW, REQ_CTRL_SAFE
 
    egui/eframe application compiled to WebAssembly (served by Trunk) or to a
    native binary. Main modules in ``blip/src``, see :doc:`/blip/internals`:
@@ -27,10 +27,10 @@ satisfies. How each is built is described on the internals page of its part.
    * ``app/layout`` -- the layout of the views as a tree of groups, shown
      with ``egui_tiles``, the properties panel and its saved form.
    * ``app/view`` -- views: time-series ``plot``, ``states`` over time,
-     ``table`` of values, ``xy`` plot, ``heatmap`` of arrays,
-     ``log_table`` and the ``actions`` form; ``time_axis`` shared by the views
-     over time, and the ``trace_selection``, the tree of the traces and
-     actions to choose those of the selected view.
+     ``table`` of values, ``xy`` plot, ``histogram`` of values, ``heatmap``
+     of arrays, ``log_table`` and the ``actions`` form; ``time_axis`` shared
+     by the views over time, and the ``trace_selection``, the tree of the
+     traces and actions to choose those of the selected view.
 
 .. arch:: proto crate
    :id: ARCH_PROTO

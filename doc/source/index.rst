@@ -3,7 +3,7 @@ blip documentation
 
 **blip** is a lightweight tracing tool for embedded systems. It shows what a
 target sends -- values, records, arrays and log records -- live as plots,
-states, tables, heatmaps and logs, and lets you carry out the actions the target
+states, tables, histograms, heatmaps and logs, and lets you carry out the actions the target
 offers, e.g. set a motor setpoint. It runs in the browser or as a native app.
 
 .. figure:: /screenshots/window.png
