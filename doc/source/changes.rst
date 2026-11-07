@@ -14,8 +14,8 @@ The first release.
 blip
    * Plots, states, tables, XY plots, histograms, heatmaps, logs and actions
      views, arranged in tabs and groups.
-   * Histograms of how the values spread over the shown time range, upright
-     or sideways, with the mean and σ of each trace; a sideways histogram can
+   * Histograms of how the values spread over the shown time range, in
+     percent of the samples of each trace, upright or sideways, with the mean and σ of each trace; a sideways histogram can
      follow the y range of a plot beside it.
    * Presets: layouts with their connections, to switch between, exported to
      and imported from JSON files.

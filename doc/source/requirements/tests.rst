@@ -148,17 +148,20 @@ Test Cases
    :verifies: REQ_VIS_HIST_COUNTS
 
    ``blip/src/app/view/histogram.rs::the_counts_axis_fits_the_tallest_bin_in_view``
-   -- the counts axis fits the tallest bin in view, also of values zoomed in
-   on, grows at once and shrinks only well below its top, and leaves room for
-   the marker strip.
-   ``blip/src/app/view/histogram.rs::the_log_counts_axis_marks_powers_of_ten_from_half_a_decade_below_one``
-   -- the logarithmic axis starts half a decade below 1 and marks 1, 10, 100
-   and 1k, a bin of one sample reaches above its start and an empty bin shows
-   nothing; the linear axis marks whole counts and leaves the floor to the end
-   label of the value axis.
+   -- the counts axis fits the largest percentage of a trace in a bin in
+   view, also of values zoomed in on, at least that of one sample, grows at
+   once and shrinks only well below its top, and leaves room for the marker
+   strip.
+   ``blip/src/app/view/histogram.rs::the_log_counts_axis_marks_powers_of_ten_from_below_one_sample``
+   -- the logarithmic axis of 1000 samples starts half a decade below one
+   sample (0.1 %) and marks 0.1 %, 1 %, 10 % and 100 %, of 2000 samples it
+   starts rounded down to half a decade without a mark at its start, a bin of
+   one sample reaches above its start and an empty bin shows nothing; the
+   linear axis marks round steps of percent, also fractions of a percent, and
+   leaves the floor to the end label of the value axis.
    ``blip/src/app/view/histogram.rs::count_labels_stay_within_the_axis``
-   -- a count label that would run past the end of the counts axis is left
-   out, by half its width along a horizontal axis and half its height along a
+   -- a percentage label that would run past the end of the counts axis is
+   left out, by half its width along a horizontal axis and half its height along a
    vertical one.
    ``blip/src/app/view/histogram.rs::the_room_beyond_the_bars_holds_the_markers_the_outside_counts_and_the_legend``
    -- the counts axis leaves room beyond the bars for the marker strip, the
@@ -222,9 +225,13 @@ Test Cases
    :component: blip
    :verifies: REQ_VIS_HIST_HOVER
 
-   ``blip/src/app/view/histogram.rs::hovering_a_bin_shows_its_range_and_the_counts_of_the_traces``
+   ``blip/src/app/view/histogram.rs::hovering_a_bin_shows_its_range_and_the_shares_and_counts_of_the_traces``
    (``egui_kittest``) -- hovering a bin highlights it and shows its range with
-   the shared unit and a row per trace; off the bins nothing is highlighted.
+   the shared unit and a row per trace with its percentage and count; off the
+   bins nothing is highlighted.
+   ``blip/src/app/view/histogram.rs::the_tooltip_shows_the_share_and_the_count_of_each_trace``
+   -- the tooltip writes the percentage of a bin and its count of all samples
+   of the trace, those outside the bins included, e.g. "25 %" and "2 of 8".
    ``blip/src/app/view/histogram.rs::bins_show_the_unit_only_if_all_traces_share_one``
    -- the range has the unit only if all traces share one.
    ``blip/src/app/view/histogram.rs::the_wheel_zooms_and_a_drag_pans_the_values_without_binning_anew``

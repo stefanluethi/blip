@@ -113,12 +113,15 @@ Visualisation
    :component: blip
    :satisfies: STK_LIVE_OBSERVE
 
-   The counts axis of a histogram shall fit the tallest bin in view, and the
-   user shall be able to switch it between a linear and a logarithmic scale.
-   The logarithmic scale shall have a tick at each power of ten and start
-   half a decade below 1, so a bin of one sample shows as a short bar and an
-   empty bin shows nothing. Counts shall be shown as numbers of samples, not
-   as percentages.
+   The counts axis of a histogram shall show the samples of each trace in a
+   bin as a percentage of all samples of that trace in the shown time range,
+   those outside the bins included, so traces of different sample rates can
+   be compared. It shall fit the tallest bin in view, and the user shall be
+   able to switch it between a linear and a logarithmic scale. The
+   logarithmic scale shall have a tick at each power of ten and start at
+   least half a decade below the percentage of one sample of the trace with
+   the most samples, rounded down to half a decade, so a bin of one sample
+   shows as a short bar and an empty bin shows nothing.
 
 .. req:: Histogram mean and spread
    :id: REQ_VIS_HIST_MARKERS
@@ -174,8 +177,9 @@ Visualisation
    :satisfies: STK_LIVE_OBSERVE
 
    Hovering over a bin of a histogram shall highlight the bin and show its
-   range of values, with the unit the traces share, and the count of each
-   trace in it. The
+   range of values, with the unit the traces share, and for each trace its
+   percentage of the samples of the trace and its count of them, such as
+   "12.5 %" and "42 of 336". The
    mouse wheel shall zoom, and dragging shall pan, the value axis only,
    magnifying the bins without binning anew, and a double click shall fit it
    again. None of them shall change the shown time range or the time cursor.

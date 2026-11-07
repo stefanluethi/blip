@@ -211,8 +211,9 @@ shown faintly at the end they lie beyond, e.g. *‹ 232* and *36 ›* (*↓* and
 sideways): those outside a fixed range or the range of a plot followed, and
 infinite samples, whatever the range.
 
-* **Hover** a bin to highlight it and read its range of values and the count
-  of each trace in it.
+* **Hover** a bin to highlight it and read its range of values and, for each
+  trace, its percentage and count of the samples, e.g. *12.5 %* and *42 of
+  336*.
 * **Scroll the mouse wheel** to zoom the value axis, and **drag** to pan it;
   the bins are magnified, not counted anew. **Double-click** to fit it again.
   None of them changes the time range or the time cursor.
@@ -221,7 +222,9 @@ infinite samples, whatever the range.
   infinite samples it shows their counts at the ends of empty axes. If all
   samples have the same value, it shows one bar centred on it.
 
-The counts axis shows numbers of samples. It fits the tallest bin in view: it
+The counts axis shows the samples of each trace in a bin as a percentage of
+all samples of that trace in the shown range, those outside the bins included,
+so traces of different sample rates compare. It fits the tallest bin in view: it
 grows at once, and shrinks only once that bin is well below its top, so it
 does not jump while live. The bars leave room at its far end for the legend
 box, the markers and the counts outside the bins.
@@ -248,8 +251,9 @@ Properties:
        others at the ends.
    * - **Counts**
      - **Scale**: *Linear* or *Log*. The logarithmic scale has a tick at each
-       power of ten and starts half a decade below 1, so a bin of one sample
-       shows as a short bar and an empty bin shows nothing.
+       power of ten, e.g. *0.1 %*, *1 %*, *10 %*, and starts at least half a
+       decade below the percentage of one sample, so a bin of one sample shows
+       as a short bar and an empty bin shows nothing.
    * - **Bars**
      - **Orientation**: *Upright*, the values along the bottom and the bars
        growing up, or *Sideways*, the values up the side and the bars growing

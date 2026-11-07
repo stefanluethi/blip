@@ -2,11 +2,12 @@
 //! counted in bins shared by all traces and drawn over each other in their colours.
 
 use super::Selectable;
-use super::heatmap::index_spacer;
 use super::time_axis::within;
 use super::{Formats, Plots, PropertiesContext, ViewContext, ViewId, Viewable, short_names};
 use crate::app::model::Model;
-use crate::app::model::numbers::{DisplayFormat, Number, NumberKind, SHOWN_DIGITS};
+use crate::app::model::numbers::{
+    DisplayFormat, Number, NumberKind, SHOWN_DIGITS, format_significant,
+};
 use crate::app::model::traces::{Samples, Series, Trace};
 use crate::app::theme;
 use crate::app::time::TimeRange;
@@ -28,9 +29,11 @@ const MAX_BINS: usize = 4096;
 const VALUE_MARGIN: f64 = 0.05;
 /// The value axis around a single value, in bin widths on each side.
 const SINGLE_VALUE_ROOM: f64 = 2.5;
-/// Where the logarithmic counts axis starts: half a decade below 1, so a bin of one
-/// sample shows as a short bar.
-pub const LOG_FLOOR: f64 = -0.5;
+/// Where the logarithmic counts axis starts: at least this many decades below the share
+/// of one sample, so a bin of one sample shows as a short bar.
+const LOG_ROOM: f64 = 0.5;
+/// The significant digits of the shares in the tooltip.
+const SHARE_DIGITS: usize = 3;
 /// The most of the counts axis the room beyond the bars takes, for the markers, the
 /// counts outside the bins and the legend.
 const MAX_ROOM: f64 = 2.0 / 3.0;
@@ -161,10 +164,10 @@ pub struct Histogram {
     /// The values panned or zoomed to instead of the fitted ones, until a double click.
     #[serde(skip)]
     value_view: Option<(f64, f64)>,
-    /// The count at the top of the bars, kept while the tallest bin shrinks a little,
-    /// see [`fit_top`].
+    /// The share in percent at the top of the bars, kept while the tallest bin shrinks
+    /// a little, see [`fit_top`].
     #[serde(skip)]
-    count_top: Option<f64>,
+    share_top: Option<f64>,
     /// What the last frame showed, for the properties, boxed as views are kept by
     /// value.
     #[serde(skip)]
@@ -188,7 +191,7 @@ impl Default for Histogram {
             follow: None,
             markers: Markers::default(),
             value_view: None,
-            count_top: None,
+            share_top: None,
             last: None,
             hovered: None,
         }
@@ -601,6 +604,26 @@ pub struct Counts {
     pub std_dev: Option<f64>,
 }
 
+impl Counts {
+    /// All samples counted, binned or below or above the bins.
+    pub fn total(&self) -> u64 {
+        self.bins.iter().sum::<u64>() + self.below + self.above
+    }
+
+    /// The share of `count` samples in percent of all samples counted.
+    pub fn share(&self, count: u64) -> f64 {
+        match self.total() {
+            0 => 0.0,
+            total => 100.0 * count as f64 / total as f64,
+        }
+    }
+
+    /// The share of each bin in percent.
+    pub fn shares(&self) -> Vec<f64> {
+        self.bins.iter().map(|&count| self.share(count)).collect()
+    }
+}
+
 /// Counts `values` in `bins`, without NaN, which marks a null. Values outside `fixed`
 /// and infinite ones are counted below or above instead.
 pub fn count(values: impl Iterator<Item = f64>, bins: &Bins, fixed: Option<(f64, f64)>) -> Counts {
@@ -665,31 +688,40 @@ impl Counted {
         (below, above)
     }
 
-    /// The most samples of a trace in one bin within `values` on the value axis.
-    fn tallest_in(&self, (low, high): (f64, f64)) -> u64 {
+    /// The share in percent of one sample of the trace with the most samples, the
+    /// smallest share a bin that is not empty can have.
+    fn one_sample(&self) -> f64 {
+        let most = self.traces.iter().map(Counts::total).max().unwrap_or(0);
+        100.0 / most.max(1) as f64
+    }
+
+    /// The largest share in percent of a trace in one bin within `values` on the value
+    /// axis, at least that of one sample.
+    fn tallest_in(&self, (low, high): (f64, f64)) -> f64 {
         let bins = &self.bins;
         let in_view =
             (0..bins.count).filter(|&index| bins.edge(index) < high && bins.edge(index + 1) > low);
         in_view
-            .flat_map(|index| self.traces.iter().map(move |counts| counts.bins[index]))
-            .max()
-            .unwrap_or(0)
+            .flat_map(|index| {
+                (self.traces.iter()).map(move |counts| counts.share(counts.bins[index]))
+            })
+            .fold(self.one_sample(), f64::max)
     }
 }
 
-/// The count at the top of the bars after `previous` with `tallest` the tallest bin in
-/// view: it grows at once and shrinks only once the tallest bin is below
+/// The share at the top of the bars after `previous` with `tallest` the share of the
+/// tallest bin in view: it grows at once and shrinks only once the tallest bin is below
 /// [`SHRINK_BELOW`] of it.
-pub fn fit_top(previous: Option<f64>, tallest: u64) -> f64 {
-    let tallest = (tallest as f64).max(1.0);
+pub fn fit_top(previous: Option<f64>, tallest: f64) -> f64 {
     match previous {
         Some(top) if tallest <= top && tallest >= top * SHRINK_BELOW => top,
         _ => tallest,
     }
 }
 
-/// The counts axis: where the bars start and where the tallest reaches, and the top of
-/// the axis beyond them, with the room for the marker strip.
+/// The counts axis, which shows the share of each trace's samples in a bin in percent:
+/// where the bars start and where the tallest reaches, and the top of the axis beyond
+/// them, with the room for the marker strip.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct CountAxis {
     pub scale: CountScale,
@@ -702,12 +734,14 @@ pub struct CountAxis {
 }
 
 impl CountAxis {
-    /// The counts axis `length` points long of bars up to `top` samples, with `strip`
-    /// points left at its end for the markers.
-    pub fn new(scale: CountScale, top: f64, length: f32, strip: f32) -> Self {
+    /// The counts axis `length` points long of bars up to `top` percent, with `strip`
+    /// points left at its end for the markers, on which one sample is `one` percent.
+    /// The logarithmic axis starts at least [`LOG_ROOM`] below one sample, rounded down
+    /// to half a decade, so that it moves seldom while live.
+    pub fn new(scale: CountScale, top: f64, one: f64, length: f32, strip: f32) -> Self {
         let floor = match scale {
             CountScale::Linear => 0.0,
-            CountScale::Log => LOG_FLOOR,
+            CountScale::Log => ((one.log10() - LOG_ROOM) * 2.0).floor() / 2.0,
         };
         let top = match scale {
             CountScale::Linear => top,
@@ -724,29 +758,32 @@ impl CountAxis {
         }
     }
 
-    /// Where a bin of `count` samples reaches on the axis, `None` for an empty bin,
-    /// which shows nothing.
-    pub fn position(&self, count: u64) -> Option<f64> {
-        (count > 0).then(|| match self.scale {
-            CountScale::Linear => count as f64,
-            CountScale::Log => (count as f64).log10(),
+    /// Where a bin of a `share` of the samples in percent reaches on the axis, `None`
+    /// for an empty bin, which shows nothing.
+    pub fn position(&self, share: f64) -> Option<f64> {
+        (share > 0.0).then(|| match self.scale {
+            CountScale::Linear => share,
+            CountScale::Log => share.log10(),
         })
     }
 
-    /// The marks of the axis, `horizontal` or not: a round step of counts apart, or a
-    /// mark at each power of ten, up to the bars, without those whose labels would run
-    /// past the end of the axis.
+    /// The marks of the axis, `horizontal` or not: a round step of percent apart, or a
+    /// mark at each power of ten above the floor, up to the bars, without those whose
+    /// labels would run past the end of the axis.
     fn marks(self, horizontal: bool) -> impl Fn(egui_plot::GridInput) -> Vec<egui_plot::GridMark> {
         move |input| {
             let marks = match self.scale {
-                CountScale::Linear => index_spacer(egui_plot::GridInput {
-                    bounds: input.bounds,
-                    base_step_size: input.base_step_size,
-                })
-                .into_iter()
-                .filter(|mark| (0.0..=self.bars_top).contains(&mark.value))
-                .collect(),
-                CountScale::Log => (0..=self.bars_top.floor().max(-1.0) as i64)
+                CountScale::Linear => {
+                    // labels need more room than the least spacing of grid lines
+                    let step = nice_at_least(input.base_step_size * 6.0);
+                    (0..=(self.bars_top / step).floor() as i64)
+                        .map(|multiple| egui_plot::GridMark {
+                            value: multiple as f64 * step,
+                            step_size: step,
+                        })
+                        .collect()
+                }
+                CountScale::Log => (self.floor.floor() as i64 + 1..=self.bars_top.floor() as i64)
                     .map(|decade| egui_plot::GridMark {
                         value: decade as f64,
                         step_size: 1.0,
@@ -754,19 +791,21 @@ impl CountAxis {
                     .collect::<Vec<_>>(),
             };
             let fits = |mark: &egui_plot::GridMark| {
-                let text = self.label(mark.value);
+                let text = self.label(mark.value, mark.step_size);
                 text.is_empty() || label_fits(mark.value, &text, &input, horizontal)
             };
             marks.into_iter().filter(fits).collect()
         }
     }
 
-    /// The text of a mark of the axis at `value`, none at the floor, where the end
-    /// label of the value axis is.
-    fn label(self, value: f64) -> String {
+    /// The text of a mark of the axis at `value`, multiples of `step` apart, none at the
+    /// floor, where the end label of the value axis is.
+    fn label(self, value: f64, step: f64) -> String {
         match self.scale {
             CountScale::Linear if value <= self.floor => String::new(),
-            CountScale::Linear => format!("{}", value.round()),
+            CountScale::Linear => {
+                format!("{} %", write_value(value, step, DisplayFormat::Default))
+            }
             CountScale::Log => decade_label(value.round() as i32),
         }
     }
@@ -866,15 +905,14 @@ fn nice_at_least(value: f64) -> f64 {
     }
 }
 
-/// The count of the power of ten `decade`, e.g. "1", "100", "10k", "1M".
+/// The share in percent of the power of ten `decade`, e.g. "0.01 %", "1 %", "100 %".
 pub fn decade_label(decade: i32) -> String {
-    let (scaled, suffix) = match decade {
-        d if d >= 9 => (d - 9, "G"),
-        d if d >= 6 => (d - 6, "M"),
-        d if d >= 3 => (d - 3, "k"),
-        d => (d, ""),
-    };
-    format!("{}{suffix}", 10u64.pow(scaled.max(0) as u32))
+    format!("{} %", format_significant(10f64.powi(decade), 1))
+}
+
+/// A share in percent, as in the tooltip, e.g. "12.5 %".
+pub fn write_share(share: f64) -> String {
+    format!("{} %", format_significant(share, SHARE_DIGITS))
 }
 
 /// The decimals that write the multiples of `step` exactly, of a few beyond those of its
@@ -1247,7 +1285,8 @@ impl Histogram {
         };
 
         let tallest = counted.as_ref().map(|counted| counted.tallest_in(values));
-        self.count_top = tallest.map(|tallest| fit_top(self.count_top, tallest));
+        self.share_top = tallest.map(|tallest| fit_top(self.share_top, tallest));
+        let one = counted.as_ref().map_or(100.0, Counted::one_sample);
         let rows = match self.markers {
             Markers::Off => 0,
             _ => shown.len(),
@@ -1259,7 +1298,8 @@ impl Histogram {
         let room = self.room(ui, frame, rows, outside, legend);
         let axis = CountAxis::new(
             self.counts,
-            self.count_top.unwrap_or(1.0),
+            self.share_top.unwrap_or(100.0),
+            one,
             count_length,
             room.length(),
         );
@@ -1380,11 +1420,11 @@ impl Histogram {
             };
         let count_formatter =
             move |mark: egui_plot::GridMark, _: &std::ops::RangeInclusive<f64>| {
-                axis.label(mark.value)
+                axis.label(mark.value, mark.step_size)
             };
         let plot = egui_plot::Plot::new(id)
             .grid_color(theme::grid_color(visuals))
-            // the counts of the bin under the pointer are shown in a tooltip
+            // the shares and counts of the bin under the pointer are shown in a tooltip
             .show_x(false)
             .show_y(false)
             .allow_boxed_zoom(false)
@@ -1424,8 +1464,8 @@ impl Histogram {
                     .custom_x_axes(vec![
                         egui_plot::AxisHints::new_x()
                             .formatter(count_formatter)
-                            // counts are short, so their labels fit closer together
-                            .label_spacing(30.0..=45.0),
+                            // shares are short, so their labels fit closer together
+                            .label_spacing(40.0..=60.0),
                     ])
                     .x_grid_spacer(axis.marks(true));
                 // following a plot, the values have the grid of the plot
@@ -1467,11 +1507,12 @@ impl Histogram {
                     .allow_hover(false),
             );
         }
-        for (trace, counts) in shown.iter().zip(&counted.traces) {
+        let shares: Vec<Vec<f64>> = counted.traces.iter().map(Counts::shares).collect();
+        for (trace, shares) in shown.iter().zip(&shares) {
             let wash = theme::wash(visuals, theme::trace_color(visuals, trace.index));
-            let bars = (counts.bins.iter().enumerate())
-                .filter_map(|(index, &count)| {
-                    let reach = axis.position(count)?;
+            let bars = (shares.iter().enumerate())
+                .filter_map(|(index, &share)| {
+                    let reach = axis.position(share)?;
                     let bar = egui_plot::Bar::new(bins.center(index), reach - axis.floor)
                         .base_offset(axis.floor)
                         .width(bins.width)
@@ -1486,11 +1527,11 @@ impl Histogram {
                 Orientation::Sideways => chart.horizontal(),
             });
         }
-        for (trace, counts) in shown.iter().zip(&counted.traces) {
+        for (trace, shares) in shown.iter().zip(&shares) {
             let color = theme::trace_color(visuals, trace.index);
-            for run in outline_runs(&counts.bins, bins, axis) {
+            for run in outline_runs(shares, bins, axis) {
                 let points: Vec<[f64; 2]> = (run.into_iter())
-                    .map(|[value, count]| self.point(value, count))
+                    .map(|[value, share]| self.point(value, share))
                     .collect();
                 plot_ui.line(
                     egui_plot::Line::new("", egui_plot::PlotPoints::from(points))
@@ -1670,14 +1711,15 @@ impl Histogram {
     }
 }
 
-/// The outlines of the bars of `counts` in `bins` on the counts `axis`, as points of a
-/// value and a count: one per run of bins that are not empty, from the floor up and
-/// down to it again at its ends, so that empty bins and the floor stay without one.
-fn outline_runs(counts: &[u64], bins: &Bins, axis: CountAxis) -> Vec<Vec<[f64; 2]>> {
+/// The outlines of the bars of the `shares` in percent of `bins` on the counts `axis`,
+/// as points of a value and a share: one per run of bins that are not empty, from the
+/// floor up and down to it again at its ends, so that empty bins and the floor stay
+/// without one.
+fn outline_runs(shares: &[f64], bins: &Bins, axis: CountAxis) -> Vec<Vec<[f64; 2]>> {
     let mut runs: Vec<Vec<[f64; 2]>> = vec![];
     let mut run: Vec<[f64; 2]> = vec![];
-    for (index, &count) in counts.iter().enumerate() {
-        match axis.position(count) {
+    for (index, &share) in shares.iter().enumerate() {
+        match axis.position(share) {
             Some(reach) => {
                 if run.is_empty() {
                     run.push([bins.edge(index), axis.floor]);
@@ -1693,7 +1735,7 @@ fn outline_runs(counts: &[u64], bins: &Bins, axis: CountAxis) -> Vec<Vec<[f64; 2
         }
     }
     if !run.is_empty() {
-        run.push([bins.edge(counts.len()), axis.floor]);
+        run.push([bins.edge(shares.len()), axis.floor]);
         runs.push(run);
     }
     runs
@@ -1892,34 +1934,51 @@ impl Bin<'_> {
         super::with_unit(text, self.unit)
     }
 
-    /// Shows the values of the bin and the count of each shown trace in it.
+    /// The share of the bin in percent and its count of all samples of `counts`, as
+    /// "12.5 %" and "42 of 336".
+    fn share_texts(&self, counts: &Counts) -> [String; 2] {
+        let count = counts.bins[self.index];
+        let share = match count {
+            0 => "0 %".to_owned(),
+            count => write_share(counts.share(count)),
+        };
+        [share, format!("{count} of {}", counts.total())]
+    }
+
+    /// Shows the values of the bin and the share and count of each shown trace in it.
     fn tooltip_ui(&self, ui: &mut egui::Ui, shown: &[Shown<'_>]) {
         let faint = theme::tokens(ui.visuals()).text_faint;
-        ui.label(egui::RichText::new(self.range_text()).color(ui.visuals().weak_text_color()));
+        let weak = ui.visuals().weak_text_color();
+        ui.label(egui::RichText::new(self.range_text()).color(weak));
         egui::Grid::new("histogram tooltip")
-            .num_columns(2)
+            .num_columns(3)
             .spacing([12.0, 2.0])
             .show(ui, |ui| {
                 for (trace, counts) in shown.iter().zip(&self.counted.traces) {
-                    let count = counts.bins[self.index];
-                    let (name, value) = if count == 0 {
+                    let [share, count] = self.share_texts(counts);
+                    let empty = counts.bins[self.index] == 0;
+                    let (name, share, count) = if empty {
                         (
                             egui::RichText::new(&trace.name).color(faint),
-                            egui::RichText::new("0").color(faint),
+                            egui::RichText::new(share).color(faint),
+                            egui::RichText::new(count).color(faint),
                         )
                     } else {
                         (
                             egui::RichText::new(&trace.name),
-                            egui::RichText::new(count.to_string()).strong(),
+                            egui::RichText::new(share).strong(),
+                            egui::RichText::new(count).color(weak),
                         )
                     };
                     ui.horizontal(|ui| {
                         dot(ui, theme::trace_color(ui.visuals(), trace.index));
                         ui.label(name).on_hover_text(&trace.path);
                     });
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(value);
-                    });
+                    for value in [share, count] {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(value);
+                        });
+                    }
                     ui.end_row();
                 }
             });
@@ -2413,46 +2472,61 @@ mod tests {
             ],
             single: false,
         };
-        assert_eq!(counted.tallest_in((-0.5, 4.5)), 9);
+        // the shares of the samples of each trace, 9 of 15 and 4 of 7
+        assert_eq!(counted.tallest_in((-0.5, 4.5)), 60.0);
         // zoomed in on the values
-        assert_eq!(counted.tallest_in((2.2, 4.5)), 4);
+        assert_eq!(counted.tallest_in((2.2, 4.5)), 400.0 / 7.0);
+        // without samples in view, the share of one sample of the most samples
+        assert_eq!(counted.one_sample(), 100.0 / 15.0);
+        assert_eq!(counted.tallest_in((10.0, 20.0)), 100.0 / 15.0);
         // it grows at once and shrinks only well below its top
-        assert_eq!(fit_top(None, 9), 9.0);
-        assert_eq!(fit_top(Some(9.0), 12), 12.0);
-        assert_eq!(fit_top(Some(9.0), 7), 9.0);
-        assert_eq!(fit_top(Some(9.0), 4), 4.0);
-        assert_eq!(fit_top(Some(9.0), 0), 1.0);
+        assert_eq!(fit_top(None, 60.0), 60.0);
+        assert_eq!(fit_top(Some(60.0), 80.0), 80.0);
+        assert_eq!(fit_top(Some(60.0), 45.0), 60.0);
+        assert_eq!(fit_top(Some(60.0), 20.0), 20.0);
         // the bars reach the top of the axis but for some room and the marker strip
-        let axis = CountAxis::new(CountScale::Linear, 9.0, 200.0, 0.0);
+        let axis = CountAxis::new(CountScale::Linear, 60.0, 100.0 / 15.0, 200.0, 0.0);
         assert_eq!(axis.floor, 0.0);
-        assert!(axis.bars_top > 9.0 && axis.bars_top < 10.0);
+        assert!(axis.bars_top > 60.0 && axis.bars_top < 66.0);
         assert_eq!(axis.axis_top, axis.bars_top);
-        let strip = CountAxis::new(CountScale::Linear, 9.0, 200.0, 50.0);
+        let strip = CountAxis::new(CountScale::Linear, 60.0, 100.0 / 15.0, 200.0, 50.0);
         assert!((strip.axis_top - strip.bars_top * 200.0 / 150.0).abs() < 1.0e-9);
     }
 
     #[test]
-    fn the_log_counts_axis_marks_powers_of_ten_from_half_a_decade_below_one() {
-        let axis = CountAxis::new(CountScale::Log, 1000.0, 200.0, 0.0);
-        assert_eq!(axis.floor, -0.5);
+    fn the_log_counts_axis_marks_powers_of_ten_from_below_one_sample() {
+        // one sample of 1000 is 0.1 %, half a decade above the floor
+        let axis = CountAxis::new(CountScale::Log, 100.0, 0.1, 200.0, 0.0);
+        assert_eq!(axis.floor, -1.5);
         let marks = axis.marks(false)(egui_plot::GridInput {
             bounds: (axis.floor, axis.axis_top),
             base_step_size: 0.01,
         });
-        let labels: Vec<String> = marks.iter().map(|mark| axis.label(mark.value)).collect();
-        assert_eq!(labels, ["1", "10", "100", "1k"]);
+        let labels: Vec<String> = (marks.iter())
+            .map(|mark| axis.label(mark.value, mark.step_size))
+            .collect();
+        assert_eq!(labels, ["0.1 %", "1 %", "10 %", "100 %"]);
         // a bin of one sample is a short bar, an empty one shows nothing
-        assert_eq!(axis.position(1), Some(0.0));
-        assert!(axis.position(1).unwrap() > axis.floor);
-        assert_eq!(axis.position(0), None);
-        assert_eq!(axis.position(100), Some(2.0));
-        assert_eq!(decade_label(7), "10M");
+        assert_eq!(axis.position(0.1), Some(-1.0));
+        assert!(axis.position(0.1).unwrap() > axis.floor);
+        assert_eq!(axis.position(0.0), None);
+        assert_eq!(axis.position(10.0), Some(1.0));
+        assert_eq!(decade_label(-3), "0.001 %");
+        // the floor is rounded down to half a decade, and not marked: one sample of
+        // 2000 is 0.05 %
+        let axis = CountAxis::new(CountScale::Log, 100.0, 0.05, 200.0, 0.0);
+        assert_eq!(axis.floor, -2.0);
+        let marks = axis.marks(false)(egui_plot::GridInput {
+            bounds: (axis.floor, axis.axis_top),
+            base_step_size: 0.01,
+        });
+        assert_eq!(marks.first().map(|mark| mark.value), Some(-1.0));
         // the end of the value axis is labelled at the floor, not the counts axis
-        let linear_floor = CountAxis::new(CountScale::Linear, 40.0, 200.0, 0.0);
-        assert_eq!(linear_floor.label(0.0), "");
-        assert_eq!(linear_floor.label(10.0), "10");
-        // the linear axis marks whole counts up to the bars
-        let linear = CountAxis::new(CountScale::Linear, 40.0, 200.0, 0.0);
+        let linear = CountAxis::new(CountScale::Linear, 40.0, 1.0, 200.0, 0.0);
+        assert_eq!(linear.label(0.0, 10.0), "");
+        assert_eq!(linear.label(10.0, 10.0), "10 %");
+        assert_eq!(linear.label(2.5, 0.5), "2.5 %");
+        // the linear axis marks round steps of percent up to the bars
         let marks = linear.marks(false)(egui_plot::GridInput {
             bounds: (0.0, linear.axis_top),
             base_step_size: 0.5,
@@ -2460,9 +2534,55 @@ mod tests {
         assert!(
             marks
                 .iter()
-                .all(|mark| mark.value.fract() == 0.0 && mark.value <= linear.bars_top)
+                .all(|mark| (mark.value / 5.0).fract() == 0.0 && mark.value <= linear.bars_top)
         );
         assert!(marks.len() > 2);
+        // a small share is marked in fractions of a percent
+        let small = CountAxis::new(CountScale::Linear, 2.0, 0.01, 200.0, 0.0);
+        let marks = small.marks(false)(egui_plot::GridInput {
+            bounds: (0.0, small.axis_top),
+            base_step_size: 0.05,
+        });
+        let labels: Vec<String> = (marks.iter())
+            .map(|mark| small.label(mark.value, mark.step_size))
+            .collect();
+        assert_eq!(labels, ["", "0.5 %", "1.0 %", "1.5 %", "2.0 %"]);
+    }
+
+    #[test]
+    fn the_tooltip_shows_the_share_and_the_count_of_each_trace() {
+        let counted = Counted {
+            bins: Bins {
+                start: 0.0,
+                width: 1.0,
+                count: 3,
+            },
+            traces: vec![
+                Counts {
+                    bins: vec![1, 2, 3],
+                    ..Counts::default()
+                },
+                // samples outside the bins count towards all samples
+                Counts {
+                    bins: vec![0, 2, 0],
+                    below: 3,
+                    above: 3,
+                    ..Counts::default()
+                },
+            ],
+            single: false,
+        };
+        let bin = |index| Bin {
+            index,
+            counted: &counted,
+            unit: None,
+            format: DisplayFormat::Default,
+        };
+        let [first, second] = [&counted.traces[0], &counted.traces[1]];
+        assert_eq!(bin(1).share_texts(first), ["33.3 %", "2 of 6"]);
+        assert_eq!(bin(1).share_texts(second), ["25 %", "2 of 8"]);
+        assert_eq!(bin(0).share_texts(second), ["0 %", "0 of 8"]);
+        assert_eq!(first.shares(), [100.0 / 6.0, 100.0 / 3.0, 50.0]);
     }
 
     #[test]
@@ -2722,7 +2842,7 @@ mod tests {
     }
 
     #[test]
-    fn hovering_a_bin_shows_its_range_and_the_counts_of_the_traces() {
+    fn hovering_a_bin_shows_its_range_and_the_shares_and_counts_of_the_traces() {
         let mut harness = pose_harness();
         let at = egui::pos2(150.0, 150.0);
         harness.hover_at(at);
@@ -2739,6 +2859,9 @@ mod tests {
         // the names of the traces in the legend and the tooltip
         assert_eq!(harness.get_all_by_label("x").count(), 2);
         assert_eq!(harness.get_all_by_label("y").count(), 2);
+        // the share and the count of each trace
+        assert_eq!(harness.get_all_by_label_contains(" %").count(), 2);
+        assert_eq!(harness.get_all_by_label_contains(" of ").count(), 2);
 
         harness.hover_at(egui::pos2(399.0, 299.0));
         harness.run();
@@ -2764,8 +2887,8 @@ mod tests {
         );
         assert_eq!((state.time.range(), state.time.cursor()), (range, cursor));
         // the counts axis fits the tallest bin in view
-        let top = state.histogram.count_top.unwrap();
-        assert!(top >= 1.0);
+        let top = state.histogram.share_top.unwrap();
+        assert!(top > 0.0 && top <= 100.0);
 
         drag(
             &mut harness,
@@ -3069,9 +3192,9 @@ mod tests {
 
     #[test]
     fn count_labels_stay_within_the_axis() {
-        // a point per count, the axis ends at about 159: the label of 150 fits on a
+        // a point per percent, the axis ends at about 110: the label of 100 % fits on a
         // vertical axis, but is too wide for the end of a horizontal one
-        let axis = CountAxis::new(CountScale::Linear, 140.0, 300.0, 15.0);
+        let axis = CountAxis::new(CountScale::Linear, 95.0, 1.0, 300.0, 20.0);
         let marks = |horizontal| -> Vec<f64> {
             let input = egui_plot::GridInput {
                 bounds: (0.0, axis.axis_top),
@@ -3081,8 +3204,8 @@ mod tests {
                 .map(|mark| mark.value)
                 .collect()
         };
-        assert_eq!(marks(false), [0.0, 50.0, 100.0, 150.0], "{}", axis.axis_top);
-        assert_eq!(marks(true), [0.0, 50.0, 100.0]);
+        assert_eq!(marks(false), [0.0, 50.0, 100.0], "{}", axis.axis_top);
+        assert_eq!(marks(true), [0.0, 50.0]);
     }
 
     #[test]
@@ -3092,8 +3215,8 @@ mod tests {
             width: 1.0,
             count: 6,
         };
-        let axis = CountAxis::new(CountScale::Linear, 3.0, 100.0, 0.0);
-        let runs = outline_runs(&[0, 2, 3, 0, 1, 0], &bins, axis);
+        let axis = CountAxis::new(CountScale::Linear, 3.0, 1.0, 100.0, 0.0);
+        let runs = outline_runs(&[0.0, 2.0, 3.0, 0.0, 1.0, 0.0], &bins, axis);
         assert_eq!(
             runs,
             [
@@ -3108,8 +3231,8 @@ mod tests {
                 vec![[4.0, 0.0], [4.0, 1.0], [5.0, 1.0], [5.0, 0.0]],
             ]
         );
-        assert!(outline_runs(&[0; 6], &bins, axis).is_empty());
-        let last = outline_runs(&[0, 0, 0, 0, 0, 4], &bins, axis);
+        assert!(outline_runs(&[0.0; 6], &bins, axis).is_empty());
+        let last = outline_runs(&[0.0, 0.0, 0.0, 0.0, 0.0, 4.0], &bins, axis);
         assert_eq!(last, [vec![[5.0, 0.0], [5.0, 4.0], [6.0, 4.0], [6.0, 0.0]]]);
     }
 
