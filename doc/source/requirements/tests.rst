@@ -247,6 +247,9 @@ Test Cases
    (``egui_kittest``) -- each time the tooltip opens it is only as wide as
    its texts, with the counts at its right edge, not as wide as a tooltip
    can be.
+   ``blip/src/app/view/histogram.rs::the_names_shares_and_counts_of_a_row_of_the_tooltip_line_up``
+   (``egui_kittest``) -- the name, share and count of a row share a line, and
+   the shares and the counts are right aligned in their columns.
    ``blip/src/app/view/histogram.rs::bins_show_the_unit_only_if_all_traces_share_one``
    -- the range has the unit only if all traces share one.
    ``blip/src/app/view/histogram.rs::the_wheel_zooms_and_a_drag_pans_the_values_without_binning_anew``

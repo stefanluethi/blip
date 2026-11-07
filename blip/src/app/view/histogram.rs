@@ -1979,9 +1979,11 @@ impl Bin<'_> {
                         dot(ui, theme::trace_color(ui.visuals(), trace.index));
                         ui.label(name).on_hover_text(&trace.path);
                     });
+                    // as high as the row of the name, so that the texts line up
+                    let height = ui.spacing().interact_size.y;
                     for (value, width) in [share, count].into_iter().zip(widths) {
-                        let layout = egui::Layout::right_to_left(egui::Align::Min);
-                        ui.allocate_ui_with_layout(egui::vec2(width, 0.0), layout, |ui| {
+                        let layout = egui::Layout::right_to_left(egui::Align::Center);
+                        ui.allocate_ui_with_layout(egui::vec2(width, height), layout, |ui| {
                             ui.label(value);
                         });
                     }
@@ -2891,6 +2893,44 @@ mod tests {
                 tooltip.right()
             );
             assert!(tooltip.width() < 250.0, "{} wide", tooltip.width());
+        }
+    }
+
+    #[test]
+    fn the_names_shares_and_counts_of_a_row_of_the_tooltip_line_up() {
+        let mut harness = pose_harness();
+        // with the rows as high as in the app
+        theme::install(&harness.ctx);
+        harness.hover_at(egui::pos2(150.0, 150.0));
+        harness.run_steps(40);
+        let tooltip = tooltip_rect(&harness);
+        let rects = |text: &str, exact: bool| -> Vec<egui::Rect> {
+            let nodes: Vec<_> = if exact {
+                harness.get_all_by_label(text).collect()
+            } else {
+                harness.get_all_by_label_contains(text).collect()
+            };
+            let mut rects: Vec<egui::Rect> = (nodes.into_iter())
+                .map(|node| node.rect())
+                .filter(|rect| tooltip.contains_rect(*rect))
+                .collect();
+            rects.sort_by(|a, b| a.top().total_cmp(&b.top()));
+            rects
+        };
+        let names = [rects("x", true), rects("y", true)].concat();
+        let (shares, counts) = (rects(" %", false), rects(" of ", false));
+        assert_eq!((names.len(), shares.len(), counts.len()), (2, 2, 2));
+        for ((name, share), count) in names.iter().zip(&shares).zip(&counts) {
+            for value in [share, count] {
+                let off = (value.center().y - name.center().y).abs();
+                assert!(
+                    off < 0.5,
+                    "a value is {off} off its name in {name:?} {value:?}"
+                );
+            }
+            // the share ends where the widest share ends, the count where the widest
+            assert_eq!(share.right(), shares[0].right().max(shares[1].right()));
+            assert_eq!(count.right(), counts[0].right().max(counts[1].right()));
         }
     }
 
