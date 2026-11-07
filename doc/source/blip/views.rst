@@ -208,7 +208,7 @@ traces share one.
 
 Samples that lie outside the bins are not binned but counted, and their counts
 shown faintly at the end they lie beyond, e.g. *‹ 232* and *36 ›* (*↓* and *↑*
-sideways): those outside a fixed range or the range of a plot followed, and
+sideways): those outside a fixed range or the range of a linked plot, and
 infinite samples, whatever the range.
 
 * **Hover** a bin to highlight it and read its range of values and, for each
@@ -234,6 +234,9 @@ Properties:
 .. list-table::
    :widths: 25 75
 
+   * - **Link**
+     - **Plot**: a plot of the layout whose traces and y range the histogram
+       shows, upright or sideways, or *None*; see below.
    * - **Bins**
      - **Mode**: *Auto*, about the square root of the number of samples, at
        least 8 and at most 64, of a round width (1, 2 or 5 times a power of
@@ -259,36 +262,43 @@ Properties:
        growing up, or *Sideways*, the values up the side and the bars growing
        to the right, e.g. beside a plot of the same traces. **Axis side** of a
        sideways histogram: the value axis on the *Left*, as in a plot, or on
-       the *Right*. **Follow**: a plot of the layout whose y range a sideways
-       histogram shows, see below. **Markers**: *Off*, *Mean*, or *Mean ±σ*
+       the *Right*. **Markers**: *Off*, *Mean*, or *Mean ±σ*
        for all traces, in a strip above the bars (to the right of them
        sideways), a row per trace: a dot at the mean and a whisker from the
        mean −σ to the mean +σ. Unlike the stats of a plot, each sample counts
        once, however long it lasts; σ is the population standard deviation.
 
-Follow a plot
-~~~~~~~~~~~~~
+Link to a plot
+~~~~~~~~~~~~~~
 
 .. figure:: /screenshots/view-histogram-sideways.png
    :target: ../_images/view-histogram-sideways.png
    :class: screenshot
-   :alt: A plot of the motor speed and, beside it, a sideways histogram of the same speed following the plot, so its bars line up with the heights of the line.
+   :alt: A plot of the motor speed and, beside it, a sideways histogram linked to the plot, so its bars line up with the heights of the line.
 
-A sideways histogram beside a plot of the same traces shows their spread at
-the heights of the plot. Choose the plot in **Follow**: the value axis then
-shows the y range the plot shows, as it is zoomed, panned or fixed. The bins
-cover that range, and the samples outside it are counted at its ends, as for
-a fixed range. While it follows, the histogram's own **Range** is greyed
-(*Set by the plot followed*), and zooming and panning of the values are off,
-also before the plot shows a y range. Plots of the same name are numbered in
-the menu, e.g. *Speed (1)* and *Speed (2)*.
+A histogram linked to a plot shows the spread of the plot's traces over the
+plot's y range; sideways beside the plot, at the heights of the plot. Choose
+the plot in **Link** › **Plot**, upright or sideways:
 
-Switched to upright, the histogram keeps the link, greyed, until it is
-sideways again. Deleting the plot drops the link.
+* The histogram shows the traces the plot shows, with their number formats,
+  and follows as traces are checked in the plot. With the histogram
+  selected, the tree shows them checked but greyed, under *Shows the traces
+  of the linked plot …*; check them in the plot. Its **Number format** is
+  greyed too (*Set by the linked plot*).
+* The value axis shows the y range the plot shows, as it is zoomed, panned
+  or fixed. The bins cover that range, and the samples outside it are
+  counted at its ends, as for a fixed range. The histogram's own **Range** is
+  greyed (*Set by the linked plot*), and zooming and panning of the values
+  are off, also before the plot shows a y range.
 
-Without the link, an automatic sideways histogram fits the samples in the
-shown time range, while the plot fits all data of its traces, so the two line
-up only while the range holds all values; follow the plot to line them up.
+Plots of the same name are numbered in the menu, e.g. *Speed (1)* and
+*Speed (2)*. Choose *None* to unlink: the histogram keeps the traces it
+showed. Deleting the plot drops the link.
+
+Without the link, an automatic histogram fits the samples in the shown time
+range, while the plot fits all data of its traces, so a sideways histogram
+lines up with the plot only while the range holds all values; link it to the
+plot to line them up.
 
 Heatmap
 -------

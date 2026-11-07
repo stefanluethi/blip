@@ -150,25 +150,28 @@ Visualisation
    of a sideways histogram shall be on the left, as in a plot, or on the
    right, as the user chooses.
 
-.. req:: Histogram follows a plot
-   :id: REQ_VIS_HIST_FOLLOW
+.. req:: Histogram linked to a plot
+   :id: REQ_VIS_HIST_LINK
    :status: implemented
    :component: blip
    :satisfies: STK_LIVE_OBSERVE
-   :rationale: A sideways histogram beside a plot of the same traces shows
-      their distribution at the same heights as the plot.
+   :rationale: A histogram beside a plot shows the distribution of the
+      plot's traces over the plot's y range; sideways, at the same heights as
+      the plot. Taking the plot's traces saves checking them twice.
 
-   blip shall let the user link a sideways histogram to a plot view of the
-   layout, or to none. While linked, the value axis of the histogram shall
-   show the y range the plot shows, as it is zoomed, panned or fixed, and
-   that range shall act as a fixed range: the bins, automatic, a fixed
-   number or a fixed width, shall cover it, and samples outside it shall be
-   counted and shown faintly at the end they lie beyond. The histogram's own
-   fixed range, zooming and panning of the values shall be off while linked,
-   also while the plot shows no y range yet.
-   Switching a linked histogram to upright shall keep the link but make it
-   inactive, shown greyed in the properties, until the histogram is switched
-   back to sideways. Deleting the plot shall drop the link.
+   blip shall let the user link a histogram, upright or sideways, to a plot
+   view of the layout, or to none. While linked, the histogram shall show
+   the traces the plot shows, with the plot's number formats, as they
+   change, and the tree of the traces shall show them checked but greyed,
+   with a hint naming the plot; its number formats shall be greyed too.
+   Unlinked, the histogram shall keep the traces it showed last. While
+   linked, the value axis of the histogram shall show the y range the plot
+   shows, as it is zoomed, panned or fixed, and that range shall act as a
+   fixed range: the bins, automatic, a fixed number or a fixed width, shall
+   cover it, and samples outside it shall be counted and shown faintly at the
+   end they lie beyond. The histogram's own fixed range, zooming and panning
+   of the values shall be off while linked, also while the plot shows no y
+   range yet. Deleting the plot shall drop the link.
 
 .. req:: Histogram interaction
    :id: REQ_VIS_HIST_HOVER
@@ -204,7 +207,7 @@ Visualisation
 
    blip shall save the checked traces and all settings of a histogram, its
    bins, range, counts scale, markers, orientation, value axis side and the
-   plot it follows, with the view in the layout of the preset, and restore
+   plot it is linked to, with the view in the layout of the preset, and restore
    them when the layout is loaded.
 
 .. req:: Time cursor

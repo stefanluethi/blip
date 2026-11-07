@@ -263,7 +263,7 @@ mod tests {
                 histogram.counts = histogram::CountScale::Log;
                 histogram.orientation = histogram::Orientation::Sideways;
                 histogram.axis_side = histogram::AxisSide::Right;
-                histogram.follow = Some(ViewId(0));
+                histogram.link = Some(ViewId(0));
                 histogram.markers = histogram::Markers::MeanSigma;
             }
         }
@@ -278,7 +278,7 @@ mod tests {
         for setting in [
             r#""bins": "Width""#,
             r#""axis_side": "Right""#,
-            r#""follow": 0"#,
+            r#""link": 0"#,
         ] {
             assert!(text.contains(setting), "{setting}");
         }

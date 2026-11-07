@@ -157,9 +157,11 @@ pub struct Histogram {
     pub counts: CountScale,
     pub orientation: Orientation,
     pub axis_side: AxisSide,
-    /// The plot whose y range the value axis shows while sideways.
+    /// The plot linked to, whose traces the histogram shows and whose y range its value
+    /// axis shows, in either orientation. The layout copies the traces, see
+    /// `Layout::take_linked_traces`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub follow: Option<ViewId>,
+    pub link: Option<ViewId>,
     pub markers: Markers,
     /// The values panned or zoomed to instead of the fitted ones, until a double click.
     #[serde(skip)]
@@ -188,7 +190,7 @@ impl Default for Histogram {
             counts: CountScale::default(),
             orientation: Orientation::default(),
             axis_side: AxisSide::default(),
-            follow: None,
+            link: None,
             markers: Markers::default(),
             value_view: None,
             share_top: None,
@@ -394,11 +396,9 @@ impl Histogram {
         }
     }
 
-    /// Whether the histogram follows a plot of `plots`: while it is sideways and linked
-    /// to one.
-    fn following(&self, plots: &Plots) -> bool {
-        self.orientation == Orientation::Sideways
-            && self.follow.and_then(|id| plots.get(id)).is_some()
+    /// Whether the histogram follows a plot of `plots`: while it is linked to one.
+    pub fn following(&self, plots: &Plots) -> bool {
+        self.link.and_then(|id| plots.get(id)).is_some()
     }
 
     /// The y range of the plot the histogram follows, if it shows one.
@@ -407,7 +407,7 @@ impl Histogram {
             return None;
         }
         plots
-            .get(self.follow?)?
+            .get(self.link?)?
             .y_range
             .filter(|(low, high)| low < high)
     }
@@ -1035,6 +1035,7 @@ impl Viewable for Histogram {
         let following = self.following(context.plots);
         let fitted = self.last.as_ref().map_or((0.0, 1.0), |last| last.data);
         let last_bins = self.last.as_ref().map(|last| last.bins);
+        super::properties_section(ui, "Link", |ui| self.link_row(ui, context.plots));
         super::properties_section(ui, "Bins", |ui| {
             let mode = self.bins;
             super::choice_row(ui, "Mode", &mut self.bins, &BinMode::CHOICES);
@@ -1085,13 +1086,8 @@ impl Viewable for Histogram {
                 &mut self.orientation,
                 &Orientation::CHOICES,
             );
-            let sideways = self.orientation == Orientation::Sideways;
-            if sideways {
+            if self.orientation == Orientation::Sideways {
                 super::choice_row(ui, "Axis side", &mut self.axis_side, &AxisSide::CHOICES);
-            }
-            // a link is kept while upright, but greyed
-            if sideways || self.follow.is_some() {
-                self.follow_row(ui, context.plots, sideways);
             }
             super::choice_row(ui, "Markers", &mut self.markers, &Markers::CHOICES);
         });
@@ -1106,7 +1102,7 @@ fn text_size(ui: &egui::Ui, text: &str, style: egui::TextStyle) -> egui::Vec2 {
         .size()
 }
 
-/// The names of `plots` in the choice of the plot to follow, numbered where several
+/// The names of `plots` in the choice of the plot to link to, numbered where several
 /// have the same name.
 fn plot_names(plots: &Plots) -> Vec<String> {
     let names: Vec<&str> = plots.0.iter().map(|plot| plot.name.as_str()).collect();
@@ -1133,7 +1129,7 @@ impl Histogram {
     /// Adds the rows of the range to the grid of a properties section, greyed, as the
     /// plot followed sets it.
     fn followed_range_rows(&mut self, ui: &mut egui::Ui) {
-        const SET_BY_PLOT: &str = "Set by the plot followed";
+        const SET_BY_PLOT: &str = "Set by the linked plot";
         let mut fixed = self.range.is_some();
         super::property_label(ui, "Range");
         ui.add_enabled_ui(false, |ui| {
@@ -1153,29 +1149,26 @@ impl Histogram {
     }
 
     /// Adds a row to the grid of a properties section to choose the plot of `plots` to
-    /// follow, enabled if `enabled`.
-    fn follow_row(&mut self, ui: &mut egui::Ui, plots: &Plots, enabled: bool) {
-        super::property_label(ui, "Follow");
+    /// link to.
+    fn link_row(&mut self, ui: &mut egui::Ui, plots: &Plots) {
+        super::property_label(ui, "Plot");
         let names = plot_names(plots);
         let current = (plots.0.iter().zip(&names))
-            .find(|(plot, _)| Some(plot.id) == self.follow)
+            .find(|(plot, _)| Some(plot.id) == self.link)
             .map_or("None", |(_, name)| name.as_str());
-        let before = self.follow;
-        ui.add_enabled_ui(enabled, |ui| {
-            egui::ComboBox::from_id_salt("histogram follow")
-                .selected_text(current)
-                .width(120.0)
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.follow, None, "None");
-                    for (plot, name) in plots.0.iter().zip(&names) {
-                        ui.selectable_value(&mut self.follow, Some(plot.id), name);
-                    }
-                })
-                .response
-                .on_hover_text("The plot whose y range the value axis shows")
-                .on_disabled_hover_text("Follows the plot only while sideways");
-        });
-        if self.follow != before {
+        let before = self.link;
+        egui::ComboBox::from_id_salt("histogram link")
+            .selected_text(current)
+            .width(120.0)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut self.link, None, "None");
+                for (plot, name) in plots.0.iter().zip(&names) {
+                    ui.selectable_value(&mut self.link, Some(plot.id), name);
+                }
+            })
+            .response
+            .on_hover_text("The plot whose traces and y range the histogram shows");
+        if self.link != before {
             // the plot's range replaces the one panned or zoomed to
             self.value_view = None;
         }
@@ -2663,7 +2656,7 @@ mod tests {
     }
 
     #[test]
-    fn a_sideways_histogram_bins_the_y_range_of_the_plot_it_follows() {
+    fn a_linked_histogram_bins_the_y_range_of_the_plot_in_either_orientation() {
         let mut model = Model::default();
         append(
             &mut model,
@@ -2674,7 +2667,7 @@ mod tests {
         let time = live(&model);
         let mut histogram = Histogram {
             orientation: Orientation::Sideways,
-            follow: Some(ViewId(7)),
+            link: Some(ViewId(7)),
             // its own range is ignored while following
             range: Some((0.0, 1.0)),
             ..histogram_of(&["a"])
@@ -2703,16 +2696,16 @@ mod tests {
             // all 200 samples are in the last 20 s
             assert_eq!((counts.below, total(counts), counts.above), (100, 51, 49));
         }
-        // a plot not of the layout, or upright, is not followed
-        histogram.follow = Some(ViewId(8));
-        assert_eq!(histogram.followed(&plots), None);
-        histogram.follow = Some(ViewId(7));
+        // upright, it bins the range of the plot too
         histogram.orientation = Orientation::Upright;
+        assert_eq!(histogram.followed(&plots), Some((100.0, 150.0)));
+        let counting = histogram.counting(&model, &time, &plots, 500.0);
+        assert_eq!(counting.fixed, Some((100.0, 150.0)));
+        // a plot not of the layout is not followed, the own range is binned again
+        histogram.link = Some(ViewId(8));
         assert_eq!(histogram.followed(&plots), None);
         let counting = histogram.counting(&model, &time, &plots, 500.0);
         assert_eq!(counting.fixed, Some((0.0, 1.0)));
-        histogram.orientation = Orientation::Sideways;
-        assert_eq!(histogram.followed(&plots), Some((100.0, 150.0)));
     }
 
     /// Drags in `harness` from `from` to `to` in steps.
@@ -2730,46 +2723,48 @@ mod tests {
     }
 
     #[test]
-    fn a_followed_plot_sets_the_values_which_do_not_pan_or_zoom() {
-        let mut model = Model::default();
-        append(
-            &mut model,
-            "a",
-            (0.0, 0.1),
-            &floats((0..200).map(f64::from)),
-        );
-        let histogram = Histogram {
-            orientation: Orientation::Sideways,
-            follow: Some(ViewId(7)),
-            value_view: Some((0.0, 10.0)),
-            ..histogram_of(&["a"])
-        };
-        let mut state = State::new(histogram, model);
-        state.plots = plots((100.0, 150.0));
-        let mut harness = harness(state, false);
-        harness.run();
-        let values = |harness: &Harness<'_, State>| {
-            harness
-                .state()
-                .histogram
-                .last
-                .as_deref()
-                .copied()
-                .unwrap()
-                .values
-        };
-        assert_eq!(values(&harness), (100.0, 150.0));
-        drag(
-            &mut harness,
-            egui::pos2(200.0, 100.0),
-            egui::pos2(200.0, 200.0),
-        );
-        super::super::scroll_wheel(&mut harness, egui::pos2(200.0, 150.0), 100.0);
-        assert_eq!(values(&harness), (100.0, 150.0));
-        // as the plot is zoomed or panned
-        harness.state_mut().plots = plots((120.0, 130.0));
-        harness.run();
-        assert_eq!(values(&harness), (120.0, 130.0));
+    fn a_linked_plot_sets_the_values_which_do_not_pan_or_zoom() {
+        for orientation in Orientation::ALL {
+            let mut model = Model::default();
+            append(
+                &mut model,
+                "a",
+                (0.0, 0.1),
+                &floats((0..200).map(f64::from)),
+            );
+            let histogram = Histogram {
+                orientation,
+                link: Some(ViewId(7)),
+                value_view: Some((0.0, 10.0)),
+                ..histogram_of(&["a"])
+            };
+            let mut state = State::new(histogram, model);
+            state.plots = plots((100.0, 150.0));
+            let mut harness = harness(state, false);
+            harness.run();
+            let values = |harness: &Harness<'_, State>| {
+                harness
+                    .state()
+                    .histogram
+                    .last
+                    .as_deref()
+                    .copied()
+                    .unwrap()
+                    .values
+            };
+            assert_eq!(values(&harness), (100.0, 150.0), "{orientation:?}");
+            drag(
+                &mut harness,
+                egui::pos2(200.0, 100.0),
+                egui::pos2(100.0, 200.0),
+            );
+            super::super::scroll_wheel(&mut harness, egui::pos2(200.0, 150.0), 100.0);
+            assert_eq!(values(&harness), (100.0, 150.0), "{orientation:?}");
+            // as the plot is zoomed or panned
+            harness.state_mut().plots = plots((120.0, 130.0));
+            harness.run();
+            assert_eq!(values(&harness), (120.0, 130.0), "{orientation:?}");
+        }
     }
 
     /// A harness showing the properties of `histogram` in a layout with the plots of
@@ -2794,43 +2789,42 @@ mod tests {
     }
 
     #[test]
-    fn a_link_is_kept_but_greyed_while_upright() {
-        let follow = |disabled: bool| {
+    fn the_link_is_chosen_in_either_orientation_and_greys_the_range() {
+        let link = |name: &'static str| {
             move |node: &egui_kittest::kittest::AccessKitNode<'_>| {
                 node.role() == egui::accesskit::Role::ComboBox
-                    && node.value().as_deref() == Some("Motor speed")
-                    && node.is_disabled() == disabled
+                    && node.value().as_deref() == Some(name)
+                    && !node.is_disabled()
             }
         };
-        let histogram = Histogram {
-            orientation: Orientation::Sideways,
-            follow: Some(ViewId(7)),
-            ..Histogram::default()
-        };
-        let mut harness = properties_harness(histogram);
+        let mut harness = properties_harness(Histogram::default());
         harness.run();
-        harness.get_by(follow(false));
-        harness.get_by_label("Axis side");
+        harness.get_by(link("None")).click();
+        harness.run();
+        harness.get_by_label("Motor speed").click();
+        harness.run();
+        harness.run();
+        assert_eq!(harness.state().link, Some(ViewId(7)));
         // the plot sets the range
         assert!(harness.get_by_label("Fixed").accesskit_node().is_disabled());
 
-        harness.get_by_label("Upright").click();
-        harness.run();
-        harness.run();
-        assert_eq!(harness.state().follow, Some(ViewId(7)));
-        harness.get_by(follow(true));
-        assert!(harness.query_by_label("Axis side").is_none());
-        assert!(!harness.get_by_label("Fixed").accesskit_node().is_disabled());
-
+        // turning sideways keeps the link working
         harness.get_by_label("Sideways").click();
         harness.run();
         harness.run();
-        harness.get_by(follow(false));
+        assert_eq!(harness.state().link, Some(ViewId(7)));
+        harness.get_by(link("Motor speed"));
+        harness.get_by_label("Axis side");
+        assert!(harness.get_by_label("Fixed").accesskit_node().is_disabled());
 
-        // without a link, an upright histogram has no follow row
-        let mut harness = properties_harness(Histogram::default());
+        // unlinked, the own range is back
+        harness.get_by(link("Motor speed")).click();
         harness.run();
-        assert!(harness.query_by_label("Follow").is_none());
+        harness.get_by_label("None").click();
+        harness.run();
+        harness.run();
+        assert_eq!(harness.state().link, None);
+        assert!(!harness.get_by_label("Fixed").accesskit_node().is_disabled());
     }
 
     /// A harness showing a histogram of `pose.x` in m and `pose.y` in rad.
@@ -2930,9 +2924,9 @@ mod tests {
         let histogram: Histogram = serde_json::from_str(r#"{"traces": ["a"]}"#).unwrap();
         assert_eq!(histogram.bins, BinMode::Auto);
         assert_eq!(histogram.bin_count, 20);
-        assert_eq!(histogram.follow, None);
+        assert_eq!(histogram.link, None);
         let json = serde_json::to_string(&Histogram::default()).unwrap();
-        assert!(!json.contains("follow"), "{json}");
+        assert!(!json.contains("link"), "{json}");
         let histogram = Histogram {
             bins: BinMode::Width,
             bin_width: 0.5,
@@ -2941,7 +2935,7 @@ mod tests {
             counts: CountScale::Log,
             orientation: Orientation::Sideways,
             axis_side: AxisSide::Right,
-            follow: Some(ViewId(3)),
+            link: Some(ViewId(3)),
             markers: Markers::MeanSigma,
             ..histogram_of(&["a"])
         };
@@ -3020,7 +3014,7 @@ mod tests {
         );
         let histogram = Histogram {
             orientation: Orientation::Sideways,
-            follow: Some(ViewId(7)),
+            link: Some(ViewId(7)),
             range: Some((0.0, 1.0)),
             ..histogram_of(&["a"])
         };

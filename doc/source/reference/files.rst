@@ -103,23 +103,23 @@ left out takes its default, so a generated preset only needs what differs.
 To find the key of a setting, change it in blip and export the preset.
 
 A view refers to another by its number in the file: the views counted in the
-order they appear, from 0, across all groups. A sideways histogram that
-follows the y range of a plot saves the number of that plot as ``follow``;
-here it follows the plot, view 0:
+order they appear, from 0, across all groups. A histogram linked to a plot
+saves the number of that plot as ``link``; here it is linked to the plot,
+view 0, and shows its traces, so it needs none of its own:
 
 .. code-block:: json
 
    {"View": {"name": "Speed spread",
-             "kind": {"Histogram": {"traces": ["motor.speed_rpm"],
-                                    "orientation": "Sideways", "follow": 0}}}}
+             "kind": {"Histogram": {"orientation": "Sideways", "link": 0}}}}
 
 The settings of a histogram are ``bins`` (``Auto``, ``Number`` or
 ``Width``), ``bin_count``, ``bin_width``, ``range`` (``[min, max]``, or
 ``null`` for auto), ``counts`` (``Linear`` or ``Log``), ``orientation``
 (``Upright`` or ``Sideways``), ``axis_side`` (``Left`` or ``Right``),
-``follow`` and ``markers`` (``Off``, ``Mean`` or ``MeanSigma``). A ``follow``
-that is not the number of a plot follows nothing. Moving views changes their
-numbers, so edit ``follow`` along with them.
+``link`` and ``markers`` (``Off``, ``Mean`` or ``MeanSigma``). A ``link``
+that is not the number of a plot links to nothing, and the histogram shows
+its own ``traces``. Moving views changes their numbers, so edit ``link``
+along with them.
 
 Versions
 ~~~~~~~~

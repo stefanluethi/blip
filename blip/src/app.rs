@@ -591,6 +591,9 @@ impl App {
     /// The tree of the traces and actions, to choose those of the selected view.
     fn traces_ui(&mut self, ui: &mut egui::Ui) {
         theme::section_header(ui, "Traces & actions", |_| {});
+        // a histogram linked to a plot shows the traces of the plot
+        let linked = (self.layout.selected_link())
+            .map(|plot| format!("Shows the traces of the linked plot {plot}"));
         let view = self.layout.selected_view_mut();
         let hint = match &view {
             None => Some("Select a view to choose its traces or actions"),
@@ -599,7 +602,7 @@ impl App {
             }
             Some(_) => None,
         };
-        if let Some(hint) = hint {
+        if let Some(hint) = hint.or(linked.as_deref()) {
             ui.weak(hint);
         }
         // a view without traces or actions, like the logs, has nothing to choose
@@ -616,14 +619,16 @@ impl App {
         let model = &self.state.model;
         let colored = (view.as_ref()).map_or_else(Vec::new, |view| view.colored_paths(model));
         let selection = view.and_then(|view| view.selection_mut());
-        view::trace_selection::show(
-            ui,
-            model,
-            &self.trace_search,
-            self.compatible_only,
-            selection,
-            &colored,
-        );
+        ui.add_enabled_ui(linked.is_none(), |ui| {
+            view::trace_selection::show(
+                ui,
+                model,
+                &self.trace_search,
+                self.compatible_only,
+                selection,
+                &colored,
+            );
+        });
     }
 }
 
@@ -653,6 +658,8 @@ impl eframe::App for App {
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.shortcuts(ui.ctx());
+        // before the traces panel shows what a linked histogram shows
+        self.layout.take_linked_traces();
         let top_frame =
             egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin::symmetric(10, 8));
         egui::Panel::top("top panel")
@@ -1151,6 +1158,48 @@ mod tests {
         harness.state_mut().reset_traces_panel();
         harness.run();
         assert!(harness.query_by_label_contains("rpm").is_some());
+    }
+
+    #[test]
+    fn a_linked_histogram_shows_the_traces_of_the_plot_greyed() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::{NodeT, Queryable};
+
+        let saved = serde_json::from_str(
+            r#"{"name": "", "kind": "Tabs", "active": 0, "children": [{"Group": {
+                "name": "Motor", "kind": "Horizontal", "children": [
+                    {"View": {"name": "Speed", "kind": {"Plot": {"traces": ["motor/rpm"]}}}},
+                    {"View": {"name": "Spread", "kind": {"Histogram": {"link": 0}}}}
+                ]}}]}"#,
+        )
+        .unwrap();
+        let mut app = App {
+            layout: layout::Layout::from_saved(saved),
+            ..App::default()
+        };
+        assert!(app.layout.select_named("Spread"));
+        app.state.set_recording(true, true);
+        app.state.receive("a", &value_of("motor/rpm", 1), 0.0);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(300.0, 400.0))
+            .build_ui_state(
+                |ui, app: &mut App| {
+                    app.layout.take_linked_traces();
+                    app.traces_panel_ui(ui);
+                },
+                app,
+            );
+        harness.run();
+        harness.get_by_label("Shows the traces of the linked plot Speed");
+        let rpm = harness.get_by(|node| {
+            node.role() == egui::accesskit::Role::CheckBox
+                && node.label().is_some_and(|label| label.contains("rpm"))
+        });
+        assert!(rpm.accesskit_node().is_disabled());
+        assert_eq!(
+            rpm.accesskit_node().toggled(),
+            Some(egui::accesskit::Toggled::True)
+        );
     }
 
     #[test]

@@ -183,11 +183,11 @@ Test Cases
    ±σ for Mean ±σ, a row per trace, without a whisker for a trace without
    spread.
 
-.. test:: Histogram orientation and the plot it follows
-   :id: TEST_BLIP_HIST_FOLLOW
+.. test:: Histogram orientation and the plot it is linked to
+   :id: TEST_BLIP_HIST_LINK
    :status: implemented
    :component: blip
-   :verifies: REQ_VIS_HIST_ORIENT, REQ_VIS_HIST_FOLLOW
+   :verifies: REQ_VIS_HIST_ORIENT, REQ_VIS_HIST_LINK
 
    ``blip/src/app/view/histogram.rs::upright_values_run_along_x_and_sideways_along_y``
    -- upright puts the values on the horizontal axis and sideways on the
@@ -197,25 +197,36 @@ Test Cases
    (``egui_kittest``) -- the value axis of a sideways histogram takes its room
    on the left or on the right, as chosen.
    ``blip/src/app/layout.rs::the_plots_of_the_layout_are_listed_with_the_y_ranges_they_show``
-   -- only the plot views of the layout can be followed, with the y range
+   -- only the plot views of the layout can be linked to, with the y range
    they show, fixed, zoomed or panned.
-   ``blip/src/app/view/histogram.rs::a_sideways_histogram_bins_the_y_range_of_the_plot_it_follows``
-   -- a linked sideways histogram covers the y range of the plot with
-   automatic, a fixed number of and fixed width bins, counts the samples below
-   and above it and ignores its own fixed range; an upright one or a plot not
-   in the layout is not followed.
-   ``blip/src/app/view/histogram.rs::a_followed_plot_sets_the_values_which_do_not_pan_or_zoom``
-   -- the value axis shows the plot's range as it changes, not its own zoom,
-   and dragging and the wheel do not move it.
-   ``blip/src/app/view/histogram.rs::a_link_is_kept_but_greyed_while_upright``
-   -- switching to upright keeps the link with its choice greyed, switching
-   back to sideways makes it work again, and the range rows are greyed while
-   following.
+   ``blip/src/app/layout.rs::a_linked_histogram_takes_the_traces_of_the_plot``
+   -- a linked histogram takes the traces, wildcards and number formats of
+   the plot as they change, a link to another view takes nothing, and
+   unlinked it keeps the traces it took.
+   ``blip/src/app.rs::a_linked_histogram_shows_the_traces_of_the_plot_greyed``
+   (``egui_kittest``) -- the tree of the traces shows the traces of the
+   linked plot checked and greyed, with a hint naming the plot.
+   ``blip/src/app/view/mod.rs::the_number_formats_of_a_linked_histogram_are_greyed``
+   (``egui_kittest``) -- the number formats of a linked histogram are greyed,
+   those of an unlinked one, or of one linked to a plot no longer in the
+   layout, are not.
+   ``blip/src/app/view/histogram.rs::a_linked_histogram_bins_the_y_range_of_the_plot_in_either_orientation``
+   -- a linked histogram, sideways or upright, covers the y range of the plot
+   with automatic, a fixed number of and fixed width bins, counts the samples
+   below and above it and ignores its own fixed range; a plot not in the
+   layout is not followed.
+   ``blip/src/app/view/histogram.rs::a_linked_plot_sets_the_values_which_do_not_pan_or_zoom``
+   -- in either orientation the value axis shows the plot's range as it
+   changes, not its own zoom, and dragging and the wheel do not move it.
+   ``blip/src/app/view/histogram.rs::the_link_is_chosen_in_either_orientation_and_greys_the_range``
+   (``egui_kittest``) -- the plot is chosen in **Link** › **Plot** while
+   upright, the link stays when turned sideways, and the range rows are
+   greyed while linked and back once unlinked.
    ``blip/src/app/view/histogram.rs::a_link_to_a_plot_without_a_range_yet_turns_off_the_own_range_and_zoom``
    -- while linked to a plot that shows no y range yet, the own fixed range,
    the wheel zoom and the range rows are off too.
    ``blip/src/app/view/histogram.rs::plots_of_the_same_name_are_told_apart_by_a_number``
-   -- plots of the same name are listed with a number to follow.
+   -- plots of the same name are listed with a number to link to.
    ``blip/src/app/layout.rs::deleting_a_plot_drops_the_links_to_it`` --
    deleting the plot drops the link, deleting another view does not.
 
@@ -247,10 +258,10 @@ Test Cases
 
    ``blip/src/app/layout/file.rs::layouts_survive_json`` -- saves a layout
    with a histogram whose bins, range, counts scale, markers, orientation,
-   value axis side and followed plot differ from the defaults as JSON and
+   value axis side and linked plot differ from the defaults as JSON and
    checks that it loads unchanged.
    ``blip/src/app/layout.rs::links_between_views_survive_saving_and_loading``
-   -- the followed plot is saved by its place in the layout and is the same
+   -- the linked plot is saved by its place in the layout and is the same
    plot after loading.
    ``blip/src/app/view/histogram.rs::settings_are_saved_with_defaults_for_those_missing``
    -- the settings survive JSON, and a histogram saved without them loads
@@ -267,7 +278,7 @@ Test Cases
    ``robot/pose.y`` with Mean ±σ markers, and
    ``blip/src/app/screenshots.rs::screenshots_layouts`` renders
    ``view-histogram-sideways``, a sideways histogram of
-   ``motor.speed_rpm`` beside the plot it follows, from the demo recording in
+   ``motor.speed_rpm`` beside the plot it is linked to, from the demo recording in
    the light and the dark theme, for the documentation and to check by eye
    that they look right.
 

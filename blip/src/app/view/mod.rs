@@ -30,7 +30,7 @@ pub struct ViewContext<'a> {
     pub formats: &'a Formats,
     /// Whether the shown view has a title row, see [`Viewable::title_ui`].
     pub titled: bool,
-    /// The plot views of the layout, which a histogram can follow.
+    /// The plot views of the layout, which a histogram can be linked to.
     pub plots: &'a Plots,
 }
 
@@ -61,7 +61,7 @@ pub struct PropertiesContext<'a> {
     pub model: &'a Model,
     /// The names of the open connections.
     pub connected: &'a HashSet<String>,
-    /// The plot views of the layout, which a histogram can follow.
+    /// The plot views of the layout, which a histogram can be linked to.
     pub plots: &'a Plots,
 }
 
@@ -71,7 +71,7 @@ pub struct PropertiesContext<'a> {
 #[derive(serde::Deserialize, serde::Serialize, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct ViewId(pub u64);
 
-/// A plot view of the layout, as a histogram following it sees it.
+/// A plot view of the layout, as a histogram linked to it sees it.
 #[derive(Clone, PartialEq, Debug)]
 pub struct PlotInfo {
     pub id: ViewId,
@@ -80,8 +80,8 @@ pub struct PlotInfo {
     pub y_range: Option<(f64, f64)>,
 }
 
-/// The plot views of the layout, in the order of the layout. A sideways histogram can
-/// follow the y range of one of them, the only link between views.
+/// The plot views of the layout, in the order of the layout. A histogram can be linked
+/// to one of them, taking its traces and its y range, the only link between views.
 #[derive(Clone, Default, PartialEq, Debug)]
 pub struct Plots(pub Vec<PlotInfo>);
 
@@ -488,7 +488,7 @@ impl View {
     /// `None`, e.g. when a view is deleted or a layout saved or loaded.
     pub fn relink(&mut self, map: impl Fn(ViewId) -> Option<ViewId>) {
         if let ViewKind::Histogram(histogram) = &mut self.kind {
-            histogram.follow = histogram.follow.and_then(map);
+            histogram.link = histogram.link.and_then(map);
         }
     }
 
@@ -561,18 +561,20 @@ impl Viewable for View {
             ViewKind::Table(table) if table.layout == table::TableLayout::Records => {
                 table.columns_ui(ui, context.model, &mut self.formats);
             }
-            _ => self.number_format_ui(ui, context.model),
+            _ => self.number_format_ui(ui, context),
         }
     }
 }
 
 impl View {
     /// Shows the number format of each shown trace with its unit, if the view writes
-    /// the values of its traces.
-    fn number_format_ui(&mut self, ui: &mut egui::Ui, model: &Model) {
+    /// the values of its traces, greyed if it takes them from a linked plot.
+    fn number_format_ui(&mut self, ui: &mut egui::Ui, context: &PropertiesContext<'_>) {
         if !self.view_type().writes_values() {
             return;
         }
+        let model = context.model;
+        let linked = matches!(&self.kind, ViewKind::Histogram(histogram) if histogram.following(context.plots));
         let paths: Vec<String> = match self.selection_mut() {
             Some(selection) if !selection.paths.is_empty() => {
                 selection.paths.iter().cloned().collect()
@@ -584,7 +586,11 @@ impl View {
             for (path, name) in paths.iter().zip(names) {
                 property_label(ui, name).on_hover_text(path);
                 let kind = number_kind(model, path);
-                number_format_ui(ui, &mut self.formats, path, kind, model.traces.unit(path));
+                ui.add_enabled_ui(!linked, |ui| {
+                    number_format_ui(ui, &mut self.formats, path, kind, model.traces.unit(path));
+                })
+                .response
+                .on_disabled_hover_text("Set by the linked plot");
                 ui.end_row();
             }
         });
@@ -686,6 +692,55 @@ pub fn scroll_wheel<State>(
 mod tests {
     use super::*;
     use egui_kittest::Harness;
+
+    #[test]
+    fn the_number_formats_of_a_linked_histogram_are_greyed() {
+        let plots = Plots(vec![PlotInfo {
+            id: ViewId(7),
+            name: "Errors".to_owned(),
+            y_range: None,
+        }]);
+        let mut view = View::new(ViewType::Histogram, "Spread".to_owned());
+        if let ViewKind::Histogram(histogram) = &mut view.kind {
+            histogram.traces.insert("motor/errors".to_owned());
+        }
+        let format_disabled = |view: View, plots: Plots| {
+            use egui_kittest::kittest::{NodeT, Queryable};
+            let mut model = Model::default();
+            model.traces.append(&proto::Value {
+                timestamp: 0,
+                path: "motor/errors".to_owned(),
+                value: proto::Data::Uint(3),
+            });
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(300.0, 600.0))
+                .build_ui_state(
+                    move |ui, view: &mut View| {
+                        let connected = HashSet::new();
+                        let context = PropertiesContext {
+                            model: &model,
+                            connected: &connected,
+                            plots: &plots,
+                        };
+                        view.properties_ui(ui, &context);
+                    },
+                    view,
+                );
+            harness.run();
+            let format = harness.get_by(|node| {
+                node.role() == egui::accesskit::Role::ComboBox
+                    && node.value().as_deref() == Some("Default")
+            });
+            format.accesskit_node().is_disabled()
+        };
+        assert!(!format_disabled(view.clone(), plots.clone()));
+        if let ViewKind::Histogram(histogram) = &mut view.kind {
+            histogram.link = Some(ViewId(7));
+        }
+        assert!(format_disabled(view.clone(), plots));
+        // a link to a plot no longer in the layout leaves them to the histogram
+        assert!(!format_disabled(view, Plots::default()));
+    }
 
     #[test]
     fn wildcards_pick_new_paths_once_the_model_has_them() {

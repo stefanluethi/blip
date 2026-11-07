@@ -358,14 +358,14 @@ fn layout_shot(name: &str, size: egui::Vec2, json: &str) {
 #[test]
 #[ignore = "renders the screenshots of the documentation, see the module"]
 fn screenshots_layouts() {
-    // a sideways histogram beside the plot it follows, the plot being view 0
+    // a sideways histogram linked to the plot beside it, view 0, showing its traces
     layout_shot(
         "view-histogram-sideways",
         egui::vec2(1000.0, 380.0),
         r#"{"name": "", "kind": "Tabs", "active": 0, "children": [{"Group": {
             "name": "Motor", "kind": "Horizontal", "shares": [1.8, 1.0], "children": [
                 {"View": {"name": "Motor speed", "kind": {"Plot": {"traces": ["motor.speed_rpm"]}}}},
-                {"View": {"name": "Speed spread", "kind": {"Histogram": {"traces": ["motor.speed_rpm"], "orientation": "Sideways", "follow": 0}}}}
+                {"View": {"name": "Speed spread", "kind": {"Histogram": {"orientation": "Sideways", "link": 0}}}}
             ]}}]}"#,
     );
 }

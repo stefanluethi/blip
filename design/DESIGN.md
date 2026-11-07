@@ -71,7 +71,8 @@ oscilloscope, not like a web app.
 - Plot legends sit in the view's title row (dot, name, value at the cursor, the shared
   unit once at the end). Stats are chips below the plot, coloured by their trace.
 - Histogram legends are a dot and name per trace in the title row, no cursor value. A
-  sideways histogram can follow a Plot's y range (its only link between views); its
+  histogram, upright or sideways, can be linked to a Plot (its only link between views):
+  it takes the plot's traces, greyed in the tree, and its y range. A sideways one's
   value axis is on the left by default, like a plot, or on the right.
 
 ## Words
