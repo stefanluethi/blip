@@ -88,21 +88,9 @@ Test Cases
    -- the outline of a trace runs over each run of bins that are not empty
    and drops to the floor at its ends, with nothing along the floor between
    runs and nothing for a trace without binned samples.
-   ``blip/src/app/view/histogram.rs::value_labels_take_one_round_step_and_stay_within_the_axis``
-   -- the value axis is labelled at one step of 1, 2 or 5 times a power of
-   ten, the smallest far enough apart, with the powers of ten above it
-   stronger and the grid lines between at a step that divides it, so steps of
-   2 and 5 never show together; a label that would run past an end of the
-   axis is left out.
    ``blip/src/app/view/histogram.rs::the_title_legend_cuts_the_names_and_keeps_the_unit``
    -- a title row too short for the legend cuts the names off before the unit,
    which stays at the end.
-   ``blip/src/app/view/histogram.rs::the_legend_box_and_the_outside_counts_are_clear_of_the_bars``
-   -- without a title row, the legend in its box and the unit below the names
-   lie in the plot outside the reach of the bars, upright and sideways.
-   ``blip/src/app/view/histogram.rs::the_legend_of_many_traces_wraps_across_the_plot_clear_of_the_bars``
-   -- a legend of nine traces too tall for the room beyond the bars wraps
-   into lines across the plot, at most three, clear of the bars.
    ``blip/src/app/view/histogram.rs::infinite_samples_alone_show_their_counts_on_empty_axes``
    -- a window of only infinite samples counts them below and above and shows
    the empty axes, not "No samples in the shown window".
@@ -157,16 +145,12 @@ Test Cases
    sample (0.1 %) and marks 0.1 %, 1 %, 10 % and 100 %, of 2000 samples it
    starts rounded down to half a decade without a mark at its start, a bin of
    one sample reaches above its start and an empty bin shows nothing; the
-   linear axis marks round steps of percent, also fractions of a percent, and
+   linear axis is marked up to the bars, also in fractions of a percent, and
    leaves the floor to the end label of the value axis.
-   ``blip/src/app/view/histogram.rs::count_labels_stay_within_the_axis``
-   -- a percentage label that would run past the end of the counts axis is
-   left out, by half its width along a horizontal axis and half its height along a
-   vertical one.
-   ``blip/src/app/view/histogram.rs::the_room_beyond_the_bars_holds_the_markers_the_outside_counts_and_the_legend``
-   -- the counts axis leaves room beyond the bars for the marker strip, the
-   counts outside the bins and the legend box, upright and sideways, with the
-   legend below the count of the samples above.
+   ``blip/src/app/view/histogram.rs::the_room_beyond_the_bars_holds_the_markers_and_the_outside_counts``
+   -- the counts axis leaves room beyond the bars for the marker strip and the
+   counts outside the bins, upright and sideways, with the counts in the
+   corners beyond the strip.
 
 .. test:: Histogram mean and spread
    :id: TEST_BLIP_HIST_MARKERS

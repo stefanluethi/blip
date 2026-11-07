@@ -75,8 +75,8 @@ Visualisation
    outline in the full colour. The legend shall show a dot and the name of
    each trace, without a value, in the title row of the view, or in its top
    right corner without a title row. The value axis, the bin width, the bin
-   edges in the tooltip and the legend shall show the unit of the traces
-   only if all checked traces share one. The bin edges and the values on the
+   edges in the tooltip and the legend in the title row shall show the unit
+   of the traces only if all checked traces share one. The bin edges and the values on the
    axis shall be written in the number format of the traces if all have the
    same one, else in the default format.
 

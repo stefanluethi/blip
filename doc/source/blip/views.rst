@@ -200,11 +200,10 @@ elements; ``null`` samples are not counted.
 
 The traces are counted in the same bins and drawn over each other, each as a
 light area under an outline in its colour. The legend shows a dot and the name
-of each trace in the title row. Without a title row it is a box at the top
-right, with the unit in a faint line below the names; upright, the names of
-many traces wrap into right-aligned lines across the top of the plot. The bars keep clear
-of the legend. The value axis, the bin edges and the legend show the unit only if all
-traces share one.
+of each trace in the title row. Without a title row it is at the top right of
+the plot, as in a plot view; there it may cover the end of the marker strip or
+a tall bar. The value axis, the bin edges and the legend in the title row show
+the unit only if all traces share one.
 
 Samples that lie outside the bins are not binned but counted, and their counts
 shown faintly at the end they lie beyond, e.g. *‹ 232* and *36 ›* (*↓* and *↑*
@@ -226,8 +225,8 @@ The counts axis shows the samples of each trace in a bin as a percentage of
 all samples of that trace in the shown range, those outside the bins included,
 so traces of different sample rates compare. It fits the tallest bin in view: it
 grows at once, and shrinks only once that bin is well below its top, so it
-does not jump while live. The bars leave room at its far end for the legend
-box, the markers and the counts outside the bins.
+does not jump while live. The bars leave room at its far end for the markers
+and the counts outside the bins.
 
 Properties:
 

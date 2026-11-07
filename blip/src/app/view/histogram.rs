@@ -34,8 +34,8 @@ const SINGLE_VALUE_ROOM: f64 = 2.5;
 const LOG_ROOM: f64 = 0.5;
 /// The significant digits of the shares in the tooltip.
 const SHARE_DIGITS: usize = 3;
-/// The most of the counts axis the room beyond the bars takes, for the markers, the
-/// counts outside the bins and the legend.
+/// The most of the counts axis the room beyond the bars takes, for the markers and the
+/// counts outside the bins.
 const MAX_ROOM: f64 = 2.0 / 3.0;
 /// The room above the tallest bin, as a part of the counts axis up to it.
 const HEADROOM: f64 = 0.08;
@@ -52,26 +52,14 @@ const MARKER_INSET: f32 = 3.0;
 const MARKER_GAP: f32 = 6.0;
 /// The radius of the dot at the mean and the half length of the ends of a whisker.
 const MARKER_RADIUS: f32 = 3.0;
-/// The room between the edges of the plot and the texts and the legend on it.
+/// The room between the edges of the plot and the texts on it.
 const OVERLAY_INSET: f32 = 6.0;
 /// The legend dots, as in the legends of plots.
 const DOT_SIZE: f32 = 8.0;
-/// The height of a row of the legend in its box, and of the unit below its rows.
-const LEGEND_ROW: f32 = 18.0;
-const UNIT_ROW: f32 = 14.0;
-/// The room around the rows of the legend in its box.
-const LEGEND_MARGIN: egui::Vec2 = egui::vec2(8.0, 3.0);
-/// The room between a name and its dot in the legend, and between the traces of a
-/// wrapped legend.
-const LEGEND_DOT_GAP: f32 = 6.0;
-const LEGEND_ITEM_GAP: f32 = 14.0;
+/// The height of the counts of the samples outside the bins.
+const TEXT_ROW: f32 = 18.0;
 /// The least width left for a name in the legend of the title row, else it ends in "…".
 const MIN_NAME_WIDTH: f32 = 16.0;
-/// How far apart in points the labels of the value axis of an upright histogram are at
-/// least, and from where they show in full.
-const VALUE_LABEL_SPACING: std::ops::RangeInclusive<f32> = 45.0..=60.0;
-/// The same for the value axis of a sideways histogram that follows no plot.
-const SIDEWAYS_LABEL_SPACING: std::ops::RangeInclusive<f32> = 30.0..=40.0;
 /// The least width of the value axis of a sideways histogram, as of the y axis of a
 /// plot, so that both line up.
 const VALUE_AXIS_THICKNESS: f32 = 50.0;
@@ -208,9 +196,8 @@ struct Last {
     /// The range of the value axis.
     values: (f64, f64),
     bins: Bins,
-    /// The plot without its axes, and the part of it the bars can reach.
+    /// The plot without its axes.
     frame: egui::Rect,
-    bars: egui::Rect,
 }
 
 /// Bins of equal width, the first starting at `start`.
@@ -767,34 +754,20 @@ impl CountAxis {
         })
     }
 
-    /// The marks of the axis, `horizontal` or not: a round step of percent apart, or a
-    /// mark at each power of ten above the floor, up to the bars, without those whose
-    /// labels would run past the end of the axis.
-    fn marks(self, horizontal: bool) -> impl Fn(egui_plot::GridInput) -> Vec<egui_plot::GridMark> {
-        move |input| {
-            let marks = match self.scale {
-                CountScale::Linear => {
-                    // labels need more room than the least spacing of grid lines
-                    let step = nice_at_least(input.base_step_size * 6.0);
-                    (0..=(self.bars_top / step).floor() as i64)
-                        .map(|multiple| egui_plot::GridMark {
-                            value: multiple as f64 * step,
-                            step_size: step,
-                        })
-                        .collect()
-                }
-                CountScale::Log => (self.floor.floor() as i64 + 1..=self.bars_top.floor() as i64)
-                    .map(|decade| egui_plot::GridMark {
-                        value: decade as f64,
-                        step_size: 1.0,
-                    })
-                    .collect::<Vec<_>>(),
-            };
-            let fits = |mark: &egui_plot::GridMark| {
-                let text = self.label(mark.value, mark.step_size);
-                text.is_empty() || label_fits(mark.value, &text, &input, horizontal)
-            };
-            marks.into_iter().filter(fits).collect()
+    /// The marks of the axis up to the bars, so that the room beyond them stays clear:
+    /// those of egui_plot, or a mark at each power of ten above the floor.
+    fn marks(self) -> impl Fn(egui_plot::GridInput) -> Vec<egui_plot::GridMark> {
+        let linear = egui_plot::log_grid_spacer(10);
+        move |input| match self.scale {
+            CountScale::Linear => (linear(input).into_iter())
+                .filter(|mark| mark.value <= self.bars_top)
+                .collect(),
+            CountScale::Log => (self.floor.floor() as i64 + 1..=self.bars_top.floor() as i64)
+                .map(|decade| egui_plot::GridMark {
+                    value: decade as f64,
+                    step_size: 1.0,
+                })
+                .collect(),
         }
     }
 
@@ -808,100 +781,6 @@ impl CountAxis {
             }
             CountScale::Log => decade_label(value.round() as i32),
         }
-    }
-}
-
-/// The least room between grid lines in points, egui_plot's default, by which it
-/// gives the smallest step in a [`egui_plot::GridInput`].
-const GRID_SPACING: f64 = 8.0;
-/// About the width of a character of the labels of the axes, and their height, in
-/// points, to keep them within the ends of the axes.
-const LABEL_CHAR_WIDTH: f64 = 7.5;
-const LABEL_HEIGHT: f64 = 16.0;
-
-/// Whether the label `text` of a mark at `value` of an axis with `input` stays within the
-/// ends of the axis: half its width along a horizontal axis, half its height along a
-/// vertical one.
-fn label_fits(value: f64, text: &str, input: &egui_plot::GridInput, horizontal: bool) -> bool {
-    let per_point = input.base_step_size / GRID_SPACING;
-    let half = if horizontal {
-        text.chars().count() as f64 * LABEL_CHAR_WIDTH / 2.0
-    } else {
-        LABEL_HEIGHT / 2.0
-    } * per_point;
-    let (low, high) = input.bounds;
-    value - half >= low && value + half <= high
-}
-
-/// Marks a value axis whose values are written in `format`: the labels at the smallest
-/// round step, 1, 2 or 5 times a power of ten, at least `spacing` points apart, the
-/// powers of ten above it stronger, and grid lines between them at a step that divides
-/// it, so that steps of 2 and 5 never show together. A label that would run past an
-/// end of the axis, horizontal or not, is left out.
-fn round_marks(
-    format: DisplayFormat,
-    spacing: f32,
-    horizontal: bool,
-) -> impl Fn(egui_plot::GridInput) -> Vec<egui_plot::GridMark> {
-    move |input| {
-        let (low, high) = input.bounds;
-        let per_point = input.base_step_size / GRID_SPACING;
-        if !(per_point.is_finite() && per_point > 0.0 && high > low) {
-            return vec![];
-        }
-        let label = nice_at_least(per_point * f64::from(spacing));
-        let mantissa = (label / 10f64.powf(label.log10().floor())).round();
-        // the grid lines between the labels, at a step that divides theirs
-        let minor = [
-            if mantissa == 2.0 {
-                label / 4.0
-            } else {
-                label / 5.0
-            },
-            if mantissa == 5.0 { label } else { label / 2.0 },
-            label,
-        ]
-        .into_iter()
-        .find(|&step| step >= input.base_step_size * (1.0 - 1.0e-9))
-        .unwrap_or(label);
-        let (first, last) = ((low / minor).ceil(), (high / minor).floor());
-        if !(last - first).is_finite() || last - first >= 10_000.0 {
-            return vec![];
-        }
-        let multiple = |value: f64, step: f64| {
-            let ratio = value / step;
-            (ratio - ratio.round()).abs() < 1.0e-6
-        };
-        (first as i64..=last as i64)
-            .map(|index| {
-                let value = index as f64 * minor;
-                let mut step_size = minor;
-                if multiple(value, label) {
-                    step_size = label;
-                    // a power of ten above the labels is stronger
-                    let mut power = 10f64.powf(label.log10().floor() + 1.0);
-                    while power <= label * 1000.0 && multiple(value, power) {
-                        step_size = power;
-                        power *= 10.0;
-                    }
-                    let text = write_value(value, step_size, format);
-                    if !label_fits(value, &text, &input, horizontal) {
-                        step_size = minor;
-                    }
-                }
-                egui_plot::GridMark { value, step_size }
-            })
-            .collect()
-    }
-}
-
-/// The smallest 1, 2 or 5 times a power of ten at least `value`.
-fn nice_at_least(value: f64) -> f64 {
-    let near = nice_near(value);
-    if near < value * (1.0 - 1.0e-9) {
-        nice_above(near)
-    } else {
-        near
     }
 }
 
@@ -1175,66 +1054,24 @@ impl Histogram {
         ui.end_row();
     }
 
-    /// The room beyond the bars on a plot of `frame` points for `rows` rows of
-    /// markers, the counts of the samples `outside` the bins and, without a title row,
-    /// the legend with `unit`. A legend too tall for the room it may take upright is
-    /// wrapped across the plot.
-    fn room(
-        &self,
-        ui: &egui::Ui,
-        frame: egui::Vec2,
-        rows: usize,
-        (below, above): (u64, u64),
-        legend: Option<Option<&str>>,
-    ) -> Room {
+    /// The room beyond the bars for `rows` rows of markers and the counts of the samples
+    /// `outside` the bins.
+    fn room(&self, ui: &egui::Ui, rows: usize, (below, above): (u64, u64)) -> Room {
         let markers = if rows > 0 {
             MARKER_INSET + rows as f32 * MARKER_ROW
         } else {
             0.0
         };
-        let size = |text: &str| text_size(ui, text, egui::TextStyle::Body);
         let outside = (below + above > 0).then(|| {
-            let [below, above] = self.outside_texts(below, above);
-            let width = size(&below).x.max(size(&above).x);
-            egui::vec2(width, LEGEND_ROW)
-        });
-        let legend = legend.map(|unit| {
-            let items: Vec<f32> = (self.selected_path_iter())
-                .map(|(_, name, _)| size(name).x + LEGEND_DOT_GAP + DOT_SIZE)
-                .collect();
-            let unit = unit.map_or(0.0, |unit| text_size(ui, unit, egui::TextStyle::Small).x);
-            let unit_row = if unit > 0.0 { UNIT_ROW } else { 0.0 };
-            let widest = items.iter().copied().fold(unit, f32::max);
-            let column = egui::vec2(widest, items.len() as f32 * LEGEND_ROW + unit_row);
-            let column = column + 2.0 * LEGEND_MARGIN;
-            // upright, the room beyond the bars takes only a part of the counts axis
-            let others = markers + OVERLAY_INSET + outside.map_or(0.0, |size| size.y);
-            let fits = others + column.y + MARKER_GAP <= frame.y * MAX_ROOM as f32;
-            if self.orientation == Orientation::Sideways || fits {
-                return Legend {
-                    size: column,
-                    lines: None,
-                };
-            }
-            let band = frame.x - 2.0 * (OVERLAY_INSET + LEGEND_MARGIN.x);
-            let lines = wrap(&items, band, LEGEND_ITEM_GAP);
-            let line_width = |line: &Vec<usize>| {
-                let gaps = line.len().saturating_sub(1) as f32 * LEGEND_ITEM_GAP;
-                line.iter().map(|&index| items[index]).sum::<f32>() + gaps
-            };
-            let width = lines.iter().map(line_width).fold(unit, f32::max);
-            let height = lines.len() as f32 * LEGEND_ROW + unit_row;
-            Legend {
-                size: egui::vec2(width, height) + 2.0 * LEGEND_MARGIN,
-                lines: Some(lines),
-            }
+            let width = (self.outside_texts(below, above).iter())
+                .map(|text| text_size(ui, text, egui::TextStyle::Body).x)
+                .fold(0.0, f32::max);
+            egui::vec2(width, TEXT_ROW)
         });
         Room {
             orientation: self.orientation,
             markers,
             outside,
-            above: above > 0,
-            legend,
         }
     }
 
@@ -1287,8 +1124,7 @@ impl Histogram {
         let paths = || self.traces.iter().map(String::as_str);
         let unit = super::common_unit(model, paths());
         let format = common_format(formats, paths());
-        let legend = (!context.titled).then_some(unit);
-        let room = self.room(ui, frame, rows, outside, legend);
+        let room = self.room(ui, rows, outside);
         let axis = CountAxis::new(
             self.counts,
             self.share_top.unwrap_or(100.0),
@@ -1297,7 +1133,11 @@ impl Histogram {
             room.length(),
         );
 
-        let plot = self.plot(id, ui.visuals(), axis, (unit, format), following);
+        let mut plot = self.plot(id, ui.visuals(), axis, (unit, format), following);
+        // without a title row, the legend of the title row goes to a corner
+        if !context.titled {
+            plot = plot.legend(egui_plot::Legend::default().position(egui_plot::Corner::RightTop));
+        }
         let visuals = ui.visuals().clone();
         let this = &*self;
         let response = plot.show(ui, |plot_ui| {
@@ -1338,22 +1178,12 @@ impl Histogram {
         }
         self.hovered = response.inner;
         let frame = *transform.frame();
-        // where the tallest bar can reach, short of the room beyond the bars
-        let bars = match self.orientation {
-            Orientation::Upright => {
-                frame.with_min_y(transform.position_from_point_y(axis.bars_top))
-            }
-            Orientation::Sideways => {
-                frame.with_max_x(transform.position_from_point_x(axis.bars_top))
-            }
-        };
         self.last = counted.as_ref().map(|counted| {
             Box::new(Last {
                 data: data.unwrap_or(fitted),
                 values,
                 bins: counted.bins,
                 frame,
-                bars,
             })
         });
 
@@ -1378,9 +1208,6 @@ impl Histogram {
                     egui::Label::new(egui::RichText::new(NO_SAMPLES).color(tokens.text_faint));
                 ui.put(rect, hint);
             }
-        }
-        if let (Some(rect), Some(legend)) = (overlay.legend_rect(), &overlay.room.legend) {
-            self.legend_box_ui(ui, (rect, legend), frame, unit);
         }
         if let (Some(index), Some(counted)) = (self.hovered, &counted) {
             let bin = Bin {
@@ -1432,43 +1259,30 @@ impl Histogram {
         match self.orientation {
             Orientation::Upright => plot
                 .custom_x_axes(vec![label(
-                    egui_plot::AxisHints::new_x()
-                        .formatter(value_formatter)
-                        .label_spacing(VALUE_LABEL_SPACING),
+                    egui_plot::AxisHints::new_x().formatter(value_formatter),
                 )])
-                .x_grid_spacer(round_marks(format, *VALUE_LABEL_SPACING.end(), true))
                 .custom_y_axes(vec![
                     egui_plot::AxisHints::new_y().formatter(count_formatter),
                 ])
-                .y_grid_spacer(axis.marks(false)),
+                .y_grid_spacer(axis.marks()),
             Orientation::Sideways => {
                 let placement = match self.axis_side {
                     AxisSide::Left => egui_plot::HPlacement::Left,
                     AxisSide::Right => egui_plot::HPlacement::Right,
                 };
-                let mut value_axis = egui_plot::AxisHints::new_y()
+                // as the y axis of a plot, so that both line up
+                let value_axis = egui_plot::AxisHints::new_y()
                     .placement(placement)
                     .min_thickness(VALUE_AXIS_THICKNESS)
                     .formatter(value_formatter);
-                if !following {
-                    value_axis = value_axis.label_spacing(SIDEWAYS_LABEL_SPACING);
-                }
-                let plot = plot
-                    .custom_x_axes(vec![
-                        egui_plot::AxisHints::new_x()
-                            .formatter(count_formatter)
-                            // shares are short, so their labels fit closer together
-                            .label_spacing(40.0..=60.0),
-                    ])
-                    .x_grid_spacer(axis.marks(true));
-                // following a plot, the values have the grid of the plot
-                if following {
-                    plot.custom_y_axes(vec![label(value_axis)])
-                } else {
-                    let spacing = *SIDEWAYS_LABEL_SPACING.end();
-                    plot.custom_y_axes(vec![label(value_axis)])
-                        .y_grid_spacer(round_marks(format, spacing, false))
-                }
+                plot.custom_x_axes(vec![
+                    egui_plot::AxisHints::new_x()
+                        .formatter(count_formatter)
+                        // shares are short, so their labels fit closer together
+                        .label_spacing(40.0..=60.0),
+                ])
+                .x_grid_spacer(axis.marks())
+                .custom_y_axes(vec![label(value_axis)])
             }
         }
     }
@@ -1500,9 +1314,11 @@ impl Histogram {
                     .allow_hover(false),
             );
         }
+        // the bars and outlines of a trace share its name, its entry in the legend
         let shares: Vec<Vec<f64>> = counted.traces.iter().map(Counts::shares).collect();
         for (trace, shares) in shown.iter().zip(&shares) {
-            let wash = theme::wash(visuals, theme::trace_color(visuals, trace.index));
+            let color = theme::trace_color(visuals, trace.index);
+            let wash = theme::wash(visuals, color);
             let bars = (shares.iter().enumerate())
                 .filter_map(|(index, &share)| {
                     let reach = axis.position(share)?;
@@ -1514,7 +1330,9 @@ impl Histogram {
                     Some(bar)
                 })
                 .collect();
-            let chart = egui_plot::BarChart::new("", bars).allow_hover(false);
+            let chart = egui_plot::BarChart::new(&trace.name, bars)
+                .color(color)
+                .allow_hover(false);
             plot_ui.bar_chart(match self.orientation {
                 Orientation::Upright => chart.vertical(),
                 Orientation::Sideways => chart.horizontal(),
@@ -1527,7 +1345,7 @@ impl Histogram {
                     .map(|[value, share]| self.point(value, share))
                     .collect();
                 plot_ui.line(
-                    egui_plot::Line::new("", egui_plot::PlotPoints::from(points))
+                    egui_plot::Line::new(&trace.name, egui_plot::PlotPoints::from(points))
                         .color(color)
                         .width(OUTLINE_WIDTH)
                         .allow_hover(false),
@@ -1614,70 +1432,6 @@ impl Histogram {
             if count > 0 {
                 overlay.painter.text(pos, anchor, text, font.clone(), faint);
             }
-        }
-    }
-
-    /// Shows the `legend` in the box `rect` on the plot `frame`, for a view without a
-    /// title row: the name and the dot of each trace, a line each or wrapped, and below
-    /// them the unit they share, small and faint.
-    fn legend_box_ui(
-        &self,
-        ui: &mut egui::Ui,
-        (rect, legend): (egui::Rect, &Legend),
-        frame: egui::Rect,
-        unit: Option<&str>,
-    ) {
-        let tokens = theme::tokens(ui.visuals());
-        let painter = ui.painter().with_clip_rect(frame);
-        painter.rect(
-            rect,
-            theme::CARD_RADIUS,
-            tokens.card,
-            egui::Stroke::new(1.0, tokens.border),
-            egui::StrokeKind::Inside,
-        );
-        let layout = egui::Layout::top_down(egui::Align::Max);
-        let inner = rect.shrink2(LEGEND_MARGIN);
-        let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(layout));
-        ui.set_clip_rect(frame.intersect(ui.clip_rect()));
-        ui.spacing_mut().item_spacing = egui::vec2(LEGEND_DOT_GAP, 0.0);
-        let weak = ui.visuals().weak_text_color();
-        let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
-        let traces: Vec<(&str, &str, usize)> = self.selected_path_iter().collect();
-        let row = egui::vec2(inner.width(), LEGEND_ROW);
-        match &legend.lines {
-            // "name ●" on a line each
-            None => {
-                for &(path, name, index) in &traces {
-                    ui.allocate_ui_with_layout(row, right_to_left, |ui| {
-                        dot(ui, theme::trace_color(ui.visuals(), index));
-                        ui.label(egui::RichText::new(name).color(weak))
-                            .on_hover_text(path);
-                    });
-                }
-            }
-            // "● name" side by side, the lines right-aligned
-            Some(lines) => {
-                for line in lines {
-                    ui.allocate_ui_with_layout(row, right_to_left, |ui| {
-                        for (position, &item) in line.iter().rev().enumerate() {
-                            if position > 0 {
-                                ui.add_space(LEGEND_ITEM_GAP - LEGEND_DOT_GAP);
-                            }
-                            let (path, name, index) = traces[item];
-                            ui.label(egui::RichText::new(name).color(weak))
-                                .on_hover_text(path);
-                            dot(ui, theme::trace_color(ui.visuals(), index));
-                        }
-                    });
-                }
-            }
-        }
-        if let Some(unit) = unit {
-            let row = egui::vec2(inner.width(), UNIT_ROW);
-            ui.allocate_ui_with_layout(row, right_to_left, |ui| {
-                ui.label(egui::RichText::new(unit).small().color(tokens.text_faint));
-            });
         }
     }
 
@@ -1769,7 +1523,7 @@ fn fitted_values(
 }
 
 /// The room at the end of the counts axis, beyond the bars: the marker strip at the
-/// end, then the counts of the samples outside the bins and the legend box.
+/// end, then the counts of the samples outside the bins.
 #[derive(Clone, PartialEq, Debug)]
 struct Room {
     orientation: Orientation,
@@ -1777,27 +1531,18 @@ struct Room {
     markers: f32,
     /// The size of the larger text of the counts outside the bins, if there are any.
     outside: Option<egui::Vec2>,
-    /// Whether samples lie above the bins.
-    above: bool,
-    /// The legend box, if it is shown.
-    legend: Option<Legend>,
 }
 
 impl Room {
     /// Its length along the counts axis, with the gap to the bars.
     fn length(&self) -> f32 {
-        let stacked = match self.orientation {
-            Orientation::Upright => {
-                let legend = self.legend.as_ref().map_or(0.0, |legend| legend.size.y);
-                self.outside.map_or(0.0, |size| size.y) + legend
-            }
-            Orientation::Sideways => {
-                let outside = self.outside.map_or(0.0, |size| size.x);
-                outside.max(self.legend.as_ref().map_or(0.0, |legend| legend.size.x))
-            }
-        };
-        let texts = self.outside.is_some() || self.legend.is_some();
-        let texts = if texts { OVERLAY_INSET + stacked } else { 0.0 };
+        let texts = self.outside.map_or(0.0, |size| {
+            OVERLAY_INSET
+                + match self.orientation {
+                    Orientation::Upright => size.y,
+                    Orientation::Sideways => size.x,
+                }
+        });
         let gap = if self.markers > 0.0 || texts > 0.0 {
             MARKER_GAP
         } else {
@@ -1805,34 +1550,6 @@ impl Room {
         };
         self.markers + texts + gap
     }
-}
-
-/// The legend in its box: its size, and the traces on each line if it is wrapped
-/// across the plot, else a line per trace.
-#[derive(Clone, PartialEq, Debug)]
-struct Legend {
-    size: egui::Vec2,
-    lines: Option<Vec<Vec<usize>>>,
-}
-
-/// The items of `widths` in lines at most `width` wide, `gap` apart, each line as
-/// the indices of its items, at least one per line.
-fn wrap(widths: &[f32], width: f32, gap: f32) -> Vec<Vec<usize>> {
-    let mut lines: Vec<Vec<usize>> = vec![];
-    let mut used = 0.0;
-    for (index, &item) in widths.iter().enumerate() {
-        match lines.last_mut() {
-            Some(line) if used + gap + item <= width => {
-                line.push(index);
-                used += gap + item;
-            }
-            _ => {
-                lines.push(vec![index]);
-                used = item;
-            }
-        }
-    }
-    lines
 }
 
 /// What is painted over the plot: its painter clipped to it, its transform and the room
@@ -1875,21 +1592,6 @@ impl Overlay {
             ),
         };
         [below, (corner, egui::Align2::RIGHT_TOP)]
-    }
-
-    /// The box of the legend, below the count of the samples above the bins.
-    fn legend_rect(&self) -> Option<egui::Rect> {
-        let size = self.room.legend.as_ref()?.size;
-        let below_text = match self.room.orientation {
-            Orientation::Upright => self.room.outside.is_some(),
-            Orientation::Sideways => self.room.above,
-        };
-        let top = if below_text { LEGEND_ROW } else { 0.0 };
-        let corner = self.corner() + egui::vec2(0.0, top);
-        Some(egui::Rect::from_min_size(
-            corner - egui::vec2(size.x, 0.0),
-            size,
-        ))
     }
 }
 
@@ -2377,7 +2079,6 @@ mod tests {
                 values: (0.0, span),
                 bins,
                 frame: egui::Rect::NOTHING,
-                bars: egui::Rect::NOTHING,
             }));
             bins.width
         };
@@ -2512,7 +2213,7 @@ mod tests {
         // one sample of 1000 is 0.1 %, half a decade above the floor
         let axis = CountAxis::new(CountScale::Log, 100.0, 0.1, 200.0, 0.0);
         assert_eq!(axis.floor, -1.5);
-        let marks = axis.marks(false)(egui_plot::GridInput {
+        let marks = axis.marks()(egui_plot::GridInput {
             bounds: (axis.floor, axis.axis_top),
             base_step_size: 0.01,
         });
@@ -2530,7 +2231,7 @@ mod tests {
         // 2000 is 0.05 %
         let axis = CountAxis::new(CountScale::Log, 100.0, 0.05, 200.0, 0.0);
         assert_eq!(axis.floor, -2.0);
-        let marks = axis.marks(false)(egui_plot::GridInput {
+        let marks = axis.marks()(egui_plot::GridInput {
             bounds: (axis.floor, axis.axis_top),
             base_step_size: 0.01,
         });
@@ -2540,27 +2241,27 @@ mod tests {
         assert_eq!(linear.label(0.0, 10.0), "");
         assert_eq!(linear.label(10.0, 10.0), "10 %");
         assert_eq!(linear.label(2.5, 0.5), "2.5 %");
-        // the linear axis marks round steps of percent up to the bars
-        let marks = linear.marks(false)(egui_plot::GridInput {
-            bounds: (0.0, linear.axis_top),
-            base_step_size: 0.5,
-        });
-        assert!(
-            marks
-                .iter()
-                .all(|mark| (mark.value / 5.0).fract() == 0.0 && mark.value <= linear.bars_top)
-        );
-        assert!(marks.len() > 2);
-        // a small share is marked in fractions of a percent
-        let small = CountAxis::new(CountScale::Linear, 2.0, 0.01, 200.0, 0.0);
-        let marks = small.marks(false)(egui_plot::GridInput {
-            bounds: (0.0, small.axis_top),
-            base_step_size: 0.05,
-        });
-        let labels: Vec<String> = (marks.iter())
-            .map(|mark| small.label(mark.value, mark.step_size))
-            .collect();
-        assert_eq!(labels, ["", "0.5 %", "1.0 %", "1.5 %", "2.0 %"]);
+        // the linear axis is marked up to the bars, also in fractions of a percent
+        for (axis, base_step_size) in [
+            (linear, 0.5),
+            (
+                CountAxis::new(CountScale::Linear, 2.0, 0.01, 200.0, 0.0),
+                0.05,
+            ),
+        ] {
+            let marks = axis.marks()(egui_plot::GridInput {
+                bounds: (0.0, axis.axis_top),
+                base_step_size,
+            });
+            assert!(marks.len() > 2);
+            assert!(marks.iter().all(|mark| mark.value <= axis.bars_top));
+            assert!(
+                marks
+                    .iter()
+                    .any(|mark| mark.value > 0.0 && mark.value < 1.0)
+                    == (base_step_size < 0.1)
+            );
+        }
     }
 
     #[test]
@@ -3159,60 +2860,25 @@ mod tests {
     }
 
     #[test]
-    fn the_legend_box_and_the_outside_counts_are_clear_of_the_bars() {
-        for orientation in [Orientation::Upright, Orientation::Sideways] {
-            let histogram = Histogram {
-                orientation,
-                markers: Markers::MeanSigma,
-                // most samples lie above the range
-                range: Some((0.0, 6.0)),
-                ..histogram_of(&["pose.x", "pose.y"])
-            };
-            let mut harness = harness(State::new(histogram, pose("m", "m")), false);
-            harness.run();
-            harness.run();
-            let last = harness.state().histogram.last.as_deref().copied().unwrap();
-            for name in ["x", "y", "m"] {
-                let rect = harness.get_by_label(name).rect();
-                assert!(
-                    !rect.intersects(last.bars),
-                    "{orientation:?} {name} {rect:?} {:?}",
-                    last.bars
-                );
-                assert!(last.frame.contains_rect(rect), "{orientation:?} {name}");
-            }
-        }
-    }
-
-    #[test]
-    fn the_room_beyond_the_bars_holds_the_markers_the_outside_counts_and_the_legend() {
+    fn the_room_beyond_the_bars_holds_the_markers_and_the_outside_counts() {
         let room = Room {
             orientation: Orientation::Upright,
             markers: 23.0,
-            outside: Some(egui::vec2(40.0, LEGEND_ROW)),
-            above: true,
-            legend: Some(Legend {
-                size: egui::vec2(60.0, 50.0),
-                lines: None,
-            }),
+            outside: Some(egui::vec2(40.0, TEXT_ROW)),
         };
-        assert_eq!(
-            room.length(),
-            23.0 + OVERLAY_INSET + LEGEND_ROW + 50.0 + MARKER_GAP
-        );
+        assert_eq!(room.length(), 23.0 + OVERLAY_INSET + TEXT_ROW + MARKER_GAP);
         let sideways = Room {
             orientation: Orientation::Sideways,
             ..room.clone()
         };
-        assert_eq!(sideways.length(), 23.0 + OVERLAY_INSET + 60.0 + MARKER_GAP);
+        assert_eq!(sideways.length(), 23.0 + OVERLAY_INSET + 40.0 + MARKER_GAP);
         let empty = Room {
             markers: 0.0,
             outside: None,
-            legend: None,
             ..room.clone()
         };
         assert_eq!(empty.length(), 0.0);
-        // the legend goes below the count of the samples above, at the right
+        // the count of the samples above goes in the corner beyond the marker strip
         let transform = egui_plot::PlotTransform::new(
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0)),
             egui_plot::PlotBounds::from_min_max([0.0, 0.0], [1.0, 1.0]),
@@ -3227,78 +2893,12 @@ mod tests {
             transform,
             room,
         };
-        let legend = overlay.legend_rect().unwrap();
-        let [_, (above, _)] = overlay.outside_positions();
-        assert_eq!(legend.right(), 400.0 - OVERLAY_INSET);
-        assert_eq!(legend.top(), above.y + LEGEND_ROW);
-        assert_eq!(above.y, 23.0 + OVERLAY_INSET);
-    }
-
-    /// The values and steps of the labelled marks of `marks`, those with a step of at
-    /// least `label`.
-    fn labelled(marks: &[egui_plot::GridMark], label: f64) -> Vec<f64> {
-        (marks.iter())
-            .filter(|mark| mark.step_size >= label * (1.0 - 1.0e-9))
-            .map(|mark| mark.value)
-            .collect()
-    }
-
-    #[test]
-    fn value_labels_take_one_round_step_and_stay_within_the_axis() {
-        // 100 points per unit: labels 60 points apart are 1 apart at least, so 1
-        let input = |bounds| egui_plot::GridInput {
-            bounds,
-            base_step_size: GRID_SPACING / 100.0,
-        };
-        let marks = round_marks(DisplayFormat::Default, 60.0, true)(input((-2.2, 2.2)));
-        assert_eq!(labelled(&marks, 1.0), [-2.0, -1.0, 0.0, 1.0, 2.0]);
-        // the grid lines between them divide the step, 0.2 apart
-        assert!(
-            marks
-                .iter()
-                .all(|mark| mark.step_size == 0.2 || mark.step_size >= 1.0)
-        );
-        assert_eq!(marks.len(), 23);
-        // 25 points per unit: labels every 5, never 2 and 5 together
-        let coarse = |bounds| egui_plot::GridInput {
-            bounds,
-            base_step_size: GRID_SPACING / 25.0,
-        };
-        let marks = round_marks(DisplayFormat::Default, 60.0, true)(coarse((-1.0, 23.0)));
-        assert_eq!(labelled(&marks, 5.0), [0.0, 5.0, 10.0, 15.0, 20.0]);
-        // the grid lines between, too close for labels, all take the smallest step
-        let mut between = marks.iter().filter(|mark| mark.value % 5.0 != 0.0);
-        assert!(between.clone().count() > 10);
-        assert!(between.all(|mark| mark.step_size == 1.0));
-        // the powers of ten are stronger
-        let ten = marks.iter().find(|mark| mark.value == 10.0).unwrap();
-        assert_eq!(ten.step_size, 10.0);
-        // a label at an end of the axis would run past it
-        let marks = round_marks(DisplayFormat::Default, 60.0, true)(input((-2.0, 2.0)));
-        assert_eq!(labelled(&marks, 1.0), [-1.0, 0.0, 1.0]);
-        let marks = round_marks(DisplayFormat::Default, 40.0, false)(input((-2.0, 2.05)));
+        let [(below, _), (above, _)] = overlay.outside_positions();
         assert_eq!(
-            labelled(&marks, 0.5),
-            [-1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5]
+            above,
+            egui::pos2(400.0 - OVERLAY_INSET, 23.0 + OVERLAY_INSET)
         );
-    }
-
-    #[test]
-    fn count_labels_stay_within_the_axis() {
-        // a point per percent, the axis ends at about 110: the label of 100 % fits on a
-        // vertical axis, but is too wide for the end of a horizontal one
-        let axis = CountAxis::new(CountScale::Linear, 95.0, 1.0, 300.0, 20.0);
-        let marks = |horizontal| -> Vec<f64> {
-            let input = egui_plot::GridInput {
-                bounds: (0.0, axis.axis_top),
-                base_step_size: GRID_SPACING,
-            };
-            (axis.marks(horizontal)(input).iter())
-                .map(|mark| mark.value)
-                .collect()
-        };
-        assert_eq!(marks(false), [0.0, 50.0, 100.0], "{}", axis.axis_top);
-        assert_eq!(marks(true), [0.0, 50.0]);
+        assert_eq!(below, egui::pos2(OVERLAY_INSET, 23.0 + OVERLAY_INSET));
     }
 
     #[test]
@@ -3408,47 +3008,6 @@ mod tests {
         };
         let plots = Plots(vec![plot(1, "Speed"), plot(2, "Pose"), plot(3, "Speed")]);
         assert_eq!(plot_names(&plots), ["Speed (1)", "Pose", "Speed (2)"]);
-    }
-
-    #[test]
-    fn the_legend_of_many_traces_wraps_across_the_plot_clear_of_the_bars() {
-        assert_eq!(
-            wrap(&[30.0, 30.0, 30.0, 50.0], 100.0, 10.0),
-            [vec![0, 1], vec![2, 3]]
-        );
-        assert_eq!(wrap(&[120.0, 30.0], 100.0, 10.0), [vec![0], vec![1]]);
-
-        let mut model = Model::default();
-        let paths: Vec<String> = (0..9).map(|index| format!("trace{index}")).collect();
-        for (index, path) in paths.iter().enumerate() {
-            let values = (0..100).map(|i| f64::from(i % 10) + index as f64);
-            append(&mut model, path, (0.0, 0.1), &floats(values));
-        }
-        let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
-        let histogram = Histogram {
-            markers: Markers::Mean,
-            ..histogram_of(&paths)
-        };
-        let mut harness = harness(State::new(histogram, model), false);
-        harness.run();
-        harness.run();
-        let last = harness.state().histogram.last.as_deref().copied().unwrap();
-        let mut lines = vec![];
-        for path in &paths {
-            let rect = harness.get_by_label(path).rect();
-            assert!(
-                !rect.intersects(last.bars),
-                "{path} {rect:?} {:?}",
-                last.bars
-            );
-            if !lines
-                .iter()
-                .any(|&y: &f32| (y - rect.center().y).abs() < 1.0)
-            {
-                lines.push(rect.center().y);
-            }
-        }
-        assert!(lines.len() <= 3, "{lines:?}");
     }
 
     #[test]
