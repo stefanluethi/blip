@@ -76,6 +76,13 @@ Spawn each specialist (`blip-dev`, `sonde-dev`, `outpost-dev`) with:
 Read each report. If a specialist reports work needed in another part, add it to the
 plan. Look at the diff yourself; a report is not proof.
 
+**Simplify.** When a part's change adds more than about 200 lines of code, spawn a
+fresh specialist of that part to run the `simplify` skill on it before the docs and the
+review: smaller code is cheaper for every agent that reads it later. Its brief: the
+files of the change, keep the behaviour and the tests the same, run the part's checks
+(`./check.sh` for blip and proto), and report what it removed or merged. Skip this for
+smaller changes.
+
 ## 6. Document
 
 Spawn `docs-writer` with the requirement IDs, a summary of what was built, and the pages

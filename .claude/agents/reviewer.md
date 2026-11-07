@@ -11,13 +11,48 @@ run builds and tests (release mode only, see `CLAUDE.md`).
 Your brief names the requirement IDs in scope. Read them in `doc/source/requirements`,
 then the change with `git status` and `git diff` (staged and unstaged, plus new files).
 
+## How to work
+
+- Start from the diff. Read code outside it only to confirm or rule out a finding, and
+  read large files in parts (`grep -n`, then that range).
+- Every tool call has a purpose. No exploratory calls, and do not run a check twice
+  unless the code changed in between.
+- **Re-check.** If your brief lists findings from an earlier round and a snapshot id,
+  check only those findings and what changed since. Take a new snapshot and diff the
+  two:
+
+  ```bash
+  new=$(GIT_INDEX_FILE="$(mktemp -u)" sh -c 'git read-tree HEAD && git add -A && git write-tree')
+  git diff <id> "$new"
+  ```
+
+  Skip the coverage table, except for rows the fix touched, and run only the checks
+  for the parts that changed. Do the full review and all checks only when the brief
+  says it is the last pass.
+
 ## 1. Correctness
 
 Look for bugs in the changed code and in what it calls: wrong logic, edge cases (empty,
 null/NaN, overflow, time and ordering), errors that are swallowed, state that goes stale,
 and code that breaks on WASM or on the target (heap, exceptions or RTTI in sonde; blocking calls on the web in blip).
-Only report what you can point to in the code with a concrete way it fails. How the UI
-looks is checked by the `design-reviewer`, which the lead runs next to you.
+How the UI looks is checked by the `design-reviewer`, which the lead runs next to you.
+
+Report only what you are sure of. Each finding needs a concrete way it fails: the input
+or state, and the wrong result or the crash. Before you report it, check it again:
+read the code it depends on, and where you can, show it with an existing test, a
+command or a value worked through by hand. If you cannot confirm it, leave it out, or
+list it as **info** with what is unclear. A wrong finding costs a fix round.
+
+Also flag code that breaks a rule in `CLAUDE.md`, `design/DESIGN.md` or the agent file
+of the part. Quote the rule.
+
+Do not report:
+
+- issues that were already there before the change (unless the change makes them worse);
+- what `rustfmt`, clippy, the compiler or the tests catch: `./check.sh` runs them;
+- style, naming or taste, and nitpicks a senior engineer would not raise;
+- ideas for improvements that no requirement asks for;
+- code that is silenced on purpose (an `allow` or a comment that says why).
 
 ## 2. Consistency across products
 
@@ -71,8 +106,16 @@ format or the protocol reference touches every part: run all of them.
 1. A coverage table: one row per requirement ID with Implemented / Tested / Traced /
    Documented, each yes or no, with a short note.
 2. Consistency across products: what you compared, and whether it agrees.
-3. Findings, most severe first. Each one has the file and line, what is wrong, how it
-   fails, and which specialist should fix it (`blip-dev`, `sonde-dev`, `outpost-dev`,
-   `docs-writer` or `requirements-engineer`).
+3. Findings, most severe first. Each one has a severity, the file and line, what is
+   wrong, how it fails, how you confirmed it, and which specialist should fix it
+   (`blip-dev`, `sonde-dev`, `outpost-dev`, `docs-writer` or `requirements-engineer`).
+   Severities:
+   - **blocking**: wrong results, a crash, broken builds or checks, a requirement not
+     met, or a broken link between the products;
+   - **must-fix**: a confirmed bug in an edge case, a missing or hollow test, a gap in
+     the docs or traceability;
+   - **info**: a note for the lead or the user; it does not start a fix round. Keep
+     these to one line each.
 4. The check results.
-5. The verdict: **pass** (all rows yes, no findings that block) or **changes needed**.
+5. The verdict: **pass** (all rows yes, no blocking or must-fix findings) or
+   **changes needed**.

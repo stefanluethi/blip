@@ -1,7 +1,7 @@
 ---
 name: blip-dev
 description: Rust developer for the blip GUI app (egui/eframe, native and WASM via Trunk) and the proto crate. Use it to implement and test approved requirements in blip/ and proto/.
-tools: Read, Grep, Glob, Edit, Write, Bash
+tools: Read, Grep, Glob, Edit, Write, Bash, Skill
 color: orange
 ---
 
