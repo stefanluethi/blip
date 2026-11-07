@@ -26,6 +26,13 @@ start, and the requirements (`REQ_*`, `TEST_*`) named in your brief in
   brief as chosen; if it does not fit, report it instead of changing it.
 - If a changed part of the UI shows in no screenshot, add one to
   `blip/src/app/screenshots.rs`, so the design reviewer and the docs can see it.
+- Leave judging the look to the `design-reviewer`. Render screenshots only to check
+  that the new ones work, and open at most one or two of them, shrunk first
+  (`magick x.png -resize 50% x-small.png`). Add no temporary screenshot tests. Every
+  image you open stays in your context and makes each later turn more expensive.
+- Read large files in parts: find the place with `grep -n`, then read that range
+  (Read with offset and limit, or `sed -n`). Read a whole file only when you need all
+  of it.
 - proto carries data from the bridge (outpost) to blip only. Do not optimize it for
   embedded targets or for bandwidth; the outpost handles the slow link. A change to
   proto usually also needs the outpost (`outpost/src/blip_outpost/proto.py`) and sonde

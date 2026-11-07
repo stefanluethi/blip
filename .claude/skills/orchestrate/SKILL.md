@@ -84,18 +84,47 @@ likely affected. It updates the guides, internals, reference, `ARCH_*` items and
 
 ## 7. Review
 
-1. Spawn `reviewer` with the requirement IDs in scope and a summary of the change. If
-   the change touches `blip/src`, spawn `design-reviewer` in the same message, with the
-   requirement IDs, the chosen design option and the views and panels that changed.
-   The design reviewer renders its screenshots into a scratch directory, so the two do
-   not get in each other's way. (The specialists have no Agent tool, so the reviewer
-   cannot start the design reviewer; you run both.)
-2. For each finding, send it to the specialist the reviewer named; design findings go
-   to `blip-dev`, missing screenshots to `blip-dev` (`screenshots.rs`) and then
-   `docs-writer`. Use SendMessage to the agent that did the work, so it keeps its
-   context. Run fixes for different parts in parallel.
-3. Spawn the reviewers again (or send them a message) to check the fixes.
-4. Stop after three rounds that still fail, and ask the user how to go on.
+Every turn of an agent rereads all it has seen so far, so a long-running agent gets
+more expensive with each message. Keep review rounds small: fresh agents with short
+briefs, and checks of what changed, not the whole change again.
+
+Before each round, save a snapshot of the working tree (it catches new untracked
+files and does not touch the index):
+
+```bash
+GIT_INDEX_FILE="$(mktemp -u)" sh -c 'git read-tree HEAD && git add -A && git write-tree'
+```
+
+It prints a tree id; note it, since shell variables do not last between commands.
+Later, run the same command again and `git diff <old id> <new id>` shows what changed
+since that round. Put the old id in the briefs of the next round.
+
+1. **First round.** Spawn `reviewer` with the requirement IDs in scope and a summary of
+   the change. If the change touches `blip/src`, spawn `design-reviewer` in the same
+   message, with the requirement IDs, the chosen design option and the views and panels
+   that changed. The design reviewer renders its screenshots into a scratch directory,
+   so the two do not get in each other's way. (The specialists have no Agent tool, so
+   the reviewer cannot start the design reviewer; you run both.)
+2. **Sort the findings.** Blocking and must-fix findings go to a fix round. Polish and
+   Info findings do not start a round: collect them and give them to the user at the
+   end, who decides.
+3. **Fixes.** Spawn a fresh specialist for the fixes, not the agent that built the
+   change. Its brief lists the findings, the files and functions they point to, the
+   user's decisions and the requirement IDs. Design findings go to `blip-dev`, missing
+   screenshots to `blip-dev` (`screenshots.rs`) and then `docs-writer`. Run fixes for
+   different parts in parallel. Use SendMessage only for a short follow-up right after
+   an agent's report, never to start a new round in a long-running agent.
+4. **Re-check.** Spawn fresh reviewers on Sonnet (the Agent tool's `model: "sonnet"`).
+   Brief them with the previous findings and the snapshot id to diff against. They
+   check that those findings are fixed and that the fix broke nothing it touched, not
+   the whole change again. The design reviewer looks at only the screenshots of the
+   fixed findings.
+5. **Last pass.** The final round runs the full checks once: the `reviewer` runs every
+   check the change touches, and the `design-reviewer` renders all screenshots to see
+   that nothing else changed. If the previous round's checks passed and only small
+   fixes followed, fold this into the re-check.
+6. Stop after two rounds that still have must-fix findings, and ask the user how to go
+   on.
 
 When the reviewer passes and the design reviewer says it looks good, set the `:status:`
 of the requirements and test cases in scope to `implemented`. Leave `verified` to the
@@ -116,7 +145,7 @@ user the exact text and add it only when they agree. The agents have no memory o
 own, so these files are where their lessons live.
 
 Report to the user: what was built, per requirement ID, the reviewer's coverage table,
-the design reviewer's verdict, the reviewer's check results, and anything left open
-(e.g. diagrams that need the draw.io app). Do not commit unless the user asks. If they
-do, use a short imperative subject and a body that explains what changed and why, as
-`CLAUDE.md` says.
+the design reviewer's verdict, the reviewer's check results, the polish and Info
+findings you collected, and anything left open (e.g. diagrams that need the draw.io
+app). Do not commit unless the user asks. If they do, use a short imperative subject
+and a body that explains what changed and why, as `CLAUDE.md` says.

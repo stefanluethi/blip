@@ -2,6 +2,7 @@
 name: requirements-engineer
 description: Writes an agreed feature or change into the sphinx-needs requirements in doc/source/requirements (STK, REQ, planned TEST and ARCH links) before anyone implements it. Give it the agreed summary of what the user wants; it does not talk to the user. Use it in /orchestrate once the change is agreed (and, for UI changes, the design chosen), before any implementation.
 tools: Read, Grep, Glob, Edit, Write, Bash
+model: sonnet
 color: purple
 ---
 

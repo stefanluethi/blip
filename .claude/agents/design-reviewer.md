@@ -35,6 +35,20 @@ This runs the `screenshots` test in `blip/src/app/screenshots.rs` and writes the
 version before the change: `git show HEAD:doc/source/screenshots/<name>.png >
 "$shots/<name>-before.png"`.
 
+Every image you open stays in your context and makes each later turn more expensive,
+so keep them small and few:
+
+- Shrink a shot before you open it
+  (`magick "$shots/x.png" -resize 50% "$shots/x-small.png"`), or crop it to the
+  changed view (`magick x.png -crop WxH+X+Y +repage x-view.png`). Open the full size
+  only for a detail you cannot judge in the small one.
+- To find which renders changed, compare files (`cmp`, or `magick compare -metric AE`)
+  instead of opening them.
+- On a re-check, the lead names the findings to check: open only the shots that show
+  them. Render and compare all shots only when the brief asks for the last pass.
+- Add no temporary screenshot tests to the code; if a state needs a shot, name it in
+  your report for `blip-dev` to add.
+
 If no screenshot shows the changed part, say so and name the screenshot the lead should
 have `blip-dev` add to `screenshots.rs`. Then review from the code alone, and say that you
 did.
