@@ -243,6 +243,10 @@ Test Cases
    ``blip/src/app/view/histogram.rs::the_tooltip_shows_the_share_and_the_count_of_each_trace``
    -- the tooltip writes the percentage of a bin and its count of all samples
    of the trace, those outside the bins included, e.g. "25 %" and "2 of 8".
+   ``blip/src/app/view/histogram.rs::the_tooltip_is_as_wide_as_its_texts_wherever_it_opens``
+   (``egui_kittest``) -- each time the tooltip opens it is only as wide as
+   its texts, with the counts at its right edge, not as wide as a tooltip
+   can be.
    ``blip/src/app/view/histogram.rs::bins_show_the_unit_only_if_all_traces_share_one``
    -- the range has the unit only if all traces share one.
    ``blip/src/app/view/histogram.rs::the_wheel_zooms_and_a_drag_pans_the_values_without_binning_anew``

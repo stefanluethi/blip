@@ -1943,12 +1943,24 @@ impl Bin<'_> {
         let faint = theme::tokens(ui.visuals()).text_faint;
         let weak = ui.visuals().weak_text_color();
         ui.label(egui::RichText::new(self.range_text()).color(weak));
+        let texts: Vec<[String; 2]> = (self.counted.traces.iter())
+            .map(|counts| self.share_texts(counts))
+            .collect();
+        // the values are right aligned in columns as wide as their widest text: a right
+        // to left layout fills the width it is given, and the grid gives the last column
+        // all of the tooltip's, which is the widest a tooltip can be when it opens
+        let widths = [0, 1].map(|column| {
+            (texts.iter())
+                .map(|texts| text_size(ui, &texts[column], egui::TextStyle::Body).x)
+                .fold(0.0, f32::max)
+        });
         egui::Grid::new("histogram tooltip")
             .num_columns(3)
             .spacing([12.0, 2.0])
             .show(ui, |ui| {
-                for (trace, counts) in shown.iter().zip(&self.counted.traces) {
-                    let [share, count] = self.share_texts(counts);
+                for ((trace, counts), [share, count]) in
+                    shown.iter().zip(&self.counted.traces).zip(texts)
+                {
                     let empty = counts.bins[self.index] == 0;
                     let (name, share, count) = if empty {
                         (
@@ -1967,8 +1979,9 @@ impl Bin<'_> {
                         dot(ui, theme::trace_color(ui.visuals(), trace.index));
                         ui.label(name).on_hover_text(&trace.path);
                     });
-                    for value in [share, count] {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    for (value, width) in [share, count].into_iter().zip(widths) {
+                        let layout = egui::Layout::right_to_left(egui::Align::Min);
+                        ui.allocate_ui_with_layout(egui::vec2(width, 0.0), layout, |ui| {
                             ui.label(value);
                         });
                     }
@@ -2153,8 +2166,14 @@ mod tests {
 
     /// A harness showing the histogram of `state`, or its title row with `title`.
     fn harness(state: State, title: bool) -> Harness<'static, State> {
+        sized_harness(state, title, egui::vec2(400.0, 300.0))
+    }
+
+    /// A harness of `size` showing the histogram of `state`, or its title row with
+    /// `title`.
+    fn sized_harness(state: State, title: bool, size: egui::Vec2) -> Harness<'static, State> {
         Harness::builder()
-            .with_size(egui::vec2(400.0, 300.0))
+            .with_size(size)
             // fast enough for double clicks
             .with_step_dt(1.0 / 60.0)
             .with_max_steps(60)
@@ -2833,6 +2852,46 @@ mod tests {
         let mut harness = harness(state, false);
         harness.run();
         harness
+    }
+
+    /// The rect of the tooltip shown in `harness`.
+    fn tooltip_rect(harness: &Harness<'_, State>) -> egui::Rect {
+        let layers = harness
+            .ctx
+            .memory(|memory| memory.areas().visible_layer_ids());
+        let tooltip = (layers.into_iter())
+            .find(|layer| layer.order == egui::Order::Tooltip)
+            .expect("a tooltip");
+        egui::AreaState::load(&harness.ctx, tooltip.id)
+            .expect("the area of the tooltip")
+            .rect()
+    }
+
+    #[test]
+    fn the_tooltip_is_as_wide_as_its_texts_wherever_it_opens() {
+        let state = State::new(histogram_of(&["pose.x", "pose.y"]), pose("m", "m"));
+        let mut harness = sized_harness(state, false, egui::vec2(1000.0, 600.0));
+        harness.run();
+        for x in [150.0, 400.0, 650.0] {
+            // away, so that the tooltip opens anew
+            harness.hover_at(egui::pos2(999.0, 599.0));
+            harness.run();
+            harness.hover_at(egui::pos2(x, 200.0));
+            harness.run_steps(40);
+            let tooltip = tooltip_rect(&harness);
+            let texts = (harness.get_all_by_label_contains(" of "))
+                .map(|node| node.rect())
+                .reduce(|a, b| a.union(b))
+                .expect("the counts");
+            // the counts end at the tooltip's margin
+            assert!(
+                tooltip.right() - texts.right() < 16.0,
+                "the counts end at {}, the tooltip at {}",
+                texts.right(),
+                tooltip.right()
+            );
+            assert!(tooltip.width() < 250.0, "{} wide", tooltip.width());
+        }
     }
 
     #[test]
