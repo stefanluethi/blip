@@ -48,9 +48,9 @@ Plots and states over time
      - fit the y axis to the data again (plots)
 
 The XY view pans with dragging and zooms with the wheel along both axes. A
-histogram pans with dragging and zooms with the wheel along its value axis,
+distribution pans with dragging and zooms with the wheel along its value axis,
 and double-clicking fits it again; it leaves the time range and the cursor
-alone. Hovering a bin shows its counts.
+alone. Hovering a bin or a box shows its counts or statistics.
 
 Timeline
 --------

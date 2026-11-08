@@ -85,7 +85,7 @@ the same format.
      - The title of the view.
    * - View ``kind``
      - The type of view, one of ``Plot``, ``States``, ``Table``, ``Xy``,
-       ``Histogram``, ``Heatmap``, ``Logs`` and ``Actions``, with its
+       ``Distribution``, ``Heatmap``, ``Logs`` and ``Actions``, with its
        settings, e.g.
        ``{"Plot": {"traces": ["motor.speed_rpm"]}}``.
    * - View ``formats``
@@ -103,21 +103,24 @@ left out takes its default, so a generated preset only needs what differs.
 To find the key of a setting, change it in blip and export the preset.
 
 A view refers to another by its number in the file: the views counted in the
-order they appear, from 0, across all groups. A histogram linked to a plot
+order they appear, from 0, across all groups. A distribution linked to a plot
 saves the number of that plot as ``link``; here it is linked to the plot,
 view 0, and shows its traces, so it needs none of its own:
 
 .. code-block:: json
 
    {"View": {"name": "Speed spread",
-             "kind": {"Histogram": {"orientation": "Sideways", "link": 0}}}}
+             "kind": {"Distribution": {"orientation": "Sideways", "link": 0}}}}
 
-The settings of a histogram are ``bins`` (``Auto``, ``Number`` or
+The kind was ``Histogram`` before the view had boxes; files with it still
+load, and are saved as ``Distribution``. The settings of a distribution are
+``show`` (``Bars``, ``Boxes`` or ``Both``), ``whiskers`` (``Iqr``, ``MinMax``,
+``P5`` for 5--95 % or ``P1`` for 1--99 %), ``bins`` (``Auto``, ``Number`` or
 ``Width``), ``bin_count``, ``bin_width``, ``range`` (``[min, max]``, or
 ``null`` for auto), ``counts`` (``Linear`` or ``Log``), ``orientation``
 (``Upright`` or ``Sideways``), ``axis_side`` (``Left`` or ``Right``),
 ``link`` and ``markers`` (``Off``, ``Mean`` or ``MeanSigma``). A ``link``
-that is not the number of a plot links to nothing, and the histogram shows
+that is not the number of a plot links to nothing, and the distribution shows
 its own ``traces``. Moving views changes their numbers, so edit ``link``
 along with them.
 

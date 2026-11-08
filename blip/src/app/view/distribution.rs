@@ -1,5 +1,6 @@
-//! A histogram: how the values of the checked traces spread over the shown window,
-//! counted in bins shared by all traces and drawn over each other in their colours.
+//! A distribution: how the values of the checked traces spread over the shown window,
+//! as bars, a histogram counted in bins shared by all traces and drawn over each other
+//! in their colours, as boxes, a box plot of each trace in a row of its own, or both.
 
 use super::Selectable;
 use super::time_axis::within;
@@ -12,6 +13,8 @@ use crate::app::model::traces::{Samples, Series, Trace};
 use crate::app::theme;
 use crate::app::time::TimeRange;
 use std::collections::BTreeSet;
+
+mod boxes;
 
 /// Automatic bins number about the square root of the samples, at least this many…
 const MIN_AUTO_BINS: f64 = 8.0;
@@ -54,19 +57,21 @@ const MARKER_GAP: f32 = 6.0;
 const MARKER_RADIUS: f32 = 3.0;
 /// The room between the edges of the plot and the texts on it.
 const OVERLAY_INSET: f32 = 6.0;
+/// The room egui_plot leaves on each side of the labels of a y axis.
+const NAME_MARGIN: f32 = 4.0;
 /// The legend dots, as in the legends of plots.
 const DOT_SIZE: f32 = 8.0;
 /// The height of the counts of the samples outside the bins.
 const TEXT_ROW: f32 = 18.0;
 /// The least width left for a name in the legend of the title row, else it ends in "…".
 const MIN_NAME_WIDTH: f32 = 16.0;
-/// The least width of the value axis of a sideways histogram, as of the y axis of a
+/// The least width of the value axis of a sideways distribution, as of the y axis of a
 /// plot, so that both line up.
 const VALUE_AXIS_THICKNESS: f32 = 50.0;
 
-/// The hint of a histogram without traces.
+/// The hint of a distribution without traces.
 const CHECK_TRACES: &str = "Check the traces to show\nin the tree on the left";
-/// The hint of a histogram without samples in the shown window.
+/// The hint of a distribution without samples in the shown window.
 const NO_SAMPLES: &str = "No samples in the shown window";
 
 named_enum! {
@@ -107,7 +112,7 @@ named_enum! {
 }
 
 named_enum! {
-    /// The side of the value axis of a sideways histogram.
+    /// The side of the value axis of a sideways distribution.
     #[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
     pub enum AxisSide {
         /// As the y axis of a plot.
@@ -129,12 +134,56 @@ named_enum! {
     }
 }
 
-/// The checked traces counted in bins of their values over the shown window.
+named_enum! {
+    /// What a distribution shows of the samples of each trace.
+    #[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
+    pub enum Show {
+        /// The histogram, with the markers.
+        #[default]
+        Bars => "Bars",
+        /// A box plot, a row per trace.
+        Boxes => "Boxes",
+        /// The histogram with a box per trace in the strip of the markers.
+        Both => "Both",
+    }
+}
+
+named_enum! {
+    /// Where the whiskers of the boxes end.
+    #[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
+    pub enum Whiskers {
+        /// At the furthest samples within 1.5 times the interquartile range of the box.
+        #[default]
+        Iqr => "1.5×IQR",
+        MinMax => "Min–max",
+        /// At the 5th and the 95th percentile.
+        P5 => "5–95 %",
+        /// At the 1st and the 99th percentile.
+        P1 => "1–99 %",
+    }
+}
+
+impl Whiskers {
+    /// What the choice means, for its hover text.
+    fn hint(self) -> &'static str {
+        match self {
+            Whiskers::Iqr => "Up to the last sample within 1.5 times the box length",
+            Whiskers::MinMax => "Down to the lowest and up to the highest sample",
+            Whiskers::P5 => "From the 5th to the 95th percentile",
+            Whiskers::P1 => "From the 1st to the 99th percentile",
+        }
+    }
+}
+
+/// How the values of the checked traces spread over the shown window: counted in bins
+/// of their values, as boxes of their quartiles, or both.
 #[derive(serde::Deserialize, serde::Serialize, Clone)]
 #[serde(default)]
-pub struct Histogram {
+pub struct Distribution {
     /// Paths of the shown traces.
     pub traces: BTreeSet<String>,
+    pub show: Show,
+    pub whiskers: Whiskers,
     pub bins: BinMode,
     /// The number of bins with [`BinMode::Number`].
     pub bin_count: usize,
@@ -145,7 +194,7 @@ pub struct Histogram {
     pub counts: CountScale,
     pub orientation: Orientation,
     pub axis_side: AxisSide,
-    /// The plot linked to, whose traces the histogram shows and whose y range its value
+    /// The plot linked to, whose traces the distribution shows and whose y range its value
     /// axis shows, in either orientation. The layout copies the traces, see
     /// `Layout::take_linked_traces`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -162,15 +211,29 @@ pub struct Histogram {
     /// value.
     #[serde(skip)]
     last: Option<Box<Last>>,
-    /// The bin under the pointer in the last frame.
+    /// The bin or the row under the pointer in the last frame.
     #[serde(skip)]
-    hovered: Option<usize>,
+    hovered: Option<Hovered>,
+    /// The boxes of the last frame, kept while their samples stay the same.
+    #[serde(skip)]
+    boxes: Option<Box<boxes::Cache>>,
 }
 
-impl Default for Histogram {
+/// What is under the pointer.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Hovered {
+    /// The bin of this index.
+    Bin(usize),
+    /// The row of the box of the trace of this index of the shown traces.
+    Row(usize),
+}
+
+impl Default for Distribution {
     fn default() -> Self {
         Self {
             traces: BTreeSet::new(),
+            show: Show::default(),
+            whiskers: Whiskers::default(),
             bins: BinMode::default(),
             bin_count: 20,
             bin_width: 1.0,
@@ -184,12 +247,13 @@ impl Default for Histogram {
             share_top: None,
             last: None,
             hovered: None,
+            boxes: None,
         }
     }
 }
 
-/// What a histogram showed in a frame.
-#[derive(Clone, Copy, PartialEq, Debug)]
+/// What a distribution showed in a frame.
+#[derive(Clone, PartialEq, Debug)]
 struct Last {
     /// The lowest and the highest value of the samples.
     data: (f64, f64),
@@ -198,6 +262,10 @@ struct Last {
     bins: Bins,
     /// The plot without its axes.
     frame: egui::Rect,
+    /// The rows of the boxes, in Boxes and Both.
+    rows: Option<boxes::Rows>,
+    /// The names of the rows on the category axis of Boxes, cut to fit.
+    names: Vec<String>,
 }
 
 /// Bins of equal width, the first starting at `start`.
@@ -326,7 +394,7 @@ fn single_width(value: f64, integers: bool) -> f64 {
     }
 }
 
-impl Histogram {
+impl Distribution {
     /// The bins for the values from `low` to `high`, of which there are about
     /// `samples` per trace, binned all if `fixed`, else as they are. Automatic bins are
     /// at least `min_width` wide, and those of `integers` at least 1 and, if of a whole
@@ -383,12 +451,12 @@ impl Histogram {
         }
     }
 
-    /// Whether the histogram follows a plot of `plots`: while it is linked to one.
+    /// Whether the distribution follows a plot of `plots`: while it is linked to one.
     pub fn following(&self, plots: &Plots) -> bool {
         self.link.and_then(|id| plots.get(id)).is_some()
     }
 
-    /// The y range of the plot the histogram follows, if it shows one.
+    /// The y range of the plot the distribution follows, if it shows one.
     fn followed(&self, plots: &Plots) -> Option<(f64, f64)> {
         if !self.following(plots) {
             return None;
@@ -500,6 +568,7 @@ impl Histogram {
                 .fold((0, 0), |(below, above), (b, a)| (below + b, above + a)),
         };
         Counting {
+            window,
             shown,
             data,
             following,
@@ -527,12 +596,14 @@ impl Histogram {
     }
 }
 
-/// What a histogram counts in a frame, see [`Histogram::counting`].
+/// What a distribution counts in a frame, see [`Distribution::counting`].
 struct Counting<'a> {
+    /// The shown window in nanoseconds, `None` before there is one.
+    window: Option<(u64, u64)>,
     shown: Vec<Shown<'a>>,
     /// The lowest and the highest value of the shown samples, `None` without one.
     data: Option<(f64, f64)>,
-    /// Whether a plot is followed, see [`Histogram::following`].
+    /// Whether a plot is followed, see [`Distribution::following`].
     following: bool,
     /// The y range of the plot followed.
     followed: Option<(f64, f64)>,
@@ -658,7 +729,7 @@ pub fn count(values: impl Iterator<Item = f64>, bins: &Bins, fixed: Option<(f64,
     counts
 }
 
-/// What a histogram counted in a frame.
+/// What a distribution counted in a frame.
 struct Counted {
     bins: Bins,
     /// The counts of each shown trace.
@@ -833,14 +904,14 @@ fn dot(ui: &mut egui::Ui, color: egui::Color32) {
         .circle_filled(dot.center(), DOT_SIZE / 2.0, color);
 }
 
-impl super::ViewInfo for Histogram {
-    const NAME: &'static str = "Histogram";
+impl super::ViewInfo for Distribution {
+    const NAME: &'static str = "Distribution";
     const ICON: &'static str = egui_phosphor::regular::CHART_BAR;
 
     fn selectable(trace: Trace<'_>) -> Selectable {
-        const NO_BOOLS: &str = "Histograms count numbers, not bools";
+        const NO_BOOLS: &str = "Distributions show numbers, not bools";
         match trace.samples {
-            Samples::Strings(_) => Selectable::No("Histograms count numbers".into()),
+            Samples::Strings(_) => Selectable::No("Distributions show numbers".into()),
             Samples::Numbers(numbers) if numbers.kind() == Some(NumberKind::Bool) => {
                 Selectable::No(NO_BOOLS.into())
             }
@@ -853,7 +924,7 @@ impl super::ViewInfo for Histogram {
     }
 }
 
-impl Viewable for Histogram {
+impl Viewable for Distribution {
     fn title_ui(&self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         let unit = super::common_unit(context.model, self.traces.iter().map(String::as_str));
         let weak = ui.visuals().weak_text_color();
@@ -915,6 +986,36 @@ impl Viewable for Histogram {
         let fitted = self.last.as_ref().map_or((0.0, 1.0), |last| last.data);
         let last_bins = self.last.as_ref().map(|last| last.bins);
         super::properties_section(ui, "Link", |ui| self.link_row(ui, context.plots));
+        super::properties_section(ui, "Display", |ui| {
+            super::choice_row(ui, "Show", &mut self.show, &Show::CHOICES);
+            super::choice_row(
+                ui,
+                "Orientation",
+                &mut self.orientation,
+                &Orientation::CHOICES,
+            );
+            if self.orientation == Orientation::Sideways {
+                super::choice_row(ui, "Axis side", &mut self.axis_side, &AxisSide::CHOICES);
+            }
+            // the markers of the bars and the whiskers of the boxes take the same place
+            match self.show {
+                Show::Bars => {
+                    super::choice_row(ui, "Markers", &mut self.markers, &Markers::CHOICES);
+                }
+                Show::Boxes | Show::Both => self.whiskers_row(ui),
+            }
+        });
+        super::properties_section(ui, "Values", |ui| {
+            if following {
+                self.followed_range_rows(ui);
+            } else {
+                super::range_rows(ui, &mut self.range, fitted);
+            }
+        });
+        // the bins and counts are kept, but play no part in the boxes alone
+        if self.show == Show::Boxes {
+            return;
+        }
         super::properties_section(ui, "Bins", |ui| {
             let mode = self.bins;
             super::choice_row(ui, "Mode", &mut self.bins, &BinMode::CHOICES);
@@ -949,26 +1050,9 @@ impl Viewable for Histogram {
                 }
                 BinMode::Auto => {}
             }
-            if following {
-                self.followed_range_rows(ui);
-            } else {
-                super::range_rows(ui, &mut self.range, fitted);
-            }
         });
         super::properties_section(ui, "Counts", |ui| {
             super::choice_row(ui, "Scale", &mut self.counts, &CountScale::CHOICES);
-        });
-        super::properties_section(ui, "Bars", |ui| {
-            super::choice_row(
-                ui,
-                "Orientation",
-                &mut self.orientation,
-                &Orientation::CHOICES,
-            );
-            if self.orientation == Orientation::Sideways {
-                super::choice_row(ui, "Axis side", &mut self.axis_side, &AxisSide::CHOICES);
-            }
-            super::choice_row(ui, "Markers", &mut self.markers, &Markers::CHOICES);
         });
     }
 }
@@ -1004,7 +1088,7 @@ fn plot_names(plots: &Plots) -> Vec<String> {
         .collect()
 }
 
-impl Histogram {
+impl Distribution {
     /// Adds the rows of the range to the grid of a properties section, greyed, as the
     /// plot followed sets it.
     fn followed_range_rows(&mut self, ui: &mut egui::Ui) {
@@ -1027,6 +1111,24 @@ impl Histogram {
         }
     }
 
+    /// Adds a row to the grid of a properties section to choose where the whiskers of
+    /// the boxes end, a combo box as four choices do not fit beside the label.
+    fn whiskers_row(&mut self, ui: &mut egui::Ui) {
+        super::property_label(ui, "Whiskers");
+        egui::ComboBox::from_id_salt("distribution whiskers")
+            .selected_text(self.whiskers.name())
+            .width(120.0)
+            .show_ui(ui, |ui| {
+                for (whiskers, name) in Whiskers::CHOICES {
+                    ui.selectable_value(&mut self.whiskers, whiskers, name)
+                        .on_hover_text(whiskers.hint());
+                }
+            })
+            .response
+            .on_hover_text(self.whiskers.hint());
+        ui.end_row();
+    }
+
     /// Adds a row to the grid of a properties section to choose the plot of `plots` to
     /// link to.
     fn link_row(&mut self, ui: &mut egui::Ui, plots: &Plots) {
@@ -1036,7 +1138,7 @@ impl Histogram {
             .find(|(plot, _)| Some(plot.id) == self.link)
             .map_or("None", |(_, name)| name.as_str());
         let before = self.link;
-        egui::ComboBox::from_id_salt("histogram link")
+        egui::ComboBox::from_id_salt("distribution link")
             .selected_text(current)
             .width(120.0)
             .show_ui(ui, |ui| {
@@ -1046,7 +1148,7 @@ impl Histogram {
                 }
             })
             .response
-            .on_hover_text("The plot whose traces and y range the histogram shows");
+            .on_hover_text("The plot whose traces and y range the distribution shows");
         if self.link != before {
             // the plot's range replaces the one panned or zoomed to
             self.value_view = None;
@@ -1054,11 +1156,16 @@ impl Histogram {
         ui.end_row();
     }
 
-    /// The room beyond the bars for `rows` rows of markers and the counts of the samples
-    /// `outside` the bins.
-    fn room(&self, ui: &egui::Ui, rows: usize, (below, above): (u64, u64)) -> Room {
-        let markers = if rows > 0 {
-            MARKER_INSET + rows as f32 * MARKER_ROW
+    /// The room beyond the bars for the strip of the markers or boxes of `traces`
+    /// traces and the counts of the samples `outside` the bins.
+    fn room(&self, ui: &egui::Ui, traces: usize, (below, above): (u64, u64)) -> Room {
+        let row = match (self.show, self.markers) {
+            (Show::Both, _) => boxes::STRIP_ROW,
+            (_, Markers::Off) => 0.0,
+            _ => MARKER_ROW,
+        };
+        let markers = if traces > 0 && row > 0.0 {
+            MARKER_INSET + traces as f32 * row
         } else {
             0.0
         };
@@ -1084,10 +1191,10 @@ impl Histogram {
         }
     }
 
-    /// Shows the histogram of the checked traces over the shown window.
+    /// Shows the distribution of the checked traces over the shown window.
     fn show(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         let (model, formats) = (context.model, context.formats);
-        let id = ui.id().with("histogram");
+        let id = ui.id().with("distribution");
         let frame_id = id.with("frame");
         // the size of the plot without its axes in the last frame
         let frame = ui
@@ -1100,6 +1207,7 @@ impl Histogram {
         };
 
         let Counting {
+            window,
             shown,
             data,
             following,
@@ -1113,57 +1221,83 @@ impl Histogram {
             true => followed.unwrap_or(fitted),
             false => self.value_view.unwrap_or(fitted),
         };
-
-        let tallest = counted.as_ref().map(|counted| counted.tallest_in(values));
-        self.share_top = tallest.map(|tallest| fit_top(self.share_top, tallest));
-        let one = counted.as_ref().map_or(100.0, Counted::one_sample);
-        let rows = match self.markers {
-            Markers::Off => 0,
-            _ => shown.len(),
+        let boxes = match (self.show, window) {
+            (Show::Bars, _) | (_, None) => None,
+            (_, Some(window)) => Some(boxes::boxes(
+                &mut self.boxes,
+                (model.samples_version(), window),
+                self.whiskers,
+                &self.traces,
+                &shown,
+            )),
         };
+
         let paths = || self.traces.iter().map(String::as_str);
         let unit = super::common_unit(model, paths());
         let format = common_format(formats, paths());
-        let room = self.room(ui, rows, outside);
-        let axis = CountAxis::new(
-            self.counts,
-            self.share_top.unwrap_or(100.0),
-            one,
-            count_length,
-            room.length(),
-        );
+        let room = self.room(ui, shown.len(), outside);
+        let (across, names) = match self.show {
+            Show::Boxes => {
+                let names = self.row_names(ui, &shown, frame);
+                (Across::Names(names.clone()), names)
+            }
+            Show::Bars | Show::Both => {
+                let tallest = counted.as_ref().map(|counted| counted.tallest_in(values));
+                self.share_top = tallest.map(|tallest| fit_top(self.share_top, tallest));
+                let one = counted.as_ref().map_or(100.0, Counted::one_sample);
+                let axis = CountAxis::new(
+                    self.counts,
+                    self.share_top.unwrap_or(100.0),
+                    one,
+                    count_length,
+                    room.length(),
+                );
+                (Across::Counts(axis), vec![])
+            }
+        };
 
-        let mut plot = self.plot(id, ui.visuals(), axis, (unit, format), following);
-        // without a title row, the legend of the title row goes to a corner
-        if !context.titled {
+        let mut plot = self.plot(id, ui.visuals(), &across, (unit, format), following);
+        // without a title row, the legend of the title row goes to a corner; the names
+        // of the rows of the boxes need none
+        if !context.titled && self.show != Show::Boxes {
             plot = plot.legend(egui_plot::Legend::default().position(egui_plot::Corner::RightTop));
         }
         let visuals = ui.visuals().clone();
         let this = &*self;
         let response = plot.show(ui, |plot_ui| {
             let (low, high) = values;
-            let counts = axis.floor..=axis.axis_top;
+            let across_range = match &across {
+                Across::Counts(axis) => axis.floor..=axis.axis_top,
+                Across::Names(names) => 0.0..=names.len().max(1) as f64,
+            };
             match this.orientation {
                 Orientation::Upright => {
                     plot_ui.set_plot_bounds_x(low..=high);
-                    plot_ui.set_plot_bounds_y(counts);
+                    plot_ui.set_plot_bounds_y(across_range);
                 }
                 Orientation::Sideways => {
-                    plot_ui.set_plot_bounds_x(counts);
+                    plot_ui.set_plot_bounds_x(across_range);
                     plot_ui.set_plot_bounds_y(low..=high);
                 }
             }
-            let counted = counted.as_ref()?;
-            let rect = plot_ui.response().rect;
-            let hovered = plot_ui.response().hover_pos().and_then(|pos| {
+            let pos = plot_ui.response().hover_pos();
+            let frame = *plot_ui.transform().frame();
+            let row = this.rows(frame, shown.len());
+            if let Some(row) = row.zip(pos).and_then(|(rows, pos)| rows.at(pos)) {
+                return Some(Hovered::Row(row));
+            }
+            let (Across::Counts(axis), Some(counted)) = (&across, &counted) else {
+                return None;
+            };
+            let hovered = pos.and_then(|pos| {
                 let part = match this.orientation {
-                    Orientation::Upright => (pos.x - rect.left()) / rect.width(),
-                    Orientation::Sideways => (rect.bottom() - pos.y) / rect.height(),
+                    Orientation::Upright => (pos.x - frame.left()) / frame.width(),
+                    Orientation::Sideways => (frame.bottom() - pos.y) / frame.height(),
                 };
                 counted.bins.at(low + f64::from(part) * (high - low))
             });
-            this.plot_bars(plot_ui, &visuals, (&shown, counted), axis, hovered);
-            hovered
+            this.plot_bars(plot_ui, &visuals, (&shown, counted), *axis, hovered);
+            hovered.map(Hovered::Bin)
         });
 
         let transform = response.transform;
@@ -1178,12 +1312,15 @@ impl Histogram {
         }
         self.hovered = response.inner;
         let frame = *transform.frame();
+        let rows = self.rows(frame, shown.len());
         self.last = counted.as_ref().map(|counted| {
             Box::new(Last {
                 data: data.unwrap_or(fitted),
                 values,
                 bins: counted.bins,
                 frame,
+                rows,
+                names,
             })
         });
 
@@ -1192,44 +1329,112 @@ impl Histogram {
             transform,
             room,
         };
-        self.paint_outside(ui, &overlay, outside);
-        match &counted {
-            Some(counted) => self.paint_markers(ui, &overlay, &shown, counted),
-            // the counts of the infinite samples say there are some
-            None if outside != (0, 0) => {}
-            None => {
-                let tokens = theme::tokens(ui.visuals());
-                let size = text_size(ui, NO_SAMPLES, egui::TextStyle::Body);
-                // on the card, so the grid does not cross it
-                let rect = egui::Rect::from_center_size(frame.center(), size)
-                    .expand2(egui::vec2(8.0, 4.0));
-                (overlay.painter).rect_filled(rect, theme::CONTROL_RADIUS, tokens.card);
-                let hint =
-                    egui::Label::new(egui::RichText::new(NO_SAMPLES).color(tokens.text_faint));
-                ui.put(rect, hint);
+        if self.show != Show::Boxes {
+            self.paint_outside(ui, &overlay, outside);
+        }
+        let any_box = boxes
+            .as_ref()
+            .is_some_and(|boxes| boxes.iter().any(Option::is_some));
+        if let (Some(rows), Some(boxes)) = (&rows, &boxes) {
+            if let Some(Hovered::Row(row)) = self.hovered {
+                let hover = theme::tokens(ui.visuals()).hover;
+                overlay.painter.rect_filled(rows.rect(row), 0.0, hover);
+            }
+            let traces = (shown.as_slice(), &boxes[..]);
+            boxes::paint(&overlay.painter, ui.visuals(), rows, &transform, traces);
+            if any_box || self.show == Show::Both {
+                let style = match self.show {
+                    Show::Both => egui::TextStyle::Small,
+                    _ => egui::TextStyle::Body,
+                };
+                boxes::paint_notes(ui, &overlay.painter, rows, values, boxes, style);
             }
         }
-        if let (Some(index), Some(counted)) = (self.hovered, &counted) {
-            let bin = Bin {
-                index,
-                counted,
-                unit,
-                format,
-            };
-            response
-                .response
-                .on_hover_ui_at_pointer(|ui| bin.tooltip_ui(ui, &shown));
+        let empty = match self.show {
+            Show::Boxes => !any_box,
+            // the counts of the infinite samples say there are some
+            Show::Bars | Show::Both => counted.is_none() && outside == (0, 0),
+        };
+        if let Some(counted) = &counted {
+            self.paint_markers(ui, &overlay, &shown, counted);
+        }
+        if empty {
+            let tokens = theme::tokens(ui.visuals());
+            let size = text_size(ui, NO_SAMPLES, egui::TextStyle::Body);
+            // on the card, so the grid does not cross it
+            let rect =
+                egui::Rect::from_center_size(frame.center(), size).expand2(egui::vec2(8.0, 4.0));
+            (overlay.painter).rect_filled(rect, theme::CONTROL_RADIUS, tokens.card);
+            let hint = egui::Label::new(egui::RichText::new(NO_SAMPLES).color(tokens.text_faint));
+            ui.put(rect, hint);
+        }
+        match self.hovered {
+            Some(Hovered::Bin(index)) => {
+                let Some(counted) = &counted else { return };
+                let bin = Bin {
+                    index,
+                    counted,
+                    unit,
+                    format,
+                };
+                response
+                    .response
+                    .on_hover_ui_at_pointer(|ui| bin.tooltip_ui(ui, &shown));
+            }
+            Some(Hovered::Row(row)) => {
+                let (Some(trace), Some(boxes)) = (shown.get(row), &boxes) else {
+                    return;
+                };
+                let tip = boxes::Tip {
+                    trace,
+                    stats: boxes.get(row).and_then(Option::as_ref),
+                    whiskers: self.whiskers,
+                    orientation: self.orientation,
+                    format: formats.of(&trace.path),
+                    unit: model.traces.unit(&trace.path),
+                };
+                response.response.on_hover_ui_at_pointer(|ui| tip.ui(ui));
+            }
+            None => {}
         }
     }
 
-    /// The plot with the value and the counts `axis` along the axes of the orientation,
-    /// the values written with `unit` and in `format`, which can be panned and zoomed
-    /// along the values unless `following` a plot, whose grid it then has.
+    /// The rows of the boxes of `traces` traces in the plot `frame`, `None` in Bars.
+    fn rows(&self, frame: egui::Rect, traces: usize) -> Option<boxes::Rows> {
+        match self.show {
+            Show::Bars => None,
+            Show::Boxes => Some(boxes::Rows::boxes(self.orientation, frame, traces)),
+            Show::Both => Some(boxes::Rows::strip(self.orientation, frame, traces)),
+        }
+    }
+
+    /// The names of the `shown` traces on the category axis of Boxes in a plot `frame`
+    /// large, cut with "…" to at most a third of the view and, sideways, to their
+    /// columns.
+    fn row_names(&self, ui: &egui::Ui, shown: &[Shown<'_>], frame: egui::Vec2) -> Vec<String> {
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        let third = ui.available_width() / 3.0;
+        let width = match self.orientation {
+            // the axis keeps a margin on each side of its labels
+            Orientation::Upright => third - 2.0 * NAME_MARGIN,
+            Orientation::Sideways => {
+                third.min(frame.x / shown.len().max(1) as f32 - 2.0 * NAME_MARGIN)
+            }
+        };
+        (shown.iter())
+            .map(|trace| boxes::cut(ui, &trace.name, width.max(0.0), &font))
+            .collect()
+    }
+
+    /// The plot with the value axis and the counts axis or the names of the rows
+    /// `across` it, along the axes of the orientation, the values written with `unit`
+    /// and in `format`, which can be panned and zoomed along the values unless
+    /// `following` a plot, whose grid it then has.
     fn plot(
         &self,
         id: egui::Id,
         visuals: &egui::Visuals,
-        axis: CountAxis,
+        across: &Across,
         (unit, format): (Option<&str>, DisplayFormat),
         following: bool,
     ) -> egui_plot::Plot<'static> {
@@ -1237,10 +1442,6 @@ impl Histogram {
         let value_formatter =
             move |mark: egui_plot::GridMark, _: &std::ops::RangeInclusive<f64>| {
                 write_value(mark.value, mark.step_size, format)
-            };
-        let count_formatter =
-            move |mark: egui_plot::GridMark, _: &std::ops::RangeInclusive<f64>| {
-                axis.label(mark.value, mark.step_size)
             };
         let plot = egui_plot::Plot::new(id)
             .grid_color(theme::grid_color(visuals))
@@ -1256,34 +1457,72 @@ impl Histogram {
             Some(unit) => hints.label(unit.to_owned()),
             None => hints,
         };
-        match self.orientation {
-            Orientation::Upright => plot
-                .custom_x_axes(vec![label(
-                    egui_plot::AxisHints::new_x().formatter(value_formatter),
-                )])
-                .custom_y_axes(vec![
-                    egui_plot::AxisHints::new_y().formatter(count_formatter),
-                ])
-                .y_grid_spacer(axis.marks()),
-            Orientation::Sideways => {
-                let placement = match self.axis_side {
+        let value_axis = match self.orientation {
+            Orientation::Upright => egui_plot::AxisHints::new_x(),
+            // as the y axis of a plot, so that both line up
+            Orientation::Sideways => egui_plot::AxisHints::new_y()
+                .placement(match self.axis_side {
                     AxisSide::Left => egui_plot::HPlacement::Left,
                     AxisSide::Right => egui_plot::HPlacement::Right,
+                })
+                .min_thickness(VALUE_AXIS_THICKNESS),
+        };
+        let value_axis = label(value_axis.formatter(value_formatter));
+        let across_axis = match self.orientation {
+            Orientation::Upright => egui_plot::AxisHints::new_y(),
+            Orientation::Sideways => egui_plot::AxisHints::new_x(),
+        };
+        let (across_axis, spacer): (_, Box<dyn Fn(egui_plot::GridInput) -> _>) = match across {
+            Across::Counts(axis) => {
+                let axis = *axis;
+                let count_formatter =
+                    move |mark: egui_plot::GridMark, _: &std::ops::RangeInclusive<f64>| {
+                        axis.label(mark.value, mark.step_size)
+                    };
+                let hints = across_axis.formatter(count_formatter);
+                let hints = match self.orientation {
+                    Orientation::Upright => hints,
+                    // shares are short, so their labels fit closer together
+                    Orientation::Sideways => hints.label_spacing(40.0..=60.0),
                 };
-                // as the y axis of a plot, so that both line up
-                let value_axis = egui_plot::AxisHints::new_y()
-                    .placement(placement)
-                    .min_thickness(VALUE_AXIS_THICKNESS)
-                    .formatter(value_formatter);
-                plot.custom_x_axes(vec![
-                    egui_plot::AxisHints::new_x()
-                        .formatter(count_formatter)
-                        // shares are short, so their labels fit closer together
-                        .label_spacing(40.0..=60.0),
-                ])
-                .x_grid_spacer(axis.marks())
-                .custom_y_axes(vec![label(value_axis)])
+                (hints, Box::new(axis.marks()))
             }
+            Across::Names(names) => {
+                let rows = Categories {
+                    orientation: self.orientation,
+                    count: names.len(),
+                };
+                let names = names.clone();
+                let name_formatter =
+                    move |mark: egui_plot::GridMark, _: &std::ops::RangeInclusive<f64>| {
+                        (rows.row(mark.value))
+                            .and_then(|row| names.get(row).cloned())
+                            .unwrap_or_default()
+                    };
+                let hints = across_axis
+                    .formatter(name_formatter)
+                    .tick_label_color(visuals.weak_text_color())
+                    // a name is shown in any row it fits in
+                    .label_spacing(0.0..=1.0);
+                (hints, Box::new(move |_| rows.marks()))
+            }
+        };
+        // no lines between the rows of the boxes
+        let grid = match (across, self.orientation) {
+            (Across::Counts(_), _) => [true, true],
+            (Across::Names(_), Orientation::Upright) => [true, false],
+            (Across::Names(_), Orientation::Sideways) => [false, true],
+        };
+        let plot = plot.show_grid(grid);
+        match self.orientation {
+            Orientation::Upright => plot
+                .custom_x_axes(vec![value_axis])
+                .custom_y_axes(vec![across_axis])
+                .y_grid_spacer(spacer),
+            Orientation::Sideways => plot
+                .custom_x_axes(vec![across_axis])
+                .x_grid_spacer(spacer)
+                .custom_y_axes(vec![value_axis]),
         }
     }
 
@@ -1354,11 +1593,11 @@ impl Histogram {
         }
     }
 
-    /// Keeps the values panned or zoomed to in `response` in [`Histogram::value_view`]
+    /// Keeps the values panned or zoomed to in `response` in [`Distribution::value_view`]
     /// instead of `shown`, until a double click fits them again.
     fn keep_value_view(
         &mut self,
-        response: &egui_plot::PlotResponse<Option<usize>>,
+        response: &egui_plot::PlotResponse<Option<Hovered>>,
         (low, high): (f64, f64),
     ) {
         if response.response.double_clicked() {
@@ -1437,7 +1676,8 @@ impl Histogram {
 
     /// The markers of the `shown` traces of `counted`, a row each.
     fn markers(&self, shown: &[Shown<'_>], counted: &Counted) -> Vec<Marker> {
-        if self.markers == Markers::Off {
+        // in Both, the boxes take their place
+        if self.markers == Markers::Off || self.show != Show::Bars {
             return vec![];
         }
         let traces = shown.iter().zip(&counted.traces).enumerate();
@@ -1498,6 +1738,53 @@ struct Marker {
     index: usize,
     mean: f64,
     whisker: Option<(f64, f64)>,
+}
+
+/// What runs across the value axis: the counts of the bars, or the names of the rows
+/// of the boxes.
+enum Across {
+    Counts(CountAxis),
+    Names(Vec<String>),
+}
+
+/// The rows of Boxes on the category axis of the plot, one unit each: from the top down
+/// upright, from the left sideways.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct Categories {
+    orientation: Orientation,
+    count: usize,
+}
+
+impl Categories {
+    /// The middle of `row` on the axis.
+    fn centre(self, row: usize) -> f64 {
+        match self.orientation {
+            Orientation::Upright => (self.count - row) as f64 - 0.5,
+            Orientation::Sideways => row as f64 + 0.5,
+        }
+    }
+
+    /// The row at `value` on the axis, `None` beyond the rows.
+    fn row(self, value: f64) -> Option<usize> {
+        let unit = value.floor();
+        if unit < 0.0 || unit >= self.count as f64 {
+            return None;
+        }
+        Some(match self.orientation {
+            Orientation::Upright => self.count - 1 - unit as usize,
+            Orientation::Sideways => unit as usize,
+        })
+    }
+
+    /// A mark in the middle of each row, for its name.
+    fn marks(self) -> Vec<egui_plot::GridMark> {
+        (0..self.count)
+            .map(|row| egui_plot::GridMark {
+                value: self.centre(row),
+                step_size: 1.0,
+            })
+            .collect()
+    }
 }
 
 /// The values the value axis fits: the `fixed` range, or else the values of `data`
@@ -1656,7 +1943,7 @@ impl Bin<'_> {
                 .map(|texts| text_size(ui, &texts[column], egui::TextStyle::Body).x)
                 .fold(0.0, f32::max)
         });
-        egui::Grid::new("histogram tooltip")
+        egui::Grid::new("bin tooltip")
             .num_columns(3)
             .spacing([12.0, 2.0])
             .show(ui, |ui| {
@@ -1722,11 +2009,11 @@ mod tests {
         values.into_iter().map(Data::Float).collect()
     }
 
-    /// A histogram of the traces at `paths`.
-    fn histogram_of(paths: &[&str]) -> Histogram {
-        Histogram {
+    /// A distribution of the traces at `paths`.
+    fn distribution_of(paths: &[&str]) -> Distribution {
+        Distribution {
             traces: paths.iter().map(|&path| path.to_owned()).collect(),
-            ..Histogram::default()
+            ..Distribution::default()
         }
     }
 
@@ -1737,10 +2024,10 @@ mod tests {
         time
     }
 
-    /// What `histogram` counts of `model` in the window of `time`, on a value axis
+    /// What `distribution` counts of `model` in the window of `time`, on a value axis
     /// 1000 points long.
-    fn counted(histogram: &Histogram, model: &Model, time: &TimeRange) -> Counted {
-        let counting = histogram.counting(model, time, &NO_PLOTS, 1000.0);
+    fn counted(distribution: &Distribution, model: &Model, time: &TimeRange) -> Counted {
+        let counting = distribution.counting(model, time, &NO_PLOTS, 1000.0);
         counting.counted.expect("samples in the window")
     }
 
@@ -1775,10 +2062,10 @@ mod tests {
         });
         let mut model = Model::default();
         append(&mut model, "a", (0.0, 1.0), &values.collect::<Vec<_>>());
-        let histogram = histogram_of(&["a"]);
+        let distribution = distribution_of(&["a"]);
         let mut time = live(&model);
         let check = |model: &Model, time: &TimeRange| {
-            let counted = counted(&histogram, model, time);
+            let counted = counted(&distribution, model, time);
             assert_eq!(
                 total(&counted.traces[0]),
                 samples_in_window(model, time, "a")
@@ -1809,9 +2096,9 @@ mod tests {
         let mut b = floats((0..40).map(|i| f64::from(i) + 7.5));
         b[3] = Data::Null;
         append(&mut model, "b", (0.0, 0.5), &b);
-        let histogram = histogram_of(&["a", "b"]);
+        let distribution = distribution_of(&["a", "b"]);
         let time = live(&model);
-        let counted = counted(&histogram, &model, &time);
+        let counted = counted(&distribution, &model, &time);
         assert_eq!(counted.traces.len(), 2);
         for (path, counts) in ["a", "b"].into_iter().zip(&counted.traces) {
             assert_eq!(counts.bins.len(), counted.bins.count);
@@ -1835,7 +2122,7 @@ mod tests {
         ] {
             append(&mut model, path, (0.0, 1.0), &[value]);
         }
-        let selectable = |path| ViewType::Histogram.selectable(model.traces.get(path).unwrap());
+        let selectable = |path| ViewType::Distribution.selectable(model.traces.get(path).unwrap());
         assert!(matches!(selectable("int"), Selectable::Trace));
         assert!(matches!(selectable("float"), Selectable::Trace));
         assert!(matches!(selectable("small"), Selectable::Elements));
@@ -1845,7 +2132,7 @@ mod tests {
     }
 
     struct State {
-        histogram: Histogram,
+        distribution: Distribution,
         model: Model,
         time: TimeRange,
         invoker: Invoker,
@@ -1855,9 +2142,9 @@ mod tests {
     }
 
     impl State {
-        fn new(histogram: Histogram, model: Model) -> Self {
+        fn new(distribution: Distribution, model: Model) -> Self {
             Self {
-                histogram,
+                distribution,
                 model,
                 time: TimeRange::default(),
                 invoker: Invoker::default(),
@@ -1868,12 +2155,12 @@ mod tests {
         }
     }
 
-    /// A harness showing the histogram of `state`, or its title row with `title`.
+    /// A harness showing the distribution of `state`, or its title row with `title`.
     fn harness(state: State, title: bool) -> Harness<'static, State> {
         sized_harness(state, title, egui::vec2(400.0, 300.0))
     }
 
-    /// A harness of `size` showing the histogram of `state`, or its title row with
+    /// A harness of `size` showing the distribution of `state`, or its title row with
     /// `title`.
     fn sized_harness(state: State, title: bool, size: egui::Vec2) -> Harness<'static, State> {
         Harness::builder()
@@ -1895,9 +2182,9 @@ mod tests {
                         plots: &state.plots,
                     };
                     if title {
-                        ui.horizontal(|ui| state.histogram.title_ui(ui, &mut context));
+                        ui.horizontal(|ui| state.distribution.title_ui(ui, &mut context));
                     } else {
-                        state.histogram.view(ui, &mut context);
+                        state.distribution.view(ui, &mut context);
                     }
                 },
                 state,
@@ -1926,9 +2213,9 @@ mod tests {
 
     #[test]
     fn the_legend_names_the_traces_in_the_title_row_or_in_a_corner() {
-        let histogram = histogram_of(&["pose.x", "pose.y"]);
+        let distribution = distribution_of(&["pose.x", "pose.y"]);
         // in the title row, with the unit both share and without values
-        let mut harness = harness(State::new(histogram.clone(), pose("m", "m")), true);
+        let mut harness = harness(State::new(distribution.clone(), pose("m", "m")), true);
         harness.run();
         harness.get_by_label("x");
         harness.get_by_label("y");
@@ -1939,17 +2226,17 @@ mod tests {
                 .count(),
             3
         );
-        let mut harness = self::harness(State::new(histogram.clone(), pose("m", "rad")), true);
+        let mut harness = self::harness(State::new(distribution.clone(), pose("m", "rad")), true);
         harness.run();
         assert!(harness.query_by_label("m").is_none());
 
         // in a corner without a title row, not in the view with one
-        let mut harness = self::harness(State::new(histogram.clone(), pose("m", "m")), false);
+        let mut harness = self::harness(State::new(distribution.clone(), pose("m", "m")), false);
         harness.run();
         let x = harness.get_by_label("x").rect();
         assert!(x.center().x > 300.0 && x.center().y < 100.0, "{x:?}");
         harness.get_by_label("y");
-        let mut state = State::new(histogram, pose("m", "m"));
+        let mut state = State::new(distribution, pose("m", "m"));
         state.titled = true;
         let mut harness = self::harness(state, false);
         harness.run();
@@ -2003,7 +2290,7 @@ mod tests {
 
     #[test]
     fn without_traces_or_samples_the_view_says_so() {
-        let mut harness = harness(State::new(Histogram::default(), Model::default()), false);
+        let mut harness = harness(State::new(Distribution::default(), Model::default()), false);
         harness.run();
         harness.get_by_label(CHECK_TRACES);
 
@@ -2011,10 +2298,10 @@ mod tests {
         let mut model = Model::default();
         append(&mut model, "a", (0.0, 1.0), &floats([1.0, 2.0]));
         append(&mut model, "a", (2.0, 1.0), &vec![Data::Null; 30]);
-        let mut harness = self::harness(State::new(histogram_of(&["a"]), model), false);
+        let mut harness = self::harness(State::new(distribution_of(&["a"]), model), false);
         harness.run();
         harness.get_by_label(NO_SAMPLES);
-        assert!(harness.state().histogram.last.is_none());
+        assert!(harness.state().distribution.last.is_none());
     }
 
     #[test]
@@ -2023,7 +2310,7 @@ mod tests {
         append(&mut model, "t", (0.0, 1.0), &floats([23.4; 30]));
         append(&mut model, "n", (0.0, 1.0), &vec![Data::Int(5); 30]);
         let time = live(&model);
-        let counted = counted(&histogram_of(&["t"]), &model, &time);
+        let counted = counted(&distribution_of(&["t"]), &model, &time);
         assert!(counted.single);
         assert_eq!(counted.bins.count, 1);
         assert!((counted.bins.center(0) - 23.4).abs() < 1.0e-9);
@@ -2036,15 +2323,15 @@ mod tests {
             format: DisplayFormat::Default,
         };
         assert_eq!(bin.range_text(), "All 21 samples are 23.4 °C");
-        let counted = self::counted(&histogram_of(&["n"]), &model, &time);
+        let counted = self::counted(&distribution_of(&["n"]), &model, &time);
         assert_eq!((counted.bins.start, counted.bins.width), (4.5, 1.0));
     }
 
     #[test]
     fn automatic_bins_number_about_the_square_root_of_the_samples() {
-        let histogram = Histogram::default();
+        let distribution = Distribution::default();
         for samples in [4, 100, 400, 10_000, 1_000_000] {
-            let bins = histogram.make_bins((0.0, 1.0), false, samples, 0.0, false);
+            let bins = distribution.make_bins((0.0, 1.0), false, samples, 0.0, false);
             let target = (samples as f64).sqrt().clamp(MIN_AUTO_BINS, MAX_AUTO_BINS);
             let count = bins.count as f64;
             assert!(
@@ -2054,54 +2341,56 @@ mod tests {
             assert!(is_round(bins.width), "{bins:?}");
         }
         // few and many samples
-        let few = histogram.make_bins((0.0, 1.0), false, 1, 0.0, false);
+        let few = distribution.make_bins((0.0, 1.0), false, 1, 0.0, false);
         assert_eq!(few.width, 0.1);
-        let many = histogram.make_bins((0.0, 1.0), false, 100_000_000, 0.0, false);
+        let many = distribution.make_bins((0.0, 1.0), false, 100_000_000, 0.0, false);
         assert_eq!(many.width, 0.02);
         // at least a few points wide, and integers at least 1 wide
-        let wide = histogram.make_bins((0.0, 1.0), false, 1_000_000, 0.04, false);
+        let wide = distribution.make_bins((0.0, 1.0), false, 1_000_000, 0.04, false);
         assert_eq!(wide.width, 0.05);
-        let integers = histogram.make_bins((0.0, 5.0), false, 1000, 0.0, true);
+        let integers = distribution.make_bins((0.0, 5.0), false, 1000, 0.0, true);
         assert_eq!((integers.width, integers.count), (1.0, 6));
     }
 
     #[test]
     fn the_automatic_width_changes_only_clearly_past_a_step() {
         // 400 samples, 20 bins: the step between 0.1 and 0.2 lies at a span of 3
-        let mut histogram = Histogram::default();
-        let bins = |histogram: &Histogram, span: f64| {
-            histogram.make_bins((0.0, span), false, 400, 0.0, false)
+        let mut distribution = Distribution::default();
+        let bins = |distribution: &Distribution, span: f64| {
+            distribution.make_bins((0.0, span), false, 400, 0.0, false)
         };
-        let shown = |histogram: &mut Histogram, span: f64| {
-            let bins = bins(histogram, span);
-            histogram.last = Some(Box::new(Last {
+        let shown = |distribution: &mut Distribution, span: f64| {
+            let bins = bins(distribution, span);
+            distribution.last = Some(Box::new(Last {
                 data: (0.0, span),
                 values: (0.0, span),
                 bins,
                 frame: egui::Rect::NOTHING,
+                rows: None,
+                names: vec![],
             }));
             bins.width
         };
         // without a width before, the nearest round one
-        assert_eq!(bins(&histogram, 2.9).width, 0.1);
-        assert_eq!(bins(&histogram, 3.1).width, 0.2);
+        assert_eq!(bins(&distribution, 2.9).width, 0.1);
+        assert_eq!(bins(&distribution, 3.1).width, 0.2);
         // around the step, the width stays
-        assert_eq!(shown(&mut histogram, 2.9), 0.1);
+        assert_eq!(shown(&mut distribution, 2.9), 0.1);
         for span in [3.1, 2.95, 3.3, 3.5, 2.9, 3.5] {
-            assert_eq!(shown(&mut histogram, span), 0.1, "{span}");
+            assert_eq!(shown(&mut distribution, span), 0.1, "{span}");
         }
         // clearly past it, it changes, and stays when it goes back a little
-        assert_eq!(shown(&mut histogram, 3.7), 0.2);
+        assert_eq!(shown(&mut distribution, 3.7), 0.2);
         for span in [2.9, 2.6, 3.2] {
-            assert_eq!(shown(&mut histogram, span), 0.2, "{span}");
+            assert_eq!(shown(&mut distribution, span), 0.2, "{span}");
         }
-        assert_eq!(shown(&mut histogram, 2.4), 0.1);
+        assert_eq!(shown(&mut distribution, 2.4), 0.1);
         // a width that is not round, e.g. of a fixed number of bins, is not kept
-        histogram.last.as_mut().unwrap().bins.width = 0.13;
-        assert_eq!(bins(&histogram, 2.6).width, 0.1);
+        distribution.last.as_mut().unwrap().bins.width = 0.13;
+        assert_eq!(bins(&distribution, 2.6).width, 0.1);
         // nor one too narrow
-        histogram.last.as_mut().unwrap().bins.width = 0.1;
-        let wide = histogram.make_bins((0.0, 3.2), false, 400, 0.15, false);
+        distribution.last.as_mut().unwrap().bins.width = 0.1;
+        let wide = distribution.make_bins((0.0, 3.2), false, 400, 0.15, false);
         assert_eq!(wide.width, 0.2);
     }
 
@@ -2117,11 +2406,11 @@ mod tests {
 
     #[test]
     fn bin_edges_are_multiples_of_the_width_and_stay_as_the_window_moves() {
-        let histogram = Histogram::default();
-        let first = histogram.make_bins((0.13, 2.73), false, 400, 0.0, false);
+        let distribution = Distribution::default();
+        let first = distribution.make_bins((0.13, 2.73), false, 400, 0.0, false);
         for step in 0..20 {
             let low = 0.13 + f64::from(step) * 0.07;
-            let bins = histogram.make_bins((low, low + 2.6), false, 400, 0.0, false);
+            let bins = distribution.make_bins((low, low + 2.6), false, 400, 0.0, false);
             assert_eq!(bins.width, first.width);
             let multiple = bins.start / bins.width;
             assert!((multiple - multiple.round()).abs() < 1.0e-9, "{bins:?}");
@@ -2131,18 +2420,18 @@ mod tests {
 
     #[test]
     fn a_fixed_number_or_width_of_bins_is_kept() {
-        let number = Histogram {
+        let number = Distribution {
             bins: BinMode::Number,
             bin_count: 7,
-            ..Histogram::default()
+            ..Distribution::default()
         };
         let bins = number.make_bins((1.0, 8.0), false, 1000, 0.5, false);
         assert_eq!(bins.count, 7);
         assert_eq!((bins.start, bins.edge(7)), (1.0, 8.0));
-        let width = Histogram {
+        let width = Distribution {
             bins: BinMode::Width,
             bin_width: 0.25,
-            ..Histogram::default()
+            ..Distribution::default()
         };
         let bins = width.make_bins((1.1, 3.0), false, 1000, 0.5, false);
         assert_eq!((bins.start, bins.width, bins.count), (1.0, 0.25, 9));
@@ -2302,7 +2591,7 @@ mod tests {
 
     #[test]
     fn mean_and_sigma_count_each_binned_sample_once() {
-        assert_eq!(Histogram::default().markers, Markers::Off);
+        assert_eq!(Distribution::default().markers, Markers::Off);
         let bins = Bins {
             start: 0.0,
             width: 1.0,
@@ -2319,7 +2608,7 @@ mod tests {
         append(&mut model, "a", (2.0, 1.0), &floats([10.0]));
         append(&mut model, "a", (19.0, 1.0), &floats([0.0]));
         let time = live(&model);
-        let counted = counted(&histogram_of(&["a"]), &model, &time);
+        let counted = counted(&distribution_of(&["a"]), &model, &time);
         let mean = counted.traces[0].mean.unwrap();
         assert_eq!(mean, 5.0);
         let (start, end) = time.range().unwrap();
@@ -2335,19 +2624,19 @@ mod tests {
         append(&mut model, "a", (0.0, 1.0), &floats([1.0, 2.0, 3.0, 4.0]));
         append(&mut model, "b", (0.0, 1.0), &floats([5.0; 4]));
         let time = live(&model);
-        let mut histogram = histogram_of(&["a", "b"]);
-        let counting = histogram.counting(&model, &time, &NO_PLOTS, 1000.0);
+        let mut distribution = distribution_of(&["a", "b"]);
+        let counting = distribution.counting(&model, &time, &NO_PLOTS, 1000.0);
         let counted = counting.counted.as_ref().unwrap();
-        assert!(histogram.markers(&counting.shown, counted).is_empty());
-        histogram.markers = Markers::Mean;
-        let markers = histogram.markers(&counting.shown, counted);
+        assert!(distribution.markers(&counting.shown, counted).is_empty());
+        distribution.markers = Markers::Mean;
+        let markers = distribution.markers(&counting.shown, counted);
         assert_eq!(
             markers.iter().map(|marker| marker.row).collect::<Vec<_>>(),
             [0, 1]
         );
         assert!(markers.iter().all(|marker| marker.whisker.is_none()));
-        histogram.markers = Markers::MeanSigma;
-        let markers = histogram.markers(&counting.shown, counted);
+        distribution.markers = Markers::MeanSigma;
+        let markers = distribution.markers(&counting.shown, counted);
         let sigma = 1.25f64.sqrt();
         assert_eq!(markers[0].mean, 2.5);
         assert_eq!(markers[0].whisker, Some((2.5 - sigma, 2.5 + sigma)));
@@ -2357,15 +2646,15 @@ mod tests {
 
     #[test]
     fn upright_values_run_along_x_and_sideways_along_y() {
-        let mut histogram = Histogram::default();
-        assert_eq!(histogram.orientation, Orientation::Upright);
-        assert_eq!(histogram.axis_side, AxisSide::Left);
-        assert_eq!(histogram.point(1.0, 5.0), [1.0, 5.0]);
-        assert_eq!(histogram.movable(false), [true, false]);
-        histogram.orientation = Orientation::Sideways;
-        assert_eq!(histogram.point(1.0, 5.0), [5.0, 1.0]);
-        assert_eq!(histogram.movable(false), [false, true]);
-        assert_eq!(histogram.movable(true), [false, false]);
+        let mut distribution = Distribution::default();
+        assert_eq!(distribution.orientation, Orientation::Upright);
+        assert_eq!(distribution.axis_side, AxisSide::Left);
+        assert_eq!(distribution.point(1.0, 5.0), [1.0, 5.0]);
+        assert_eq!(distribution.movable(false), [true, false]);
+        distribution.orientation = Orientation::Sideways;
+        assert_eq!(distribution.point(1.0, 5.0), [5.0, 1.0]);
+        assert_eq!(distribution.movable(false), [false, true]);
+        assert_eq!(distribution.movable(true), [false, false]);
     }
 
     /// The plots of a layout with the plot 7, "Motor speed", showing `y_range`.
@@ -2387,12 +2676,12 @@ mod tests {
             &floats((0..200).map(f64::from)),
         );
         let time = live(&model);
-        let mut histogram = Histogram {
+        let mut distribution = Distribution {
             orientation: Orientation::Sideways,
             link: Some(ViewId(7)),
             // its own range is ignored while following
             range: Some((0.0, 1.0)),
-            ..histogram_of(&["a"])
+            ..distribution_of(&["a"])
         };
         let plots = plots((100.0, 150.0));
         for (mode, count) in [
@@ -2400,10 +2689,10 @@ mod tests {
             (BinMode::Number, Some(9)),
             (BinMode::Width, None),
         ] {
-            histogram.bins = mode;
-            histogram.bin_count = 9;
-            histogram.bin_width = 5.0;
-            let counting = histogram.counting(&model, &time, &plots, 500.0);
+            distribution.bins = mode;
+            distribution.bin_count = 9;
+            distribution.bin_width = 5.0;
+            let counting = distribution.counting(&model, &time, &plots, 500.0);
             assert_eq!(counting.fixed, Some((100.0, 150.0)));
             let counted = counting.counted.unwrap();
             let bins = counted.bins;
@@ -2419,14 +2708,14 @@ mod tests {
             assert_eq!((counts.below, total(counts), counts.above), (100, 51, 49));
         }
         // upright, it bins the range of the plot too
-        histogram.orientation = Orientation::Upright;
-        assert_eq!(histogram.followed(&plots), Some((100.0, 150.0)));
-        let counting = histogram.counting(&model, &time, &plots, 500.0);
+        distribution.orientation = Orientation::Upright;
+        assert_eq!(distribution.followed(&plots), Some((100.0, 150.0)));
+        let counting = distribution.counting(&model, &time, &plots, 500.0);
         assert_eq!(counting.fixed, Some((100.0, 150.0)));
         // a plot not of the layout is not followed, the own range is binned again
-        histogram.link = Some(ViewId(8));
-        assert_eq!(histogram.followed(&plots), None);
-        let counting = histogram.counting(&model, &time, &plots, 500.0);
+        distribution.link = Some(ViewId(8));
+        assert_eq!(distribution.followed(&plots), None);
+        let counting = distribution.counting(&model, &time, &plots, 500.0);
         assert_eq!(counting.fixed, Some((0.0, 1.0)));
     }
 
@@ -2454,23 +2743,23 @@ mod tests {
                 (0.0, 0.1),
                 &floats((0..200).map(f64::from)),
             );
-            let histogram = Histogram {
+            let distribution = Distribution {
                 orientation,
                 link: Some(ViewId(7)),
                 value_view: Some((0.0, 10.0)),
-                ..histogram_of(&["a"])
+                ..distribution_of(&["a"])
             };
-            let mut state = State::new(histogram, model);
+            let mut state = State::new(distribution, model);
             state.plots = plots((100.0, 150.0));
             let mut harness = harness(state, false);
             harness.run();
             let values = |harness: &Harness<'_, State>| {
                 harness
                     .state()
-                    .histogram
+                    .distribution
                     .last
                     .as_deref()
-                    .copied()
+                    .cloned()
                     .unwrap()
                     .values
             };
@@ -2489,24 +2778,24 @@ mod tests {
         }
     }
 
-    /// A harness showing the properties of `histogram` in a layout with the plots of
+    /// A harness showing the properties of `distribution` in a layout with the plots of
     /// [`plots`].
-    fn properties_harness(histogram: Histogram) -> Harness<'static, Histogram> {
+    fn properties_harness(distribution: Distribution) -> Harness<'static, Distribution> {
         let model = Model::default();
         let plots = plots((0.0, 1.0));
         Harness::builder()
             .with_size(egui::vec2(300.0, 600.0))
             .build_ui_state(
-                move |ui, histogram: &mut Histogram| {
+                move |ui, distribution: &mut Distribution| {
                     let connected = Default::default();
                     let context = PropertiesContext {
                         model: &model,
                         connected: &connected,
                         plots: &plots,
                     };
-                    histogram.properties_ui(ui, &context);
+                    distribution.properties_ui(ui, &context);
                 },
-                histogram,
+                distribution,
             )
     }
 
@@ -2519,7 +2808,7 @@ mod tests {
                     && !node.is_disabled()
             }
         };
-        let mut harness = properties_harness(Histogram::default());
+        let mut harness = properties_harness(Distribution::default());
         harness.run();
         harness.get_by(link("None")).click();
         harness.run();
@@ -2549,9 +2838,9 @@ mod tests {
         assert!(!harness.get_by_label("Fixed").accesskit_node().is_disabled());
     }
 
-    /// A harness showing a histogram of `pose.x` in m and `pose.y` in rad.
+    /// A harness showing a distribution of `pose.x` in m and `pose.y` in rad.
     fn pose_harness() -> Harness<'static, State> {
-        let state = State::new(histogram_of(&["pose.x", "pose.y"]), pose("m", "m"));
+        let state = State::new(distribution_of(&["pose.x", "pose.y"]), pose("m", "m"));
         let mut harness = harness(state, false);
         harness.run();
         harness
@@ -2572,7 +2861,7 @@ mod tests {
 
     #[test]
     fn the_tooltip_is_as_wide_as_its_texts_wherever_it_opens() {
-        let state = State::new(histogram_of(&["pose.x", "pose.y"]), pose("m", "m"));
+        let state = State::new(distribution_of(&["pose.x", "pose.y"]), pose("m", "m"));
         let mut harness = sized_harness(state, false, egui::vec2(1000.0, 600.0));
         harness.run();
         for x in [150.0, 400.0, 650.0] {
@@ -2642,8 +2931,10 @@ mod tests {
         harness.hover_at(at);
         harness.run_steps(40);
         let state = harness.state();
-        let index = state.histogram.hovered.expect("a bin under the pointer");
-        let bins = state.histogram.last.as_deref().copied().unwrap().bins;
+        let Some(Hovered::Bin(index)) = state.distribution.hovered else {
+            panic!("no bin under the pointer");
+        };
+        let bins = state.distribution.last.as_deref().cloned().unwrap().bins;
         let range = format!(
             "{} to {} m",
             write_value(bins.edge(index), bins.width, DisplayFormat::Default),
@@ -2659,7 +2950,7 @@ mod tests {
 
         harness.hover_at(egui::pos2(399.0, 299.0));
         harness.run();
-        assert_eq!(harness.state().histogram.hovered, None);
+        assert_eq!(harness.state().distribution.hovered, None);
     }
 
     #[test]
@@ -2667,21 +2958,21 @@ mod tests {
         let mut harness = pose_harness();
         let state = harness.state();
         let (range, cursor) = (state.time.range(), state.time.cursor());
-        let last = state.histogram.last.as_deref().copied().unwrap();
+        let last = state.distribution.last.as_deref().cloned().unwrap();
         let (low, high) = last.values;
-        assert!(state.histogram.value_view.is_none());
+        assert!(state.distribution.value_view.is_none());
 
         super::super::scroll_wheel(&mut harness, egui::pos2(200.0, 150.0), 100.0);
         let state = harness.state();
-        let (zoomed_low, zoomed_high) = state.histogram.value_view.unwrap();
+        let (zoomed_low, zoomed_high) = state.distribution.value_view.unwrap();
         assert!(zoomed_high - zoomed_low < (high - low) * 0.9);
         assert_eq!(
-            state.histogram.last.as_deref().copied().unwrap().bins,
+            state.distribution.last.as_deref().cloned().unwrap().bins,
             last.bins
         );
         assert_eq!((state.time.range(), state.time.cursor()), (range, cursor));
         // the counts axis fits the tallest bin in view
-        let top = state.histogram.share_top.unwrap();
+        let top = state.distribution.share_top.unwrap();
         assert!(top > 0.0 && top <= 100.0);
 
         drag(
@@ -2690,11 +2981,11 @@ mod tests {
             egui::pos2(250.0, 140.0),
         );
         let state = harness.state();
-        let (panned_low, panned_high) = state.histogram.value_view.unwrap();
+        let (panned_low, panned_high) = state.distribution.value_view.unwrap();
         assert!(panned_low < zoomed_low);
         assert!(((panned_high - panned_low) - (zoomed_high - zoomed_low)).abs() < 1.0e-6);
         assert_eq!(
-            state.histogram.last.as_deref().copied().unwrap().bins,
+            state.distribution.last.as_deref().cloned().unwrap().bins,
             last.bins
         );
         assert_eq!((state.time.range(), state.time.cursor()), (range, cursor));
@@ -2711,9 +3002,9 @@ mod tests {
             harness.run();
         }
         let state = harness.state();
-        assert!(state.histogram.value_view.is_none());
+        assert!(state.distribution.value_view.is_none());
         assert_eq!(
-            state.histogram.last.as_deref().copied().unwrap().values,
+            state.distribution.last.as_deref().cloned().unwrap().values,
             (low, high)
         );
         assert_eq!((state.time.range(), state.time.cursor()), (range, cursor));
@@ -2721,13 +3012,13 @@ mod tests {
 
     #[test]
     fn settings_are_saved_with_defaults_for_those_missing() {
-        let histogram: Histogram = serde_json::from_str(r#"{"traces": ["a"]}"#).unwrap();
-        assert_eq!(histogram.bins, BinMode::Auto);
-        assert_eq!(histogram.bin_count, 20);
-        assert_eq!(histogram.link, None);
-        let json = serde_json::to_string(&Histogram::default()).unwrap();
+        let distribution: Distribution = serde_json::from_str(r#"{"traces": ["a"]}"#).unwrap();
+        assert_eq!(distribution.bins, BinMode::Auto);
+        assert_eq!(distribution.bin_count, 20);
+        assert_eq!(distribution.link, None);
+        let json = serde_json::to_string(&Distribution::default()).unwrap();
         assert!(!json.contains("link"), "{json}");
-        let histogram = Histogram {
+        let distribution = Distribution {
             bins: BinMode::Width,
             bin_width: 0.5,
             bin_count: 12,
@@ -2737,28 +3028,28 @@ mod tests {
             axis_side: AxisSide::Right,
             link: Some(ViewId(3)),
             markers: Markers::MeanSigma,
-            ..histogram_of(&["a"])
+            ..distribution_of(&["a"])
         };
-        let loaded: Histogram =
-            serde_json::from_str(&serde_json::to_string(&histogram).unwrap()).unwrap();
+        let loaded: Distribution =
+            serde_json::from_str(&serde_json::to_string(&distribution).unwrap()).unwrap();
         assert_eq!(
             serde_json::to_value(&loaded).unwrap(),
-            serde_json::to_value(&histogram).unwrap()
+            serde_json::to_value(&distribution).unwrap()
         );
     }
 
     #[test]
     fn bins_of_whole_widths_over_integers_are_centred_on_them() {
-        let auto = Histogram::default();
+        let auto = Distribution::default();
         let bins = auto.make_bins((5.0, 6.0), false, 100, 0.0, true);
         assert_eq!((bins.start, bins.width, bins.count), (4.5, 1.0, 2));
         // the bar of 5 is where it was as the only value
         let single = auto.make_bins((5.0, 5.0), false, 100, 0.0, true);
         assert_eq!((single.start, single.width), (4.5, 1.0));
-        let width = Histogram {
+        let width = Distribution {
             bins: BinMode::Width,
             bin_width: 2.0,
-            ..Histogram::default()
+            ..Distribution::default()
         };
         // no integer on an edge, two in each bin
         let bins = width.make_bins((3.0, 9.0), false, 100, 0.0, true);
@@ -2773,7 +3064,7 @@ mod tests {
             width.make_bins((3.0, 9.0), false, 100, 0.0, false).start,
             2.0
         );
-        let narrow = Histogram {
+        let narrow = Distribution {
             bin_width: 0.5,
             ..width
         };
@@ -2782,7 +3073,7 @@ mod tests {
             3.0
         );
         // a fixed range of integers keeps its last value in the last bin
-        let bins = Histogram::default().make_bins((0.0, 10.0), true, 10_000, 0.0, true);
+        let bins = Distribution::default().make_bins((0.0, 10.0), true, 10_000, 0.0, true);
         assert_eq!(
             (bins.start, bins.edge(bins.count), bins.index(10.0)),
             (-0.5, 10.5, 10)
@@ -2796,7 +3087,7 @@ mod tests {
         values.push(Data::Float(f64::INFINITY));
         append(&mut model, "a", (0.0, 1.0), &values);
         let time = live(&model);
-        let counted = counted(&histogram_of(&["a"]), &model, &time);
+        let counted = counted(&distribution_of(&["a"]), &model, &time);
         let counts = &counted.traces[0];
         assert_eq!((counts.below, total(counts), counts.above), (1, 3, 2));
         assert_eq!(counts.mean, Some(2.0));
@@ -2812,11 +3103,11 @@ mod tests {
             (0.0, 0.1),
             &floats((0..200).map(f64::from)),
         );
-        let histogram = Histogram {
+        let distribution = Distribution {
             orientation: Orientation::Sideways,
             link: Some(ViewId(7)),
             range: Some((0.0, 1.0)),
-            ..histogram_of(&["a"])
+            ..distribution_of(&["a"])
         };
         let plots = Plots(vec![PlotInfo {
             id: ViewId(7),
@@ -2824,30 +3115,30 @@ mod tests {
             y_range: None,
         }]);
         let time = live(&model);
-        let counting = histogram.counting(&model, &time, &plots, 500.0);
+        let counting = distribution.counting(&model, &time, &plots, 500.0);
         assert!(counting.following);
         assert_eq!(counting.fixed, None);
-        let mut state = State::new(histogram.clone(), model);
+        let mut state = State::new(distribution.clone(), model);
         state.plots = plots.clone();
         let mut harness = harness(state, false);
         harness.run();
         super::super::scroll_wheel(&mut harness, egui::pos2(200.0, 150.0), 100.0);
-        assert_eq!(harness.state().histogram.value_view, None);
+        assert_eq!(harness.state().distribution.value_view, None);
         // greyed in the properties
         let model = Model::default();
         let mut properties = Harness::builder()
             .with_size(egui::vec2(300.0, 600.0))
             .build_ui_state(
-                move |ui, histogram: &mut Histogram| {
+                move |ui, distribution: &mut Distribution| {
                     let connected = Default::default();
                     let context = PropertiesContext {
                         model: &model,
                         connected: &connected,
                         plots: &plots,
                     };
-                    histogram.properties_ui(ui, &context);
+                    distribution.properties_ui(ui, &context);
                 },
-                histogram,
+                distribution,
             );
         properties.run();
         assert!(
@@ -2939,7 +3230,7 @@ mod tests {
             append(&mut model, path, (0.0, 1.0), &floats([1.0]));
             model.traces.set_unit(path, "rad");
         }
-        let histogram = histogram_of(&[
+        let distribution = distribution_of(&[
             "robot/shoulder.position_error",
             "robot/elbow.position_error",
         ]);
@@ -2955,9 +3246,9 @@ mod tests {
                         titled: true,
                         plots: &state.plots,
                     };
-                    ui.horizontal(|ui| state.histogram.title_ui(ui, &mut context));
+                    ui.horizontal(|ui| state.distribution.title_ui(ui, &mut context));
                 },
-                State::new(histogram, model),
+                State::new(distribution, model),
             );
         harness.run();
         let unit = harness.get_by_label("rad").rect();
@@ -2974,20 +3265,20 @@ mod tests {
     #[test]
     fn the_value_axis_of_a_sideways_histogram_is_on_the_side_chosen() {
         for (side, on_left) in [(AxisSide::Left, true), (AxisSide::Right, false)] {
-            let histogram = Histogram {
+            let distribution = Distribution {
                 orientation: Orientation::Sideways,
                 axis_side: side,
-                ..histogram_of(&["pose.x"])
+                ..distribution_of(&["pose.x"])
             };
-            let mut harness = harness(State::new(histogram, pose("m", "m")), false);
+            let mut harness = harness(State::new(distribution, pose("m", "m")), false);
             harness.run();
             harness.run();
             let frame = harness
                 .state()
-                .histogram
+                .distribution
                 .last
                 .as_deref()
-                .copied()
+                .cloned()
                 .unwrap()
                 .frame;
             let (left, right) = (frame.left(), 400.0 - frame.right());
@@ -3015,13 +3306,555 @@ mod tests {
         let mut model = Model::default();
         let values = floats([f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY]);
         append(&mut model, "a", (0.0, 1.0), &values);
-        let histogram = histogram_of(&["a"]);
+        let distribution = distribution_of(&["a"]);
         let time = live(&model);
-        let counting = histogram.counting(&model, &time, &NO_PLOTS, 500.0);
+        let counting = distribution.counting(&model, &time, &NO_PLOTS, 500.0);
         assert!(counting.counted.is_none());
         assert_eq!(counting.outside, (1, 2));
-        let mut harness = harness(State::new(histogram, model), false);
+        let mut harness = harness(State::new(distribution, model), false);
         harness.run();
         assert!(harness.query_by_label(NO_SAMPLES).is_none());
+    }
+
+    /// The boxes `distribution` shows of `model` in the window of `time`, following a
+    /// plot of `plots`.
+    fn boxes_of(
+        distribution: &mut Distribution,
+        model: &Model,
+        time: &TimeRange,
+        plots: &Plots,
+    ) -> Vec<Option<boxes::BoxStats>> {
+        let counting = distribution.counting(model, time, plots, 1000.0);
+        let window = counting.window.expect("a window");
+        boxes::boxes(
+            &mut distribution.boxes,
+            (model.samples_version(), window),
+            distribution.whiskers,
+            &distribution.traces,
+            &counting.shown,
+        )
+        .to_vec()
+    }
+
+    #[test]
+    fn boxes_count_each_sample_once_over_the_shown_window() {
+        let values = (0..=40).map(|second| match second % 7 {
+            3 => Data::Null,
+            _ => Data::Float(f64::from(second % 5)),
+        });
+        let mut model = Model::default();
+        append(&mut model, "a", (0.0, 1.0), &values.collect::<Vec<_>>());
+        let mut distribution = Distribution {
+            show: Show::Boxes,
+            ..distribution_of(&["a"])
+        };
+        let mut time = live(&model);
+        let samples = |distribution: &mut Distribution, model: &Model, time: &TimeRange| {
+            let boxes = boxes_of(distribution, model, time, &NO_PLOTS);
+            let samples = boxes[0].as_ref().unwrap().samples as u64;
+            assert_eq!(samples, samples_in_window(model, time, "a"));
+            samples
+        };
+        // the last 20 s, live, without the nulls
+        assert_eq!(samples(&mut distribution, &model, &time), 21 - 3);
+        // anew as the window is panned and zoomed, and moves on while live
+        time.pan_zoom(0.0, 40.0);
+        assert_eq!(samples(&mut distribution, &model, &time), 41 - 6);
+        time.pan_zoom(5.0, 15.0);
+        samples(&mut distribution, &model, &time);
+        time.go_live();
+        time.pan_zoom(20.0, 40.0);
+        append(&mut model, "a", (41.0, 1.0), &floats([1.0; 10]));
+        time.update(&model, 0.0);
+        samples(&mut distribution, &model, &time);
+
+        // a sample that holds long counts once, as in the bars
+        let mut model = Model::default();
+        append(&mut model, "a", (0.0, 1.0), &floats([0.0, 10.0]));
+        append(&mut model, "a", (2.0, 1.0), &floats([10.0]));
+        append(&mut model, "a", (19.0, 1.0), &floats([0.0]));
+        let time = live(&model);
+        let stats = boxes_of(&mut distribution, &model, &time, &NO_PLOTS)[0]
+            .clone()
+            .unwrap();
+        assert_eq!((stats.samples, stats.mean, stats.median), (4, 5.0, 5.0));
+
+        // the box does not depend on the range of the value axis
+        distribution.range = Some((100.0, 200.0));
+        let fixed = boxes_of(&mut distribution, &model, &time, &NO_PLOTS);
+        distribution.link = Some(ViewId(7));
+        let linked = boxes_of(&mut distribution, &model, &time, &plots((3.0, 4.0)));
+        assert_eq!(fixed, [Some(stats.clone())]);
+        assert_eq!(linked, [Some(stats)]);
+    }
+
+    #[test]
+    fn the_form_is_bars_by_default_and_boxes_give_each_trace_a_row() {
+        assert_eq!(Distribution::default().show, Show::Bars);
+        for orientation in Orientation::ALL {
+            let distribution = Distribution {
+                show: Show::Boxes,
+                orientation,
+                ..distribution_of(&["pose.x", "pose.y"])
+            };
+            let mut harness = harness(State::new(distribution, pose("m", "m")), false);
+            harness.run();
+            let state = harness.state();
+            let last = state.distribution.last.as_deref().cloned().unwrap();
+            let rows = last.rows.unwrap();
+            let across = match orientation {
+                Orientation::Upright => last.frame.height(),
+                Orientation::Sideways => last.frame.width(),
+            };
+            assert_eq!(rows.count, 2);
+            assert!(
+                (rows.length() - across / 2.0).abs() < 1.0e-3,
+                "{orientation:?}"
+            );
+            let covered = rows.rect(0).union(rows.rect(1));
+            assert!(
+                (covered.area() - last.frame.area()).abs() < 1.0,
+                "{orientation:?}"
+            );
+            // from the top down, from the left
+            let first = rows.rect(0).center();
+            match orientation {
+                Orientation::Upright => assert!(first.y < last.frame.center().y),
+                Orientation::Sideways => assert!(first.x < last.frame.center().x),
+            }
+            assert_eq!(last.names, ["x", "y"]);
+            // no bins or counts
+            assert_eq!(state.distribution.share_top, None);
+        }
+    }
+
+    #[test]
+    fn the_names_of_the_rows_are_cut_at_a_third_of_the_view() {
+        let paths = [
+            "arm/joint.shoulder_position_error",
+            "arm/joint.elbow_position_error",
+        ];
+        let model = || {
+            let mut model = Model::default();
+            for path in paths {
+                append(
+                    &mut model,
+                    path,
+                    (0.0, 0.1),
+                    &floats((0..50).map(f64::from)),
+                );
+            }
+            model
+        };
+        for orientation in Orientation::ALL {
+            let distribution = Distribution {
+                show: Show::Boxes,
+                orientation,
+                ..distribution_of(&paths)
+            };
+            let state = State::new(distribution, model());
+            let mut harness = sized_harness(state, false, egui::vec2(300.0, 200.0));
+            harness.run();
+            let last = harness
+                .state()
+                .distribution
+                .last
+                .as_deref()
+                .cloned()
+                .unwrap();
+            let full = ["elbow_position_error", "shoulder_position_error"];
+            for (name, full) in last.names.iter().zip(full) {
+                assert!(name.ends_with('…'), "{name}");
+                assert!(full.starts_with(name.trim_end_matches('…')), "{name}");
+            }
+            let font = egui::FontId::proportional(13.0);
+            let widths: Vec<f32> = (last.names.iter())
+                .map(|name| {
+                    harness.ctx.fonts_mut(|fonts| {
+                        let galley = fonts.layout_no_wrap(
+                            name.clone(),
+                            font.clone(),
+                            egui::Color32::PLACEHOLDER,
+                        );
+                        galley.size().x
+                    })
+                })
+                .collect();
+            assert!(widths.iter().all(|&width| width <= 100.0), "{widths:?}");
+            if orientation == Orientation::Upright {
+                // the names take at most a third of the view
+                assert!(last.frame.left() <= 300.0 / 3.0 + 8.0, "{:?}", last.frame);
+            } else {
+                // and fit their columns
+                let column = last.frame.width() / 2.0;
+                assert!(widths.iter().all(|&width| width < column), "{widths:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn both_puts_a_box_per_trace_in_the_strip_of_the_markers() {
+        let distribution = Distribution {
+            show: Show::Both,
+            markers: Markers::MeanSigma,
+            ..distribution_of(&["pose.x", "pose.y"])
+        };
+        let mut harness = harness(State::new(distribution, pose("m", "m")), false);
+        harness.run();
+        let state = harness.state();
+        let last = state.distribution.last.as_deref().cloned().unwrap();
+        let rows = last.rows.unwrap();
+        assert_eq!((rows.count, rows.length()), (2, 14.0));
+        assert_eq!(rows.style.thickness, 10.0);
+        assert_eq!(rows.centre(0), last.frame.top() + MARKER_INSET + 7.0);
+        // the boxes take the place of the markers, above the bars
+        let model = &state.model;
+        let counting = state
+            .distribution
+            .counting(model, &state.time, &NO_PLOTS, 1000.0);
+        let counted = counting.counted.as_ref().unwrap();
+        assert!(
+            state
+                .distribution
+                .markers(&counting.shown, counted)
+                .is_empty()
+        );
+        assert!(state.distribution.share_top.is_some());
+    }
+
+    #[test]
+    fn a_trace_without_samples_keeps_its_row() {
+        let model = || {
+            let mut model = Model::default();
+            append(&mut model, "a", (0.0, 1.0), &floats((0..40).map(f64::from)));
+            append(&mut model, "b", (0.0, 1.0), &floats([1.0, 2.0, 3.0]));
+            model
+        };
+        for show in [Show::Boxes, Show::Both] {
+            let distribution = Distribution {
+                show,
+                ..distribution_of(&["a", "b"])
+            };
+            let mut harness = harness(State::new(distribution, model()), false);
+            harness.run();
+            let last = harness
+                .state()
+                .distribution
+                .last
+                .as_deref()
+                .cloned()
+                .unwrap();
+            let rows = last.rows.unwrap();
+            assert_eq!(rows.count, 2, "{show:?}");
+            let state = harness.state_mut();
+            let boxes = boxes_of(
+                &mut state.distribution,
+                &state.model,
+                &state.time,
+                &NO_PLOTS,
+            );
+            assert!(boxes[0].is_some() && boxes[1].is_none(), "{show:?}");
+            // its tooltip says so
+            harness.hover_at(egui::pos2(last.frame.center().x, rows.centre(1)));
+            harness.run_steps(40);
+            assert_eq!(harness.state().distribution.hovered, Some(Hovered::Row(1)));
+            harness.get_by_label(boxes::NO_SAMPLES);
+            assert!(harness.query_by_label("Median").is_none());
+        }
+    }
+
+    #[test]
+    fn the_properties_hide_the_rows_that_do_not_apply_to_the_form() {
+        let mut harness = properties_harness(Distribution {
+            bins: BinMode::Width,
+            bin_width: 0.5,
+            ..Distribution::default()
+        });
+        harness.run();
+        let shows = |harness: &Harness<'_, Distribution>, labels: &[&str]| -> Vec<bool> {
+            (labels.iter())
+                .map(|label| harness.query_all_by_label(label).next().is_some())
+                .collect()
+        };
+        let labels = ["Markers", "Whiskers", "Mode", "Width", "Scale", "Range"];
+        assert_eq!(
+            shows(&harness, &labels),
+            [true, false, true, true, true, true]
+        );
+        let slot = harness.get_by_label("Markers").rect().top();
+
+        harness.get_by_label("Boxes").click();
+        harness.run();
+        harness.run();
+        assert_eq!(harness.state().show, Show::Boxes);
+        assert_eq!(
+            shows(&harness, &labels),
+            [false, true, false, false, false, true]
+        );
+        // in the place of the markers
+        assert!((harness.get_by_label("Whiskers").rect().top() - slot).abs() < 4.0);
+        harness
+            .get_by(|node| {
+                node.role() == egui::accesskit::Role::ComboBox
+                    && node.value().as_deref() == Some("1.5×IQR")
+            })
+            .click();
+        harness.run();
+        harness.get_by_label("5–95 %").click();
+        // the hover text of the choice under the pointer fades in
+        harness.run_steps(4);
+        assert_eq!(harness.state().whiskers, Whiskers::P5);
+        harness.event(egui::Event::PointerGone);
+        harness.run_steps(4);
+
+        harness.get_by_label("Both").click();
+        harness.run();
+        harness.run();
+        assert_eq!(
+            shows(&harness, &labels),
+            [false, true, true, true, true, true]
+        );
+        harness.get_by_label("Bars").click();
+        harness.run();
+        harness.run();
+        assert_eq!(
+            shows(&harness, &labels),
+            [true, false, true, true, true, true]
+        );
+        // the hidden settings are kept
+        let state = harness.state();
+        assert_eq!((state.bins, state.bin_width), (BinMode::Width, 0.5));
+        assert_eq!(state.whiskers, Whiskers::P5);
+    }
+
+    #[test]
+    fn a_linked_view_follows_the_plot_in_all_forms() {
+        let model = || {
+            let mut model = Model::default();
+            append(
+                &mut model,
+                "a",
+                (0.0, 0.1),
+                &floats((0..200).map(f64::from)),
+            );
+            model
+        };
+        for show in Show::ALL {
+            for orientation in Orientation::ALL {
+                let distribution = Distribution {
+                    show,
+                    orientation,
+                    link: Some(ViewId(7)),
+                    ..distribution_of(&["a"])
+                };
+                let mut state = State::new(distribution, model());
+                state.plots = plots((100.0, 150.0));
+                let mut harness = harness(state, false);
+                harness.run();
+                let values = |harness: &Harness<'_, State>| {
+                    let last = harness.state().distribution.last.as_deref().cloned();
+                    last.unwrap().values
+                };
+                assert_eq!(values(&harness), (100.0, 150.0), "{show:?} {orientation:?}");
+                super::super::scroll_wheel(&mut harness, egui::pos2(200.0, 150.0), 100.0);
+                assert_eq!(values(&harness), (100.0, 150.0), "{show:?} {orientation:?}");
+                harness.state_mut().plots = plots((120.0, 130.0));
+                harness.run();
+                assert_eq!(values(&harness), (120.0, 130.0), "{show:?} {orientation:?}");
+            }
+        }
+    }
+
+    /// The rects of the labels `texts` in the tooltip of `harness`, in their order.
+    fn tooltip_rects(harness: &Harness<'_, State>, texts: &[&str]) -> Vec<egui::Rect> {
+        let tooltip = tooltip_rect(harness);
+        (texts.iter())
+            .map(|text| {
+                (harness.get_all_by_label(text))
+                    .map(|node| node.rect())
+                    .find(|rect| tooltip.contains_rect(*rect))
+                    .unwrap_or_else(|| panic!("{text} in the tooltip"))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn hovering_a_row_lights_it_and_shows_the_box_of_the_trace() {
+        for orientation in Orientation::ALL {
+            let distribution = Distribution {
+                show: Show::Boxes,
+                orientation,
+                ..distribution_of(&["pose.x", "pose.y"])
+            };
+            let mut state = State::new(distribution, pose("m", "m"));
+            state.formats.set("pose.x", DisplayFormat::Scientific);
+            let mut harness = harness(state, false);
+            theme::install(&harness.ctx);
+            harness.run();
+            let last = harness
+                .state()
+                .distribution
+                .last
+                .as_deref()
+                .cloned()
+                .unwrap();
+            let rows = last.rows.unwrap();
+            // anywhere in the row, also away from the box
+            let at = match orientation {
+                Orientation::Upright => egui::pos2(last.frame.left() + 2.0, rows.centre(0) + 10.0),
+                Orientation::Sideways => egui::pos2(rows.centre(0) + 10.0, last.frame.top() + 2.0),
+            };
+            harness.hover_at(at);
+            harness.run_steps(40);
+            assert_eq!(
+                harness.state().distribution.hovered,
+                Some(Hovered::Row(0)),
+                "{orientation:?}"
+            );
+            let names = [
+                "Min",
+                "Low whisker",
+                "Q1",
+                "Median",
+                "Mean",
+                "Q3",
+                "High whisker",
+                "Max",
+            ];
+            let rects = tooltip_rects(&harness, &names);
+            // in the order drawn: low to high upright, high to low sideways
+            for pair in rects.windows(2) {
+                match orientation {
+                    Orientation::Upright => assert!(pair[0].top() < pair[1].top()),
+                    Orientation::Sideways => assert!(pair[0].top() > pair[1].top()),
+                }
+            }
+            // the trace and its values in its number format with its unit, right aligned
+            tooltip_rects(&harness, &["x"]);
+            let state = harness.state();
+            let mut distribution = state.distribution.clone();
+            let stats = boxes_of(&mut distribution, &state.model, &state.time, &NO_PLOTS)[0]
+                .clone()
+                .unwrap();
+            let step = boxes::value_step(&stats);
+            let texts: Vec<String> = (boxes::tooltip_rows(&stats, Whiskers::Iqr, orientation))
+                .into_iter()
+                .map(|(_, value, _)| {
+                    format!("{} m", write_value(value, step, DisplayFormat::Scientific))
+                })
+                .collect();
+            let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+            let values = tooltip_rects(&harness, &texts);
+            let right = values[0].right();
+            assert!(values.iter().all(|rect| (rect.right() - right).abs() < 0.5));
+            // the counts under the rule
+            let counts = tooltip_rects(&harness, &["Samples", "Outliers"]);
+            let lowest = rects.iter().map(|rect| rect.bottom()).fold(0.0, f32::max);
+            assert!(counts[0].top() > lowest && counts[1].top() > counts[0].top());
+            let samples = stats.samples.to_string();
+            let count = tooltip_rects(&harness, &[samples.as_str()]);
+            assert!(
+                (count[0].right() - right).abs() < 0.5,
+                "{count:?} {values:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn min_max_whiskers_leave_out_their_rows_and_percentiles_are_named() {
+        for (whiskers, low, high) in [
+            (Whiskers::MinMax, None, None),
+            (Whiskers::P5, Some("5 %"), Some("95 %")),
+            (Whiskers::P1, Some("1 %"), Some("99 %")),
+        ] {
+            let distribution = Distribution {
+                show: Show::Boxes,
+                whiskers,
+                ..distribution_of(&["pose.x", "pose.y"])
+            };
+            let mut harness = harness(State::new(distribution, pose("m", "m")), false);
+            harness.run();
+            let last = harness
+                .state()
+                .distribution
+                .last
+                .as_deref()
+                .cloned()
+                .unwrap();
+            let rows = last.rows.unwrap();
+            harness.hover_at(egui::pos2(last.frame.center().x, rows.centre(1)));
+            harness.run_steps(40);
+            tooltip_rects(&harness, &["y", "Min", "Q1", "Median", "Mean", "Q3", "Max"]);
+            for name in ["Low whisker", "High whisker"] {
+                assert!(harness.query_by_label(name).is_none(), "{whiskers:?}");
+            }
+            match (low, high) {
+                (Some(low), Some(high)) => {
+                    tooltip_rects(&harness, &[low, high, "Samples", "Outliers"]);
+                }
+                _ => {
+                    tooltip_rects(&harness, &["Samples"]);
+                    assert!(harness.query_by_label("Outliers").is_none());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn hovering_the_strip_of_both_shows_a_box_and_below_it_a_bin() {
+        let distribution = Distribution {
+            show: Show::Both,
+            ..distribution_of(&["pose.x", "pose.y"])
+        };
+        let mut harness = harness(State::new(distribution, pose("m", "m")), false);
+        harness.run();
+        let last = harness
+            .state()
+            .distribution
+            .last
+            .as_deref()
+            .cloned()
+            .unwrap();
+        let rows = last.rows.unwrap();
+        harness.hover_at(egui::pos2(last.frame.center().x, rows.centre(1)));
+        harness.run_steps(40);
+        assert_eq!(harness.state().distribution.hovered, Some(Hovered::Row(1)));
+        harness.get_by_label("Median");
+        harness.hover_at(egui::pos2(
+            last.frame.center().x,
+            last.frame.bottom() - 10.0,
+        ));
+        harness.run_steps(4);
+        assert!(matches!(
+            harness.state().distribution.hovered,
+            Some(Hovered::Bin(_))
+        ));
+    }
+
+    #[test]
+    fn show_and_whiskers_are_saved_and_old_histograms_load_as_bars() {
+        let distribution = Distribution {
+            show: Show::Both,
+            whiskers: Whiskers::P1,
+            ..distribution_of(&["a"])
+        };
+        let json = serde_json::to_string(&distribution).unwrap();
+        let loaded: Distribution = serde_json::from_str(&json).unwrap();
+        assert_eq!((loaded.show, loaded.whiskers), (Show::Both, Whiskers::P1));
+        // a view saved by the name it had before it showed boxes
+        let old =
+            r#"{"name": "Spread", "kind": {"Histogram": {"traces": ["a"], "markers": "Mean"}}}"#;
+        let view: crate::app::view::View = serde_json::from_str(old).unwrap();
+        assert_eq!(view.view_type(), ViewType::Distribution);
+        assert_eq!(view.view_type().name(), "Distribution");
+        let crate::app::view::ViewKind::Distribution(loaded) = &view.kind else {
+            panic!("a distribution");
+        };
+        assert_eq!(loaded.show, Show::Bars);
+        assert_eq!(loaded.whiskers, Whiskers::Iqr);
+        assert_eq!(loaded.markers, Markers::Mean);
+        // saved by its new name
+        let json = serde_json::to_string(&view).unwrap();
+        assert!(json.contains(r#""Distribution":"#), "{json}");
     }
 }

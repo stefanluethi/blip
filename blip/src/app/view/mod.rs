@@ -1,6 +1,6 @@
 pub mod actions;
+pub mod distribution;
 pub mod heatmap;
-pub mod histogram;
 pub mod log_table;
 pub mod plot;
 pub mod states;
@@ -30,7 +30,7 @@ pub struct ViewContext<'a> {
     pub formats: &'a Formats,
     /// Whether the shown view has a title row, see [`Viewable::title_ui`].
     pub titled: bool,
-    /// The plot views of the layout, which a histogram can be linked to.
+    /// The plot views of the layout, which a distribution can be linked to.
     pub plots: &'a Plots,
 }
 
@@ -61,7 +61,7 @@ pub struct PropertiesContext<'a> {
     pub model: &'a Model,
     /// The names of the open connections.
     pub connected: &'a HashSet<String>,
-    /// The plot views of the layout, which a histogram can be linked to.
+    /// The plot views of the layout, which a distribution can be linked to.
     pub plots: &'a Plots,
 }
 
@@ -71,7 +71,7 @@ pub struct PropertiesContext<'a> {
 #[derive(serde::Deserialize, serde::Serialize, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct ViewId(pub u64);
 
-/// A plot view of the layout, as a histogram linked to it sees it.
+/// A plot view of the layout, as a distribution linked to it sees it.
 #[derive(Clone, PartialEq, Debug)]
 pub struct PlotInfo {
     pub id: ViewId,
@@ -80,8 +80,9 @@ pub struct PlotInfo {
     pub y_range: Option<(f64, f64)>,
 }
 
-/// The plot views of the layout, in the order of the layout. A histogram can be linked
-/// to one of them, taking its traces and its y range, the only link between views.
+/// The plot views of the layout, in the order of the layout. A distribution can be
+/// linked to one of them, taking its traces and its y range, the only link between
+/// views.
 #[derive(Clone, Default, PartialEq, Debug)]
 pub struct Plots(pub Vec<PlotInfo>);
 
@@ -177,12 +178,13 @@ pub enum Selectable {
 /// Defines the types of views, `ViewType`, and the state of a view of each,
 /// `ViewKind`, from the list of the types, each the variant name and the type
 /// implementing [`Viewable`], [`ViewInfo`] and `Default`. A new type of view is added
-/// to the list in [`views!`] below; the variant names are saved in layouts.
+/// to the list in [`views!`] below; the variant names are saved in layouts. Attributes
+/// before a line go to its variant of `ViewKind`, e.g. a serde alias for an old name.
 macro_rules! views {
-    ($($kind:ident: $view:ty),* $(,)?) => {
+    ($($(#[$meta:meta])* $kind:ident: $view:ty),* $(,)?) => {
         #[derive(serde::Deserialize, serde::Serialize, Clone)]
         pub enum ViewKind {
-            $($kind($view)),*
+            $($(#[$meta])* $kind($view)),*
         }
 
         /// The kinds of views the user can add.
@@ -263,7 +265,9 @@ views! {
     States: states::States,
     Table: table::Table,
     Xy: xy::Xy,
-    Histogram: histogram::Histogram,
+    // called Histogram before it showed boxes too
+    #[serde(alias = "Histogram")]
+    Distribution: distribution::Distribution,
     Heatmap: heatmap::Heatmap,
     Logs: log_table::LogTable,
     Actions: actions::Actions,
@@ -487,8 +491,8 @@ impl View {
     /// Changes the views this view refers to by `map`, dropping those it maps to
     /// `None`, e.g. when a view is deleted or a layout saved or loaded.
     pub fn relink(&mut self, map: impl Fn(ViewId) -> Option<ViewId>) {
-        if let ViewKind::Histogram(histogram) = &mut self.kind {
-            histogram.link = histogram.link.and_then(map);
+        if let ViewKind::Distribution(distribution) = &mut self.kind {
+            distribution.link = distribution.link.and_then(map);
         }
     }
 
@@ -574,7 +578,7 @@ impl View {
             return;
         }
         let model = context.model;
-        let linked = matches!(&self.kind, ViewKind::Histogram(histogram) if histogram.following(context.plots));
+        let linked = matches!(&self.kind, ViewKind::Distribution(distribution) if distribution.following(context.plots));
         let paths: Vec<String> = match self.selection_mut() {
             Some(selection) if !selection.paths.is_empty() => {
                 selection.paths.iter().cloned().collect()
@@ -700,9 +704,9 @@ mod tests {
             name: "Errors".to_owned(),
             y_range: None,
         }]);
-        let mut view = View::new(ViewType::Histogram, "Spread".to_owned());
-        if let ViewKind::Histogram(histogram) = &mut view.kind {
-            histogram.traces.insert("motor/errors".to_owned());
+        let mut view = View::new(ViewType::Distribution, "Spread".to_owned());
+        if let ViewKind::Distribution(distribution) = &mut view.kind {
+            distribution.traces.insert("motor/errors".to_owned());
         }
         let format_disabled = |view: View, plots: Plots| {
             use egui_kittest::kittest::{NodeT, Queryable};
@@ -734,11 +738,11 @@ mod tests {
             format.accesskit_node().is_disabled()
         };
         assert!(!format_disabled(view.clone(), plots.clone()));
-        if let ViewKind::Histogram(histogram) = &mut view.kind {
-            histogram.link = Some(ViewId(7));
+        if let ViewKind::Distribution(distribution) = &mut view.kind {
+            distribution.link = Some(ViewId(7));
         }
         assert!(format_disabled(view.clone(), plots));
-        // a link to a plot no longer in the layout leaves them to the histogram
+        // a link to a plot no longer in the layout leaves them to the distribution
         assert!(!format_disabled(view, Plots::default()));
     }
 

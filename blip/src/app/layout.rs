@@ -510,20 +510,20 @@ impl Layout {
         Plots(plots)
     }
 
-    /// Gives each histogram linked to a plot the traces of the plot, with its wildcards
+    /// Gives each distribution linked to a plot the traces of the plot, with its wildcards
     /// and number formats, so that it shows what the plot shows. After unlinking, the
-    /// histogram keeps them.
+    /// distribution keeps them.
     pub fn take_linked_traces(&mut self) {
         let links: Vec<(TileId, TileId)> = (self.tree.tiles.iter())
             .filter_map(|(&tile_id, tile)| match tile {
                 Tile::Pane(View {
-                    kind: ViewKind::Histogram(histogram),
+                    kind: ViewKind::Distribution(distribution),
                     ..
-                }) => Some((tile_id, tile_of(histogram.link?))),
+                }) => Some((tile_id, tile_of(distribution.link?))),
                 _ => None,
             })
             .collect();
-        for (histogram, plot) in links {
+        for (distribution, plot) in links {
             let Some(View {
                 kind: ViewKind::Plot(plot),
                 wildcards,
@@ -534,25 +534,25 @@ impl Layout {
                 continue;
             };
             let taken = (plot.traces.clone(), wildcards.clone(), formats.clone());
-            if let Some(Tile::Pane(view)) = self.tree.tiles.get_mut(histogram)
-                && let ViewKind::Histogram(histogram) = &mut view.kind
+            if let Some(Tile::Pane(view)) = self.tree.tiles.get_mut(distribution)
+                && let ViewKind::Distribution(distribution) = &mut view.kind
             {
-                (histogram.traces, view.wildcards, view.formats) = taken;
+                (distribution.traces, view.wildcards, view.formats) = taken;
             }
         }
     }
 
     /// The name of the plot the selected view takes its traces from, if it is a
-    /// histogram linked to a plot.
+    /// distribution linked to a plot.
     pub fn selected_link(&self) -> Option<&str> {
         let Some(View {
-            kind: ViewKind::Histogram(histogram),
+            kind: ViewKind::Distribution(distribution),
             ..
         }) = self.view(self.selected?)
         else {
             return None;
         };
-        match self.view(tile_of(histogram.link?))? {
+        match self.view(tile_of(distribution.link?))? {
             View {
                 name,
                 kind: ViewKind::Plot(_),
@@ -1750,17 +1750,17 @@ mod tests {
         assert!(layout.view(plot).is_none());
     }
 
-    /// The histogram at `tile_id` of `layout`.
-    fn histogram(
+    /// The distribution at `tile_id` of `layout`.
+    fn distribution(
         layout: &mut Layout,
         tile_id: TileId,
-    ) -> &mut crate::app::view::histogram::Histogram {
+    ) -> &mut crate::app::view::distribution::Distribution {
         match layout.tree.tiles.get_mut(tile_id) {
             Some(Tile::Pane(View {
-                kind: ViewKind::Histogram(histogram),
+                kind: ViewKind::Distribution(distribution),
                 ..
-            })) => histogram,
-            _ => panic!("{tile_id:?} is no histogram"),
+            })) => distribution,
+            _ => panic!("{tile_id:?} is no distribution"),
         }
     }
 
@@ -1778,7 +1778,7 @@ mod tests {
     #[test]
     fn the_plots_of_the_layout_are_listed_with_the_y_ranges_they_show() {
         let (mut layout, tab, first, _) = default_layout();
-        let histogram = layout.add_view_into(tab, ViewType::Histogram);
+        let distribution = layout.add_view_into(tab, ViewType::Distribution);
         layout.add_view_into(tab, ViewType::Plot);
         let model = Model::default();
         let names = |plots: &Plots| -> Vec<String> {
@@ -1788,7 +1788,7 @@ mod tests {
         let plots = layout.plots(&model);
         assert_eq!(names(&plots), ["Plot 1", "Plot 2"]);
         assert_eq!(plots.0[0].id, view_id(first));
-        assert!(plots.get(view_id(histogram)).is_none());
+        assert!(plots.get(view_id(distribution)).is_none());
         assert_eq!(plots.0[0].y_range, None);
         // fixed, then zoomed or panned
         (
@@ -1803,23 +1803,23 @@ mod tests {
     #[test]
     fn deleting_a_plot_drops_the_links_to_it() {
         let (mut layout, tab, plot, logs) = default_layout();
-        let shown = layout.add_view_into(tab, ViewType::Histogram);
-        histogram(&mut layout, shown).link = Some(view_id(plot));
+        let shown = layout.add_view_into(tab, ViewType::Distribution);
+        distribution(&mut layout, shown).link = Some(view_id(plot));
         layout.remove(logs);
-        assert_eq!(histogram(&mut layout, shown).link, Some(view_id(plot)));
+        assert_eq!(distribution(&mut layout, shown).link, Some(view_id(plot)));
         layout.remove(plot);
-        assert_eq!(histogram(&mut layout, shown).link, None);
+        assert_eq!(distribution(&mut layout, shown).link, None);
     }
 
     #[test]
     fn a_linked_histogram_takes_the_traces_of_the_plot() {
         let (mut layout, tab, source, logs) = default_layout();
-        let shown = layout.add_view_into(tab, ViewType::Histogram);
+        let shown = layout.add_view_into(tab, ViewType::Distribution);
         let view = |layout: &mut Layout, tile_id| match layout.tree.tiles.get_mut(tile_id) {
             Some(Tile::Pane(view)) => view.clone(),
             _ => panic!("{tile_id:?} is no view"),
         };
-        histogram(&mut layout, shown).traces = ["own".to_owned()].into();
+        distribution(&mut layout, shown).traces = ["own".to_owned()].into();
         let traces: std::collections::BTreeSet<String> = ["a".to_owned(), "b".to_owned()].into();
         plot(&mut layout, source).traces = traces.clone();
         if let Some(Tile::Pane(view)) = layout.tree.tiles.get_mut(source) {
@@ -1830,16 +1830,16 @@ mod tests {
         // unlinked, it keeps its own
         layout.take_linked_traces();
         assert_eq!(
-            histogram(&mut layout, shown).traces,
+            distribution(&mut layout, shown).traces,
             ["own".to_owned()].into()
         );
         layout.select(shown);
         assert_eq!(layout.selected_link(), None);
 
-        histogram(&mut layout, shown).link = Some(view_id(source));
+        distribution(&mut layout, shown).link = Some(view_id(source));
         layout.take_linked_traces();
         let linked = view(&mut layout, shown);
-        assert_eq!(histogram(&mut layout, shown).traces, traces);
+        assert_eq!(distribution(&mut layout, shown).traces, traces);
         assert_eq!(linked.wildcards, ["motor".to_owned()].into());
         assert_eq!(
             linked.formats.of("a"),
@@ -1850,23 +1850,23 @@ mod tests {
         plot(&mut layout, source).traces.remove("b");
         layout.take_linked_traces();
         assert_eq!(
-            histogram(&mut layout, shown).traces,
+            distribution(&mut layout, shown).traces,
             ["a".to_owned()].into()
         );
         // a link to another view takes nothing
-        histogram(&mut layout, shown).link = Some(view_id(logs));
-        histogram(&mut layout, shown).traces.clear();
+        distribution(&mut layout, shown).link = Some(view_id(logs));
+        distribution(&mut layout, shown).traces.clear();
         layout.take_linked_traces();
-        assert!(histogram(&mut layout, shown).traces.is_empty());
+        assert!(distribution(&mut layout, shown).traces.is_empty());
         assert_eq!(layout.selected_link(), None);
         // unlinked, it keeps what it took
-        histogram(&mut layout, shown).link = Some(view_id(source));
+        distribution(&mut layout, shown).link = Some(view_id(source));
         layout.take_linked_traces();
-        histogram(&mut layout, shown).link = None;
+        distribution(&mut layout, shown).link = None;
         plot(&mut layout, source).traces.clear();
         layout.take_linked_traces();
         assert_eq!(
-            histogram(&mut layout, shown).traces,
+            distribution(&mut layout, shown).traces,
             ["a".to_owned()].into()
         );
     }
@@ -1875,10 +1875,10 @@ mod tests {
     fn links_between_views_survive_saving_and_loading() {
         let (mut layout, tab, first, _) = default_layout();
         let second = layout.add_view_into(tab, ViewType::Plot);
-        let shown = layout.add_view_into(tab, ViewType::Histogram);
+        let shown = layout.add_view_into(tab, ViewType::Distribution);
         // the tiles no longer count from the first
         layout.remove(first);
-        histogram(&mut layout, shown).link = Some(view_id(second));
+        distribution(&mut layout, shown).link = Some(view_id(second));
         let saved = layout.to_saved();
         let json = serde_json::to_string(&saved).unwrap();
         // the plot is the second view saved, after the logs
@@ -1890,7 +1890,7 @@ mod tests {
             panic!("three views");
         };
         assert_eq!(loaded.view(plot).unwrap().name, "Plot 2");
-        assert_eq!(histogram(&mut loaded, shown).link, Some(view_id(plot)));
+        assert_eq!(distribution(&mut loaded, shown).link, Some(view_id(plot)));
         assert_eq!(serde_json::to_string(&loaded.to_saved()).unwrap(), json);
     }
 }

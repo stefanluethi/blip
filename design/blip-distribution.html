@@ -1,0 +1,611 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>blip distribution view: box plots</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400&family=Fira+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<style>
+/* The tokens of blip/src/app/theme.rs. --q is theme.tint as an opacity. */
+:root, :root[data-theme="dark"] {
+  --canvas:#111217; --panel:#181b1f; --card:#181b1f; --control:#22252b; --hover:#2a2d34; --popup:#22252b;
+  --border:#2a2d33; --border-strong:#3a3e46; --text:#ccccdc; --text-weak:#9a9aab; --text-faint:#6e6e80;
+  --accent:#3d71d9; --accent-text:#6e9fff; --on-accent:#fff; --cursor:#ececf4;
+  --t0:#648fff; --t1:#fe6100; --t2:#dc267f; --t3:#ffb000; --t4:#785ef0; --t5:#9aa0a6;
+  --q:.16; --shadow:rgba(0,0,0,.47);
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --canvas:#f4f5f5; --panel:#fff; --card:#fff; --control:#f4f5f5; --hover:#eceef0; --popup:#fff;
+  --border:#dcdee1; --border-strong:#c7cacf; --text:#24292e; --text-weak:#5b6168; --text-faint:#878d95;
+  --accent:#3871dc; --accent-text:#1f62e0; --on-accent:#fff; --cursor:#3a3f46;
+  --t5:#6b7280;
+  --q:.14; --shadow:rgba(0,0,0,.11);
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--canvas); color: var(--text); font: 400 15px/1.5 "Fira Sans", system-ui, sans-serif; }
+.mono { font-family: "Fira Code", ui-monospace, monospace; }
+
+.page { max-width: 1240px; margin: 0 auto; padding: 32px 24px 80px; }
+.page > header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 40px; }
+.page > header img { width: 32px; height: 32px; }
+.page h1 { font-size: 26px; font-weight: 500; margin: 0; letter-spacing: -0.01em; }
+.page > header p { margin: 0; color: var(--text-weak); flex: 1 1 320px; max-width: 72ch; }
+section.idea { margin: 0 0 64px; }
+section.idea > h2 { font-size: 20px; font-weight: 500; margin: 0 0 6px; }
+section.idea > p { margin: 0 0 16px; max-width: 76ch; color: var(--text-weak); }
+section.idea > p b, .notes b { color: var(--text); font-weight: 500; }
+.compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 24px 20px; align-items: start; }
+.compare.narrow-cards { grid-template-columns: repeat(auto-fit, minmax(280px, 300px)); }
+.compare.one { grid-template-columns: minmax(0, 1fr); }
+figure { margin: 0; min-width: 0; }
+figcaption { font-size: 13px; color: var(--text-weak); margin: 0 0 8px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+figcaption b { color: var(--text); font-weight: 500; }
+figcaption .pick { color: var(--accent-text); }
+.notes { font-size: 13px; color: var(--text-weak); margin: 10px 2px 0; padding: 0; list-style: none; }
+.notes li { margin: 0 0 4px; padding-left: 14px; position: relative; }
+.notes li::before { content: ""; position: absolute; left: 2px; top: .62em; width: 5px; height: 1px; background: var(--text-faint); }
+.controls { display: flex; flex-wrap: wrap; gap: 10px 22px; margin: 0 0 18px; font-size: 13px; color: var(--text-weak); }
+.controls label { display: inline-flex; gap: 8px; align-items: center; }
+
+.seg { height: 26px; border: 1px solid var(--border); background: var(--canvas); border-radius: 3px; display: inline-flex; padding: 2px; gap: 2px; }
+.seg button { font: inherit; font-size: 13px; color: var(--text-weak); background: none; border: 1px solid transparent; border-radius: 2px; padding: 0 12px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--control); border-color: var(--border-strong); color: var(--text); }
+.seg button:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 1px; }
+
+/* The mockup of the app: egui points are CSS pixels. */
+.app { font: 400 13px/1 "Fira Sans", sans-serif; font-variant-numeric: tabular-nums; color: var(--text); }
+.stage { background: var(--canvas); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; min-width: 0; }
+.card-title { height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 12px; white-space: nowrap; }
+.card-title .ph { color: var(--text-weak); font-size: 14px; }
+.card-title .more { margin-left: auto; color: var(--text-weak); font-size: 16px; flex: none; }
+.legend { display: flex; gap: 12px; overflow: hidden; margin-left: 8px; min-width: 0; flex: 0 1 auto; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; color: var(--text-weak); }
+.legend i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+.card-body { padding: 0 8px 8px; }
+.card-body.untitled { padding-top: 8px; }
+.plotbox { position: relative; width: 100%; }
+.plotbox svg { display: block; }
+.tk { fill: var(--text-weak); font-size: 12px; font-family: "Fira Sans", sans-serif; font-variant-numeric: tabular-nums; }
+.tk.faint { fill: var(--text-faint); }
+.cap { fill: var(--text-weak); font-size: 11px; font-family: "Fira Sans", sans-serif; }
+.hint { fill: var(--text-faint); font-size: 13px; font-family: "Fira Sans", sans-serif; }
+.pair { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(0, 1fr); gap: 8px; }
+
+/* tooltips: the bin tooltip of today, and the box tooltip proposed */
+.tip { position: absolute; pointer-events: none; background: var(--popup); border: 1px solid var(--border); border-radius: 4px; box-shadow: 0 4px 12px var(--shadow); padding: 6px 8px; font-size: 13px; white-space: nowrap; display: none; z-index: 3; }
+.tip.static { position: static; display: inline-block; }
+.tip .th { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.tip .th i { width: 8px; height: 8px; border-radius: 50%; }
+.tip .th .w { color: var(--text-weak); margin-left: 6px; }
+.tip .g { display: grid; grid-template-columns: auto auto; column-gap: 16px; row-gap: 0; align-items: center; }
+.tip .g span { height: 18px; display: flex; align-items: center; color: var(--text-weak); }
+.tip .g b { height: 18px; display: flex; align-items: center; justify-content: flex-end; font-weight: 500; }
+.tip .g .box { color: var(--text); }
+.tip .g .f { color: var(--text-faint); font-weight: 400; }
+.tip .g .rule { grid-column: 1 / -1; height: 1px; background: var(--border); margin: 3px 0; }
+.lbox { position: absolute; top: 14px; right: 18px; background: var(--card); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 13px; }
+.lbox div { display: flex; gap: 6px; justify-content: flex-end; align-items: center; height: 18px; color: var(--text-weak); }
+.lbox i { width: 8px; height: 8px; border-radius: 50%; }
+
+/* properties panel */
+.props { background: var(--panel); padding: 4px 10px 10px; width: 300px; max-width: 100%; }
+.props .head { height: 30px; display: flex; align-items: center; font-size: 11px; font-weight: 500; color: var(--text-weak); letter-spacing: .02em; }
+.props .vt { display: flex; align-items: center; gap: 8px; height: 30px; }
+.props .vt .ph { color: var(--accent-text); }
+.props .vt .kind { margin-left: auto; font-size: 12px; color: var(--text-weak); border: 1px solid var(--border); border-radius: 3px; padding: 3px 6px; }
+.props .sec { height: 30px; display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 500; color: var(--text-weak); border-top: 1px solid var(--border); margin-top: 4px; letter-spacing: .02em; }
+.props .sec .ph { font-size: 10px; }
+.props .pr { min-height: 30px; display: grid; grid-template-columns: 76px 1fr; gap: 8px; align-items: center; }
+.props .pr > span:first-child { color: var(--text-weak); }
+.props .pr.sub > span:first-child { padding-left: 10px; }
+.props .new { box-shadow: inset 2px 0 0 var(--accent); margin-left: -10px; padding-left: 10px; }
+.field { height: 24px; border: 1px solid var(--border); background: var(--canvas); border-radius: 3px; display: flex; align-items: center; padding: 0 6px; gap: 6px; }
+.sg { height: 24px; border: 1px solid var(--border); background: var(--canvas); border-radius: 3px; display: flex; padding: 2px; gap: 2px; }
+.sg span { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--text-weak); border-radius: 2px; border: 1px solid transparent; padding: 0 5px; white-space: nowrap; }
+.sg span.on { background: var(--control); border-color: var(--border-strong); color: var(--text); }
+.combo { height: 24px; width: 120px; border: 1px solid var(--border); background: var(--control); border-radius: 3px; display: flex; align-items: center; justify-content: space-between; padding: 0 6px; }
+.propsrow { display: flex; flex-wrap: wrap; gap: 20px; align-items: start; }
+
+.reco { border-left: 2px solid var(--accent); padding: 4px 0 4px 16px; max-width: 80ch; }
+.reco p { margin: 0 0 10px; color: var(--text-weak); }
+.reco p b { color: var(--text); font-weight: 500; }
+
+@media (max-width: 720px) { .pair { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <img src="icon/blip-standard.svg" alt="">
+    <h1>Distribution view: boxes</h1>
+    <p>The histogram view becomes Distribution, and Show picks Bars, Boxes or Both. This study compares three ways to draw a box in blip's look, with the tokens of <span class="mono">theme.rs</span> at the app's size. Hover a box to see its tooltip.</p>
+    <div class="seg" role="group" aria-label="Theme">
+      <button type="button" data-theme-choice="dark">Dark</button>
+      <button type="button" data-theme-choice="light">Light</button>
+    </div>
+  </header>
+
+  <section class="idea" id="boxes">
+    <h2>Show: Boxes</h2>
+    <p>The cycle times of the target's tasks over 20 s, a nominal 1000 µs each. <b>ctrl_loop</b> is tight but now and then late, <b>can_rx</b> jitters evenly, <b>telemetry</b> has long tails. A row per trace along one shared value axis; bins and counts play no part.</p>
+    <div class="controls">
+      <label>Traces <span class="seg" role="group" data-ctl="n"><button type="button" data-v="1">1</button><button type="button" data-v="3">3</button><button type="button" data-v="6">6</button></span></label>
+      <label>Whiskers <span class="seg" role="group" data-ctl="wh"><button type="button" data-v="iqr">1.5×IQR</button><button type="button" data-v="mm">Min–max</button><button type="button" data-v="p5">5–95 %</button><button type="button" data-v="p1">1–99 %</button></span></label>
+      <label>Orientation <span class="seg" role="group" data-ctl="or"><button type="button" data-v="up">Upright</button><button type="button" data-v="side">Sideways</button></span></label>
+      <label>Card <span class="seg" role="group" data-ctl="narrow"><button type="button" data-v="0">Wide</button><button type="button" data-v="1">Narrow</button></span></label>
+    </div>
+    <div class="compare" id="box-compare">
+      <figure><figcaption><b>A. Washed boxes, names on the axis</b> <span class="pick">the bars' look, folded into a box</span></figcaption>
+        <div class="stage app"><div class="card"><div class="card-title" data-legend="tasks"></div><div class="card-body"><div class="plotbox" id="ba"></div></div></div></div>
+        <ul class="notes">
+          <li><b>Box</b>: <span class="mono">wash</span> under a 1.5 pt outline, as the bars. <b>Median</b> 2.5 pt across the box. <b>Mean</b> the marker dot (r 3) with a 1.5 pt ring in <span class="mono">card</span>, so it stays clear on the median.</li>
+          <li><b>Whiskers</b> 1.5 pt with caps half as long as the box is thick. <b>Outliers</b> dots of r 2 at 45 %: piles of them darken, single ones stay quiet.</li>
+          <li><b>Thickness</b> 40 % of the row, 6 to 24 pt. <b>Names</b> on the category axis in <span class="mono">text_weak</span> at tick size, cut with "…" at a third of the card. No row lines.</li>
+        </ul>
+      </figure>
+      <figure><figcaption><b>B. Outlined boxes on bands</b> <span class="pick">the least ink, rows told apart by bands</span></figcaption>
+        <div class="stage app"><div class="card"><div class="card-title" data-legend="tasks"></div><div class="card-body"><div class="plotbox" id="bb"></div></div></div></div>
+        <ul class="notes">
+          <li><b>Box</b>: outline only, 1.5 pt. <b>Median</b> 2 pt. <b>Whiskers</b> 1 pt without caps. <b>Outliers</b> rings of r 2.5 at 55 %.</li>
+          <li><b>Names</b> only in the legend of the title row, in row order. Every other row gets a band in <span class="mono">hover</span> at half opacity. The plot keeps its width; sideways, the empty bottom row still lines up with a plot.</li>
+          <li>Thickness 60 % of the row, up to 32 pt. Without a title row the corner legend covers the top row.</li>
+        </ul>
+      </figure>
+      <figure><figcaption><b>C. Range bars with captions</b> <span class="pick">thin and dense, like a scope's measurement bar</span></figcaption>
+        <div class="stage app"><div class="card"><div class="card-title" data-legend="tasks"></div><div class="card-body"><div class="plotbox" id="bc"></div></div></div></div>
+        <ul class="notes">
+          <li><b>Box</b>: a solid <span class="mono">tint</span> bar 10 pt thick whatever the row, no outline. <b>Median</b> a 2 pt tick taller than the bar. <b>Whiskers</b> 1 pt, no caps. <b>Outliers</b> short ticks at 50 %, a rug.</li>
+          <li><b>Names</b> as 11 pt captions inside each row (upright), under each column (sideways). Rows split by 1 px <span class="mono">border</span> lines.</li>
+          <li>The same drawing as the strip of Both, only larger. Rows can be as low as 28 pt.</li>
+        </ul>
+      </figure>
+    </div>
+  </section>
+
+  <section class="idea" id="both">
+    <h2>Show: Both</h2>
+    <p>Bars as today, and in the strip above them a thin box per trace in place of the mean and σ markers. The box says where the middle half lies; the bars show what the box hides: <b>x</b> and <b>y</b> of <b>robot/pose</b> pile up at their turning points, which no box can tell.</p>
+    <div class="controls">
+      <label>Traces <span class="seg" role="group" data-ctl="bn"><button type="button" data-v="1">1</button><button type="button" data-v="3">3</button><button type="button" data-v="6">6</button></span></label>
+      <label>Orientation <span class="seg" role="group" data-ctl="bor"><button type="button" data-v="up">Upright</button><button type="button" data-v="side">Sideways</button></span></label>
+    </div>
+    <div class="compare">
+      <figure><figcaption><b>A strip</b> <span class="pick">10 pt rows, 6 pt washed box</span></figcaption>
+        <div class="stage app"><div class="card"><div class="card-title" data-legend="pose"></div><div class="card-body"><div class="plotbox" id="sa"></div></div></div></div>
+        <ul class="notes"><li>Row height stays <span class="mono">MARKER_ROW</span> 10. The box is 6 pt with a 1 pt outline, the median 2 pt, whisker caps ±3 pt as today's σ whisker. Outliers r 1.5.</li></ul>
+      </figure>
+      <figure><figcaption><b>B strip</b> <span class="pick">10 pt rows, 6 pt outline</span></figcaption>
+        <div class="stage app"><div class="card"><div class="card-title" data-legend="pose"></div><div class="card-body"><div class="plotbox" id="sb"></div></div></div></div>
+        <ul class="notes"><li>At 6 pt the empty box nearly closes up; the mean dot fills it.</li></ul>
+      </figure>
+      <figure><figcaption><b>C strip</b> <span class="pick">10 pt rows, 6 pt tint bar</span></figcaption>
+        <div class="stage app"><div class="card"><div class="card-title" data-legend="pose"></div><div class="card-body"><div class="plotbox" id="sc"></div></div></div></div>
+        <ul class="notes"><li>A solid bar reads best at this size; the median tick spans the whole row.</li></ul>
+      </figure>
+    </div>
+  </section>
+
+  <section class="idea" id="sideways">
+    <h2>Sideways, next to a plot</h2>
+    <p>Boxes turned on their side beside a plot of <b>motor.speed_rpm</b>. The values run up the shared y range; the names take the place of the time axis, so both plot areas start and end at the same height. One trace makes one box, kept at the largest thickness instead of a slab.</p>
+    <div class="compare one">
+      <figure><figcaption><b>A, value axis on the left</b></figcaption>
+        <div class="stage app"><div class="pair">
+          <div class="card"><div class="card-title"><i class="ph ph-chart-line"></i><span>Motor speed</span><span class="legend"><span><i style="background:var(--t0)"></i>speed_rpm</span><span>rpm</span></span><i class="ph ph-dots-three more"></i></div><div class="card-body"><div class="plotbox" id="sp1"></div></div></div>
+          <div class="card"><div class="card-title"><i class="ph ph-chart-bar"></i><span>Speed spread</span><span class="legend"><span><i style="background:var(--t0)"></i>speed_rpm</span><span>rpm</span></span><i class="ph ph-dots-three more"></i></div><div class="card-body"><div class="plotbox" id="ss1"></div></div></div>
+        </div></div>
+        <ul class="notes"><li>speed_rpm holds at 2400, 800 and 1800 rpm. The box spans the middle half of the time and its median sits on the 1800 plateau; the bars of Both would show the three plateaus.</li></ul>
+      </figure>
+    </div>
+  </section>
+
+  <section class="idea" id="tooltip">
+    <h2>The box tooltip</h2>
+    <p>Laid out like the bin tooltip: names in <span class="mono">text_weak</span> on the left, values right aligned in one column as wide as the widest. The trace heads it with its dot. The five numbers of the box are in <span class="mono">text</span>, the ends in weak; counts sit under a rule. Values in the trace's number format with the unit.</p>
+    <div class="compare narrow-cards">
+      <figure><figcaption><b>1.5×IQR</b></figcaption><div id="tt1"></div></figure>
+      <figure><figcaption><b>Min–max</b> <span class="pick">no whisker or outlier rows</span></figcaption><div id="tt2"></div></figure>
+      <figure><figcaption><b>Sideways</b> <span class="pick">listed top down, as drawn</span></figcaption><div id="tt3"></div></figure>
+    </div>
+    <ul class="notes" style="max-width:80ch">
+      <li>The order follows the picture: low to high upright, high to low sideways. Percentile whiskers are named by their percent ("5 %", "95 %") instead of "Low whisker".</li>
+      <li>Hovering anywhere in a row lights it in <span class="mono">hover</span>, as the column of a bin.</li>
+    </ul>
+  </section>
+
+  <section class="idea" id="edges">
+    <h2>Empty, single and crowded</h2>
+    <p>Shown in A. The other options treat these the same way.</p>
+    <div class="compare narrow-cards">
+      <figure><figcaption><b>One trace without samples</b></figcaption>
+        <div class="stage app"><div class="card"><div class="card-title" data-legend="tasks3"></div><div class="card-body"><div class="plotbox" id="e1"></div></div></div></div>
+        <ul class="notes"><li>Its row stays, with its name and "No samples" in <span class="mono">text_faint</span>, so the rows do not jump.</li></ul>
+      </figure>
+      <figure><figcaption><b>All samples the same</b></figcaption>
+        <div class="stage app"><div class="card"><div class="card-title"><i class="ph ph-chart-bar"></i><span>Supply</span><span class="legend"><span><i style="background:var(--t0)"></i>vbat</span><span><i style="background:var(--t1)"></i>vref</span><span>V</span></span><i class="ph ph-dots-three more"></i></div><div class="card-body"><div class="plotbox" id="e2"></div></div></div></div>
+        <ul class="notes"><li>vref is always 3.3 V: the box collapses to its median line with the mean dot on it.</li></ul>
+      </figure>
+      <figure><figcaption><b>Fixed range cuts a box</b></figcaption>
+        <div class="stage app"><div class="card"><div class="card-title"><i class="ph ph-chart-bar"></i><span>Speed spread</span><span class="legend"><span><i style="background:var(--t0)"></i>speed_rpm</span><span>rpm</span></span><i class="ph ph-dots-three more"></i></div><div class="card-body"><div class="plotbox" id="e3"></div></div></div></div>
+        <ul class="notes"><li>Range 1500 to 2500: the low whisker runs into the edge without a cap, so it reads as cut. The tooltip still gives the true values.</li></ul>
+      </figure>
+      <figure><figcaption><b>Many outliers, live</b></figcaption>
+        <div class="stage app"><div class="card"><div class="card-title"><i class="ph ph-chart-bar"></i><span>ISR latency</span><span class="legend"><span><i style="background:var(--t0)"></i>uart_isr</span><span><i style="background:var(--t1)"></i>dma_isr</span><span>µs</span></span><i class="ph ph-dots-three more"></i></div><div class="card-body"><div class="plotbox" id="e4"></div></div></div></div>
+        <ul class="notes"><li>A skewed latency: hundreds of samples past 1.5×IQR. At 45 % they merge into a soft trail instead of a row of beads.</li></ul>
+      </figure>
+      <figure><figcaption><b>Long names, narrow card</b></figcaption>
+        <div class="stage app"><div class="card"><div class="card-title"><i class="ph ph-chart-bar"></i><span>Joint errors</span><span class="legend"><span><i style="background:var(--t0)"></i>shoulder.position_error</span><span><i style="background:var(--t1)"></i>elbow.position_error</span><span><i style="background:var(--t2)"></i>wrist.position_error</span></span><i class="ph ph-dots-three more"></i></div><div class="card-body"><div class="plotbox" id="e5"></div></div></div></div>
+        <ul class="notes"><li>The name column takes at most a third of the card and cuts the rest with "…"; the full path is in the tooltip.</li></ul>
+      </figure>
+      <figure><figcaption><b>Alone in a tab</b> <span class="pick">no title row</span></figcaption>
+        <div class="stage app"><div class="card"><div class="card-body untitled"><div class="plotbox" id="e6"></div></div></div></div>
+        <ul class="notes"><li>With names on the axis A needs no corner legend in Boxes; Both keeps it, as today.</li></ul>
+      </figure>
+    </div>
+  </section>
+
+  <section class="idea" id="properties">
+    <h2>Properties</h2>
+    <p>Show comes first, because it decides what else applies. Markers and Whiskers share one slot, so switching Show swaps one row in place. Range moves out of Bins into Values, because it cuts boxes too. Rows that do not apply are hidden, as Axis side is today. New or moved rows are marked blue here.</p>
+    <div class="propsrow" id="props"></div>
+    <ul class="notes" style="max-width:80ch;margin-top:14px">
+      <li><b>Whiskers</b> is a combo box (1.5×IQR, Min–max, 5–95 %, 1–99 %), as the plot link is: four segments do not fit the 300 pt panel beside the label. Each entry gets a hover text, e.g. "Up to the last sample within 1.5 times the box length".</li>
+      <li>The section that held Orientation and Markers was called Bars; it becomes Display, as it now holds Show.</li>
+      <li>Hidden, not greyed: a greyed Bins section in Boxes would look like it does something. Settings of hidden rows are kept and come back with Bars.</li>
+    </ul>
+  </section>
+
+  <section class="idea" id="reco">
+    <h2>Recommendation</h2>
+    <div class="reco">
+      <p><b>A, washed boxes with names on the axis.</b> A box drawn as a wash under a 1.5 pt outline is the bars' look folded up, so Bars, Boxes and Both read as one view, and the strip of Both is the same box at 6 pt. Names on the category axis make a box plot readable without matching colours to a legend, which matters with six traces of near-equal colour; the legend in the title row stays as in every view.</p>
+      <p>Caps on the whiskers and translucent dots for outliers keep the classic box plot that firmware developers know. Clamping thickness to 24 pt keeps one or two traces from becoming slabs.</p>
+      <p>From C, take the 1 px <span class="mono">border</span> line between rows if six rows look loose. B's bands draw in the eye too much for a calm tool, and its names exist only as colours.</p>
+    </div>
+  </section>
+</div>
+
+<script>
+// theme toggle
+(function () {
+  const root = document.documentElement;
+  let saved = null;
+  try { saved = localStorage.getItem('blip-ideas-theme'); } catch (e) {}
+  saved = new URLSearchParams(location.search).get('theme') || saved;
+  const set = (t) => {
+    root.dataset.theme = t;
+    document.querySelectorAll('[data-theme-choice]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.themeChoice === t)));
+    try { localStorage.setItem('blip-ideas-theme', t); } catch (e) {}
+  };
+  set(saved === 'light' ? 'light' : 'dark');
+  document.querySelectorAll('[data-theme-choice]').forEach(b => b.addEventListener('click', () => set(b.dataset.themeChoice)));
+})();
+
+// ---- data, seeded ----
+function rng(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const rnd = rng(11);
+const gauss = () => { let u = 0, v = 0; while (!u) u = rnd(); v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+const N = 1000, times = Array.from({ length: N }, (_, i) => i * 0.02), TAU = 2 * Math.PI;
+const wrap = a => { a = (a + Math.PI) % TAU; if (a < 0) a += TAU; return a - Math.PI; };
+const D = {
+  ctrl: times.map(() => 1000 + 4 * gauss() + (rnd() < 0.025 ? 25 + 70 * rnd() : 0)),
+  can: times.map(() => 1000 + 60 * (rnd() - 0.5) + 2 * gauss()),
+  tele: times.map(() => 1000 + 9 * gauss() / Math.max(0.25, Math.abs(gauss()))),
+  adc: times.map(() => 997 + 2 * gauss()),
+  poll: times.map(() => (rnd() < 0.5 ? 985 : 1018) + 3 * gauss()),
+  wdog: times.map((t) => 1004 + 6 * Math.sin(TAU * t / 7) + 3 * gauss()),
+  heading: times.map(t => wrap(-1.5 + t / 20 * TAU * 1.1 + 0.9 * Math.sin(TAU * t / 9)) + 0.01 * gauss()),
+  x: times.map(t => 2 * Math.sin(TAU * (t - 6.5) / 23) + 0.02 * gauss()),
+  y: times.map(t => Math.sin(TAU * t / 13 + 3.3) + 0.02 * gauss()),
+  tx: times.map(t => 1.7 * Math.sin(TAU * (t - 5.5) / 23) + 0.02 * gauss()),
+  ty: times.map(t => 0.8 * Math.sin(TAU * t / 13 + 3.0) + 0.02 * gauss()),
+  err: times.map(() => 0.35 * gauss()),
+  speed: times.map(t => { let v; if (t < 7) v = 2400; else if (t < 10) v = 800 + 1600 * Math.exp(-(t - 7) / 0.55); else if (t < 11.6) v = 800; else v = 1800 - 1000 * Math.exp(-(t - 11.6) / 0.45); return v + 9 * gauss(); }),
+  uart: times.map(() => 3 + Math.exp(1.1 + 0.55 * gauss())),
+  dma: times.map(() => 2 + Math.exp(0.6 + 0.35 * gauss())),
+  vbat: times.map(t => 3.62 - 0.004 * t + 0.01 * gauss()),
+  shoulder: times.map(() => 0.004 * gauss() + 0.001),
+  elbow: times.map(() => 0.007 * gauss() - 0.002),
+  wrist: times.map(() => 0.011 * gauss()),
+};
+const S = (name, ci, vals) => ({ name, ci, vals });
+const taskTraces = n => n === 1 ? [S('ctrl_loop', 0, D.ctrl)]
+  : n === 3 ? [S('ctrl_loop', 0, D.ctrl), S('can_rx', 1, D.can), S('telemetry', 2, D.tele)]
+  : [S('ctrl_loop', 0, D.ctrl), S('can_rx', 1, D.can), S('telemetry', 2, D.tele), S('adc_isr', 3, D.adc), S('sensor_poll', 4, D.poll), S('watchdog', 5, D.wdog)];
+const poseTraces = n => n === 1 ? [S('x', 0, D.x)]
+  : n === 3 ? [S('heading', 0, D.heading), S('x', 1, D.x), S('y', 2, D.y)]
+  : [S('error', 0, D.err), S('heading', 1, D.heading), S('pose.x', 2, D.x), S('pose.y', 3, D.y), S('target.x', 4, D.tx), S('target.y', 5, D.ty)];
+
+// ---- numbers ----
+function nice(x) { const p = Math.pow(10, Math.floor(Math.log10(x))); const m = x / p; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p; }
+function niceNear(x) { const p = Math.pow(10, Math.floor(Math.log10(x))); const m = x / p; return (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * p; }
+function decimals(step) { return Math.max(0, -Math.floor(Math.log10(step) + 1e-9)); }
+function fmt(v, step) { const d = decimals(step); const s = v.toFixed(d); return s === '-' + (0).toFixed(d) ? (0).toFixed(d) : s; }
+function ticks(lo, hi, max) { const step = niceNear((hi - lo) / Math.max(1, max)); const out = []; for (let v = Math.ceil(lo / step - 1e-9) * step; v <= hi + 1e-9; v += step) out.push(+v.toFixed(10)); return { out, step }; }
+const sig = v => { if (v === 0) return '0'; const d = Math.max(0, 3 - Math.floor(Math.log10(Math.abs(v))) - 1); return v.toFixed(Math.min(d, 6)); };
+
+// ---- box statistics: over all samples, each once ----
+function boxStats(vals, wh) {
+  const s = [...vals].sort((a, b) => a - b), n = s.length;
+  const q = p => { const h = (n - 1) * p, i = Math.floor(h); return i + 1 < n ? s[i] + (h - i) * (s[i + 1] - s[i]) : s[i]; };
+  const q1 = q(.25), med = q(.5), q3 = q(.75), iqr = q3 - q1;
+  const mean = s.reduce((a, b) => a + b, 0) / n;
+  let lo, hi;
+  if (wh === 'mm') { lo = s[0]; hi = s[n - 1]; }
+  else if (wh === 'p5') { lo = q(.05); hi = q(.95); }
+  else if (wh === 'p1') { lo = q(.01); hi = q(.99); }
+  else { const a = q1 - 1.5 * iqr, b = q3 + 1.5 * iqr; lo = s.find(v => v >= a); hi = [...s].reverse().find(v => v <= b); }
+  const out = wh === 'mm' ? [] : s.filter(v => v < lo || v > hi);
+  return { n, min: s[0], max: s[n - 1], q1, med, q3, mean, lo, hi, out, below: out.filter(v => v < lo).length };
+}
+
+// ---- text measuring, for the name column ----
+const ctx = document.createElement('canvas').getContext('2d');
+const textW = (t, px = 12) => { ctx.font = `400 ${px}px "Fira Sans"`; return ctx.measureText(t).width; };
+const cut = (t, w, px = 12) => { if (textW(t, px) <= w) return t; while (t.length > 1 && textW(t + '…', px) > w) t = t.slice(0, -1); return t + '…'; };
+const esc = t => t.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+const col = i => `var(--t${Math.min(i, 5)})`;
+
+// ---- one box, in the look of an option ----
+// at(v, a): the point of value v at `a` across the row; ax: the centre across; t: thickness
+function boxSvg(st, c, ax, t, at, side, look, strip) {
+  let s = '';
+  const L = (v1, a1, v2, a2, w, extra = '') => { const [x1, y1] = at(v1, a1), [x2, y2] = at(v2, a2); return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" style="stroke:${c}" stroke-width="${w}" ${extra}/>`; };
+  const rect = (va, vb, aa, ab, style) => { const [x1, y1] = at(va, aa), [x2, y2] = at(vb, ab); return `<rect x="${Math.min(x1, x2)}" y="${Math.min(y1, y2)}" width="${Math.max(Math.abs(x2 - x1), .01)}" height="${Math.abs(y2 - y1)}" ${style}/>`; };
+  const h = t / 2;
+  const P = look === 'A' ? { w: strip ? 1.5 : 1.5, med: strip ? 2 : 2.5, cap: strip ? 3 : Math.min(h, 10), out: strip ? 1.5 : 2 }
+    : look === 'B' ? { w: 1, med: 2, cap: 0, out: strip ? 1.5 : 2.5 }
+    : { w: 1, med: 2, cap: 0, out: 0 };
+  // outliers first, under everything
+  for (const v of st.out) {
+    if (look === 'C') s += L(v, ax - h * .7, v, ax + h * .7, 1, 'stroke-opacity=".5"');
+    else if (look === 'B') { const [x, y] = at(v, ax); s += `<circle cx="${x}" cy="${y}" r="${P.out}" fill="none" style="stroke:${c}" stroke-width="1" stroke-opacity=".55"/>`; }
+    else { const [x, y] = at(v, ax); s += `<circle cx="${x}" cy="${y}" r="${P.out}" style="fill:${c}" fill-opacity=".45"/>`; }
+  }
+  // whiskers
+  s += L(st.lo, ax, st.q1, ax, P.w) + L(st.q3, ax, st.hi, ax, P.w);
+  if (P.cap) s += L(st.lo, ax - P.cap, st.lo, ax + P.cap, P.w) + L(st.hi, ax - P.cap, st.hi, ax + P.cap, P.w);
+  // box
+  if (look === 'A') s += rect(st.q1, st.q3, ax - h, ax + h, `style="fill:${c};stroke:${c}" fill-opacity="var(--q)" stroke-width="${strip ? 1 : 1.5}"`);
+  else if (look === 'B') s += rect(st.q1, st.q3, ax - h, ax + h, `fill="none" style="stroke:${c}" stroke-width="${strip ? 1 : 1.5}"`);
+  else { s += rect(st.q1, st.q3, ax - h, ax + h, `style="fill:var(--card)"`); s += rect(st.q1, st.q3, ax - h, ax + h, `style="fill:${c}" fill-opacity="calc(var(--q) * 2.2)"`); }
+  // median, then the mean dot
+  const mh = look === 'C' ? (strip ? 5 : h + 3) : h;
+  s += L(st.med, ax - mh, st.med, ax + mh, P.med);
+  const [mx, my] = at(st.mean, ax);
+  s += `<circle cx="${mx}" cy="${my}" r="3" style="fill:${c};stroke:var(--card)" stroke-width="1.5" paint-order="stroke"/>`;
+  return s;
+}
+
+// ---- the box tooltip ----
+function tipHtml(sr, st, wh, unit, side, dec) {
+  const u = unit ? ' ' + unit : '', f = v => v.toFixed(dec) + u;
+  const lowName = wh === 'p5' ? '5 %' : wh === 'p1' ? '1 %' : 'Low whisker', highName = wh === 'p5' ? '95 %' : wh === 'p1' ? '99 %' : 'High whisker';
+  let rows = [['Min', st.min, 0], ...(wh === 'mm' ? [] : [[lowName, st.lo, 0]]), ['Q1', st.q1, 1], ['Median', st.med, 1], ['Mean', st.mean, 1], ['Q3', st.q3, 1], ...(wh === 'mm' ? [] : [[highName, st.hi, 0]]), ['Max', st.max, 0]];
+  if (side) rows = rows.reverse();
+  let g = rows.map(([k, v, box]) => `<span>${k}</span><b class="${box ? 'box' : ''}" style="${box ? '' : 'color:var(--text-weak);font-weight:400'}">${f(v)}</b>`).join('');
+  g += `<div class="rule"></div><span>Samples</span><b>${st.n}</b>`;
+  if (wh !== 'mm') g += `<span>Outliers</span><b class="${st.out.length ? '' : 'f'}">${st.out.length}</b>`;
+  return `<div class="th"><i style="background:${col(sr.ci)}"></i><span>${esc(sr.name)}</span></div><div class="g">${g}</div>`;
+}
+function placeTip(el, tip, px, py, H) {
+  tip.style.display = 'block';
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  let tx = px + 14, ty = py + 14;
+  if (tx + tw > el.clientWidth) tx = px - tw - 10;
+  if (ty + th > H) ty = py - th - 10;
+  tip.style.left = Math.max(0, tx) + 'px'; tip.style.top = Math.max(0, ty) + 'px';
+}
+function valueRange(series, o) {
+  if (o.vrange) return o.vrange;
+  const all = series.flatMap(s => s.vals); let lo = Math.min(...all), hi = Math.max(...all);
+  if (hi === lo) return [lo - Math.abs(lo) * 0.05 - 0.05, hi + Math.abs(hi) * 0.05 + 0.05];
+  const p = (hi - lo) * 0.05; return [lo - p, hi + p];
+}
+
+// ---- Show: Boxes ----
+function drawBoxes(el, o) {
+  const w = Math.max(160, Math.floor(el.clientWidth)), H = o.h || 260;
+  const side = o.orient === 'side', look = o.look, series = o.series, n = series.length;
+  // the room for the names: A and C upright on the left, A and C sideways below
+  let nameW = 0;
+  if (!side && look === 'A') nameW = Math.min(Math.max(...series.map(s => textW(s.name))) + 2, Math.max(40, w / 3), 160);
+  const M = side ? { l: o.axis === 'right' ? 10 : 50, r: o.axis === 'right' ? 50 : 12, t: 8, b: 24 }
+    : { l: look === 'A' ? nameW + 12 : 12, r: 12, t: 8, b: o.unit ? 38 : 24 };
+  const x0 = M.l, x1 = w - M.r, y0 = M.t, y1 = H - M.b;
+  const [vlo, vhi] = valueRange(series.filter(s => s.vals.length), o);
+  const V = v => side ? y1 - (v - vlo) / (vhi - vlo) * (y1 - y0) : x0 + (v - vlo) / (vhi - vlo) * (x1 - x0);
+  const across = side ? x1 - x0 : y1 - y0, row = across / n;
+  const rowStart = i => side ? x0 + i * row : y0 + i * row;
+  const capH = look === 'C' && !side ? 15 : 0;
+  const centre = i => rowStart(i) + capH + (row - capH) / 2;
+  const thick = look === 'A' ? Math.max(6, Math.min(24, 0.4 * row)) : look === 'B' ? Math.max(6, Math.min(32, 0.6 * row)) : Math.min(10, Math.max(6, 0.5 * (row - capH)));
+  const at = (v, a) => side ? [a, V(v)] : [V(v), a];
+  let s = `<svg width="${w}" height="${H}" viewBox="0 0 ${w} ${H}" role="img" aria-label="box plot"><defs><clipPath id="clip-${el.id}"><rect x="${x0}" y="${y0}" width="${x1 - x0}" height="${y1 - y0}"/></clipPath></defs>`;
+  // bands of B
+  if (look === 'B') for (let i = 1; i < n; i += 2) s += side ? `<rect x="${rowStart(i)}" y="${y0}" width="${row}" height="${y1 - y0}" style="fill:var(--hover)" fill-opacity=".55"/>` : `<rect x="${x0}" y="${rowStart(i)}" width="${x1 - x0}" height="${row}" style="fill:var(--hover)" fill-opacity=".55"/>`;
+  // value grid and ticks
+  const valLen = side ? y1 - y0 : x1 - x0;
+  const vt = ticks(vlo, vhi, Math.max(2, Math.floor(valLen / (side ? 48 : 60))));
+  for (const v of vt.out) {
+    if (v < vlo || v > vhi) continue;
+    const p = V(v), label = fmt(v, vt.step);
+    if (side) { s += `<line x1="${x0}" x2="${x1}" y1="${p}" y2="${p}" style="stroke:var(--border)"/>`; s += o.axis === 'right' ? `<text class="tk" x="${x1 + 6}" y="${p + 4}">${label}</text>` : `<text class="tk" x="${x0 - 6}" y="${p + 4}" text-anchor="end">${label}</text>`; }
+    else s += `<line x1="${p}" x2="${p}" y1="${y0}" y2="${y1}" style="stroke:var(--border)"/><text class="tk" x="${p}" y="${y1 + 15}" text-anchor="middle">${label}</text>`;
+  }
+  if (o.unit && !side) s += `<text class="tk" x="${(x0 + x1) / 2}" y="${y1 + 31}" text-anchor="middle">${o.unit}</text>`;
+  if (side && o.unit) s += `<text class="tk" transform="translate(${o.axis === 'right' ? w - 4 : 12} ${(y0 + y1) / 2}) rotate(-90)" text-anchor="middle">${o.unit}</text>`;
+  // row lines of C
+  if (look === 'C') for (let i = 1; i < n; i++) { const p = rowStart(i); s += side ? `<line x1="${p}" x2="${p}" y1="${y0}" y2="${y1}" style="stroke:var(--border)"/>` : `<line x1="${x0}" x2="${x1}" y1="${p}" y2="${p}" style="stroke:var(--border)"/>`; }
+  // names
+  series.forEach((sr, i) => {
+    const faint = !sr.vals.length ? ' faint' : '';
+    if (look === 'A' || (look === 'C' && side)) {
+      if (side) s += `<text class="tk${faint}" x="${centre(i)}" y="${y1 + 15}" text-anchor="middle">${esc(cut(sr.name, row - 6))}</text>`;
+      else if (look === 'A') s += `<text class="tk${faint}" x="${x0 - 8}" y="${centre(i) + 4}" text-anchor="end">${esc(cut(sr.name, nameW))}</text>`;
+    } else if (look === 'C') s += `<text class="cap${faint}" x="${x0 + 6}" y="${rowStart(i) + 13}">${esc(cut(sr.name, x1 - x0 - 12, 11))}</text>`;
+  });
+  s += `<g clip-path="url(#clip-${el.id})"><rect class="hov" x="0" y="0" width="0" height="0" style="fill:var(--hover)"/>`;
+  const stats = series.map(sr => sr.vals.length ? boxStats(sr.vals, o.wh) : null);
+  series.forEach((sr, i) => {
+    if (!stats[i]) { const [x, y] = side ? [centre(i), (y0 + y1) / 2] : [(x0 + x1) / 2, centre(i) + 4]; s += `<text class="hint" x="${x}" y="${y}" text-anchor="middle">No samples</text>`; return; }
+    s += boxSvg(stats[i], col(sr.ci), centre(i), thick, at, side, look, false);
+  });
+  s += `</g><rect x="${x0 + .5}" y="${y0 + .5}" width="${x1 - x0 - 1}" height="${y1 - y0 - 1}" fill="none" style="stroke:var(--border)"/></svg>`;
+  el.innerHTML = s + `<div class="tip"></div>` + (o.legendBox ? `<div class="lbox">${series.map(sr => `<div>${sr.name}<i style="background:${col(sr.ci)}"></i></div>`).join('')}</div>` : '');
+  const svg = el.querySelector('svg'), hov = el.querySelector('.hov'), tip = el.querySelector('.tip');
+  svg.addEventListener('mousemove', ev => {
+    const r = svg.getBoundingClientRect(), px = ev.clientX - r.left, py = ev.clientY - r.top;
+    const a = side ? px : py, i = Math.floor((a - (side ? x0 : y0)) / row);
+    if (px < x0 || px > x1 || py < y0 || py > y1 || i < 0 || i >= n || !stats[i]) { hov.setAttribute('width', 0); tip.style.display = 'none'; return; }
+    if (side) { hov.setAttribute('x', rowStart(i)); hov.setAttribute('width', row); hov.setAttribute('y', y0); hov.setAttribute('height', y1 - y0); }
+    else { hov.setAttribute('y', rowStart(i)); hov.setAttribute('height', row); hov.setAttribute('x', x0); hov.setAttribute('width', x1 - x0); }
+    tip.innerHTML = tipHtml(series[i], stats[i], o.wh, o.unit, side, o.dec ?? 1);
+    placeTip(el, tip, px, py, H);
+  });
+  svg.addEventListener('mouseleave', () => { hov.setAttribute('width', 0); tip.style.display = 'none'; });
+}
+
+// ---- Show: Both (today's bars, with boxes in the strip) ----
+function binsFor(series, px) {
+  const all = series.flatMap(s => s.vals); let lo = Math.min(...all), hi = Math.max(...all);
+  const target = Math.min(64, Math.max(8, Math.sqrt(Math.max(...series.map(s => s.vals.length)))));
+  let h = niceNear((hi - lo) / target); while ((hi - lo) / h > px / 4) h = nice(h * 1.5);
+  const start = Math.floor(lo / h) * h; let n = Math.max(1, Math.ceil((hi - start) / h - 1e-9)); if (start + n * h <= hi) n++;
+  return { start, h, n, lo, hi };
+}
+function drawBoth(el, o) {
+  const w = Math.max(160, Math.floor(el.clientWidth)), H = o.h || 260;
+  const side = o.orient === 'side', series = o.series, look = o.look;
+  const M = side ? { l: 50, r: 12, t: 8, b: 24 } : { l: 46, r: 12, t: 8, b: o.unit ? 38 : 24 };
+  const x0 = M.l, x1 = w - M.r, y0 = M.t, y1 = H - M.b;
+  const valLen = side ? y1 - y0 : x1 - x0, B = binsFor(series, valLen);
+  const shares = series.map(sr => { const c = new Array(B.n).fill(0); for (const v of sr.vals) c[Math.min(B.n - 1, Math.floor((v - B.start) / B.h + 1e-9))]++; return c.map(k => k / sr.vals.length); });
+  const maxC = Math.max(...shares.flat());
+  const pad = (B.hi - B.lo) * 0.05, vlo = B.lo - pad, vhi = B.hi + pad;
+  const ROW = 10, INSET = 3, GAP = 6, lane = INSET + series.length * ROW + GAP;
+  const cTop = maxC * 1.08;
+  const V = v => side ? y1 - (v - vlo) / (vhi - vlo) * (y1 - y0) : x0 + (v - vlo) / (vhi - vlo) * (x1 - x0);
+  const C = c => side ? x0 + c / cTop * (x1 - x0 - lane) : y1 - c / cTop * (y1 - y0 - lane);
+  const P = (v, c) => side ? [C(c), V(v)] : [V(v), C(c)];
+  let s = `<svg width="${w}" height="${H}" viewBox="0 0 ${w} ${H}" role="img" aria-label="histogram with boxes"><defs><clipPath id="clip-${el.id}"><rect x="${x0}" y="${y0}" width="${x1 - x0}" height="${y1 - y0}"/></clipPath></defs>`;
+  const vt = ticks(vlo, vhi, Math.max(2, Math.floor(valLen / (side ? 48 : 55))));
+  for (const v of vt.out) { if (v < vlo || v > vhi) continue; const p = V(v), label = fmt(v, vt.step);
+    if (side) s += `<line x1="${x0}" x2="${x1}" y1="${p}" y2="${p}" style="stroke:var(--border)"/><text class="tk" x="${x0 - 6}" y="${p + 4}" text-anchor="end">${label}</text>`;
+    else s += `<line x1="${p}" x2="${p}" y1="${y0}" y2="${y1}" style="stroke:var(--border)"/><text class="tk" x="${p}" y="${y1 + 15}" text-anchor="middle">${label}</text>`; }
+  const ct = ticks(0, cTop, Math.max(2, Math.floor((side ? x1 - x0 - lane : y1 - y0 - lane) / (side ? 60 : 45))));
+  for (const v of ct.out) { const p = C(v), label = Math.round(v * 100) + ' %';
+    if (side) s += `<line x1="${p}" x2="${p}" y1="${y0}" y2="${y1}" style="stroke:var(--border)"/><text class="tk" x="${p}" y="${y1 + 15}" text-anchor="middle">${label}</text>`;
+    else s += `<line x1="${x0}" x2="${x1}" y1="${p}" y2="${p}" style="stroke:var(--border)"/><text class="tk" x="${x0 - 6}" y="${p + 4}" text-anchor="end">${label}</text>`; }
+  if (o.unit && !side) s += `<text class="tk" x="${(x0 + x1) / 2}" y="${y1 + 31}" text-anchor="middle">${o.unit}</text>`;
+  s += `<g clip-path="url(#clip-${el.id})"><rect class="hov" x="0" y="0" width="0" height="0" style="fill:var(--hover)"/>`;
+  const edge = i => B.start + i * B.h;
+  series.forEach((sr, j) => shares[j].forEach((c, i) => { if (!c) return; const [ax, ay] = P(edge(i), 0), [bx, by] = P(edge(i + 1), c); s += `<rect x="${Math.min(ax, bx)}" y="${Math.min(ay, by)}" width="${Math.abs(bx - ax)}" height="${Math.abs(by - ay)}" style="fill:${col(sr.ci)}" fill-opacity="var(--q)" shape-rendering="crispEdges"/>`; }));
+  series.forEach((sr, j) => { const pts = [P(edge(0), 0)]; shares[j].forEach((c, i) => pts.push(P(edge(i), c), P(edge(i + 1), c))); pts.push(P(edge(B.n), 0)); s += `<polyline points="${pts.map(p => p.join(',')).join(' ')}" fill="none" style="stroke:${col(sr.ci)}" stroke-width="1.5"/>`; });
+  // the strip: a row per trace at the far end of the counts axis
+  const stats = series.map(sr => boxStats(sr.vals, 'iqr'));
+  const rowAt = j => side ? x1 - INSET - (j + .5) * ROW : y0 + INSET + (j + .5) * ROW;
+  const at = (v, a) => side ? [a, V(v)] : [V(v), a];
+  series.forEach((sr, j) => { s += boxSvg(stats[j], col(sr.ci), rowAt(j), 6, at, side, look, true); });
+  s += `</g><rect x="${x0 + .5}" y="${y0 + .5}" width="${x1 - x0 - 1}" height="${y1 - y0 - 1}" fill="none" style="stroke:var(--border)"/></svg>`;
+  el.innerHTML = s + `<div class="tip"></div>`;
+  const svg = el.querySelector('svg'), hov = el.querySelector('.hov'), tip = el.querySelector('.tip');
+  svg.addEventListener('mousemove', ev => {
+    const r = svg.getBoundingClientRect(), px = ev.clientX - r.left, py = ev.clientY - r.top;
+    const a = side ? x1 - px - INSET : py - y0 - INSET, j = Math.floor(a / ROW);
+    if (px < x0 || px > x1 || py < y0 || py > y1 || j < 0 || j >= series.length) { hov.setAttribute('width', 0); tip.style.display = 'none'; return; }
+    const st = rowAt(j) - ROW / 2;
+    if (side) { hov.setAttribute('x', st); hov.setAttribute('width', ROW); hov.setAttribute('y', y0); hov.setAttribute('height', y1 - y0); }
+    else { hov.setAttribute('y', st); hov.setAttribute('height', ROW); hov.setAttribute('x', x0); hov.setAttribute('width', x1 - x0); }
+    tip.innerHTML = tipHtml(series[j], stats[j], 'iqr', o.unit, side, 2);
+    placeTip(el, tip, px, py, H);
+  });
+  svg.addEventListener('mouseleave', () => { hov.setAttribute('width', 0); tip.style.display = 'none'; });
+}
+
+// the motor speed over time, as Plot draws it
+function drawSpeedPlot(el, o) {
+  const w = Math.max(200, Math.floor(el.clientWidth)), H = o.h;
+  const x0 = 50, x1 = w - 12, y0 = 8, y1 = H - 24, [lo, hi] = o.yrange;
+  const X = t => x0 + t / 20 * (x1 - x0), Y = v => y1 - (v - lo) / (hi - lo) * (y1 - y0);
+  let s = `<svg width="${w}" height="${H}" viewBox="0 0 ${w} ${H}" role="img" aria-label="plot"><defs><clipPath id="clip-${el.id}"><rect x="${x0}" y="${y0}" width="${x1 - x0}" height="${y1 - y0}"/></clipPath></defs>`;
+  const vt = ticks(lo, hi, Math.floor((y1 - y0) / 48));
+  for (const v of vt.out) s += `<line x1="${x0}" x2="${x1}" y1="${Y(v)}" y2="${Y(v)}" style="stroke:var(--border)"/><text class="tk" x="${x0 - 6}" y="${Y(v) + 4}" text-anchor="end">${fmt(v, vt.step)}</text>`;
+  for (const [t, label] of [[5.5, '17:15:32'], [15.5, '17:15:42']]) s += `<line x1="${X(t)}" x2="${X(t)}" y1="${y0}" y2="${y1}" style="stroke:var(--border)"/><text class="tk" x="${X(t)}" y="${y1 + 15}" text-anchor="middle">${label}</text>`;
+  s += `<text class="tk" transform="translate(12 ${(y0 + y1) / 2}) rotate(-90)" text-anchor="middle">rpm</text>`;
+  s += `<polyline clip-path="url(#clip-${el.id})" points="${D.speed.map((v, i) => X(times[i]).toFixed(1) + ',' + Y(v).toFixed(1)).join(' ')}" fill="none" style="stroke:var(--t0)" stroke-width="1.5"/>`;
+  s += `<rect x="${x0 + .5}" y="${y0 + .5}" width="${x1 - x0 - 1}" height="${y1 - y0 - 1}" fill="none" style="stroke:var(--border)"/></svg>`;
+  el.innerHTML = s;
+}
+
+// ---- properties panels ----
+function props(show) {
+  const sg = (items, on) => `<span class="sg">${items.map(i => `<span class="${i === on ? 'on' : ''}">${i}</span>`).join('')}</span>`;
+  const pr = (k, v, cls = '') => `<div class="pr ${cls}"><span>${k}</span>${v}</div>`;
+  const sec = t => `<div class="sec"><i class="ph ph-caret-down"></i>${t}</div>`;
+  let h = `<div class="head">PROPERTIES</div><div class="vt"><i class="ph ph-chart-bar"></i><span>Task periods</span><span class="kind">Distribution</span></div>`;
+  h += sec('LINK') + pr('Plot', `<span class="combo">None <i class="ph ph-caret-down"></i></span>`);
+  h += sec('DISPLAY') + pr('Show', sg(['Bars', 'Boxes', 'Both'], show), 'new') + pr('Orientation', sg(['Upright', 'Sideways'], 'Upright'));
+  h += show === 'Bars' ? pr('Markers', sg(['Off', 'Mean', 'Mean ±σ'], 'Off')) : pr('Whiskers', `<span class="combo">1.5×IQR <i class="ph ph-caret-down"></i></span>`, 'new');
+  h += sec('VALUES') + pr('Range', sg(['Auto', 'Fixed'], 'Auto'), 'new');
+  if (show !== 'Boxes') h += sec('BINS') + pr('Mode', sg(['Auto', 'Number', 'Width'], 'Auto')) + sec('COUNTS') + pr('Scale', sg(['Linear', 'Log'], 'Linear'));
+  return `<figure><figcaption><b>Show: ${show}</b></figcaption><div class="stage app" style="padding:0;overflow:hidden;width:fit-content;max-width:100%"><div class="props">${h}</div></div></figure>`;
+}
+
+// ---- the figures ----
+const state = { n: '3', wh: 'iqr', or: 'up', narrow: '0', bn: '3', bor: 'up' };
+const spRange = (() => { const lo = Math.min(...D.speed), hi = Math.max(...D.speed), p = (hi - lo) * .05; return [lo - p, hi + p]; })();
+const figures = [
+  ['ba', () => drawBoxes, () => ({ look: 'A', series: taskTraces(+state.n), unit: 'µs', wh: state.wh, orient: state.or, h: 270 })],
+  ['bb', () => drawBoxes, () => ({ look: 'B', series: taskTraces(+state.n), unit: 'µs', wh: state.wh, orient: state.or, h: 270 })],
+  ['bc', () => drawBoxes, () => ({ look: 'C', series: taskTraces(+state.n), unit: 'µs', wh: state.wh, orient: state.or, h: 270 })],
+  ['sa', () => drawBoth, () => ({ look: 'A', series: poseTraces(+state.bn), unit: +state.bn === 1 ? 'm' : null, orient: state.bor, h: 270 })],
+  ['sb', () => drawBoth, () => ({ look: 'B', series: poseTraces(+state.bn), unit: +state.bn === 1 ? 'm' : null, orient: state.bor, h: 270 })],
+  ['sc', () => drawBoth, () => ({ look: 'C', series: poseTraces(+state.bn), unit: +state.bn === 1 ? 'm' : null, orient: state.bor, h: 270 })],
+  ['ss1', () => drawBoxes, () => ({ look: 'A', series: [S('speed_rpm', 0, D.speed)], wh: 'iqr', orient: 'side', h: 260, vrange: spRange, unit: 'rpm', dec: 0 })],
+  ['e1', () => drawBoxes, () => ({ look: 'A', series: [S('ctrl_loop', 0, D.ctrl), S('can_rx', 1, []), S('telemetry', 2, D.tele)], unit: 'µs', wh: 'iqr', h: 210 })],
+  ['e2', () => drawBoxes, () => ({ look: 'A', series: [S('vbat', 0, D.vbat), S('vref', 1, Array(400).fill(3.3))], unit: 'V', wh: 'iqr', h: 210, dec: 3 })],
+  ['e3', () => drawBoxes, () => ({ look: 'A', series: [S('speed_rpm', 0, D.speed)], unit: 'rpm', wh: 'iqr', h: 210, vrange: [1500, 2500], dec: 0 })],
+  ['e4', () => drawBoxes, () => ({ look: 'A', series: [S('uart_isr', 0, D.uart), S('dma_isr', 1, D.dma)], unit: 'µs', wh: 'iqr', h: 210 })],
+  ['e5', () => drawBoxes, () => ({ look: 'A', series: [S('shoulder.position_error', 0, D.shoulder), S('elbow.position_error', 1, D.elbow), S('wrist.position_error', 2, D.wrist)], unit: 'rad', wh: 'iqr', h: 210, dec: 4 })],
+  ['e6', () => drawBoxes, () => ({ look: 'A', series: taskTraces(3), unit: 'µs', wh: 'iqr', h: 230 })],
+];
+const legends = {
+  tasks: () => [taskTraces(+state.n), 'µs', 'Task periods'],
+  tasks3: () => [[S('ctrl_loop', 0), S('can_rx', 1), S('telemetry', 2)], 'µs', 'Task periods'],
+  pose: () => [poseTraces(+state.bn), +state.bn === 1 ? 'm' : null, 'Pose spread'],
+};
+function legendHtml([series, unit, title]) {
+  return `<i class="ph ph-chart-bar"></i><span>${title}</span><span class="legend">${series.map(sr => `<span><i style="background:${col(sr.ci)}"></i>${sr.name}</span>`).join('')}${unit ? `<span>${unit}</span>` : ''}</span><i class="ph ph-dots-three more"></i>`;
+}
+function renderAll() {
+  document.querySelectorAll('[data-legend]').forEach(e => e.innerHTML = legendHtml(legends[e.dataset.legend]()));
+  document.getElementById('box-compare').classList.toggle('narrow-cards', state.narrow === '1');
+  for (const [id, f, o] of figures) f()(document.getElementById(id), o());
+  drawSpeedPlot(document.getElementById('sp1'), { h: 260, yrange: spRange });
+  const ctl = S('ctrl_loop', 0, D.ctrl);
+  const tt = (id, wh, side) => document.getElementById(id).innerHTML = `<div class="app"><div class="tip static">${tipHtml(ctl, boxStats(ctl.vals, wh), wh, 'µs', side, 1)}</div></div>`;
+  tt('tt1', 'iqr', false); tt('tt2', 'mm', false); tt('tt3', 'iqr', true);
+  document.getElementById('props').innerHTML = ['Bars', 'Boxes', 'Both'].map(props).join('');
+}
+document.querySelectorAll('[data-ctl]').forEach(g => {
+  const key = g.dataset.ctl;
+  const sync = () => g.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === state[key])));
+  g.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { state[key] = b.dataset.v; sync(); renderAll(); }));
+  sync();
+});
+let resizeTimer;
+window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderAll, 80); });
+document.fonts && document.fonts.ready.then(renderAll);
+renderAll();
+</script>
+</body>
+</html>

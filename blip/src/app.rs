@@ -591,7 +591,7 @@ impl App {
     /// The tree of the traces and actions, to choose those of the selected view.
     fn traces_ui(&mut self, ui: &mut egui::Ui) {
         theme::section_header(ui, "Traces & actions", |_| {});
-        // a histogram linked to a plot shows the traces of the plot
+        // a distribution linked to a plot shows the traces of the plot
         let linked = (self.layout.selected_link())
             .map(|plot| format!("Shows the traces of the linked plot {plot}"));
         let view = self.layout.selected_view_mut();
@@ -658,7 +658,7 @@ impl eframe::App for App {
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.shortcuts(ui.ctx());
-        // before the traces panel shows what a linked histogram shows
+        // before the traces panel shows what a linked distribution shows
         self.layout.take_linked_traces();
         let top_frame =
             egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin::symmetric(10, 8));
@@ -1169,7 +1169,7 @@ mod tests {
             r#"{"name": "", "kind": "Tabs", "active": 0, "children": [{"Group": {
                 "name": "Motor", "kind": "Horizontal", "children": [
                     {"View": {"name": "Speed", "kind": {"Plot": {"traces": ["motor/rpm"]}}}},
-                    {"View": {"name": "Spread", "kind": {"Histogram": {"link": 0}}}}
+                    {"View": {"name": "Spread", "kind": {"Distribution": {"link": 0}}}}
                 ]}}]}"#,
         )
         .unwrap();

@@ -60,38 +60,38 @@ Test Cases
    :component: blip
    :verifies: REQ_VIS_HIST, REQ_VIS_HIST_EMPTY
 
-   ``blip/src/app/view/histogram.rs::counts_add_up_to_the_samples_of_the_shown_window``
+   ``blip/src/app/view/distribution.rs::counts_add_up_to_the_samples_of_the_shown_window``
    -- the counts of a trace add up to its samples in the shown time range
    without its nulls, live, after panning and zooming, and as samples arrive.
-   ``blip/src/app/view/histogram.rs::traces_share_one_set_of_bins_and_nulls_are_not_counted``
+   ``blip/src/app/view/distribution.rs::traces_share_one_set_of_bins_and_nulls_are_not_counted``
    -- two traces are counted in one set of bins, each without its nulls.
-   ``blip/src/app/view/histogram.rs::numbers_and_elements_of_small_arrays_are_checked_but_not_bools_or_strings``
+   ``blip/src/app/view/distribution.rs::numbers_and_elements_of_small_arrays_are_checked_but_not_bools_or_strings``
    -- integer and float traces and the elements of small arrays can be
    checked, bool and string traces, arrays of bools and large arrays cannot.
-   ``blip/src/app/view/histogram.rs::the_legend_names_the_traces_in_the_title_row_or_in_a_corner``
+   ``blip/src/app/view/distribution.rs::the_legend_names_the_traces_in_the_title_row_or_in_a_corner``
    -- the title row shows the names without values and the unit only if both
    traces share it; without a title row the names are in the top right
    corner, with one they are not in the view.
-   ``blip/src/app/view/histogram.rs::bins_show_the_unit_only_if_all_traces_share_one``
+   ``blip/src/app/view/distribution.rs::bins_show_the_unit_only_if_all_traces_share_one``
    -- the range of a bin has the unit only if the traces share one (the value
    axis and the bin width take the same shared unit).
-   ``blip/src/app/view/histogram.rs::values_are_written_in_the_format_the_traces_share``
+   ``blip/src/app/view/distribution.rs::values_are_written_in_the_format_the_traces_share``
    -- bin edges and axis values are in the number format of the traces if all
    have the same, else in the default format, with the decimals of the step.
-   ``blip/src/app/view/histogram.rs::without_traces_or_samples_the_view_says_so``
+   ``blip/src/app/view/distribution.rs::without_traces_or_samples_the_view_says_so``
    -- without traces the view asks to check traces in the tree, with only
    nulls in the shown window it shows "No samples in the shown window".
-   ``blip/src/app/view/histogram.rs::samples_of_one_value_are_one_bar_centred_on_it``
+   ``blip/src/app/view/distribution.rs::samples_of_one_value_are_one_bar_centred_on_it``
    -- samples all of one value are one bar centred on it, 1 wide for
    integers, else a round width near 1 % of the value.
-   ``blip/src/app/view/histogram.rs::outlines_run_over_the_bins_that_are_not_empty``
+   ``blip/src/app/view/distribution.rs::outlines_run_over_the_bins_that_are_not_empty``
    -- the outline of a trace runs over each run of bins that are not empty
    and drops to the floor at its ends, with nothing along the floor between
    runs and nothing for a trace without binned samples.
-   ``blip/src/app/view/histogram.rs::the_title_legend_cuts_the_names_and_keeps_the_unit``
+   ``blip/src/app/view/distribution.rs::the_title_legend_cuts_the_names_and_keeps_the_unit``
    -- a title row too short for the legend cuts the names off before the unit,
    which stays at the end.
-   ``blip/src/app/view/histogram.rs::infinite_samples_alone_show_their_counts_on_empty_axes``
+   ``blip/src/app/view/distribution.rs::infinite_samples_alone_show_their_counts_on_empty_axes``
    -- a window of only infinite samples counts them below and above and shows
    the empty axes, not "No samples in the shown window".
 
@@ -101,28 +101,28 @@ Test Cases
    :component: blip
    :verifies: REQ_VIS_HIST_BINS
 
-   ``blip/src/app/view/histogram.rs::automatic_bins_number_about_the_square_root_of_the_samples``
+   ``blip/src/app/view/distribution.rs::automatic_bins_number_about_the_square_root_of_the_samples``
    -- automatic bins number about the square root of the samples, at least 8
    and at most 64, with a width of 1, 2 or 5 times a power of ten, at least a
    few points wide and at least 1 for integers.
-   ``blip/src/app/view/histogram.rs::the_automatic_width_changes_only_clearly_past_a_step``
+   ``blip/src/app/view/distribution.rs::the_automatic_width_changes_only_clearly_past_a_step``
    -- as the values change around a step between two widths, the automatic
    width stays until the ideal width is about 20 % past the step, in either
    direction, and a width that is not round or too narrow is not kept.
-   ``blip/src/app/view/histogram.rs::the_value_axis_fits_the_values_with_a_margin``
+   ``blip/src/app/view/distribution.rs::the_value_axis_fits_the_values_with_a_margin``
    -- the value axis fits the values with 5 % on each side, or a fixed range.
-   ``blip/src/app/view/histogram.rs::bin_edges_are_multiples_of_the_width_and_stay_as_the_window_moves``
+   ``blip/src/app/view/distribution.rs::bin_edges_are_multiples_of_the_width_and_stay_as_the_window_moves``
    -- as the values move, the width stays and the edges are multiples of it.
-   ``blip/src/app/view/histogram.rs::a_fixed_number_or_width_of_bins_is_kept`` -- a fixed number of bins
+   ``blip/src/app/view/distribution.rs::a_fixed_number_or_width_of_bins_is_kept`` -- a fixed number of bins
    splits the range of the values evenly, a fixed width is kept, and a value
    at the end of a fixed range is in the last bin.
-   ``blip/src/app/view/histogram.rs::samples_outside_a_fixed_range_are_counted_below_and_above_it``
+   ``blip/src/app/view/distribution.rs::samples_outside_a_fixed_range_are_counted_below_and_above_it``
    -- samples outside a fixed range are not binned but counted below and
    above it.
-   ``blip/src/app/view/histogram.rs::infinite_samples_are_counted_beyond_the_bins_also_without_a_fixed_range``
+   ``blip/src/app/view/distribution.rs::infinite_samples_are_counted_beyond_the_bins_also_without_a_fixed_range``
    -- infinite samples are not binned nor in the mean but counted below and
    above the bins, also without a fixed range.
-   ``blip/src/app/view/histogram.rs::bins_of_whole_widths_over_integers_are_centred_on_them``
+   ``blip/src/app/view/distribution.rs::bins_of_whole_widths_over_integers_are_centred_on_them``
    -- automatic and fixed width bins of a whole width over integer traces have
    their edges half a unit below multiples of the width, so the bar of 5 runs
    from 4.5 to 5.5 as when 5 is the only value, no integer is on an edge and a
@@ -135,19 +135,19 @@ Test Cases
    :component: blip
    :verifies: REQ_VIS_HIST_COUNTS
 
-   ``blip/src/app/view/histogram.rs::the_counts_axis_fits_the_tallest_bin_in_view``
+   ``blip/src/app/view/distribution.rs::the_counts_axis_fits_the_tallest_bin_in_view``
    -- the counts axis fits the largest percentage of a trace in a bin in
    view, also of values zoomed in on, at least that of one sample, grows at
    once and shrinks only well below its top, and leaves room for the marker
    strip.
-   ``blip/src/app/view/histogram.rs::the_log_counts_axis_marks_powers_of_ten_from_below_one_sample``
+   ``blip/src/app/view/distribution.rs::the_log_counts_axis_marks_powers_of_ten_from_below_one_sample``
    -- the logarithmic axis of 1000 samples starts half a decade below one
    sample (0.1 %) and marks 0.1 %, 1 %, 10 % and 100 %, of 2000 samples it
    starts rounded down to half a decade without a mark at its start, a bin of
    one sample reaches above its start and an empty bin shows nothing; the
    linear axis is marked up to the bars, also in fractions of a percent, and
    leaves the floor to the end label of the value axis.
-   ``blip/src/app/view/histogram.rs::the_room_beyond_the_bars_holds_the_markers_and_the_outside_counts``
+   ``blip/src/app/view/distribution.rs::the_room_beyond_the_bars_holds_the_markers_and_the_outside_counts``
    -- the counts axis leaves room beyond the bars for the marker strip and the
    counts outside the bins, upright and sideways, with the counts in the
    corners beyond the strip.
@@ -158,11 +158,11 @@ Test Cases
    :component: blip
    :verifies: REQ_VIS_HIST_MARKERS
 
-   ``blip/src/app/view/histogram.rs::mean_and_sigma_count_each_binned_sample_once``
+   ``blip/src/app/view/distribution.rs::mean_and_sigma_count_each_binned_sample_once``
    -- markers are off by default; σ is the population standard deviation;
    a sample that holds long counts once, so the mean differs from the
    time-weighted one of the plot statistics.
-   ``blip/src/app/view/histogram.rs::markers_are_a_dot_or_a_dot_and_a_whisker_in_a_row_per_trace``
+   ``blip/src/app/view/distribution.rs::markers_are_a_dot_or_a_dot_and_a_whisker_in_a_row_per_trace``
    -- no markers when off, a dot per trace for Mean, a dot and a whisker over
    ±σ for Mean ±σ, a row per trace, without a whisker for a trace without
    spread.
@@ -173,11 +173,11 @@ Test Cases
    :component: blip
    :verifies: REQ_VIS_HIST_ORIENT, REQ_VIS_HIST_LINK
 
-   ``blip/src/app/view/histogram.rs::upright_values_run_along_x_and_sideways_along_y``
+   ``blip/src/app/view/distribution.rs::upright_values_run_along_x_and_sideways_along_y``
    -- upright puts the values on the horizontal axis and sideways on the
    vertical one, with the value axis on the left by default, and only the
    value axis pans and zooms.
-   ``blip/src/app/view/histogram.rs::the_value_axis_of_a_sideways_histogram_is_on_the_side_chosen``
+   ``blip/src/app/view/distribution.rs::the_value_axis_of_a_sideways_histogram_is_on_the_side_chosen``
    (``egui_kittest``) -- the value axis of a sideways histogram takes its room
    on the left or on the right, as chosen.
    ``blip/src/app/layout.rs::the_plots_of_the_layout_are_listed_with_the_y_ranges_they_show``
@@ -194,22 +194,22 @@ Test Cases
    (``egui_kittest``) -- the number formats of a linked histogram are greyed,
    those of an unlinked one, or of one linked to a plot no longer in the
    layout, are not.
-   ``blip/src/app/view/histogram.rs::a_linked_histogram_bins_the_y_range_of_the_plot_in_either_orientation``
+   ``blip/src/app/view/distribution.rs::a_linked_histogram_bins_the_y_range_of_the_plot_in_either_orientation``
    -- a linked histogram, sideways or upright, covers the y range of the plot
    with automatic, a fixed number of and fixed width bins, counts the samples
    below and above it and ignores its own fixed range; a plot not in the
    layout is not followed.
-   ``blip/src/app/view/histogram.rs::a_linked_plot_sets_the_values_which_do_not_pan_or_zoom``
+   ``blip/src/app/view/distribution.rs::a_linked_plot_sets_the_values_which_do_not_pan_or_zoom``
    -- in either orientation the value axis shows the plot's range as it
    changes, not its own zoom, and dragging and the wheel do not move it.
-   ``blip/src/app/view/histogram.rs::the_link_is_chosen_in_either_orientation_and_greys_the_range``
+   ``blip/src/app/view/distribution.rs::the_link_is_chosen_in_either_orientation_and_greys_the_range``
    (``egui_kittest``) -- the plot is chosen in **Link** › **Plot** while
    upright, the link stays when turned sideways, and the range rows are
    greyed while linked and back once unlinked.
-   ``blip/src/app/view/histogram.rs::a_link_to_a_plot_without_a_range_yet_turns_off_the_own_range_and_zoom``
+   ``blip/src/app/view/distribution.rs::a_link_to_a_plot_without_a_range_yet_turns_off_the_own_range_and_zoom``
    -- while linked to a plot that shows no y range yet, the own fixed range,
    the wheel zoom and the range rows are off too.
-   ``blip/src/app/view/histogram.rs::plots_of_the_same_name_are_told_apart_by_a_number``
+   ``blip/src/app/view/distribution.rs::plots_of_the_same_name_are_told_apart_by_a_number``
    -- plots of the same name are listed with a number to link to.
    ``blip/src/app/layout.rs::deleting_a_plot_drops_the_links_to_it`` --
    deleting the plot drops the link, deleting another view does not.
@@ -220,23 +220,23 @@ Test Cases
    :component: blip
    :verifies: REQ_VIS_HIST_HOVER
 
-   ``blip/src/app/view/histogram.rs::hovering_a_bin_shows_its_range_and_the_shares_and_counts_of_the_traces``
+   ``blip/src/app/view/distribution.rs::hovering_a_bin_shows_its_range_and_the_shares_and_counts_of_the_traces``
    (``egui_kittest``) -- hovering a bin highlights it and shows its range with
    the shared unit and a row per trace with its percentage and count; off the
    bins nothing is highlighted.
-   ``blip/src/app/view/histogram.rs::the_tooltip_shows_the_share_and_the_count_of_each_trace``
+   ``blip/src/app/view/distribution.rs::the_tooltip_shows_the_share_and_the_count_of_each_trace``
    -- the tooltip writes the percentage of a bin and its count of all samples
    of the trace, those outside the bins included, e.g. "25 %" and "2 of 8".
-   ``blip/src/app/view/histogram.rs::the_tooltip_is_as_wide_as_its_texts_wherever_it_opens``
+   ``blip/src/app/view/distribution.rs::the_tooltip_is_as_wide_as_its_texts_wherever_it_opens``
    (``egui_kittest``) -- each time the tooltip opens it is only as wide as
    its texts, with the counts at its right edge, not as wide as a tooltip
    can be.
-   ``blip/src/app/view/histogram.rs::the_names_shares_and_counts_of_a_row_of_the_tooltip_line_up``
+   ``blip/src/app/view/distribution.rs::the_names_shares_and_counts_of_a_row_of_the_tooltip_line_up``
    (``egui_kittest``) -- the name, share and count of a row share a line, and
    the shares and the counts are right aligned in their columns.
-   ``blip/src/app/view/histogram.rs::bins_show_the_unit_only_if_all_traces_share_one``
+   ``blip/src/app/view/distribution.rs::bins_show_the_unit_only_if_all_traces_share_one``
    -- the range has the unit only if all traces share one.
-   ``blip/src/app/view/histogram.rs::the_wheel_zooms_and_a_drag_pans_the_values_without_binning_anew``
+   ``blip/src/app/view/distribution.rs::the_wheel_zooms_and_a_drag_pans_the_values_without_binning_anew``
    (``egui_kittest``) -- the wheel zooms and a drag pans the value axis
    without changing the bins, a double click fits it again, and none of them
    changes the shown time range or the time cursor.
@@ -245,7 +245,7 @@ Test Cases
    :id: TEST_BLIP_HIST_SAVED
    :status: implemented
    :component: blip
-   :verifies: REQ_VIS_HIST_SAVED
+   :verifies: REQ_VIS_HIST_SAVED, REQ_VIS_DIST_SHOW, REQ_VIS_DIST_WHISKERS
 
    ``blip/src/app/layout/file.rs::layouts_survive_json`` -- saves a layout
    with a histogram whose bins, range, counts scale, markers, orientation,
@@ -254,24 +254,133 @@ Test Cases
    ``blip/src/app/layout.rs::links_between_views_survive_saving_and_loading``
    -- the linked plot is saved by its place in the layout and is the same
    plot after loading.
-   ``blip/src/app/view/histogram.rs::settings_are_saved_with_defaults_for_those_missing``
+   ``blip/src/app/view/distribution.rs::settings_are_saved_with_defaults_for_those_missing``
    -- the settings survive JSON, and a histogram saved without them loads
    with the defaults.
+   ``blip/src/app/view/distribution.rs::show_and_whiskers_are_saved_and_old_histograms_load_as_bars``
+   -- Show and Whiskers survive JSON (also in
+   ``blip/src/app/layout/file.rs::layouts_survive_json``), and a view saved
+   as a Histogram (the old name) loads as a Distribution view with Bars and
+   1.5×IQR whiskers and its own settings, and is saved by the new name.
 
 .. test:: Histogram screenshots
    :id: TEST_BLIP_HIST_SHOTS
    :status: implemented
    :component: blip
-   :verifies: REQ_VIS_HIST, REQ_VIS_HIST_MARKERS, REQ_VIS_HIST_ORIENT
+   :verifies: REQ_VIS_HIST, REQ_VIS_HIST_MARKERS, REQ_VIS_HIST_ORIENT, REQ_VIS_DIST_SHOW, REQ_VIS_DIST_BOX
 
    ``blip/src/app/screenshots.rs::screenshots_views`` renders
-   ``view-histogram``, an upright histogram of ``robot/pose.x`` and
+   ``view-distribution``, the upright bars of ``robot/pose.x`` and
    ``robot/pose.y`` with Mean ±σ markers, and
    ``blip/src/app/screenshots.rs::screenshots_layouts`` renders
-   ``view-histogram-sideways``, a sideways histogram of
+   ``view-distribution-sideways``, the sideways bars of
    ``motor.speed_rpm`` beside the plot it is linked to, from the demo recording in
    the light and the dark theme, for the documentation and to check by eye
    that they look right.
+
+.. test:: Distribution box statistics
+   :id: TEST_BLIP_DIST_STATS
+   :status: implemented
+   :component: blip
+   :verifies: REQ_VIS_DIST_STATS, REQ_VIS_DIST_WHISKERS, REQ_VIS_DIST_BOX_EMPTY
+
+   ``blip/src/app/view/distribution/boxes.rs::quartiles_interpolate_between_the_samples_as_numpy``
+   -- quartiles and percentiles of known samples are those of numpy's
+   default (type 7), linear between the order statistics.
+   ``blip/src/app/view/distribution/boxes.rs::whiskers_end_at_the_fences_the_percentiles_or_the_extremes``
+   -- the whiskers of 1.5×IQR end at the furthest samples within the fences,
+   those of 5–95 % and 1–99 % at the percentiles and Min–max at the
+   extremes; the samples beyond them are the outliers, none with Min–max.
+   ``blip/src/app/view/distribution/boxes.rs::nulls_infinite_samples_and_equal_values``
+   -- nulls and infinite samples are not in the box, no samples give no box,
+   equal values give a box of the median alone with the mean on it, with
+   every whisker choice.
+   ``blip/src/app/view/distribution/boxes.rs::a_box_wholly_beyond_the_value_axis_points_to_its_edge``
+   -- a box wholly above or below the value axis gets an arrow at that edge,
+   one partly shown is cut at the edge instead.
+   ``blip/src/app/view/distribution.rs::boxes_count_each_sample_once_over_the_shown_window``
+   -- a box counts the samples of the shown window without nulls, anew as
+   the window pans, zooms and moves on while live; a sample that holds long
+   counts once; a fixed range or a linked plot's range does not change it.
+   ``blip/src/app/view/distribution.rs::a_trace_without_samples_keeps_its_row``
+   -- a trace without samples in the window has no box.
+
+.. test:: Distribution forms, boxes and properties
+   :id: TEST_BLIP_DIST_BOXES
+   :status: implemented
+   :component: blip
+   :verifies: REQ_VIS_DIST_SHOW, REQ_VIS_DIST_BOX, REQ_VIS_DIST_BOX_EMPTY, REQ_VIS_DIST_PROPS, REQ_VIS_HIST_ORIENT, REQ_VIS_HIST_LINK
+
+   ``blip/src/app/view/distribution.rs::the_form_is_bars_by_default_and_boxes_give_each_trace_a_row``
+   (``egui_kittest``) -- the form is Bars by default; Boxes gives each trace
+   an equal row covering the plot, from the top upright and from the left
+   sideways, named by the traces, without counts.
+   ``blip/src/app/view/distribution.rs::the_names_of_the_rows_are_cut_at_a_third_of_the_view``
+   (``egui_kittest``) -- long names are cut with "…" to a third of the view,
+   and sideways to their columns.
+   ``blip/src/app/view/distribution.rs::both_puts_a_box_per_trace_in_the_strip_of_the_markers``
+   (``egui_kittest``) -- Both puts a 10 pt box per trace in 14 pt rows of the
+   strip at the end of the counts axis, in place of the markers, over the
+   bars.
+   ``blip/src/app/view/distribution/boxes.rs::a_box_is_40_percent_of_its_row_at_most_24_pt``
+   -- a box is 40 % of its row thick, at least 6 and at most 24 pt, with caps
+   half as long; the rows and the strip of Both lie where they should, and
+   the row under a point is found.
+   ``blip/src/app/view/distribution.rs::a_trace_without_samples_keeps_its_row``
+   (``egui_kittest``) -- in Boxes and Both a trace without samples keeps its
+   row, whose tooltip says "No samples".
+   ``blip/src/app/view/distribution.rs::the_properties_hide_the_rows_that_do_not_apply_to_the_form``
+   (``egui_kittest``) -- Bars shows Markers, Bins and Counts; Boxes shows
+   Whiskers in the place of Markers and hides Bins and Counts; Both shows
+   Whiskers, Bins and Counts; Range is in all; the whiskers are chosen in a
+   combo box and the hidden settings are kept.
+   ``blip/src/app/view/distribution.rs::a_linked_view_follows_the_plot_in_all_forms``
+   (``egui_kittest``) -- in Bars, Boxes and Both, upright and sideways, a
+   linked view shows the plot's y range as it changes and the wheel does not
+   zoom it.
+
+.. test:: Distribution box hover
+   :id: TEST_BLIP_DIST_HOVER
+   :status: implemented
+   :component: blip
+   :verifies: REQ_VIS_DIST_BOX_HOVER
+
+   ``blip/src/app/view/distribution.rs::hovering_a_row_lights_it_and_shows_the_box_of_the_trace``
+   (``egui_kittest``) -- hovering anywhere in a row of Boxes, also away from
+   the box, makes it the hovered row, lit, and shows the name of the trace and
+   min, low whisker, Q1, median, mean, Q3, high whisker and max, from the top
+   down upright and from the bottom up sideways, right aligned in the number
+   format (Scientific here) and unit of the trace, then under them Samples and
+   Outliers, the count right aligned with the values.
+   ``blip/src/app/view/distribution.rs::min_max_whiskers_leave_out_their_rows_and_percentiles_are_named``
+   (``egui_kittest``) -- with Min–max the whisker and outlier rows are left
+   out, with 5–95 % and 1–99 % the whiskers are named "5 %", "95 %", "1 %"
+   and "99 %".
+   ``blip/src/app/view/distribution.rs::hovering_the_strip_of_both_shows_a_box_and_below_it_a_bin``
+   (``egui_kittest``) -- in Both, hovering a row of the strip shows the box of
+   its trace, below the strip a bin.
+   ``blip/src/app/view/distribution/boxes.rs::the_tooltip_lists_the_values_in_the_order_drawn``
+   -- the rows of the tooltip in the order drawn, the box in the text colour
+   and its ends weak, the values written to a thousandth of the range.
+
+.. test:: Distribution screenshots
+   :id: TEST_BLIP_DIST_SHOTS
+   :status: implemented
+   :component: blip
+   :verifies: REQ_VIS_DIST_SHOW, REQ_VIS_DIST_BOX
+
+   ``blip/src/app/screenshots.rs::screenshots_views`` renders
+   ``view-distribution-boxes``, the upright boxes of ``robot/pose.x``,
+   ``robot/pose.y`` and ``robot/pose.heading``, and
+   ``view-distribution-both``, the bars of ``robot/pose.x`` and
+   ``robot/pose.y`` with their boxes in the strip;
+   ``blip/src/app/screenshots.rs::screenshots_layouts`` renders
+   ``view-distribution-boxes-sideways``, the sideways box of
+   ``motor.speed_rpm`` beside the plot it is linked to; and
+   ``blip/src/app/screenshots.rs::screenshots_panels`` renders
+   ``panel-properties-distribution``, the properties of that view; from the
+   demo recording in the light and the dark theme, for the documentation and
+   to check by eye that they look right.
 
 .. test:: Log records are kept by path and shown in a table
    :id: TEST_BLIP_LOGS

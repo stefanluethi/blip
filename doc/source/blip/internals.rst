@@ -123,8 +123,11 @@ What a frame costs follows what is shown, not how much data there is:
   again only when its filter changes or a path is no longer shown.
 * The timeline counts what arrived at most ten times a second, a heatmap
   uploads its image only when it changes.
-* A histogram counts the samples of the shown range again in each frame, in
-  one pass over the samples found by binary search.
+* A distribution counts the samples of the shown range again in each frame, in
+  one pass over the samples found by binary search. The box statistics
+  (``distribution/boxes.rs``) are cached: they are computed again only when
+  the samples version, the shown window, the whiskers or the traces change,
+  not on every frame.
 
 Receiving
 ---------
@@ -284,20 +287,20 @@ so older presets still load.
 Links between views
 ~~~~~~~~~~~~~~~~~~~
 
-A histogram can be linked to a plot, the only link between views: it shows
+A distribution can be linked to a plot, the only link between views: it shows
 the plot's traces and its y range. A view refers to another by a ``ViewId``,
 the id of its tile in the tree. Each frame, ``Layout::take_linked_traces``
-copies the traces of each linked plot into the histogram, with the plot
+copies the traces of each linked plot into the distribution, with the plot
 view's wildcards and number formats, before anything shows them; ``App::ui``
 calls it before the side panels and ``Layout::ui`` again before the views.
-The histogram keeps them when unlinked. ``Layout::selected_link`` names the
-plot of a selected linked histogram, for the greyed tree of the traces. Each
+The distribution keeps them when unlinked. ``Layout::selected_link`` names the
+plot of a selected linked distribution, for the greyed tree of the traces. Each
 frame, ``Layout::plots`` lists the plot views in the order of the
 layout as ``Plots``: the ``ViewId``, the name and the y range each shows
 (``Plot::shown_y``: the range panned or zoomed to, else the fixed min and max,
 with the ends not set fitted to all its data). The layout takes the list before
 it draws the views and passes it to all of them, so a plot zoomed or panned in
-a frame shows its new range to the histograms in the next; the layout repaints
+a frame shows its new range to the distributions in the next; the layout repaints
 when a range changed during the frame.
 
 ``View::relink`` maps the links of a view to other ids and drops those it maps

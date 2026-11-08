@@ -26,8 +26,8 @@ on the right and are saved with the layout.
    * - XY
      - traces against other traces, or arrays over their indices
      - numbers and bools; one-dimensional arrays
-   * - Histogram
-     - how the values spread over the shown time range, as bars
+   * - Distribution
+     - how the values spread over the shown time range, as bars or box plots
      - numbers, elements of arrays of up to 16 elements
    * - Heatmap
      - an array as colours, over time or at the cursor
@@ -40,7 +40,7 @@ on the right and are saved with the layout.
      - actions, see :doc:`/blip/actions`
 
 Every view's properties start with its **Name**. Views that write values as
-text (plot, states, table, histogram, heatmap) also have a **Number format** section:
+text (plot, states, table, distribution, heatmap) also have a **Number format** section:
 for each trace how its numbers are written -- decimal, hex, binary or
 scientific -- next to its unit as sent by the target. Hex and binary apply to
 whole numbers only; strings and bools have no format.
@@ -184,19 +184,24 @@ Properties:
   the trail fades out.
 * **Line styles** -- as for plots.
 
-Histogram
----------
+Distribution
+------------
 
-.. figure:: /screenshots/view-histogram.png
-   :target: ../_images/view-histogram.png
+.. figure:: /screenshots/view-distribution.png
+   :target: ../_images/view-distribution.png
    :class: screenshot
-   :alt: A histogram of the robot's x and y position, the bars of both drawn over each other, with the mean and σ of each as whiskers above them and the legend at the top right.
+   :alt: A distribution of the robot's x and y position as bars drawn over each other, with the mean and σ of each as whiskers above them and the legend at the top right.
 
-How often each value occurs in the shown time range: the samples of the
-checked traces are counted in bins of their values, drawn as bars. The
-histogram counts anew as the range is moved, zoomed or moves on while live.
-It takes integer and float traces and the elements of arrays of up to 16
-elements; ``null`` samples are not counted.
+How the values spread over the shown time range, as bars, as box plots or as
+both. It takes integer and float traces and the elements of arrays of up to 16
+elements; ``null`` samples are not counted. It counts anew as the range is
+moved, zoomed or moves on while live. Choose the form in **Show**:
+
+* **Bars** (the default): how often each value occurs. The samples of the
+  checked traces are counted in bins of their values, drawn as bars.
+* **Boxes**: a box plot, a row per trace, see below.
+* **Both**: the bars, and a box per trace in the strip above them in place of
+  the markers.
 
 The traces are counted in the same bins and drawn over each other, each as a
 light area under an outline in its colour. The legend shows a dot and the name
@@ -228,15 +233,89 @@ grows at once, and shrinks only once that bin is well below its top, so it
 does not jump while live. The bars leave room at its far end for the markers
 and the counts outside the bins.
 
+Boxes
+~~~~~
+
+.. figure:: /screenshots/view-distribution-boxes.png
+   :target: ../_images/view-distribution-boxes.png
+   :class: screenshot
+   :alt: A box plot of the robot's x and y position, a row per trace with its name on the left, each a box with a median line, a mean dot, whiskers and outlier dots.
+
+With **Show** set to *Boxes* each trace has a row with its name on the
+category axis; long names are cut with *…* at a third of the view. A box
+spans the first to the third quartile as a light area under an outline, with a
+line at the median, a dot at the mean, whiskers with caps, and a dot for each
+outlier beyond the whiskers. Sideways, the traces are columns with their names
+below.
+
+.. figure:: /screenshots/view-distribution-both.png
+   :target: ../_images/view-distribution-both.png
+   :class: screenshot
+   :alt: The bars of the robot's x and y position with a box for each trace in the strip above them.
+
+With *Both* the boxes are drawn in the strip above the bars (to the right of
+them sideways), in rows of 14 pt, and replace the mean and σ markers.
+
+.. figure:: /screenshots/view-distribution-boxes-sideways.png
+   :target: ../_images/view-distribution-boxes-sideways.png
+   :class: screenshot
+   :alt: A sideways box plot of the robot's x and y position, a column per trace with its name below.
+
+The **Whiskers** end at:
+
+* *1.5×IQR* (the default): the furthest sample within 1.5 times the length of
+  the box from it. Samples beyond are outliers.
+* *Min–max*: the lowest and the highest sample. There are no outliers.
+* *5–95 %* or *1–99 %*: those percentiles. Samples beyond are outliers.
+
+The statistics count all samples that are not ``null`` and finite in the shown
+time range, each once, however long it lasts, unlike the stats of a plot. The
+quartiles and percentiles are interpolated between samples. Infinite samples
+are left out of the boxes, while the bars still count them at their ends. The
+boxes do not depend on the **Range**: a fixed or linked range only cuts them at
+its edge, and a box wholly beyond it shows a faint arrow at that edge (*‹* and
+*›*, *↓* and *↑* sideways).
+
+**Hover** a row to light it and read, in the order drawn (low to high; high to
+low sideways), its min, low whisker, Q1, median, mean, Q3, high whisker and
+max, then the number of samples and of outliers. With *Min–max* the whisker
+and outlier rows are left out, and percentile whiskers are named by their
+percentile, e.g. *5 %* and *95 %*. A trace without samples in the range keeps
+its row and shows *No samples*.
+
 Properties:
+
+.. figure:: /screenshots/panel-properties-distribution.png
+   :target: ../_images/panel-properties-distribution.png
+   :class: screenshot
+   :alt: The properties panel of a distribution with Link, Display, Values, Bins and Counts.
+
+Rows that do not apply to the chosen form are hidden. The settings of a hidden
+row are kept.
 
 .. list-table::
    :widths: 25 75
 
    * - **Link**
-     - **Plot**: a plot of the layout whose traces and y range the histogram
-       shows, upright or sideways, or *None*; see below.
-   * - **Bins**
+     - **Plot**: a plot of the layout whose traces and y range the
+       distribution shows, upright or sideways, or *None*; see below.
+   * - **Display**
+     - **Show**: *Bars*, *Boxes* or *Both*. **Orientation**: *Upright*, the
+       values along the bottom and the bars growing up, or *Sideways*, the
+       values up the side and the bars growing to the right, e.g. beside a
+       plot of the same traces. **Axis side** of a sideways distribution: the
+       value axis on the *Left*, as in a plot, or on the *Right*.
+       **Markers** (*Bars*): *Off*, *Mean*, or *Mean ±σ* for all traces, in a
+       strip above the bars (to the right of them sideways), a row per
+       trace: a dot at the mean and a whisker from the mean −σ to the mean
+       +σ. Unlike the stats of a plot, each sample counts once, however long
+       it lasts; σ is the population standard deviation. **Whiskers**
+       (*Boxes* and *Both*): where the whiskers end, see above.
+   * - **Values**
+     - **Range**: *Auto* fits the values shown, with 5 % room on each side
+       for the bars; *Fixed* shows only those between **Min** and **Max**,
+       and the bars count the others at the ends.
+   * - **Bins** (*Bars* and *Both*)
      - **Mode**: *Auto*, about the square root of the number of samples, at
        least 8 and at most 64, of a round width (1, 2 or 5 times a power of
        ten) that changes only once the ideal width is clearly past a step, so
@@ -247,55 +326,44 @@ Properties:
        put as the range moves. Over integer traces, bins of a whole-number
        width start half a unit below those multiples instead, so no integer
        lies on an edge and each bin holds the same number of integers; with a
-       width of 1, the bar of 5 runs from 4.5 to 5.5. Switching to *Number* or *Width* starts from the bins shown.
-       **Range**: *Auto* bins the values shown with 5 % room on each side;
-       *Fixed* bins only those between **Min** and **Max**, and counts the
-       others at the ends.
-   * - **Counts**
+       width of 1, the bar of 5 runs from 4.5 to 5.5. Switching to *Number* or
+       *Width* starts from the bins shown.
+   * - **Counts** (*Bars* and *Both*)
      - **Scale**: *Linear* or *Log*. The logarithmic scale has a tick at each
        power of ten, e.g. *0.1 %*, *1 %*, *10 %*, and starts at least half a
        decade below the percentage of one sample, so a bin of one sample shows
        as a short bar and an empty bin shows nothing.
-   * - **Bars**
-     - **Orientation**: *Upright*, the values along the bottom and the bars
-       growing up, or *Sideways*, the values up the side and the bars growing
-       to the right, e.g. beside a plot of the same traces. **Axis side** of a
-       sideways histogram: the value axis on the *Left*, as in a plot, or on
-       the *Right*. **Markers**: *Off*, *Mean*, or *Mean ±σ*
-       for all traces, in a strip above the bars (to the right of them
-       sideways), a row per trace: a dot at the mean and a whisker from the
-       mean −σ to the mean +σ. Unlike the stats of a plot, each sample counts
-       once, however long it lasts; σ is the population standard deviation.
 
 Link to a plot
 ~~~~~~~~~~~~~~
 
-.. figure:: /screenshots/view-histogram-sideways.png
-   :target: ../_images/view-histogram-sideways.png
+.. figure:: /screenshots/view-distribution-sideways.png
+   :target: ../_images/view-distribution-sideways.png
    :class: screenshot
-   :alt: A plot of the motor speed and, beside it, a sideways histogram linked to the plot, so its bars line up with the heights of the line.
+   :alt: A plot of the motor speed and, beside it, a sideways distribution linked to the plot, so its bars line up with the heights of the line.
 
-A histogram linked to a plot shows the spread of the plot's traces over the
+A distribution linked to a plot shows the spread of the plot's traces over the
 plot's y range; sideways beside the plot, at the heights of the plot. Choose
 the plot in **Link** › **Plot**, upright or sideways:
 
-* The histogram shows the traces the plot shows, with their number formats,
-  and follows as traces are checked in the plot. With the histogram
+* The distribution shows the traces the plot shows, with their number formats,
+  and follows as traces are checked in the plot. With the distribution
   selected, the tree shows them checked but greyed, under *Shows the traces
   of the linked plot …*; check them in the plot. Its **Number format** is
   greyed too (*Set by the linked plot*).
 * The value axis shows the y range the plot shows, as it is zoomed, panned
   or fixed. The bins cover that range, and the samples outside it are
-  counted at its ends, as for a fixed range. The histogram's own **Range** is
-  greyed (*Set by the linked plot*), and zooming and panning of the values
-  are off, also before the plot shows a y range.
+  counted at its ends, as for a fixed range; boxes are cut at it. The
+  distribution's own **Range** is greyed (*Set by the linked plot*), and
+  zooming and panning of the values are off, also before the plot shows a y
+  range.
 
 Plots of the same name are numbered in the menu, e.g. *Speed (1)* and
-*Speed (2)*. Choose *None* to unlink: the histogram keeps the traces it
+*Speed (2)*. Choose *None* to unlink: the distribution keeps the traces it
 showed. Deleting the plot drops the link.
 
-Without the link, an automatic histogram fits the samples in the shown time
-range, while the plot fits all data of its traces, so a sideways histogram
+Without the link, an automatic distribution fits the samples in the shown time
+range, while the plot fits all data of its traces, so a sideways distribution
 lines up with the plot only while the range holds all values; link it to the
 plot to line them up.
 

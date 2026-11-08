@@ -98,8 +98,9 @@ added next to the selected one; select it and check its traces:
   on the x axis, and what each y trace is plotted against, in the properties.
 * **Heatmap**: ``thermal/frame`` is an 8×8 array, shown as a grid at the time
   cursor; ``audio/spectrum`` is a 64-bin array, shown over time.
-* **Histogram**: ``imu`` › ``.acc`` shows how the three accelerations spread
-  over the shown time range, as bars drawn over each other.
+* **Distribution**: ``imu`` › ``.acc`` shows how the three accelerations spread
+  over the shown time range, as bars drawn over each other; set **Show** to
+  *Boxes* for a box plot.
 * **Table**: the values of the checked traces at the time cursor.
 
 Drag a view by its title onto the side of another view to arrange them, see

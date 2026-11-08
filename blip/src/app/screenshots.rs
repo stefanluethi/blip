@@ -202,7 +202,12 @@ struct ViewShot {
 /// Renders the view of `json`, the saved form of a view, on its own, with the last
 /// 20 s of the recording and the cursor 6 s before its end.
 fn view_shot(name: &str, json: &str) {
-    let model = demo_model();
+    view_shot_of(name, demo_model(), json, None);
+}
+
+/// Renders the view of `json` on its own as [`view_shot`] does, with the last 20 s of
+/// `model`, and the pointer at `hover` if given.
+fn view_shot_of(name: &str, model: model::Model, json: &str, hover: Option<egui::Pos2>) {
     let mut time = time::TimeRange::default();
     time.fit(&model);
     let latest = time.latest().expect("the recording has data");
@@ -253,6 +258,11 @@ fn view_shot(name: &str, json: &str) {
         );
     theme::install(&harness.ctx);
     harness.run_steps(4);
+    if let Some(at) = hover {
+        harness.hover_at(at);
+        // long enough for the tooltip to open
+        harness.run_steps(40);
+    }
     save_both(&mut harness, name);
 }
 
@@ -277,8 +287,16 @@ fn screenshots_views() {
             r#"{"name": "Robot", "kind": {"Xy": {"traces": ["robot/pose.x", "robot/pose.y"], "xs": ["robot/pose.x"], "against": {"robot/pose.y": "robot/pose.x"}, "equal_axes": true}}}"#,
         ),
         (
-            "view-histogram",
-            r#"{"name": "Pose spread", "kind": {"Histogram": {"traces": ["robot/pose.x", "robot/pose.y"], "markers": "MeanSigma"}}}"#,
+            "view-distribution",
+            r#"{"name": "Pose spread", "kind": {"Distribution": {"traces": ["robot/pose.x", "robot/pose.y"], "markers": "MeanSigma"}}}"#,
+        ),
+        (
+            "view-distribution-boxes",
+            r#"{"name": "Pose spread", "kind": {"Distribution": {"traces": ["robot/pose.x", "robot/pose.y", "robot/pose.heading"], "show": "Boxes"}}}"#,
+        ),
+        (
+            "view-distribution-both",
+            r#"{"name": "Pose spread", "kind": {"Distribution": {"traces": ["robot/pose.x", "robot/pose.y"], "show": "Both"}}}"#,
         ),
         (
             "view-heatmap-grid",
@@ -296,6 +314,98 @@ fn screenshots_views() {
     for (name, json) in views {
         view_shot(name, json);
     }
+
+    // boxes of loop timings at their edge cases: many outliers, a long name, no
+    // samples in the window, all samples equal, and a fixed value range that one box
+    // lies beyond and one whisker is cut at
+    view_shot_of(
+        "view-distribution-boxes-edges",
+        timing_model(),
+        r#"{"name": "Loop timing", "kind": {"Distribution": {"traces": ["loop/period", "motor/current_controller_integrator_feedback_period_measured", "sensor/sample_period", "timer/fixed_tick", "comms/poll_period", "adc/conversion"], "show": "Boxes", "range": [900.0, 1100.0]}}}"#,
+        None,
+    );
+    // the tooltip of the middle one of three boxes, under the pointer
+    view_shot_of(
+        "view-distribution-box-tooltip",
+        timing_model(),
+        r#"{"name": "Loop timing", "kind": {"Distribution": {"traces": ["adc/conversion", "loop/period", "motor/current_controller_integrator_feedback_period_measured"], "show": "Boxes"}}}"#,
+        Some(VIEW.to_pos2() * 0.5),
+    );
+}
+
+/// A model of 30 s of loop timings in µs at 100 Hz, made up for the edge cases of the
+/// boxes, see [`screenshots_views`].
+fn timing_model() -> model::Model {
+    // a fixed sequence of pseudo random numbers in [0, 1), xorshift
+    let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+    let mut random = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed >> 11) as f64 / (1u64 << 53) as f64
+    };
+    // about normal around 0 with a spread of about `sigma`
+    let mut normal = move |sigma: f64| (random() + random() + random() - 1.5) * 2.0 * sigma;
+    let mut model = model::Model::default();
+    let append = |model: &mut model::Model, path: &str, seconds: f64, value: f64| {
+        model.traces.append(&proto::Value {
+            timestamp: (seconds * 1.0e9).round() as u64,
+            path: path.to_owned(),
+            value: proto::Data::Float(value),
+        });
+    };
+    for index in 0..3000 {
+        let seconds = f64::from(index) * 0.01;
+        // jitter with a spike in every tenth sample, early or late
+        let spike = if index % 10 == 3 {
+            let size = 35.0 + 55.0 * (f64::from(index % 70) / 70.0);
+            if index % 20 == 3 { size } else { -size }
+        } else {
+            0.0
+        };
+        append(
+            &mut model,
+            "loop/period",
+            seconds,
+            1003.7 + normal(4.0) + spike,
+        );
+        append(
+            &mut model,
+            "motor/current_controller_integrator_feedback_period_measured",
+            seconds,
+            1024.3 + normal(12.0),
+        );
+        // only in the first 5 s, before the shown window
+        if seconds < 5.0 {
+            append(
+                &mut model,
+                "sensor/sample_period",
+                seconds,
+                997.0 + normal(3.0),
+            );
+        }
+        append(&mut model, "timer/fixed_tick", seconds, 987.0);
+        // beyond the value range
+        append(
+            &mut model,
+            "comms/poll_period",
+            seconds,
+            1183.0 + normal(9.0),
+        );
+        // the lower whisker below the value range
+        append(&mut model, "adc/conversion", seconds, 945.6 + normal(30.0));
+    }
+    for path in [
+        "loop/period",
+        "motor/current_controller_integrator_feedback_period_measured",
+        "sensor/sample_period",
+        "timer/fixed_tick",
+        "comms/poll_period",
+        "adc/conversion",
+    ] {
+        model.traces.set_unit(path, "µs");
+    }
+    model
 }
 
 /// What a layout is shown with.
@@ -358,16 +468,26 @@ fn layout_shot(name: &str, size: egui::Vec2, json: &str) {
 #[test]
 #[ignore = "renders the screenshots of the documentation, see the module"]
 fn screenshots_layouts() {
-    // a sideways histogram linked to the plot beside it, view 0, showing its traces
-    layout_shot(
-        "view-histogram-sideways",
-        egui::vec2(1000.0, 380.0),
-        r#"{"name": "", "kind": "Tabs", "active": 0, "children": [{"Group": {
-            "name": "Motor", "kind": "Horizontal", "shares": [1.8, 1.0], "children": [
-                {"View": {"name": "Motor speed", "kind": {"Plot": {"traces": ["motor.speed_rpm"]}}}},
-                {"View": {"name": "Speed spread", "kind": {"Histogram": {"orientation": "Sideways", "link": 0}}}}
-            ]}}]}"#,
-    );
+    // a sideways distribution linked to the plot beside it, view 0, showing its traces,
+    // as bars and as boxes
+    for (name, show) in [
+        ("view-distribution-sideways", "Bars"),
+        ("view-distribution-boxes-sideways", "Boxes"),
+    ] {
+        layout_shot(name, egui::vec2(1000.0, 380.0), &linked_distribution(show));
+    }
+}
+
+/// The saved form of a layout of the plot "Motor speed" and the sideways distribution
+/// "Speed spread" linked to it, showing `show`.
+fn linked_distribution(show: &str) -> String {
+    format!(
+        r#"{{"name": "", "kind": "Tabs", "active": 0, "children": [{{"Group": {{
+        "name": "Motor", "kind": "Horizontal", "shares": [1.8, 1.0], "children": [
+            {{"View": {{"name": "Motor speed", "kind": {{"Plot": {{"traces": ["motor.speed_rpm"]}}}}}}}},
+            {{"View": {{"name": "Speed spread", "kind": {{"Distribution": {{"show": "{show}", "orientation": "Sideways", "link": 0}}}}}}}}
+        ]}}}}]}}"#
+    )
 }
 
 #[test]
@@ -417,4 +537,31 @@ fn screenshots_panels() {
     theme::install(&harness.ctx);
     harness.run_steps(4);
     save_both(&mut harness, "panel-time");
+
+    // the properties of a sideways distribution showing boxes, linked to a plot
+    let mut layout = layout::Layout::from_saved(
+        serde_json::from_str(&linked_distribution("Boxes")).expect("a layout"),
+    );
+    layout.select_named("Speed spread");
+    let model = demo_model();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(300.0, 560.0))
+        .with_pixels_per_point(PIXELS_PER_POINT)
+        .wgpu()
+        .build_ui_state(
+            move |ui, layout: &mut layout::Layout| {
+                paint_background(ui, theme::tokens(ui.visuals()).card);
+                let connected = Default::default();
+                let context = view::PropertiesContext {
+                    model: &model,
+                    connected: &connected,
+                    plots: &NO_PLOTS,
+                };
+                layout.properties_ui(ui, &context);
+            },
+            layout,
+        );
+    theme::install(&harness.ctx);
+    harness.run_steps(4);
+    save_both(&mut harness, "panel-properties-distribution");
 }

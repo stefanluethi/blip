@@ -58,7 +58,7 @@ How blip shows data
 
 View
    A pane in the center that shows traces, logs or actions: a plot, a states
-   view, a table, an XY plot, a histogram, a heatmap, a log view or an actions
+   view, a table, an XY plot, a distribution, a heatmap, a log view or an actions
    view. Each view has its own selection and its own settings. See
    :doc:`views`.
 

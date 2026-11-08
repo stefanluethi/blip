@@ -199,7 +199,7 @@ fn load_group(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::view::{ViewKind, ViewType, histogram};
+    use crate::app::view::{ViewKind, ViewType, distribution};
 
     #[test]
     fn layout_survives_save_and_load() {
@@ -249,22 +249,24 @@ mod tests {
             view.formats
                 .set("imu.acc[1]", crate::app::model::numbers::DisplayFormat::Hex);
         }
-        // a histogram with all its settings changed, following the plot, view 0
+        // a distribution with all its settings changed, following the plot, view 0
         for node in &mut views {
             if let Node::View(View {
-                kind: ViewKind::Histogram(histogram),
+                kind: ViewKind::Distribution(distribution),
                 ..
             }) = node
             {
-                histogram.bins = histogram::BinMode::Width;
-                histogram.bin_count = 12;
-                histogram.bin_width = 0.5;
-                histogram.range = Some((-1.0, 2.0));
-                histogram.counts = histogram::CountScale::Log;
-                histogram.orientation = histogram::Orientation::Sideways;
-                histogram.axis_side = histogram::AxisSide::Right;
-                histogram.link = Some(ViewId(0));
-                histogram.markers = histogram::Markers::MeanSigma;
+                distribution.show = distribution::Show::Both;
+                distribution.whiskers = distribution::Whiskers::P5;
+                distribution.bins = distribution::BinMode::Width;
+                distribution.bin_count = 12;
+                distribution.bin_width = 0.5;
+                distribution.range = Some((-1.0, 2.0));
+                distribution.counts = distribution::CountScale::Log;
+                distribution.orientation = distribution::Orientation::Sideways;
+                distribution.axis_side = distribution::AxisSide::Right;
+                distribution.link = Some(ViewId(0));
+                distribution.markers = distribution::Markers::MeanSigma;
             }
         }
         let file = Group::tabs(vec![Node::Group(Group {

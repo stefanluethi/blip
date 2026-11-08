@@ -65,7 +65,10 @@ Visualisation
    :component: blip
    :satisfies: STK_LIVE_OBSERVE
 
-   blip shall offer a histogram view, which counts the samples of each
+   blip shall offer a Distribution view, shown as "Distribution" in the view
+   picker, the menus and as default title; presets saved with histogram
+   views shall load as Distribution views unchanged. In its Bars form, the
+   histogram, the view counts the samples of each
    checked trace in bins of their values over the shown time range, and
    counts anew as the range is panned, zoomed or moves on while live. The
    user shall be able to check integer and float traces and the elements of
@@ -86,7 +89,8 @@ Visualisation
    :component: blip
    :satisfies: STK_LIVE_OBSERVE
 
-   blip shall let the user choose the bins of a histogram: automatic, a
+   blip shall let the user choose the bins of the Bars of a Distribution
+   view, the histogram: automatic, a
    fixed number of bins, or a fixed bin width in the unit of the traces.
    Automatic bins shall be about the square root of the number of samples,
    at least 8 and at most 64, with a width rounded to 1, 2 or 5 times a power
@@ -113,7 +117,7 @@ Visualisation
    :component: blip
    :satisfies: STK_LIVE_OBSERVE
 
-   The counts axis of a histogram shall show the samples of each trace in a
+   The counts axis of the Bars of a Distribution view, the histogram, shall show the samples of each trace in a
    bin as a percentage of all samples of that trace in the shown time range,
    those outside the bins included, so traces of different sample rates can
    be compared. It shall fit the tallest bin in view, and the user shall be
@@ -129,7 +133,8 @@ Visualisation
    :component: blip
    :satisfies: STK_LIVE_OBSERVE
 
-   blip shall let the user show, for all traces of a histogram at once,
+   blip shall let the user show, for all traces of the Bars of a Distribution
+   view at once,
    no markers (the default), the mean, or the mean and the population
    standard deviation σ (divided by the number of samples, as in the plot
    statistics) of the samples binned, counting each sample once whatever
@@ -138,77 +143,183 @@ Visualisation
    and a whisker from the mean −σ to the mean +σ, in the colour of the
    trace.
 
-.. req:: Histogram orientation
+.. req:: Distribution orientation
    :id: REQ_VIS_HIST_ORIENT
    :status: implemented
    :component: blip
    :satisfies: STK_LIVE_OBSERVE
 
-   blip shall let the user show a histogram upright, with the values along
-   the horizontal axis and the bars growing up, or sideways, with the values
-   along the vertical axis and the bars growing to the side. The value axis
-   of a sideways histogram shall be on the left, as in a plot, or on the
+   blip shall let the user show a Distribution view, in all its forms,
+   upright, with the values along the horizontal axis and the bars growing
+   up or the boxes stacked in rows, or sideways, with the values along the
+   vertical axis and the bars growing to the side or the boxes side by side
+   in columns. The value axis of a sideways Distribution view shall be on the left, as in a plot, or on the
    right, as the user chooses.
 
-.. req:: Histogram linked to a plot
+.. req:: Distribution linked to a plot
    :id: REQ_VIS_HIST_LINK
    :status: implemented
    :component: blip
    :satisfies: STK_LIVE_OBSERVE
-   :rationale: A histogram beside a plot shows the distribution of the
+   :rationale: A Distribution view beside a plot shows the distribution of the
       plot's traces over the plot's y range; sideways, at the same heights as
       the plot. Taking the plot's traces saves checking them twice.
 
-   blip shall let the user link a histogram, upright or sideways, to a plot
-   view of the layout, or to none. While linked, the histogram shall show
+   blip shall let the user link a Distribution view, upright or sideways and in
+   all its forms, to a plot
+   view of the layout, or to none. While linked, the view shall show
    the traces the plot shows, with the plot's number formats, as they
    change, and the tree of the traces shall show them checked but greyed,
    with a hint naming the plot; its number formats shall be greyed too.
-   Unlinked, the histogram shall keep the traces it showed last. While
-   linked, the value axis of the histogram shall show the y range the plot
+   Unlinked, the view shall keep the traces it showed last. While
+   linked, the value axis of the view shall show the y range the plot
    shows, as it is zoomed, panned or fixed, and that range shall act as a
-   fixed range: the bins, automatic, a fixed number or a fixed width, shall
+   fixed range: the boxes and whiskers shall be cut at its edges and the bins, automatic, a fixed number or a fixed width, shall
    cover it, and samples outside it shall be counted and shown faintly at the
-   end they lie beyond. The histogram's own fixed range, zooming and panning
+   end they lie beyond. The view's own fixed range, zooming and panning
    of the values shall be off while linked, also while the plot shows no y
    range yet. Deleting the plot shall drop the link.
 
-.. req:: Histogram interaction
+.. req:: Distribution interaction
    :id: REQ_VIS_HIST_HOVER
    :status: implemented
    :component: blip
    :satisfies: STK_LIVE_OBSERVE
 
-   Hovering over a bin of a histogram shall highlight the bin and show its
+   Hovering over a bin of the Bars of a Distribution view shall highlight the bin and show its
    range of values, with the unit the traces share, and for each trace its
    percentage of the samples of the trace and its count of them, such as
    "12.5 %" and "42 of 336". The
-   mouse wheel shall zoom, and dragging shall pan, the value axis only,
-   magnifying the bins without binning anew, and a double click shall fit it
+   mouse wheel shall zoom, and dragging shall pan, the value axis only, of
+   all forms, magnifying the bins without binning anew, and a double click shall fit it
    again. None of them shall change the shown time range or the time cursor.
 
-.. req:: Histogram without data
+.. req:: Distribution without data
    :id: REQ_VIS_HIST_EMPTY
    :status: implemented
    :component: blip
    :satisfies: STK_LIVE_OBSERVE
 
-   A histogram without checked traces shall show a hint to check traces in
-   the tree of the traces. A histogram whose traces have no samples in the
+   A Distribution view without checked traces shall show a hint to check
+   traces in the tree of the traces. A Distribution view whose traces have no samples in the
    shown time range shall show empty axes and "No samples in the shown
-   window". A histogram whose samples all have the same value shall show one
-   bar centred on that value.
+   window". The Bars of a view whose samples all have the same value shall
+   show one bar centred on that value.
 
-.. req:: Histogram settings saved
+.. req:: Distribution settings saved
    :id: REQ_VIS_HIST_SAVED
    :status: implemented
    :component: blip
    :satisfies: STK_LIVE_OBSERVE, STK_REVIEW
 
-   blip shall save the checked traces and all settings of a histogram, its
-   bins, range, counts scale, markers, orientation, value axis side and the
+   blip shall save the checked traces and all settings of a Distribution
+   view, its show form (Bars, Boxes or Both), whiskers, bins, range, counts
+   scale, markers, orientation, value axis side and the
    plot it is linked to, with the view in the layout of the preset, and restore
    them when the layout is loaded.
+
+.. req:: Distribution shows bars, boxes or both
+   :id: REQ_VIS_DIST_SHOW
+   :status: implemented
+   :component: blip
+   :satisfies: STK_LIVE_OBSERVE
+
+   blip shall let the user choose what a Distribution view shows: Bars (the
+   default), Boxes or Both. Bars shall be the histogram with the Markers
+   Off, Mean or Mean ±σ. Boxes shall be a box plot, in which each trace gets
+   an equal row along the shared value axis, upright with the values along
+   the horizontal axis and the rows stacked, sideways with the values along
+   the vertical axis and the columns side by side. The names of the traces
+   shall label the rows on the category axis, below the columns when
+   sideways, cut with "…" at no more than a third of the view, with no
+   lines or bands between the rows; the bins and counts settings shall not
+   apply, but shall be kept, so switching back restores them. Both shall be the bars with a box per trace in the marker strip
+   above them, in place of the mean and σ markers, with the rows of the strip
+   grown from 10 pt to 14 pt. Orientation, axis side, link to a plot, value
+   zoom, pan and fit by double click, units, number formats and the legend in
+   the title row shall apply to all forms.
+
+.. req:: Distribution box
+   :id: REQ_VIS_DIST_BOX
+   :status: implemented
+   :component: blip
+   :satisfies: STK_LIVE_OBSERVE
+
+   blip shall draw the box of a trace from the first to the third quartile,
+   with a median line and the mean as a dot. The box shall be a wash under
+   an outline of 1.5 pt in the colour of the trace, the median line heavier
+   than the outline, the mean dot ringed in the card colour, the whiskers
+   capped, and the outliers small dots at 45 % opacity. The box shall be 40 %
+   of its row thick, at most 24 pt, and in Both 10 pt in a 14 pt row, with
+   an outline of 1 pt.
+
+.. req:: Distribution whiskers
+   :id: REQ_VIS_DIST_WHISKERS
+   :status: implemented
+   :component: blip
+   :satisfies: STK_LIVE_OBSERVE
+
+   blip shall let the user choose, for Boxes and Both, where the whiskers end:
+   1.5×IQR (the default), the furthest sample within 1.5 times the
+   interquartile range of the box; Min–max; 5–95 %; or 1–99 %. Samples beyond
+   the whiskers shall be drawn as outlier dots, none with Min–max.
+
+.. req:: Distribution box statistics
+   :id: REQ_VIS_DIST_STATS
+   :status: implemented
+   :component: blip
+   :satisfies: STK_LIVE_OBSERVE
+
+   blip shall compute the box of a trace over all its non-null samples in the
+   shown time range, each counted once and not weighted by the time it lasts,
+   as the bars do. Quartiles and percentiles shall be linear interpolations
+   between the order statistics (type 7, the default of numpy). They shall not
+   depend on the range of the value axis: parts beyond a fixed or linked
+   range shall be cut off at its edge, and a whisker end without cap shall
+   read as cut. They shall be computed anew as the range is panned, zoomed or
+   moves on while live.
+
+.. req:: Distribution box interaction
+   :id: REQ_VIS_DIST_BOX_HOVER
+   :status: implemented
+   :component: blip
+   :satisfies: STK_LIVE_OBSERVE
+
+   Hovering anywhere in the row of a trace in Boxes or in the box strip of Both
+   shall light the row, as a bin column is lit, and show a tooltip with the dot
+   and name of the trace and a grid of names and right-aligned values in the
+   number format of the trace with its unit: min, low whisker, Q1, median,
+   mean, Q3, high whisker and max, in the order drawn (low to high upright,
+   high to low sideways), then under a rule the number of Samples and of
+   Outliers. With Min–max, the rows of whiskers and outliers shall be left
+   out; percentile whiskers shall be named by their percentile, such as "5 %"
+   and "95 %".
+
+.. req:: Distribution box without data
+   :id: REQ_VIS_DIST_BOX_EMPTY
+   :status: implemented
+   :component: blip
+   :satisfies: STK_LIVE_OBSERVE
+
+   A trace without samples in the shown time range shall keep its row in Boxes
+   and Both with its name and "No samples". A trace whose samples all have the
+   same value shall have its box collapsed to the median line with the mean
+   dot. A trace whose whole box lies beyond a fixed or linked value range
+   shall show a faint arrow at the edge it lies beyond, as the bars show the
+   samples outside the range faintly, and its tooltip shall still work.
+
+.. req:: Distribution properties
+   :id: REQ_VIS_DIST_PROPS
+   :status: implemented
+   :component: blip
+   :satisfies: STK_LIVE_OBSERVE
+
+   blip shall group the properties of a Distribution view as Link (Plot);
+   Display (Show, Orientation, Axis side when sideways, then Markers for Bars
+   or Whiskers for Boxes and Both in the same place); Values (Range, which
+   cuts the boxes too); and for Bars and Both only Bins (Mode, Number or
+   Width) and Counts (Scale). Rows that do not apply to the form shown shall be
+   hidden.
 
 .. req:: Time cursor
    :id: REQ_VIS_CURSOR

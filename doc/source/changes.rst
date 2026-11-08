@@ -12,12 +12,13 @@ change, e.g. in scripts, schemas, layout or recording files.
 The first release.
 
 blip
-   * Plots, states, tables, XY plots, histograms, heatmaps, logs and actions
+   * Plots, states, tables, XY plots, distributions, heatmaps, logs and actions
      views, arranged in tabs and groups.
-   * Histograms of how the values spread over the shown time range, in
-     percent of the samples of each trace, upright or sideways, with the mean
-     and σ of each trace; a histogram linked to a plot shows the plot's
-     traces over its y range.
+   * Distributions of how the values spread over the shown time range, as
+     histograms in percent of the samples of each trace, as box plots with
+     median, mean, quartiles, whiskers and outliers, or both, upright or
+     sideways; a distribution linked to a plot shows the plot's traces over
+     its y range.
    * Presets: layouts with their connections, to switch between, exported to
      and imported from JSON files.
    * One time range for all views: live, paused or playing, with a time cursor

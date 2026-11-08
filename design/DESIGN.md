@@ -40,6 +40,12 @@ oscilloscope, not like a web app.
   1.5 pt outline in the full colour; all washes first, then all outlines, then markers.
   Mean and ±σ sit in a whisker strip above the bars (a row per trace: dot at the mean,
   whisker over ±σ), not as lines across the data.
+- Distribution boxes use the bar look: a wash under a 1.5 pt outline, a heavier median
+  line, the mean as the marker dot ringed in `card`, capped whiskers, outliers as small
+  dots at 45 %. Box thickness is 40 % of the row, at most 24 pt. In Boxes, trace names
+  label the rows on the category axis, with no lines or bands between rows; in Both, a
+  10 pt box with a 1 pt outline sits in a 14 pt row of the marker strip.
+- A choice of more than three long options is a combo box, not `segmented`.
 - The time cursor has its own colour (`cursor_color`) and is drawn at 35 % opacity while
   it follows the end of the window.
 - Keep it calm: the user found per-pixel bins and confetti-coloured log ticks in the
