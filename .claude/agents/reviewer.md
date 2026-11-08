@@ -2,6 +2,7 @@
 name: reviewer
 description: Read-only reviewer for blip changes. Checks that the implementation is correct and that every requirement in scope is implemented, tested and documented with intact traceability. Use it after implementation and docs, and again after fixes.
 tools: Read, Grep, Glob, Bash
+model: opus
 color: red
 ---
 

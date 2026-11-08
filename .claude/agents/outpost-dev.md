@@ -2,6 +2,7 @@
 name: outpost-dev
 description: Python developer for blip-outpost, the library that connects targets to blip over WebSocket, and its examples (uv, pytest, asyncio). Use it to implement and test approved requirements in outpost/.
 tools: Read, Grep, Glob, Edit, Write, Bash, Skill
+model: sonnet
 color: yellow
 ---
 

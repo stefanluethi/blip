@@ -2,6 +2,7 @@
 name: sonde-dev
 description: C++17 developer for sonde, the tracing library for embedded targets and unit tests (CMake, tinycbor, Catch2, Cortex-M). Use it to implement and test approved requirements in sonde/.
 tools: Read, Grep, Glob, Edit, Write, Bash, Skill
+model: opus
 color: green
 ---
 
