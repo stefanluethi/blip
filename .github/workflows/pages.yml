@@ -20,7 +20,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  TRUNK_VERSION: v0.21.14
+  TRUNK_VERSION: v0.22.1
+  # trunk-x86_64-unknown-linux-gnu.tar.gz.sha256 of the release
+  TRUNK_SHA256: 2ab8d548fd5ed9cda50906f61fd8654204e7893bd52ebbfd90533862b7d71ee1
 
 jobs:
   build:
@@ -44,10 +46,16 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # gh downloads through the API, which keeps working when the plain
+      # release download URL answers 504
       - name: Install trunk
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          curl -sSfL "https://github.com/trunk-rs/trunk/releases/download/${TRUNK_VERSION}/trunk-x86_64-unknown-linux-gnu.tar.gz" \
-            | tar -xz -C "$HOME/.cargo/bin"
+          asset=trunk-x86_64-unknown-linux-gnu.tar.gz
+          gh release download "$TRUNK_VERSION" -R trunk-rs/trunk -p "$asset" -D "$RUNNER_TEMP"
+          echo "$TRUNK_SHA256  $RUNNER_TEMP/$asset" | sha256sum -c
+          tar -xzf "$RUNNER_TEMP/$asset" -C "$HOME/.cargo/bin"
           trunk --version
 
       - name: Build blip
