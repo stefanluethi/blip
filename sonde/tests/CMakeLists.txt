@@ -1,3 +1,8 @@
+# Catch2 must be built with the standard of the tests, or its library lacks the
+# printer of std::string_view (MSVC defaults to C++14)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 include(FetchContent)
 FetchContent_Declare(Catch2
     URL https://github.com/catchorg/Catch2/archive/refs/tags/v3.9.1.tar.gz
