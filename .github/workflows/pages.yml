@@ -23,6 +23,8 @@ env:
   TRUNK_VERSION: v0.22.1
   # trunk-x86_64-unknown-linux-gnu.tar.gz.sha256 of the release
   TRUNK_SHA256: 2ab8d548fd5ed9cda50906f61fd8654204e7893bd52ebbfd90533862b7d71ee1
+  # the wasm-opt that trunk 0.22.1 asks for
+  WASM_OPT_VERSION: version_131
 
 jobs:
   build:
@@ -57,6 +59,28 @@ jobs:
           echo "$TRUNK_SHA256  $RUNNER_TEMP/$asset" | sha256sum -c
           tar -xzf "$RUNNER_TEMP/$asset" -C "$HOME/.cargo/bin"
           trunk --version
+
+      # trunk would download these from the same release URLs; it uses them from
+      # the PATH when the versions match (wasm-bindgen that of Cargo.lock)
+      - name: Install wasm-bindgen and wasm-opt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # downloads an asset and checks it against the hash published with it
+          fetch() {  # repo tag asset checksum-asset
+            gh release download "$2" -R "$1" -p "$3" -p "$4" -D "$RUNNER_TEMP"
+            test "$(awk '{print $1}' "$RUNNER_TEMP/$4")" = "$(sha256sum "$RUNNER_TEMP/$3" | awk '{print $1}')"
+            tar -xzf "$RUNNER_TEMP/$3" -C "$RUNNER_TEMP"
+          }
+          bindgen=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')
+          name="wasm-bindgen-${bindgen}-x86_64-unknown-linux-musl"
+          fetch rustwasm/wasm-bindgen "$bindgen" "$name.tar.gz" "$name.tar.gz.sha256sum"
+          cp "$RUNNER_TEMP/$name/wasm-bindgen" "$HOME/.cargo/bin/"
+          name="binaryen-${WASM_OPT_VERSION}-x86_64-linux"
+          fetch WebAssembly/binaryen "$WASM_OPT_VERSION" "$name.tar.gz" "$name.tar.gz.sha256"
+          cp "$RUNNER_TEMP/binaryen-${WASM_OPT_VERSION}/bin/wasm-opt" "$HOME/.cargo/bin/"
+          wasm-bindgen --version
+          wasm-opt --version
 
       - name: Build blip
         working-directory: blip
