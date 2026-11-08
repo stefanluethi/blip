@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Lead a feature or change in blip from idea to reviewed code. Clarify with the user, get design options from the designer for UI changes, have the requirements engineer write the requirements, get them approved, have a technical spec written on Opus, hand the slices of work on Sonnet to the specialist agents (blip-dev, sonde-dev, outpost-dev, docs-writer) and loop with the reviewer and, for blip UI changes, the design-reviewer until requirements, code and look agree. Runs only when the user types /orchestrate.
+description: Lead a feature or change in blip from idea to reviewed code. Small changes take a light path (one specialist, one Sonnet review). For the rest, clarify with the user, get design options from the designer for UI changes, have the requirements engineer write the requirements, get them approved, have a technical spec written on Opus, hand the slices of work on Sonnet to the specialist agents (blip-dev, sonde-dev, outpost-dev, docs-writer) and loop with the reviewer and, for blip UI changes, the design-reviewer until requirements, code and look agree. Runs only when the user types /orchestrate.
 argument-hint: <change>
 disable-model-invocation: true
 ---
@@ -26,6 +26,37 @@ The change to build: $ARGUMENTS
    - what is out of scope.
    Do not ask what you can find in the code or docs.
 3. Sum up the agreed change in a few lines and get the user's OK.
+4. Pick the path (see "Light path" below) and tell the user which one and why, in the
+   same message as the summary. The user can ask for the full path.
+
+## Light path
+
+Most of the cost of a change is in the agents that run for many turns, so a small change
+does not get the whole team. Take the light path when all of these hold:
+
+- one part changes (blip, proto, outpost or sonde), in a few files, about 150 lines of
+  code or less;
+- no new view, panel or control, and no design choice to make with the user;
+- no change to the protocol, the recording format or a saved file format;
+- at most a few requirements are added or changed.
+
+Then:
+
+1. **Requirements.** If the change adds or changes a requirement, spawn
+   `requirements-engineer` and get the user's approval as in step 3. If it only fixes the
+   code of existing requirements, name their IDs and skip this.
+2. **Build.** Spawn the part's specialist once on its default model. Its brief is the
+   spec in short (the sections of step 5), and names the docs pages it updates as well:
+   the guide or reference page the change touches and the `changes.rst` entry. Skip the
+   designer, the spec file, the simplify pass and the `docs-writer`.
+3. **Review.** Spawn `reviewer` on Sonnet (`model: "sonnet"`, `effort: "medium"`) as the
+   last pass, so it runs the checks once. If the change touches the look of `blip/src`,
+   spawn `design-reviewer` in the same message.
+4. **Fix and finish** as in steps 8 and 9.
+
+If the change turns out larger while you work (the specialist reports work in another
+part, or the diff grows past the limits above), tell the user and go on with the full
+path from the step you are at.
 
 ## 2. Design (when the user will see the change)
 
@@ -90,6 +121,9 @@ The spec has these sections:
   do; existing functions to reuse, named by file and function.
 - **Slices:** in order, each one buildable and checked on its own, about 300 lines of
   code at most: the requirement IDs, the files, the steps, and what done looks like.
+- **Context:** per slice, what its agent reads before it starts: the sections of the docs
+  (`internals.rst`, `sonde/README.md`, by heading) and the code (file and function or line
+  range). A slice agent reads these instead of whole files, so keep the list short.
 - **Tests:** per slice, the test names, the `TEST_*` item each fills, and the inputs
   and expected values worked out (by running the numbers), not guessed.
 - **Not to touch:** what stays as it is.
@@ -99,17 +133,23 @@ with the same sections in short.
 
 ## 6. Implement
 
-Spawn a fresh specialist per slice, in the spec's order, on Sonnet (the Agent tool's
-`model: "sonnet"`). Slices of different parts that do not share files may run in
-parallel. Each brief has:
+Spawn a fresh specialist per slice, in the spec's order, on Sonnet at medium effort (the
+Agent tool's `model: "sonnet"` and `effort: "medium"`): the spec has made the decisions,
+so the slice needs no deep reasoning. Slices of different parts that do not share files
+may run in parallel. Each brief has:
 
-- the spec file and the slice to build; the slices before it are done;
+- the spec file and the slice to build, and the slice's **Context** list; the slices
+  before it are done;
 - the requirement IDs it implements and the `TEST_*` items it must fill in;
 - what other parts are changing at the same time.
 
 A slice the spec leaves open, or one that failed twice on Sonnet, goes to the
 specialist on its default model. If a specialist reports that the spec does not fit the
 code, have the spec fixed before the next slice.
+
+The developers stop after 80 turns (`maxTurns`) and return what they have. A slice that
+hits the limit was too large: resume it once with SendMessage to finish it, and split the
+slices that follow smaller. Do not lift the limit.
 
 Read each report. If a specialist reports work needed in another part, add it to the
 plan. Look at the diff yourself; a report is not proof.
@@ -157,11 +197,13 @@ since that round. Put the old id in the briefs of the next round.
    change. Its brief lists the findings, the files and functions they point to, the
    user's decisions and the requirement IDs. Design findings go to `blip-dev`, missing
    screenshots to `blip-dev` (`screenshots.rs`) and then `docs-writer`. Run fixes for
-   different parts in parallel. Fixes the findings spell out run on Sonnet; a finding
+   different parts in parallel. Fixes the findings spell out run on Sonnet at medium
+effort (`model: "sonnet"`, `effort: "medium"`); a finding
    that needs a design decision goes to the specialist on its default model. Use
    SendMessage only for a short follow-up right after an agent's report, never to start
    a new round in a long-running agent.
-4. **Re-check.** Spawn fresh reviewers on Sonnet (the Agent tool's `model: "sonnet"`).
+4. **Re-check.** Spawn fresh reviewers on Sonnet at medium effort (the Agent tool's
+   `model: "sonnet"` and `effort: "medium"`).
    Brief them with the previous findings and the snapshot id to diff against. They
    check that those findings are fixed and that the fix broke nothing it touched, not
    the whole change again. The design reviewer looks at only the screenshots of the

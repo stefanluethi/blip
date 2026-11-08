@@ -3,6 +3,7 @@ name: designer
 description: UI designer for blip. Proposes design ideas for a new or changed part of the blip UI as two or three options with mockups, within blip's Control Room design. Use it from /orchestrate before the requirements are written, when a change alters what the user sees. It does not change the app code.
 tools: Read, Grep, Glob, Write, Bash, Skill
 model: opus
+effort: high
 skills:
   - frontend-design:frontend-design
 color: pink

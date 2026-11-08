@@ -3,6 +3,7 @@ name: docs-writer
 description: Technical writer for the blip documentation in doc/source (Sphinx, sphinx-needs, draw.io diagrams, screenshots). Use it after implementation to bring the guides, internals, reference, architecture elements and release notes in step with the code.
 tools: Read, Grep, Glob, Edit, Write, Bash
 model: sonnet
+effort: medium
 color: cyan
 ---
 

@@ -4,6 +4,8 @@ project(sonde VERSION 0.1.0 LANGUAGES C CXX)
 
 if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
     set(sonde_top_level ON)
+    # compile_commands.json in the build directory, for clangd
+    set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 else()
     set(sonde_top_level OFF)
 endif()

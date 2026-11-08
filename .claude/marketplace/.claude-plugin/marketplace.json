@@ -1,0 +1,12 @@
+{
+  "name": "blip-tools",
+  "description": "Claude Code plugins for working on blip",
+  "owner": { "name": "Stefan Lüthi" },
+  "plugins": [
+    {
+      "name": "blip-lsp",
+      "source": "./blip-lsp",
+      "description": "rust-analyzer in release mode and clangd for sonde"
+    }
+  ]
+}

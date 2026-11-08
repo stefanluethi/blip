@@ -1,0 +1,15 @@
+{
+  "rust-analyzer": {
+    "command": "rust-analyzer",
+    "extensionToLanguage": { ".rs": "rust" },
+    "initializationOptions": {
+      "cargo": { "extraArgs": ["--release"] },
+      "check": { "extraArgs": ["--release"] }
+    }
+  },
+  "clangd": {
+    "command": "clangd",
+    "args": ["--background-index", "--compile-commands-dir=${CLAUDE_PROJECT_DIR}/sonde/build"],
+    "extensionToLanguage": { ".cpp": "cpp", ".hpp": "cpp", ".h": "cpp", ".c": "c" }
+  }
+}

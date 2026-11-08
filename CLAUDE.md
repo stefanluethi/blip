@@ -40,6 +40,11 @@ ctest --test-dir sonde/build --output-on-failure
 
 Cross builds for Cortex-M use `MinSizeRel`, as in `.github/workflows/sonde.yml`.
 
+A hook (`.claude/hooks/release-only.py`, registered in `.claude/settings.json`) blocks
+Bash commands that would build in debug. The project's `blip-lsp` plugin
+(`.claude/marketplace`) runs rust-analyzer in release mode, and clangd on the compile
+database that the sonde configure above writes to `sonde/build`.
+
 ## Checks
 
 `./check.sh` runs the CI-style checks (all in release): cargo check for native and
@@ -68,6 +73,7 @@ changes.
 through them: clarify with the user, pick a design for UI changes, write and approve the
 requirements, spec the code on Opus (`.claude/specs`), implement it in slices on Sonnet,
 document, then review until every requirement in scope is implemented, tested, traced
-and documented, and the UI looks right.
+and documented, and the UI looks right. A small change in one part takes a light path:
+one specialist and one review on Sonnet.
 
 `design/DESIGN.md` describes the look of blip and the UI rules; follow it for UI work.

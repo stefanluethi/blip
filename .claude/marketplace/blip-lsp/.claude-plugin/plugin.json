@@ -1,0 +1,6 @@
+{
+  "name": "blip-lsp",
+  "version": "1.0.0",
+  "description": "Language servers for blip: rust-analyzer in release mode (it shares target/release with ./check.sh and never fills target/debug) and clangd for sonde",
+  "author": { "name": "Stefan Lüthi" }
+}
