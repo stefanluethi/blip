@@ -100,24 +100,6 @@ fn scrolling_a_time_plot_zooms_the_window() {
 }
 
 #[test]
-fn closest_index_picks_the_closest_timestamp() {
-    let timestamps: Vec<u64> = (0..10).map(|i| i * 1_000_000).collect(); // 1 ms apart
-    assert_eq!(closest_index(&timestamps, 2_400_000), Some(2));
-    assert_eq!(closest_index(&timestamps, 2_600_000), Some(3));
-    assert_eq!(closest_index(&timestamps, 1_000_000_000), Some(9));
-    assert!(closest_index(&[], 1).is_none());
-}
-
-#[test]
-fn index_at_picks_the_current_sample() {
-    let timestamps: Vec<u64> = (0..10).map(|i| i * 1_000_000).collect(); // 1 ms apart
-    assert_eq!(index_at(&timestamps, 2_600_000), Some(2));
-    assert_eq!(index_at(&timestamps, 3_000_000), Some(3));
-    assert_eq!(index_at(&timestamps, 1_000_000_000), Some(9));
-    assert!(index_at(&timestamps[1..], 0).is_none());
-}
-
-#[test]
 fn visible_range_includes_neighbours() {
     let timestamps: Vec<u64> = (0..100).map(|i| i * 1_000_000).collect(); // 1 ms apart
     let ms = |ms: f64| (ms * 1.0e6) as u64;

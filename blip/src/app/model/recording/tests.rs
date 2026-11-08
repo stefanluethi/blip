@@ -226,3 +226,22 @@ fn other_files_are_no_recordings() {
     .unwrap();
     assert!(read(&newer).1.unwrap_err().contains("version"));
 }
+
+#[test]
+fn read_header_finds_the_header() {
+    let header = |format: &str| {
+        serde_cbor_2::to_vec(&Header {
+            format: format.to_owned(),
+            version: 2,
+        })
+        .unwrap()
+    };
+    let mut bytes = header(FORMAT);
+    let (found, len) = read_header(&bytes).unwrap();
+    assert_eq!((found.version, len), (2, bytes.len()));
+    bytes.push(0x01);
+    assert_eq!(read_header(&bytes).unwrap().1, bytes.len() - 1);
+    assert!(read_header(&header("other")).is_none());
+    assert!(read_header(&[0xff]).is_none());
+    assert!(read_header(&[]).is_none());
+}

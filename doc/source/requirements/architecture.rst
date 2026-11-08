@@ -22,15 +22,17 @@ satisfies. How each is built is described on the internals page of its part.
      splits frames into messages.
    * ``app/model`` -- the data model: value ``traces``, ``logs``, the
      announced ``actions`` with the ``Invoker``, which sends invocations and
-     tracks their answers, and the ``recording`` of the received messages.
+     tracks their answers, the ``recording`` of the received messages, and
+     ``sorted``, the searches of ascending timestamps.
    * ``app/time.rs`` -- the time range shared by all views, and the timeline.
    * ``app/layout`` -- the layout of the views as a tree of groups, shown
      with ``egui_tiles``, the properties panel and its saved form.
    * ``app/view`` -- views: time-series ``plot``, ``states`` over time,
      ``table`` of values, ``xy`` plot, ``distribution`` of values, ``heatmap``
      of arrays, ``log_table`` and the ``actions`` form; ``time_axis`` shared
-     by the views over time, and the ``trace_selection``, the tree of the
-     traces and actions to choose those of the selected view.
+     by the views over time, ``plotting`` shared by the plot views, and the
+     ``trace_selection``, the tree of the traces and actions to choose those of
+     the selected view.
 
 .. arch:: proto crate
    :id: ARCH_PROTO

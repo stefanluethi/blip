@@ -50,7 +50,8 @@ Structure
      - What was received: ``traces`` (with ``numbers``, the columns of numbers),
        ``logs``, ``actions`` (the announced actions and the ``Invoker``) and
        ``recording`` (the received messages, and reading and writing recording
-       files); ``cbor`` and ``decode`` read the messages.
+       files); ``cbor`` and ``decode`` read the messages; ``sorted`` holds the
+       searches of ascending timestamps.
    * - ``app/time.rs``, ``app/time/timeline.rs``
      - The ``TimeRange`` shared by all views, its controls and the timeline
        with the activity bars.
@@ -60,8 +61,9 @@ Structure
        the center (``drag.rs``) and the saved form (``file.rs``).
    * - ``app/view``
      - The views and what they share: the ``Viewable`` trait, the
-       ``trace_selection`` tree, the ``time_axis`` of the views over time and
-       the properties widgets.
+       ``trace_selection`` tree, the ``time_axis`` of the views over time,
+       ``plotting``, the drawing pieces the plot views share, and the
+       properties widgets.
    * - ``app/files.rs``
      - Open and save dialogs (``rfd`` natively, a file input and a download
        on the web) and dropped files.

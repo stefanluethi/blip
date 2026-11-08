@@ -307,3 +307,16 @@ fn the_buttons_pause_and_go_live() {
     harness.run();
     assert!(!time(&harness).is_live());
 }
+
+#[test]
+fn window_and_cursor_in_nanoseconds() {
+    let time = TimeRange {
+        origin: 5,
+        ..time_range(0.0, 10.0, 4.0)
+    };
+    assert_eq!(time.timestamps(), Some((6_000_000_005, 10_000_000_005)));
+    assert_eq!(time.cursor_timestamp(), Some(10_000_000_005));
+    let empty = TimeRange::default();
+    assert_eq!(empty.timestamps(), None);
+    assert_eq!(empty.cursor_timestamp(), None);
+}

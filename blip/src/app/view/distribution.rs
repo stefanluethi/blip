@@ -3,14 +3,17 @@
 //! in their colours, as boxes, a box plot of each trace in a row of its own, or both.
 
 use super::Selectable;
-use super::time_axis::within;
-use super::{Formats, Plots, PropertiesContext, ViewContext, ViewId, Viewable, short_names};
+use super::{
+    Formats, LEGEND_DOT_SIZE, Plots, PropertiesContext, ViewContext, ViewId, Viewable, legend_dot,
+    text_size,
+};
 use crate::app::model::Model;
 use crate::app::model::numbers::{
     DisplayFormat, Number, NumberKind, SHOWN_DIGITS, format_significant,
 };
+use crate::app::model::sorted::within;
 use crate::app::model::traces::{Samples, Series, Trace};
-use crate::app::theme;
+use crate::app::theme::{self, TokensExt};
 use crate::app::time::TimeRange;
 use std::collections::BTreeSet;
 
@@ -59,8 +62,6 @@ const MARKER_RADIUS: f32 = 3.0;
 const OVERLAY_INSET: f32 = 6.0;
 /// The room egui_plot leaves on each side of the labels of a y axis.
 const NAME_MARGIN: f32 = 4.0;
-/// The legend dots, as in the legends of plots.
-const DOT_SIZE: f32 = 8.0;
 /// The height of the counts of the samples outside the bins.
 const TEXT_ROW: f32 = 18.0;
 /// The least width left for a name in the legend of the title row, else it ends in "…".
@@ -69,8 +70,6 @@ const MIN_NAME_WIDTH: f32 = 16.0;
 /// plot, so that both line up.
 const VALUE_AXIS_THICKNESS: f32 = 50.0;
 
-/// The hint of a distribution without traces.
-const CHECK_TRACES: &str = "Check the traces to show\nin the tree on the left";
 /// The hint of a distribution without samples in the shown window.
 const NO_SAMPLES: &str = "No samples in the shown window";
 
@@ -108,6 +107,24 @@ named_enum! {
         /// The values along the vertical axis, the bars growing to the right, e.g.
         /// beside a plot of the same traces.
         Sideways => "Sideways",
+    }
+}
+
+impl Orientation {
+    /// `upright` or `sideways`, by the orientation. Both are evaluated.
+    pub fn pick<T>(self, upright: T, sideways: T) -> T {
+        match self {
+            Self::Upright => upright,
+            Self::Sideways => sideways,
+        }
+    }
+
+    /// The values `along` the value axis and `across` it, as the x and y of the plot.
+    pub fn xy<T>(self, along: T, across: T) -> [T; 2] {
+        match self {
+            Self::Upright => [along, across],
+            Self::Sideways => [across, along],
+        }
     }
 }
 
@@ -470,12 +487,7 @@ impl Distribution {
     /// The shown paths with their names in the legend and their indices, which pick
     /// their colors.
     fn selected_path_iter(&self) -> impl Iterator<Item = (&str, &str, usize)> {
-        let names = short_names(self.traces.iter().map(String::as_str));
-        self.traces
-            .iter()
-            .zip(names)
-            .enumerate()
-            .map(|(index, (path, name))| (path.as_str(), name, index))
+        super::indexed_names(&self.traces)
     }
 
     /// The shown traces that were received, with their samples in `window`, in
@@ -547,9 +559,7 @@ impl Distribution {
         plots: &Plots,
         length: f32,
     ) -> Counting<'a> {
-        let window = time
-            .range()
-            .map(|(start, end)| (time.timestamp(start), time.timestamp(end)));
+        let window = time.timestamps();
         let shown = self.shown_traces(model, window);
         let following = self.following(plots);
         let followed = self.followed(plots);
@@ -581,18 +591,12 @@ impl Distribution {
 
     /// Whether the plot can be panned and zoomed along the axes, x and y.
     fn movable(&self, following: bool) -> [bool; 2] {
-        match self.orientation {
-            Orientation::Upright => [!following, false],
-            Orientation::Sideways => [false, !following],
-        }
+        self.orientation.xy(!following, false)
     }
 
     /// The point at `value` and `count` on the axes of the plot.
     fn point(&self, value: f64, count: f64) -> [f64; 2] {
-        match self.orientation {
-            Orientation::Upright => [value, count],
-            Orientation::Sideways => [count, value],
-        }
+        self.orientation.xy(value, count)
     }
 }
 
@@ -897,13 +901,6 @@ fn common_format<'a>(formats: &Formats, paths: impl IntoIterator<Item = &'a str>
     }
 }
 
-/// Shows a dot in `color` as in the legends.
-fn dot(ui: &mut egui::Ui, color: egui::Color32) {
-    let (dot, _) = ui.allocate_exact_size(egui::Vec2::splat(DOT_SIZE), egui::Sense::hover());
-    ui.painter()
-        .circle_filled(dot.center(), DOT_SIZE / 2.0, color);
-}
-
 impl super::ViewInfo for Distribution {
     const NAME: &'static str = "Distribution";
     const ICON: &'static str = egui_phosphor::regular::CHART_BAR;
@@ -940,7 +937,7 @@ impl Viewable for Distribution {
         let left_to_right = egui::Layout::left_to_right(egui::Align::Center);
         ui.allocate_ui_with_layout(names, left_to_right, |ui| {
             for (path, name, index) in self.selected_path_iter() {
-                if ui.available_width() < 6.0 + DOT_SIZE + MIN_NAME_WIDTH {
+                if ui.available_width() < 6.0 + LEGEND_DOT_SIZE + MIN_NAME_WIDTH {
                     // a name cut off ends in "…" already
                     let more = egui::RichText::new("…").color(weak);
                     if ui.available_width() >= text_size(ui, "…", egui::TextStyle::Body).x {
@@ -949,7 +946,7 @@ impl Viewable for Distribution {
                     break;
                 }
                 ui.add_space(6.0);
-                dot(ui, theme::trace_color(ui.visuals(), index));
+                legend_dot(ui, theme::trace_color(ui.visuals(), index));
                 let label = egui::Label::new(egui::RichText::new(name).color(weak)).truncate();
                 ui.add(label).on_hover_text(path);
             }
@@ -971,10 +968,7 @@ impl Viewable for Distribution {
 
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         if self.traces.is_empty() {
-            let faint = theme::tokens(ui.visuals()).text_faint;
-            ui.centered_and_justified(|ui| {
-                ui.label(egui::RichText::new(CHECK_TRACES).color(faint));
-            });
+            theme::hint(ui, super::CHECK_TRACES);
             return;
         }
         self.show(ui, context);
@@ -1057,14 +1051,6 @@ impl Viewable for Distribution {
     }
 }
 
-/// The size of `text` in `style` on one line.
-fn text_size(ui: &egui::Ui, text: &str, style: egui::TextStyle) -> egui::Vec2 {
-    let font = style.resolve(ui.style());
-    (ui.painter())
-        .layout_no_wrap(text.to_owned(), font, egui::Color32::PLACEHOLDER)
-        .size()
-}
-
 /// The names of `plots` in the choice of the plot to link to, numbered where several
 /// have the same name.
 fn plot_names(plots: &Plots) -> Vec<String> {
@@ -1115,17 +1101,15 @@ impl Distribution {
     /// the boxes end, a combo box as four choices do not fit beside the label.
     fn whiskers_row(&mut self, ui: &mut egui::Ui) {
         super::property_label(ui, "Whiskers");
-        egui::ComboBox::from_id_salt("distribution whiskers")
-            .selected_text(self.whiskers.name())
-            .width(120.0)
-            .show_ui(ui, |ui| {
-                for (whiskers, name) in Whiskers::CHOICES {
-                    ui.selectable_value(&mut self.whiskers, whiskers, name)
-                        .on_hover_text(whiskers.hint());
-                }
-            })
-            .response
-            .on_hover_text(self.whiskers.hint());
+        super::choice_combo(
+            ui,
+            "distribution whiskers",
+            Some(120.0),
+            &mut self.whiskers,
+            Whiskers::CHOICES,
+            Some(Whiskers::hint),
+        )
+        .on_hover_text(self.whiskers.hint());
         ui.end_row();
     }
 
@@ -1201,10 +1185,7 @@ impl Distribution {
             .data(|data| data.get_temp::<egui::Vec2>(frame_id))
             .unwrap_or_else(|| ui.available_size() - egui::vec2(VALUE_AXIS_THICKNESS, 24.0))
             .max(egui::Vec2::splat(1.0));
-        let (value_length, count_length) = match self.orientation {
-            Orientation::Upright => (frame.x, frame.y),
-            Orientation::Sideways => (frame.y, frame.x),
-        };
+        let [value_length, count_length] = self.orientation.xy(frame.x, frame.y);
 
         let Counting {
             window,
@@ -1270,16 +1251,9 @@ impl Distribution {
                 Across::Counts(axis) => axis.floor..=axis.axis_top,
                 Across::Names(names) => 0.0..=names.len().max(1) as f64,
             };
-            match this.orientation {
-                Orientation::Upright => {
-                    plot_ui.set_plot_bounds_x(low..=high);
-                    plot_ui.set_plot_bounds_y(across_range);
-                }
-                Orientation::Sideways => {
-                    plot_ui.set_plot_bounds_x(across_range);
-                    plot_ui.set_plot_bounds_y(low..=high);
-                }
-            }
+            let [x, y] = this.orientation.xy(low..=high, across_range);
+            plot_ui.set_plot_bounds_x(x);
+            plot_ui.set_plot_bounds_y(y);
             let pos = plot_ui.response().hover_pos();
             let frame = *plot_ui.transform().frame();
             let row = this.rows(frame, shown.len());
@@ -1290,10 +1264,10 @@ impl Distribution {
                 return None;
             };
             let hovered = pos.and_then(|pos| {
-                let part = match this.orientation {
-                    Orientation::Upright => (pos.x - frame.left()) / frame.width(),
-                    Orientation::Sideways => (frame.bottom() - pos.y) / frame.height(),
-                };
+                let part = this.orientation.pick(
+                    (pos.x - frame.left()) / frame.width(),
+                    (frame.bottom() - pos.y) / frame.height(),
+                );
                 counted.bins.at(low + f64::from(part) * (high - low))
             });
             this.plot_bars(plot_ui, &visuals, (&shown, counted), *axis, hovered);
@@ -1337,7 +1311,7 @@ impl Distribution {
             .is_some_and(|boxes| boxes.iter().any(Option::is_some));
         if let (Some(rows), Some(boxes)) = (&rows, &boxes) {
             if let Some(Hovered::Row(row)) = self.hovered {
-                let hover = theme::tokens(ui.visuals()).hover;
+                let hover = ui.tokens().hover;
                 overlay.painter.rect_filled(rows.rect(row), 0.0, hover);
             }
             let traces = (shown.as_slice(), &boxes[..]);
@@ -1359,14 +1333,7 @@ impl Distribution {
             self.paint_markers(ui, &overlay, &shown, counted);
         }
         if empty {
-            let tokens = theme::tokens(ui.visuals());
-            let size = text_size(ui, NO_SAMPLES, egui::TextStyle::Body);
-            // on the card, so the grid does not cross it
-            let rect =
-                egui::Rect::from_center_size(frame.center(), size).expand2(egui::vec2(8.0, 4.0));
-            (overlay.painter).rect_filled(rect, theme::CONTROL_RADIUS, tokens.card);
-            let hint = egui::Label::new(egui::RichText::new(NO_SAMPLES).color(tokens.text_faint));
-            ui.put(rect, hint);
+            theme::hint_over(ui, frame, NO_SAMPLES);
         }
         match self.hovered {
             Some(Hovered::Bin(index)) => {
@@ -1414,13 +1381,11 @@ impl Distribution {
     fn row_names(&self, ui: &egui::Ui, shown: &[Shown<'_>], frame: egui::Vec2) -> Vec<String> {
         let font = egui::TextStyle::Body.resolve(ui.style());
         let third = ui.available_width() / 3.0;
-        let width = match self.orientation {
+        let width = self.orientation.pick(
             // the axis keeps a margin on each side of its labels
-            Orientation::Upright => third - 2.0 * NAME_MARGIN,
-            Orientation::Sideways => {
-                third.min(frame.x / shown.len().max(1) as f32 - 2.0 * NAME_MARGIN)
-            }
-        };
+            third - 2.0 * NAME_MARGIN,
+            third.min(frame.x / shown.len().max(1) as f32 - 2.0 * NAME_MARGIN),
+        );
         (shown.iter())
             .map(|trace| boxes::cut(ui, &trace.name, width.max(0.0), &font))
             .collect()
@@ -1510,8 +1475,7 @@ impl Distribution {
         // no lines between the rows of the boxes
         let grid = match (across, self.orientation) {
             (Across::Counts(_), _) => [true, true],
-            (Across::Names(_), Orientation::Upright) => [true, false],
-            (Across::Names(_), Orientation::Sideways) => [false, true],
+            (Across::Names(_), _) => self.orientation.xy(true, false),
         };
         let plot = plot.show_grid(grid);
         match self.orientation {
@@ -1548,7 +1512,7 @@ impl Distribution {
             ];
             plot_ui.polygon(
                 egui_plot::Polygon::new("", corners.to_vec())
-                    .fill_color(theme::tokens(visuals).hover)
+                    .fill_color(visuals.tokens().hover)
                     .stroke(egui::Stroke::NONE)
                     .allow_hover(false),
             );
@@ -1606,13 +1570,9 @@ impl Distribution {
             return;
         }
         let bounds = response.transform.bounds();
-        let axis = match self.orientation {
-            Orientation::Upright => 0,
-            Orientation::Sideways => 1,
-        };
+        let axis = self.orientation.pick(0, 1);
         let (shown_low, shown_high) = (bounds.min()[axis], bounds.max()[axis]);
-        let tolerance = (high - low) * 1.0e-6;
-        if (shown_low - low).abs() > tolerance || (shown_high - high).abs() > tolerance {
+        if super::plotting::range_moved((low, high), (shown_low, shown_high)) {
             self.value_view = Some((shown_low, shown_high));
         }
     }
@@ -1646,10 +1606,7 @@ impl Distribution {
             let painter = &overlay.painter;
             if let Some((low, high)) = marker.whisker {
                 let (low, high) = (at(low), at(high));
-                let cap = match self.orientation {
-                    Orientation::Upright => egui::vec2(0.0, MARKER_RADIUS),
-                    Orientation::Sideways => egui::vec2(MARKER_RADIUS, 0.0),
-                };
+                let cap = egui::Vec2::from(self.orientation.xy(0.0, MARKER_RADIUS));
                 painter.line_segment([low, high], stroke);
                 painter.line_segment([low - cap, low + cap], stroke);
                 painter.line_segment([high - cap, high + cap], stroke);
@@ -1661,7 +1618,7 @@ impl Distribution {
     /// Paints the counts of the samples below and above the bins faintly at the ends
     /// they lie beyond, in the room beyond the bars.
     fn paint_outside(&self, ui: &egui::Ui, overlay: &Overlay, (below, above): (u64, u64)) {
-        let faint = theme::tokens(ui.visuals()).text_faint;
+        let faint = ui.tokens().text_faint;
         let font = egui::TextStyle::Body.resolve(ui.style());
         let [below_text, above_text] = self.outside_texts(below, above);
         let [below_at, above_at] = overlay.outside_positions();
@@ -1770,10 +1727,10 @@ impl Categories {
         if unit < 0.0 || unit >= self.count as f64 {
             return None;
         }
-        Some(match self.orientation {
-            Orientation::Upright => self.count - 1 - unit as usize,
-            Orientation::Sideways => unit as usize,
-        })
+        Some(
+            self.orientation
+                .pick(self.count - 1 - unit as usize, unit as usize),
+        )
     }
 
     /// A mark in the middle of each row, for its name.
@@ -1824,11 +1781,7 @@ impl Room {
     /// Its length along the counts axis, with the gap to the bars.
     fn length(&self) -> f32 {
         let texts = self.outside.map_or(0.0, |size| {
-            OVERLAY_INSET
-                + match self.orientation {
-                    Orientation::Upright => size.y,
-                    Orientation::Sideways => size.x,
-                }
+            OVERLAY_INSET + self.orientation.pick(size.y, size.x)
         });
         let gap = if self.markers > 0.0 || texts > 0.0 {
             MARKER_GAP
@@ -1929,7 +1882,7 @@ impl Bin<'_> {
 
     /// Shows the values of the bin and the share and count of each shown trace in it.
     fn tooltip_ui(&self, ui: &mut egui::Ui, shown: &[Shown<'_>]) {
-        let faint = theme::tokens(ui.visuals()).text_faint;
+        let faint = ui.tokens().text_faint;
         let weak = ui.visuals().weak_text_color();
         ui.label(egui::RichText::new(self.range_text()).color(weak));
         let texts: Vec<[String; 2]> = (self.counted.traces.iter())
@@ -1965,7 +1918,7 @@ impl Bin<'_> {
                         )
                     };
                     ui.horizontal(|ui| {
-                        dot(ui, theme::trace_color(ui.visuals(), trace.index));
+                        legend_dot(ui, theme::trace_color(ui.visuals(), trace.index));
                         ui.label(name).on_hover_text(&trace.path);
                     });
                     // as high as the row of the name, so that the texts line up

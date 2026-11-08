@@ -8,7 +8,7 @@ use crate::app::model::numbers::{
     DisplayFormat, Number, NumberKind, SHOWN_DIGITS, format_significant,
 };
 use crate::app::model::traces::Series;
-use crate::app::theme;
+use crate::app::theme::{self, TokensExt};
 use crate::app::time::seconds_since;
 use std::collections::BTreeMap;
 
@@ -176,7 +176,7 @@ pub fn properties_ui(ui: &mut egui::Ui, measurements: &mut Vec<Measurement>, pat
                 name.unwrap_or_else(|| short_names([measurement.trace.as_str()])[0]),
             );
             if name.is_none() {
-                text = text.color(theme::tokens(ui.visuals()).text_faint);
+                text = text.color(ui.tokens().text_faint);
             }
             let hint = if name.is_some() {
                 measurement.trace.clone()
@@ -195,17 +195,15 @@ pub fn properties_ui(ui: &mut egui::Ui, measurements: &mut Vec<Measurement>, pat
                 .response
                 .on_hover_text(hint);
             ui.horizontal(|ui| {
-                egui::ComboBox::from_id_salt(("stat", index))
-                    .selected_text(measurement.stat.name())
-                    .width(100.0)
-                    .show_ui(ui, |ui| {
-                        for stat in Stat::ALL {
-                            ui.selectable_value(&mut measurement.stat, stat, stat.name())
-                                .on_hover_text(stat.hint());
-                        }
-                    })
-                    .response
-                    .on_hover_text(measurement.stat.hint());
+                super::choice_combo(
+                    ui,
+                    ("stat", index),
+                    Some(100.0),
+                    &mut measurement.stat,
+                    Stat::ALL.into_iter().map(|stat| (stat, stat.name())),
+                    Some(Stat::hint),
+                )
+                .on_hover_text(measurement.stat.hint());
                 let remove = ui
                     .add(theme::icon_button(egui_phosphor::regular::MINUS))
                     .on_hover_text("Remove this stat");
@@ -302,7 +300,7 @@ pub fn measurements_ui(
 /// The room around the contents of a measurement and between them, in points.
 const CHIP_MARGIN: egui::Vec2 = egui::vec2(6.0, 2.0);
 const CHIP_SPACING: f32 = 6.0;
-const DOT_SIZE: f32 = 8.0;
+const DOT_SIZE: f32 = super::LEGEND_DOT_SIZE;
 
 /// Shows a measurement as a dot in `color`, its `label` and its `value`, a dash without
 /// one, in a slot as wide as the widest value it showed since it or its `format` last
@@ -316,7 +314,7 @@ fn chip_ui(
     value: Option<&str>,
     format: DisplayFormat,
 ) -> egui::Response {
-    let tokens = theme::tokens(ui.visuals());
+    let tokens = ui.tokens();
     let galley = |ui: &egui::Ui, text: egui::RichText| {
         egui::WidgetText::from(text).into_galley(
             ui,
@@ -340,15 +338,7 @@ fn chip_ui(
     let id = ui
         .id()
         .with(("stat width", &measurement.trace, measurement.stat));
-    let value_width = ui.data_mut(|data| {
-        let (last_slot, width) = data.get_temp_mut_or_default::<(String, f32)>(id);
-        if *last_slot != slot {
-            *last_slot = slot;
-            *width = 0.0;
-        }
-        *width = width.max(value.size().x);
-        *width
-    });
+    let value_width = super::sticky_width(ui.ctx(), id, slot, value.size().x);
     let inner = egui::vec2(
         DOT_SIZE + CHIP_SPACING + label.size().x + CHIP_SPACING + value_width,
         label.size().y.max(value.size().y),

@@ -3,6 +3,7 @@ pub mod distribution;
 pub mod heatmap;
 pub mod log_table;
 pub mod plot;
+pub mod plotting;
 pub mod states;
 pub mod stats;
 pub mod table;
@@ -34,25 +35,64 @@ pub struct ViewContext<'a> {
     pub plots: &'a Plots,
 }
 
+impl<'a> ViewContext<'a> {
+    /// A context with the default formats, no title row and no plots.
+    pub fn new(model: &'a Model, time: &'a mut TimeRange, invoker: &'a mut Invoker) -> Self {
+        Self {
+            model,
+            time,
+            invoker,
+            formats: &NO_FORMATS,
+            titled: false,
+            plots: &NO_PLOTS,
+        }
+    }
+
+    /// The same context with the formats of another view.
+    pub fn with_formats<'b>(&'b mut self, formats: &'b Formats) -> ViewContext<'b> {
+        ViewContext {
+            model: self.model,
+            time: &mut *self.time,
+            invoker: &mut *self.invoker,
+            formats,
+            titled: self.titled,
+            plots: self.plots,
+        }
+    }
+}
+
+/// A value for each trace of a view by its path, the default for traces without one.
+#[derive(serde::Deserialize, serde::Serialize, Clone, Default)]
+pub struct PerPath<T>(BTreeMap<String, T>);
+
 /// The display formats of the traces of a view by their paths, the default format for
 /// traces without one.
-#[derive(serde::Deserialize, serde::Serialize, Clone, Default)]
-pub struct Formats(BTreeMap<String, DisplayFormat>);
+pub type Formats = PerPath<DisplayFormat>;
 
 /// The formats of a view whose traces all have the default format.
-pub static NO_FORMATS: Formats = Formats(BTreeMap::new());
+pub static NO_FORMATS: Formats = PerPath(BTreeMap::new());
 
-impl Formats {
-    pub fn of(&self, path: &str) -> DisplayFormat {
+impl<T: Copy + Default + PartialEq> PerPath<T> {
+    pub fn of(&self, path: &str) -> T {
         self.0.get(path).copied().unwrap_or_default()
     }
 
-    pub fn set(&mut self, path: &str, format: DisplayFormat) {
-        if format == DisplayFormat::Default {
+    pub fn set(&mut self, path: &str, value: T) {
+        if value == T::default() {
             self.0.remove(path);
         } else {
-            self.0.insert(path.to_owned(), format);
+            self.0.insert(path.to_owned(), value);
         }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Forgets the values of the traces that are not among `shown`, so layouts do not
+    /// keep them and traces shown again start with the default.
+    pub fn retain_shown(&mut self, shown: &BTreeSet<String>) {
+        self.0.retain(|path, _| shown.contains(path));
     }
 }
 
@@ -323,6 +363,52 @@ pub fn text_color_on(background: egui::Color32) -> egui::Color32 {
     }
 }
 
+/// Each path with its short name and its index, which picks its color. Colors follow the
+/// order of the selection, so they do not change as traces arrive.
+pub fn indexed_names(paths: &BTreeSet<String>) -> impl Iterator<Item = (&str, &str, usize)> + '_ {
+    let names = short_names(paths.iter().map(String::as_str));
+    paths
+        .iter()
+        .zip(names)
+        .enumerate()
+        .map(|(index, (path, name))| (path.as_str(), name, index))
+}
+
+/// The hint of a view with traces to show but none checked.
+pub const CHECK_TRACES: &str = "Check the traces to show in the tree on the left";
+
+/// The diameter of the dots in the legends, in points.
+pub const LEGEND_DOT_SIZE: f32 = 8.0;
+
+/// Shows a dot in `color` as in the legends.
+pub fn legend_dot(ui: &mut egui::Ui, color: egui::Color32) {
+    let (dot, _) = ui.allocate_exact_size(egui::Vec2::splat(LEGEND_DOT_SIZE), egui::Sense::hover());
+    ui.painter()
+        .circle_filled(dot.center(), LEGEND_DOT_SIZE / 2.0, color);
+}
+
+/// The size of `text` in `style` on one line.
+pub fn text_size(ui: &egui::Ui, text: &str, style: egui::TextStyle) -> egui::Vec2 {
+    let font = style.resolve(ui.style());
+    (ui.painter())
+        .layout_no_wrap(text.to_owned(), font, egui::Color32::PLACEHOLDER)
+        .size()
+}
+
+/// The widest `needed` since `slot` last changed, kept under `id`. Keeps a value in place
+/// while it changes, until a new slot (e.g. another range or format) starts it anew.
+pub fn sticky_width(ctx: &egui::Context, id: egui::Id, slot: String, needed: f32) -> f32 {
+    ctx.data_mut(|data| {
+        let (last_slot, width) = data.get_temp_mut_or_default::<(String, f32)>(id);
+        if *last_slot != slot {
+            *last_slot = slot;
+            *width = 0.0;
+        }
+        *width = width.max(needed);
+        *width
+    })
+}
+
 /// Names of the traces at `paths` for legends and axes: the last level of each path,
 /// after its last "/" or, for a record field, its last ".". Paths whose last levels are
 /// the same keep as many levels as needed to tell them apart.
@@ -390,6 +476,75 @@ pub fn property_label(ui: &mut egui::Ui, text: &str) -> egui::Response {
     ui.label(egui::RichText::new(text).color(color))
 }
 
+/// Puts `item` in `set` if `member`, else takes it out.
+pub fn set_member<T, Q>(set: &mut BTreeSet<T>, item: &Q, member: bool)
+where
+    T: Ord + std::borrow::Borrow<Q>,
+    Q: Ord + ToOwned<Owned = T> + ?Sized,
+{
+    if member {
+        if !set.contains(item) {
+            set.insert(item.to_owned());
+        }
+    } else {
+        set.remove(item);
+    }
+}
+
+/// Adds a row labelled `label` to the grid of a properties section with a checkbox for
+/// `value` that shows `hint` on hover.
+pub fn checkbox_row(ui: &mut egui::Ui, label: &str, value: &mut bool, hint: &str) {
+    property_label(ui, label);
+    ui.checkbox(value, "").on_hover_text(hint);
+    ui.end_row();
+}
+
+/// Adds a row per path of `paths` to the grid of a properties section: the short name
+/// of the path (the path on hover), then what `add` shows for it.
+pub fn path_rows<P: AsRef<str>>(
+    ui: &mut egui::Ui,
+    paths: &[P],
+    mut add: impl FnMut(&mut egui::Ui, &P),
+) {
+    let names = short_names(paths.iter().map(|path| path.as_ref()));
+    for (path, name) in paths.iter().zip(names) {
+        property_label(ui, name).on_hover_text(path.as_ref());
+        add(ui, path);
+        ui.end_row();
+    }
+}
+
+/// Shows a combo box to choose `value` among `options` by their names, with `hint` of
+/// each option on hover.
+pub fn choice_combo<T: PartialEq + Copy>(
+    ui: &mut egui::Ui,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    width: Option<f32>,
+    value: &mut T,
+    options: impl IntoIterator<Item = (T, &'static str)>,
+    hint: Option<fn(T) -> &'static str>,
+) -> egui::Response {
+    let options: Vec<(T, &'static str)> = options.into_iter().collect();
+    let current = options
+        .iter()
+        .find(|(option, _)| option == value)
+        .map_or("", |&(_, name)| name);
+    let mut combo = egui::ComboBox::from_id_salt(id_salt).selected_text(current);
+    if let Some(width) = width {
+        combo = combo.width(width);
+    }
+    combo
+        .show_ui(ui, |ui| {
+            for (option, name) in options {
+                let response = ui.selectable_value(value, option, name);
+                if let Some(hint) = hint {
+                    response.on_hover_text(hint(option));
+                }
+            }
+        })
+        .response
+}
+
 /// Adds a row labelled `label` to the grid of a properties section to choose one of
 /// `options` by their names.
 pub fn choice_row<T: PartialEq + Copy>(
@@ -411,12 +566,7 @@ pub fn optional_number_row(ui: &mut egui::Ui, label: &str, value: &mut Option<f6
     let id = ui.id().with(("optional number", label));
     let edited: Option<String> = ui.data(|data| data.get_temp(id));
     let mut text = edited.unwrap_or_else(|| value.map_or_else(String::new, |v| v.to_string()));
-    let response = ui.add(
-        egui::TextEdit::singleline(&mut text)
-            .hint_text("auto")
-            .margin(theme::FIELD_MARGIN)
-            .desired_width(f32::INFINITY),
-    );
+    let response = ui.add(theme::wide_field(&mut text).hint_text("auto"));
     if response.changed() {
         let text = text.trim();
         if text.is_empty() {
@@ -532,14 +682,7 @@ impl View {
 impl Viewable for View {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         self.expand_wildcards(context.model);
-        let context = &mut ViewContext {
-            model: context.model,
-            time: context.time,
-            invoker: context.invoker,
-            formats: &self.formats,
-            titled: context.titled,
-            plots: context.plots,
-        };
+        let context = &mut context.with_formats(&self.formats);
         self.kind.viewable().view(ui, context);
     }
 
@@ -548,14 +691,7 @@ impl Viewable for View {
     }
 
     fn title_ui(&self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
-        let context = &mut ViewContext {
-            model: context.model,
-            time: context.time,
-            invoker: context.invoker,
-            formats: &self.formats,
-            titled: context.titled,
-            plots: context.plots,
-        };
+        let context = &mut context.with_formats(&self.formats);
         self.kind.viewable_ref().title_ui(ui, context);
     }
 
@@ -585,18 +721,15 @@ impl View {
             }
             _ => return,
         };
-        let names = short_names(paths.iter().map(String::as_str));
         properties_section(ui, "Number format", |ui| {
-            for (path, name) in paths.iter().zip(names) {
-                property_label(ui, name).on_hover_text(path);
+            path_rows(ui, &paths, |ui, path| {
                 let kind = number_kind(model, path);
                 ui.add_enabled_ui(!linked, |ui| {
                     number_format_ui(ui, &mut self.formats, path, kind, model.traces.unit(path));
                 })
                 .response
                 .on_disabled_hover_text("Set by the linked plot");
-                ui.end_row();
-            }
+            });
         });
     }
 }

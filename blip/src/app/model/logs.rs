@@ -1,4 +1,5 @@
 use super::Version;
+use super::sorted::{between_by, upper_bound_by};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -118,9 +119,7 @@ impl PathLogs {
 
     /// The entries from `start` up to `end` nanoseconds, without `end`.
     pub fn between(&self, start: u64, end: u64) -> &[LogEntry] {
-        let first = self.entries.partition_point(|entry| entry.time < start);
-        let last = first + self.entries[first..].partition_point(|entry| entry.time < end);
-        &self.entries[first..last]
+        &self.entries[between_by(&self.entries, (start, end), |entry| entry.time)]
     }
 }
 
@@ -151,9 +150,7 @@ impl Logs {
         let Some(logs) = self.by_path.get_mut(path) else {
             unreachable!("the path was just added");
         };
-        let at = logs
-            .entries
-            .partition_point(|known| known.time <= entry.time);
+        let at = upper_bound_by(&logs.entries, entry.time, |known| known.time);
         if at < logs.entries.len() {
             logs.order = Version::default();
         }
@@ -254,6 +251,17 @@ mod tests {
         assert_eq!(logs.get("motor").unwrap().entries.len(), 2);
         assert_eq!(logs.get(DEFAULT_PATH).unwrap().entries[0].message, "c");
         assert_eq!(logs.time_span(), Some((1, 3)));
+    }
+
+    #[test]
+    fn move_all_to_keeps_no_span_without_records() {
+        let mut logs = Logs::default();
+        logs.move_all_to(7);
+        assert_eq!(logs.time_span(), None);
+        logs.push("", at(1, "a"));
+        logs.push("", at(3, "b"));
+        logs.move_all_to(7);
+        assert_eq!(logs.time_span(), Some((7, 7)));
     }
 
     #[test]

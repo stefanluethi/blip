@@ -45,6 +45,7 @@ use connections::Received;
 use eframe::Frame;
 use egui::{Context, Key, KeyboardShortcut, Modifiers};
 use std::collections::HashSet;
+use theme::TokensExt;
 use view::{ViewContext, Viewable};
 
 const OPEN_RECORDING: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
@@ -144,7 +145,7 @@ impl State {
 /// Returns whether it was clicked, to switch.
 fn record_button(ui: &mut egui::Ui, recording: bool, connected: bool) -> bool {
     // plain while idle, red like a record key and filled with a tint of it while recording
-    let tokens = theme::tokens(ui.visuals());
+    let tokens = ui.tokens();
     let red = tokens.error;
     let color = if recording {
         red
@@ -603,7 +604,7 @@ impl App {
             Some(_) => None,
         };
         if let Some(hint) = hint.or(linked.as_deref()) {
-            ui.weak(hint);
+            theme::panel_hint(ui, hint);
         }
         // a view without traces or actions, like the logs, has nothing to choose
         if view.as_ref().is_some_and(|view| !view.has_selection()) {
@@ -717,22 +718,18 @@ impl eframe::App for App {
                 // the views are cards on the canvas, with a gap around them, the tab bar
                 // on top brings its own room above the tabs
                 egui::Frame::central_panel(ui.style())
-                    .fill(theme::tokens(ui.visuals()).canvas)
+                    .fill(ui.tokens().canvas)
                     .inner_margin(egui::Margin {
                         top: 2,
                         ..egui::Margin::same(theme::GAP as i8)
                     }),
             )
             .show(ui, |ui| {
-                let mut context = ViewContext {
-                    model: &self.state.model,
-                    time: &mut self.state.time,
-                    invoker: &mut self.state.invoker,
-                    formats: &view::NO_FORMATS,
-                    titled: false,
-                    // the layout lists its plots
-                    plots: &view::NO_PLOTS,
-                };
+                let mut context = ViewContext::new(
+                    &self.state.model,
+                    &mut self.state.time,
+                    &mut self.state.invoker,
+                );
                 self.layout.ui(ui, &mut context);
             });
         self.send_invocations();
@@ -794,7 +791,7 @@ const CONNECTIONS_WIDTH: f32 = 300.0;
 /// connection or their number, and the messages received per second, `rate`. It is a
 /// button that opens the list of connections.
 fn status_chip(ui: &mut egui::Ui, open: &HashSet<String>, rate: Option<f64>) -> egui::Response {
-    let tokens = theme::tokens(ui.visuals());
+    let tokens = ui.tokens();
     let id = ui.id().with("status chip");
     // the frame shows the state of the previous frame, as it is drawn before the click
     // is sensed on it
@@ -889,7 +886,7 @@ fn theme_button(ui: &mut egui::Ui) {
         ),
     };
     let square = egui::Vec2::splat(ui.spacing().interact_size.y);
-    let tokens = theme::tokens(ui.visuals());
+    let tokens = ui.tokens();
     if ui
         .add(
             // framed like the other controls, which the menu bar leaves unframed
@@ -923,7 +920,7 @@ fn panel_button(ui: &mut egui::Ui, side: PanelSide, collapsed: &mut bool) {
         (PanelSide::Right, true) => "Show the properties and the connections",
     };
     let square = egui::Vec2::splat(ui.spacing().interact_size.y);
-    let tokens = theme::tokens(ui.visuals());
+    let tokens = ui.tokens();
     let response = ui
         .add(
             egui::Button::new("")

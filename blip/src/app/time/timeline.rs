@@ -9,7 +9,7 @@ use super::{
 };
 use crate::app::model::logs::LogLevel;
 use crate::app::model::{Activity, Model, Version};
-use crate::app::theme;
+use crate::app::theme::{self, TokensExt};
 use egui_phosphor::regular;
 use std::ops::Range;
 
@@ -137,15 +137,18 @@ fn zoom(time: &mut TimeRange, scale: &Scale, x: f32, factor: f64) {
         return;
     }
     let t = scale.t_at(x).clamp(first, latest);
-    // not `clamp`, which panics if rounding puts the end before the start
-    let start = (t - (t - from_start) * factor)
-        .min(latest - duration)
-        .max(first);
+    let start = clamp_within(t - (t - from_start) * factor, first, latest - duration);
     time.overview = Some(Overview {
         start,
         duration,
         follows: start + duration >= latest,
     });
+}
+
+/// `value` limited to `low..=high`, `low` if rounding puts `high` before it (where
+/// `clamp` panics).
+fn clamp_within(value: f64, low: f64, high: f64) -> f64 {
+    value.min(high).max(low)
 }
 
 /// Moves the zoomed-in timeline of `time` shown at `scale` by `delta` seconds within
@@ -154,9 +157,7 @@ fn pan(time: &mut TimeRange, scale: &Scale, delta: f64) {
     let (Some((first, latest)), Some(_)) = (time.span, time.overview) else {
         return;
     };
-    let start = (scale.start + delta)
-        .min(latest - scale.duration)
-        .max(first);
+    let start = clamp_within(scale.start + delta, first, latest - scale.duration);
     time.overview = Some(Overview {
         start,
         duration: scale.duration,
@@ -175,7 +176,7 @@ pub(super) fn show(time: &mut TimeRange, ui: &mut egui::Ui, model: &Model) {
     let ruler = ui.interact(ruler_rect, id.with("ruler"), egui::Sense::click_and_drag());
     let track = ui.interact(track_rect, id.with("track"), egui::Sense::click_and_drag());
 
-    let tokens = theme::tokens(ui.visuals());
+    let tokens = ui.tokens();
     let painter = ui.painter_at(rect.expand(1.0));
     painter.rect_filled(track_rect, 3.0, tokens.canvas);
     let Some((start, end)) = view(time) else {
@@ -594,7 +595,7 @@ impl Bins {
     /// one, which is still filling, grows up to the others instead of rescaling them,
     /// and changes of the scale under `id` are animated.
     fn paint(&self, ui: &egui::Ui, id: egui::Id, painter: &egui::Painter, rect: egui::Rect) {
-        let tokens = theme::tokens(ui.visuals());
+        let tokens = ui.tokens();
         let room = rect.height() - 2.0;
         let log_room = room * LOG_BAR_SHARE;
         let (max_rate, max_logs) = self.scale_max();
@@ -763,7 +764,7 @@ fn paint_ruler(
     base: TimeBase,
     origin: u64,
 ) {
-    let tokens = theme::tokens(ui.visuals());
+    let tokens = ui.tokens();
     let step = label_step(scale.resolution() * f64::from(LABEL_SPACING));
     let decimals = decimals_for(step);
     let font = egui::TextStyle::Body.resolve(ui.style());
@@ -799,7 +800,7 @@ fn first_tick(start: f64, step: f64, offset: f64, origin: u64) -> f64 {
 /// Paints `text` in a small pill beside `x` on the ruler in `rect`, e.g. the time at
 /// the pointer: right of it, or left of it near the end.
 fn paint_pill(ui: &egui::Ui, painter: &egui::Painter, rect: egui::Rect, x: f32, text: &str) {
-    let tokens = theme::tokens(ui.visuals());
+    let tokens = ui.tokens();
     let font = egui::TextStyle::Body.resolve(ui.style());
     let text_color = ui.visuals().strong_text_color();
     let galley = painter.layout_no_wrap(text.to_owned(), font, text_color);

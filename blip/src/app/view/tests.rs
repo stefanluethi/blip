@@ -150,3 +150,96 @@ fn short_names_keep_levels_to_tell_paths_apart() {
     );
     assert_eq!(short_names(["a/x", "b/x", "c/y"]), ["a/x", "b/x", "y"]);
 }
+
+#[test]
+fn sticky_width_grows_until_the_slot_changes() {
+    let ctx = egui::Context::default();
+    let id = egui::Id::new("w");
+    assert_eq!(sticky_width(&ctx, id, "a".to_owned(), 10.0), 10.0);
+    assert_eq!(sticky_width(&ctx, id, "a".to_owned(), 5.0), 10.0);
+    assert_eq!(sticky_width(&ctx, id, "a".to_owned(), 12.0), 12.0);
+    assert_eq!(sticky_width(&ctx, id, "b".to_owned(), 3.0), 3.0);
+}
+
+#[test]
+fn range_moved_ignores_rounding() {
+    use super::plotting::range_moved;
+    assert!(!range_moved((0.0, 10.0), (0.0, 10.0)));
+    assert!(!range_moved((0.0, 10.0), (5e-6, 10.0)));
+    assert!(range_moved((0.0, 10.0), (2e-5, 10.0)));
+    assert!(range_moved((0.0, 10.0), (0.0, 9.0)));
+    assert!(!range_moved((3.0, 3.0), (3.0, 3.0)));
+}
+
+#[test]
+fn indexed_names_follow_the_order_of_the_selection() {
+    let paths: BTreeSet<String> = ["b/x", "a/x", "c/y"].map(str::to_owned).into();
+    let named: Vec<_> = indexed_names(&paths).collect();
+    assert_eq!(
+        named,
+        [("a/x", "a/x", 0), ("b/x", "b/x", 1), ("c/y", "y", 2)]
+    );
+}
+
+#[test]
+fn set_member_inserts_and_removes() {
+    let mut set: BTreeSet<String> = ["a".to_owned()].into();
+    let members = |set: &BTreeSet<String>| set.iter().cloned().collect::<Vec<_>>();
+    set_member(&mut set, "b", true);
+    assert_eq!(members(&set), ["a", "b"]);
+    set_member(&mut set, "b", true);
+    assert_eq!(members(&set), ["a", "b"]);
+    set_member(&mut set, "a", false);
+    assert_eq!(members(&set), ["b"]);
+    set_member(&mut set, "z", false);
+    assert_eq!(members(&set), ["b"]);
+}
+
+#[test]
+fn per_path_keeps_only_values_off_the_default() {
+    let mut formats = Formats::default();
+    formats.set("a", DisplayFormat::Hex);
+    formats.set("b", DisplayFormat::Default);
+    assert_eq!(formats.of("a"), DisplayFormat::Hex);
+    assert_eq!(formats.of("b"), DisplayFormat::Default);
+    assert_eq!(formats.of("z"), DisplayFormat::Default);
+    formats.retain_shown(&["b".to_owned()].into());
+    assert_eq!(formats.of("a"), DisplayFormat::Default);
+    assert!(formats.is_empty());
+}
+
+#[test]
+fn per_path_writes_the_bytes_of_the_old_newtypes() {
+    use super::plot::{LineStyle, LineStyles};
+    #[derive(serde::Serialize)]
+    struct OldFormats(BTreeMap<String, DisplayFormat>);
+    #[derive(serde::Serialize)]
+    struct OldLineStyles(BTreeMap<String, LineStyle>);
+
+    let mut formats = Formats::default();
+    formats.set("a", DisplayFormat::Hex);
+    let old = OldFormats([("a".to_owned(), DisplayFormat::Hex)].into());
+    assert_eq!(serde_json::to_string(&formats).unwrap(), r#"{"a":"Hex"}"#);
+    assert_eq!(
+        serde_json::to_string(&formats).unwrap(),
+        serde_json::to_string(&old).unwrap()
+    );
+    assert_eq!(
+        serde_cbor_2::to_vec(&formats).unwrap(),
+        serde_cbor_2::to_vec(&old).unwrap()
+    );
+
+    let mut styles = LineStyles::default();
+    styles.set("a", LineStyle::Dashed);
+    styles.set("b", LineStyle::Solid);
+    let old = OldLineStyles([("a".to_owned(), LineStyle::Dashed)].into());
+    assert_eq!(serde_json::to_string(&styles).unwrap(), r#"{"a":"Dashed"}"#);
+    assert_eq!(
+        serde_cbor_2::to_vec(&styles).unwrap(),
+        serde_cbor_2::to_vec(&old).unwrap()
+    );
+
+    let read: Formats = serde_json::from_str(r#"{"a":"Hex","c":"Binary"}"#).unwrap();
+    assert_eq!(read.of("a"), DisplayFormat::Hex);
+    assert_eq!(read.of("c"), DisplayFormat::Binary);
+}

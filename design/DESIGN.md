@@ -23,7 +23,7 @@ oscilloscope, not like a web app.
   underline.
 - The selected view gets a neutral frame (`text_faint`) and a title bar filled with
   `hover`, not the accent.
-- New UI takes its colours from `theme::tokens(ui.visuals())` and the helpers in
+- New UI takes its colours from `ui.tokens()` and the helpers in
   `theme.rs`. No colour literals in views.
 
 ## Colour
@@ -82,6 +82,13 @@ oscilloscope, not like a web app.
   histogram, upright or sideways, can be linked to a Plot (its only link between views):
   it takes the plot's traces, greyed in the tree, and its y range. A sideways one's
   value axis is on the left by default, like a plot, or on the right.
+- Empty states are one short sentence that says what to do, in `text_weak` Body, with no
+  icon or illustration. A view with nothing to show centres it in the card (`hint`), with
+  centred lines that wrap at 320 px or the card width. When the axes or frame are still
+  drawn (Plot, States, Histogram), the hint sits centred on the plot on a `card` patch so
+  the grid does not cross it (`hint_over`). Panels and popups put it at the top left,
+  under their header or search field (`panel_hint`). Hard line breaks are not used; the
+  text wraps.
 
 ## Words
 

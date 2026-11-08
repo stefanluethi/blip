@@ -9,7 +9,7 @@ mod properties;
 pub use file::{Group, GroupKind};
 
 use crate::app::model::Model;
-use crate::app::theme;
+use crate::app::theme::{self, TokensExt};
 use crate::app::view::{PlotInfo, Plots, View, ViewContext, ViewId, ViewKind, ViewType, Viewable};
 use egui_tiles::{Container, ContainerKind, Tile, TileId, Tree};
 use std::collections::{HashMap, HashSet};
@@ -72,17 +72,10 @@ enum Action {
 /// Shows a field of at least `min_size` to edit `name`, which ends with Enter or a click
 /// elsewhere, or with Escape to cancel. Returns whether to keep the name once it ended.
 fn rename_field(ui: &mut egui::Ui, name: &mut String, min_size: egui::Vec2) -> Option<bool> {
-    let field = egui::TextEdit::singleline(name)
+    let field = theme::field(name)
         .min_size(min_size)
-        .desired_width(min_size.x)
-        .margin(theme::FIELD_MARGIN);
-    let response = ui.add(field);
-    if response.lost_focus() {
-        Some(!ui.input(|i| i.key_pressed(egui::Key::Escape)))
-    } else {
-        response.request_focus();
-        None
-    }
+        .desired_width(min_size.x);
+    theme::focused_edit(ui, field)
 }
 
 pub struct Layout {
@@ -242,10 +235,7 @@ impl Layout {
             .tile_ids()
             .map(|tile_id| self.name(tile_id))
             .collect();
-        (1..)
-            .map(|n| format!("{base} {n}"))
-            .find(|name| !names.contains(name.as_str()))
-            .expect("there is always an unused name")
+        super::unused_name(base, true, |name| names.contains(name))
     }
 
     /// Adds a new tab at the end of the top level, returns its id.
@@ -703,7 +693,7 @@ fn view_picker(ui: &mut egui::Ui, rect: egui::Rect, group: TileId) -> Option<Vie
     // a small group shows a part of the buttons, which neither paint nor take clicks
     // outside it
     ui.set_clip_rect(rect.intersect(ui.clip_rect()));
-    let tokens = theme::tokens(ui.visuals());
+    let tokens = ui.tokens();
     let gap = theme::GAP;
     let types = ViewType::ALL;
     // as many columns as fit with a gap between and around them, n·(button + gap) + gap
@@ -913,7 +903,7 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
             ui.add_space(theme::GAP);
         }
         // each view is a card on the canvas
-        let tokens = theme::tokens(ui.visuals());
+        let tokens = ui.tokens();
         let card = card_rect(ui.max_rect(), below_tab_bar);
         self.cards.push((tile_id, card));
         ui.painter().rect(
@@ -1119,11 +1109,11 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
     ) {
         if self.dragged == Some(tile_id) {
             let rect = card_rect(rect, self.below_tab_bar.contains(&tile_id));
-            let veil = theme::tokens(&style.visuals).canvas.gamma_multiply(0.6);
+            let veil = style.visuals.tokens().canvas.gamma_multiply(0.6);
             painter.rect_filled(rect, theme::CARD_RADIUS, veil);
         }
         if *self.selected == Some(tile_id) {
-            let stroke = egui::Stroke::new(1.0, theme::tokens(&style.visuals).text_faint);
+            let stroke = egui::Stroke::new(1.0, style.visuals.tokens().text_faint);
             let rect = card_rect(rect, self.below_tab_bar.contains(&tile_id));
             painter.rect_stroke(rect, theme::CARD_RADIUS, stroke, egui::StrokeKind::Inside);
         }
@@ -1170,7 +1160,7 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
         // egui_tiles clips the tab bar to the tiles, which leaves out the gap around them
         let mut painter = ui.painter().clone();
         painter.set_clip_rect(line);
-        painter.rect_filled(line, 0.0, theme::tokens(ui.visuals()).border);
+        painter.rect_filled(line, 0.0, ui.tokens().border);
     }
 
     fn tab_bar_trailing_ui(
@@ -1193,7 +1183,7 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
     }
 
     fn tab_bar_color(&self, visuals: &egui::Visuals) -> egui::Color32 {
-        theme::tokens(visuals).canvas
+        visuals.tokens().canvas
     }
 
     fn tab_bg_color(
@@ -1245,7 +1235,7 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
 /// The underline of the open tab at the bottom of `rect`, in the accent and inset like
 /// its title.
 fn paint_tab_underline(painter: &egui::Painter, rect: egui::Rect) {
-    let accent = theme::tokens(&painter.ctx().global_style().visuals).accent;
+    let accent = painter.ctx().global_style().visuals.tokens().accent;
     let inset = 4.0;
     let line = egui::Rect::from_x_y_ranges(
         rect.left() + inset..=rect.right() - inset,

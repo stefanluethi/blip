@@ -2,13 +2,16 @@
 //! positions as paths.
 
 use super::Selectable;
-use super::heatmap::{index_spacer, index_x_axis, sample_at_cursor};
-use super::plot::{LineStyle, LineStyles, ShowPoints, is_point, to_screen};
-use super::time_axis::{index_at, within};
+use super::plot::{LineStyle, LineStyles, ShowPoints};
+use super::plotting::{
+    index_spacer, index_x_axis, is_point, plot_array, plot_lines, plot_points, sample_at_cursor,
+    to_screen,
+};
 use super::trace_selection::MAX_LISTED_ELEMENTS;
 use super::{PropertiesContext, ViewContext, ViewType, Viewable, short_names};
 use crate::app::model::Model;
 use crate::app::model::numbers::{SHOWN_DIGITS, format_significant};
+use crate::app::model::sorted::{index_at, upper_bound, within};
 use crate::app::model::traces::{Samples, Series, Trace};
 use crate::app::theme;
 use crate::app::time::TimeRange;
@@ -23,8 +26,6 @@ const FADE_STEPS: usize = 8;
 const DEFAULT_FADE: f32 = 0.85;
 /// Width of the choice between the x and the y axis in the properties.
 const AXIS_CHOICE_WIDTH: f32 = 64.0;
-/// Radius of the marks of the points.
-const POINT_RADIUS: f32 = 2.0;
 
 /// The shown traces on the y axis, each plotted against one of the shown traces on
 /// the x axis, within the shown window. Or the shown arrays at the cursor time,
@@ -76,7 +77,7 @@ fn pair(x: Series<'_>, y: Series<'_>, indices: Range<usize>) -> Vec<[f64; 2]> {
     let mut x_count = y
         .timestamps
         .get(first)
-        .map_or(0, |&t| x.timestamps.partition_point(|&x_t| x_t <= t));
+        .map_or(0, |&t| upper_bound(x.timestamps, t));
     indices
         .map(|index| {
             let t = y.timestamps[index];
@@ -181,70 +182,6 @@ fn trail_lines(
     lines
 }
 
-/// Draws the lines through `points` in `style`, if any, broken where a point is
-/// missing.
-fn plot_lines(
-    name: &str,
-    points: &[[f64; 2]],
-    color: egui::Color32,
-    style: Option<egui_plot::LineStyle>,
-    plot_ui: &mut egui_plot::PlotUi<'_>,
-) {
-    let Some(line_style) = style else {
-        return;
-    };
-    for segment in points.split(|point| !is_point(point)) {
-        if segment.len() > 1 {
-            plot_ui.line(
-                egui_plot::Line::new(name, segment.to_vec())
-                    .color(color)
-                    .style(line_style),
-            );
-        }
-    }
-}
-
-/// Marks the `points` that are not missing.
-fn plot_points(
-    name: &str,
-    points: &[[f64; 2]],
-    color: egui::Color32,
-    plot_ui: &mut egui_plot::PlotUi<'_>,
-) {
-    let points: Vec<[f64; 2]> = points.iter().copied().filter(is_point).collect();
-    if !points.is_empty() {
-        plot_ui.points(
-            egui_plot::Points::new(name, points)
-                .color(color)
-                .radius(POINT_RADIUS)
-                .filled(true),
-        );
-    }
-}
-
-/// Draws the elements `values` of an array over their indices, the lines in `style`
-/// and the points marked as `points` says.
-pub(super) fn plot_array(
-    name: &str,
-    values: &[f64],
-    color: egui::Color32,
-    style: LineStyle,
-    points: ShowPoints,
-    plot_ui: &mut egui_plot::PlotUi<'_>,
-) {
-    let values: Vec<[f64; 2]> = values
-        .iter()
-        .enumerate()
-        .map(|(index, &value)| [index as f64, value])
-        .collect();
-    let line_style = style.plot_style(&values, plot_ui.transform());
-    plot_lines(name, &values, color, line_style, plot_ui);
-    let width = plot_ui.transform().frame().width();
-    if style.marks_points(points, values.len(), width) {
-        plot_points(name, &values, color, plot_ui);
-    }
-}
-
 /// The parent of `path` and the name of its last level.
 fn split_last(path: &str) -> (&str, &str) {
     match path.rfind(['/', '.']) {
@@ -298,8 +235,12 @@ fn line_names<'a>(lines: &[(&'a str, &'a str)]) -> Vec<&'a str> {
     short_names(keys)
 }
 
-/// The label of an axis: the name of its trace and the unit of its traces.
-fn axis_label(name: &str, unit: Option<&str>) -> String {
+/// The label of an axis: the name of its trace, if it has one, and the unit of its traces.
+fn axis_label(names: &[&str], unit: Option<&str>) -> String {
+    let name = match names {
+        [name] => name,
+        _ => "",
+    };
     match unit {
         Some(unit) if name.is_empty() => format!("[{unit}]"),
         Some(unit) => format!("{name} [{unit}]"),
@@ -506,15 +447,9 @@ impl Xy {
         let x_paths: BTreeSet<&str> = lines.iter().map(|&(x, _)| x).collect();
         let y_paths: Vec<&str> = lines.iter().map(|&(_, y)| y).collect();
         let x_unit = super::common_unit(model, x_paths.iter().copied());
-        let x_label = match short_names(x_paths.iter().copied())[..] {
-            [name] => axis_label(name, x_unit),
-            _ => axis_label("", x_unit),
-        };
+        let x_label = axis_label(&short_names(x_paths.iter().copied()), x_unit);
         let y_unit = super::common_unit(model, y_paths.iter().copied());
-        let y_label = match short_names(y_paths.iter().copied())[..] {
-            [name] => axis_label(name, y_unit),
-            _ => axis_label("", y_unit),
-        };
+        let y_label = axis_label(&short_names(y_paths.iter().copied()), y_unit);
         let x_axis = egui_plot::AxisHints::new_x().label(x_label);
         let mut plot = self.plot(ui, "x", x_axis, y_label);
 
@@ -526,10 +461,8 @@ impl Xy {
         for (low, high) in (y_paths.iter()).filter_map(|path| model.traces.series(path)?.range) {
             plot = plot.include_y(low).include_y(high);
         }
-        let range = time
-            .range()
-            .map(|(start, end)| (time.timestamp(start), time.timestamp(end)));
-        let cursor = time.cursor().map(|t| time.timestamp(t));
+        let range = time.timestamps();
+        let cursor = time.cursor_timestamp();
         let ring_color = ui.visuals().strong_text_color();
         let visuals = ui.visuals().clone();
         let response = plot.show(ui, |plot_ui| {
@@ -570,10 +503,7 @@ impl Xy {
     fn show_arrays(&self, ui: &mut egui::Ui, model: &Model, time: &TimeRange, paths: &[&str]) {
         let names = short_names(paths.iter().copied());
         let unit = super::common_unit(model, paths.iter().copied());
-        let y_label = match names[..] {
-            [name] => axis_label(name, unit),
-            _ => axis_label("", unit),
-        };
+        let y_label = axis_label(&names, unit);
         let mut plot = self
             .plot(ui, "index", index_x_axis("index"), y_label)
             .x_grid_spacer(index_spacer);
@@ -651,7 +581,10 @@ impl Viewable for Xy {
         if !arrays.is_empty() {
             self.show_arrays(ui, context.model, context.time, &arrays);
         } else if self.against.is_empty() {
-            ui.weak("Select an x and a y trace, or an array, in the traces panel");
+            theme::hint(
+                ui,
+                "Select an x and a y trace, or an array, in the traces panel",
+            );
         } else {
             self.show_plot(ui, context.model, context.time);
         }
@@ -670,8 +603,7 @@ impl Viewable for Xy {
         let name_of = |path: &str| name_by_path.get(path).copied().unwrap_or("").to_owned();
         super::properties_section(ui, "Axes", |ui| {
             if arrays.is_empty() {
-                for (path, &name) in paths.iter().zip(&names) {
-                    super::property_label(ui, name).on_hover_text(path);
+                super::path_rows(ui, &paths, |ui, path| {
                     ui.horizontal(|ui| {
                         let mut is_x = self.xs.contains(path);
                         let height = ui.spacing().interact_size.y;
@@ -704,18 +636,19 @@ impl Viewable for Xy {
                             .response
                             .on_hover_text(format!("Plotted against {current}"));
                     });
-                    ui.end_row();
-                }
+                });
             } else {
                 super::property_label(ui, "X");
                 ui.weak("Index of the elements")
                     .on_hover_text("Arrays are plotted over the indices of their elements");
                 ui.end_row();
             }
-            super::property_label(ui, "Equal axes");
-            ui.checkbox(&mut self.equal_axes, "")
-                .on_hover_text("Give a unit the same length on both axes");
-            ui.end_row();
+            super::checkbox_row(
+                ui,
+                "Equal axes",
+                &mut self.equal_axes,
+                "Give a unit the same length on both axes",
+            );
         });
         super::properties_section(ui, "Lines", |ui| {
             self.points.choice_row(ui);

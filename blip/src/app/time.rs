@@ -5,7 +5,7 @@
 //! timestamp received, so that they keep nanoseconds also for Unix times.
 
 use crate::app::model::Model;
-use crate::app::theme;
+use crate::app::theme::{self, TokensExt};
 use egui_phosphor::regular;
 
 mod timeline;
@@ -207,6 +207,17 @@ impl TimeRange {
         self.cursor.or_else(|| self.range().map(|(_, end)| end))
     }
 
+    /// The shown window in nanoseconds.
+    pub fn timestamps(&self) -> Option<(u64, u64)> {
+        self.range()
+            .map(|(start, end)| (self.timestamp(start), self.timestamp(end)))
+    }
+
+    /// The time of the cursor in nanoseconds, see [`TimeRange::cursor`].
+    pub fn cursor_timestamp(&self) -> Option<u64> {
+        self.cursor().map(|t| self.timestamp(t))
+    }
+
     /// Whether the user put the cursor somewhere, instead of it following the end of the
     /// window.
     pub fn cursor_is_set(&self) -> bool {
@@ -400,7 +411,7 @@ impl TimeRange {
         let live = format!("{} Live", regular::BROADCAST);
         let following = recording && self.is_live();
         let live_button = if following {
-            let tokens = theme::tokens(ui.visuals());
+            let tokens = ui.tokens();
             egui::Button::new(egui::RichText::new(live).color(tokens.on_accent))
                 .fill(tokens.accent)
                 .stroke(egui::Stroke::NONE)

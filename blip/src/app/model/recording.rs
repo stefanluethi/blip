@@ -118,10 +118,18 @@ impl Recording {
 /// Whether `file` starts like a recording file rather than a layout.
 pub fn is_recording(file: &[u8]) -> bool {
     let gzip = file.starts_with(&[0x1f, 0x8b]);
-    gzip || serde_cbor_2::Deserializer::from_slice(file)
-        .into_iter::<Header>()
-        .next()
-        .is_some_and(|header| header.is_ok_and(|header| header.format == FORMAT))
+    gzip || read_header(file).is_some()
+}
+
+/// The header at the start of `bytes` if its format is [`FORMAT`], and its length in
+/// bytes.
+fn read_header(bytes: &[u8]) -> Option<(Header, usize)> {
+    let mut items = serde_cbor_2::Deserializer::from_slice(bytes).into_iter::<Header>();
+    let header = items
+        .next()?
+        .ok()
+        .filter(|header| header.format == FORMAT)?;
+    Some((header, items.byte_offset()))
 }
 
 /// Bytes decompressed at once while reading a file, about 0.2 ms of inflating.
@@ -193,21 +201,16 @@ impl FileReader {
         };
         // the header is a few bytes at the start
         reader.fill(READ_CHUNK);
-        let mut items =
-            serde_cbor_2::Deserializer::from_slice(&reader.buffer).into_iter::<Header>();
-        match items.next() {
-            Some(Ok(header)) if header.format == FORMAT => {
-                if header.version > VERSION {
-                    return Err(format!(
-                        "the recording has version {}, this blip reads up to version {VERSION}",
-                        header.version
-                    ));
-                }
-            }
-            _ => return Err("the file is not a blip recording".to_owned()),
+        let Some((header, len)) = read_header(&reader.buffer) else {
+            return Err("the file is not a blip recording".to_owned());
+        };
+        if header.version > VERSION {
+            return Err(format!(
+                "the recording has version {}, this blip reads up to version {VERSION}",
+                header.version
+            ));
         }
-        let header = items.byte_offset();
-        reader.buffer.drain(..header);
+        reader.buffer.drain(..len);
         Ok(reader)
     }
 

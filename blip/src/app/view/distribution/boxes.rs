@@ -2,12 +2,13 @@
 //! samples of each trace, in a row per trace across the value axis.
 
 use super::{
-    MARKER_INSET, MARKER_RADIUS, OUTLINE_WIDTH, OVERLAY_INSET, Orientation, Shown, Whiskers, dot,
-    nice_near, text_size, write_value,
+    MARKER_INSET, MARKER_RADIUS, OUTLINE_WIDTH, OVERLAY_INSET, Orientation, Shown, Whiskers,
+    nice_near, write_value,
 };
 use crate::app::model::Version;
 use crate::app::model::numbers::DisplayFormat;
-use crate::app::theme;
+use crate::app::theme::{self, TokensExt};
+use crate::app::view::{legend_dot, text_size};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -176,10 +177,8 @@ impl Rows {
     /// The rows of Boxes, which share the `frame` of the plot: from the top down
     /// upright, from the left sideways.
     pub fn boxes(orientation: Orientation, frame: egui::Rect, count: usize) -> Self {
-        let (first, length) = match orientation {
-            Orientation::Upright => (frame.top(), frame.height()),
-            Orientation::Sideways => (frame.left(), frame.width()),
-        };
+        let (first, length) =
+            orientation.pick((frame.top(), frame.height()), (frame.left(), frame.width()));
         let step = length / count.max(1) as f32;
         let thickness = (BOX_SHARE * step).clamp(MIN_BOX, MAX_BOX);
         Self {
@@ -202,10 +201,10 @@ impl Rows {
     /// the plot, where the markers of Bars are: from the top down upright, from the
     /// right sideways.
     pub fn strip(orientation: Orientation, frame: egui::Rect, count: usize) -> Self {
-        let (first, step) = match orientation {
-            Orientation::Upright => (frame.top() + MARKER_INSET, STRIP_ROW),
-            Orientation::Sideways => (frame.right() - MARKER_INSET, -STRIP_ROW),
-        };
+        let (first, step) = orientation.pick(
+            (frame.top() + MARKER_INSET, STRIP_ROW),
+            (frame.right() - MARKER_INSET, -STRIP_ROW),
+        );
         Self {
             orientation,
             frame,
@@ -235,10 +234,7 @@ impl Rows {
     /// The point `along` the value axis and `offset` from the middle of `row` across it.
     fn point(&self, row: usize, along: f32, offset: f32) -> egui::Pos2 {
         let across = self.centre(row) + offset;
-        match self.orientation {
-            Orientation::Upright => egui::pos2(along, across),
-            Orientation::Sideways => egui::pos2(across, along),
-        }
+        egui::Pos2::from(self.orientation.xy(along, across))
     }
 
     /// The `row` along the whole value axis.
@@ -246,18 +242,16 @@ impl Rows {
         let start = self.first + row as f32 * self.step;
         let across = egui::Rangef::new(start, start + self.step);
         let across = egui::Rangef::new(across.min.min(across.max), across.min.max(across.max));
-        match self.orientation {
-            Orientation::Upright => egui::Rect::from_x_y_ranges(self.frame.x_range(), across),
-            Orientation::Sideways => egui::Rect::from_x_y_ranges(across, self.frame.y_range()),
-        }
+        let [x, y] = self.orientation.pick(
+            [self.frame.x_range(), across],
+            [across, self.frame.y_range()],
+        );
+        egui::Rect::from_x_y_ranges(x, y)
     }
 
     /// The row at `pos`, `None` outside the rows.
     pub fn at(&self, pos: egui::Pos2) -> Option<usize> {
-        let across = match self.orientation {
-            Orientation::Upright => pos.y,
-            Orientation::Sideways => pos.x,
-        };
+        let across = self.orientation.pick(pos.y, pos.x);
         let row = ((across - self.first) / self.step).floor();
         (self.frame.contains(pos) && row >= 0.0 && (row as usize) < self.count)
             .then_some(row as usize)
@@ -266,10 +260,10 @@ impl Rows {
 
 /// Where `value` lies along the value axis of `transform`.
 fn along(transform: &egui_plot::PlotTransform, orientation: Orientation, value: f64) -> f32 {
-    match orientation {
-        Orientation::Upright => transform.position_from_point_x(value),
-        Orientation::Sideways => transform.position_from_point_y(value),
-    }
+    orientation.pick(
+        transform.position_from_point_x(value),
+        transform.position_from_point_y(value),
+    )
 }
 
 /// Paints the boxes of the `shown` traces in their colours, a row of `rows` each: all
@@ -334,7 +328,7 @@ pub fn paint(
             median,
         );
     }
-    let card = theme::tokens(visuals).card;
+    let card = visuals.tokens().card;
     for (row, color, stats) in traces() {
         let mean = at(row, stats.mean, 0.0);
         painter.circle_filled(mean, MARKER_RADIUS + RING_WIDTH, card);
@@ -353,7 +347,7 @@ pub fn paint_notes(
     boxes: &[Option<BoxStats>],
     style: egui::TextStyle,
 ) {
-    let faint = theme::tokens(ui.visuals()).text_faint;
+    let faint = ui.tokens().text_faint;
     let font = style.resolve(ui.style());
     let frame = rows.frame;
     for (row, stats) in boxes.iter().enumerate() {
@@ -361,10 +355,10 @@ pub fn paint_notes(
         let Some(stats) = stats else {
             let galley = painter.layout_no_wrap(NO_SAMPLES.to_owned(), font.clone(), faint);
             let size = galley.size();
-            let middle = match rows.orientation {
-                Orientation::Upright => egui::pos2(frame.center().x, centre),
-                Orientation::Sideways => egui::pos2(centre, frame.center().y),
-            };
+            let middle = rows.orientation.pick(
+                egui::pos2(frame.center().x, centre),
+                egui::pos2(centre, frame.center().y),
+            );
             // up the column if it is too narrow for the note
             let shape = if rows.orientation == Orientation::Sideways && size.x > rows.length() {
                 let corner = middle + egui::vec2(-size.y / 2.0, size.x / 2.0);
@@ -500,10 +494,10 @@ impl Tip<'_> {
     /// Shows the dot and the name of the trace, the values of its box and, under a rule,
     /// its samples and outliers.
     pub fn ui(&self, ui: &mut egui::Ui) {
-        let faint = theme::tokens(ui.visuals()).text_faint;
+        let faint = ui.tokens().text_faint;
         let (weak, text) = (ui.visuals().weak_text_color(), ui.visuals().text_color());
         ui.horizontal(|ui| {
-            dot(ui, theme::trace_color(ui.visuals(), self.trace.index));
+            legend_dot(ui, theme::trace_color(ui.visuals(), self.trace.index));
             ui.label(&self.trace.name).on_hover_text(&self.trace.path);
         });
         let Some(stats) = self.stats else {

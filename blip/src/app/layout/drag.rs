@@ -3,7 +3,7 @@
 //! side of a view nearest to the pointer, on a tab button, or into an empty group.
 
 use super::{Drop, Layout, Side};
-use crate::app::theme;
+use crate::app::theme::{self, TokensExt};
 use egui_tiles::{Container, TileId};
 
 /// What the center pane showed in this frame, to drop on.
@@ -123,7 +123,7 @@ impl Layout {
     /// Marks where `target` would put the dropped view or group: a line in the gap where
     /// it moves between views or tabs, or the place it takes in a new or empty group.
     fn paint_drop(&self, ui: &egui::Ui, target: &Target) {
-        let accent = theme::tokens(ui.visuals()).accent;
+        let accent = ui.tokens().accent;
         let painter = ui.painter();
         let rect = target.rect;
         let line = |from: egui::Pos2, to: egui::Pos2| {

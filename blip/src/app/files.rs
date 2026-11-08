@@ -34,6 +34,16 @@ pub struct File {
     pub bytes: Vec<u8>,
 }
 
+impl File {
+    /// The file `name` with its `bytes`, or why they could not be read.
+    fn read(name: String, bytes: Result<Vec<u8>, String>) -> Result<File, String> {
+        match bytes {
+            Ok(bytes) => Ok(File { name, bytes }),
+            Err(error) => Err(format!("{name} cannot be read: {error}")),
+        }
+    }
+}
+
 /// The files the user opens, which arrive later on the web.
 pub struct Files {
     sender: Sender<Result<File, String>>,
@@ -62,13 +72,10 @@ impl Files {
         else {
             return;
         };
-        let file = std::fs::read(&path)
-            .map(|bytes| File {
-                name: path.display().to_string(),
-                bytes,
-            })
-            .map_err(|error| format!("{} cannot be read: {error}", path.display()));
-        self.sender.send(file).ok();
+        let bytes = std::fs::read(&path).map_err(|error| error.to_string());
+        self.sender
+            .send(File::read(path.display().to_string(), bytes))
+            .ok();
     }
 
     /// Lets the user choose a file of `kind` to open, which [`Self::try_recv`] returns.
@@ -84,14 +91,7 @@ impl Files {
     pub fn receive_dropped(&self, ctx: &egui::Context) {
         for dropped in ctx.input(|input| input.raw.dropped_files.clone()) {
             let name = dropped.path().display().to_string();
-            let read = move |bytes: Result<Vec<u8>, String>| {
-                bytes
-                    .map(|bytes| File {
-                        name: name.clone(),
-                        bytes,
-                    })
-                    .map_err(|error| format!("{name} cannot be read: {error}"))
-            };
+            let read = move |bytes| File::read(name.clone(), bytes);
             #[cfg(not(target_arch = "wasm32"))]
             self.sender.send(read(dropped.bytes())).ok();
             #[cfg(target_arch = "wasm32")]
@@ -160,13 +160,10 @@ mod web {
             wasm_bindgen_futures::spawn_local(async move {
                 let name = file.name();
                 let read = wasm_bindgen_futures::JsFuture::from(file.array_buffer()).await;
-                let file = read
-                    .map(|buffer| File {
-                        name: name.clone(),
-                        bytes: js_sys::Uint8Array::new(&buffer).to_vec(),
-                    })
-                    .map_err(|error| format!("{name} cannot be read: {error:?}"));
-                sender.send(file).ok();
+                let bytes = read
+                    .map(|buffer| js_sys::Uint8Array::new(&buffer).to_vec())
+                    .map_err(|error| format!("{error:?}"));
+                sender.send(File::read(name, bytes)).ok();
                 ctx.request_repaint();
             });
         });
@@ -199,3 +196,6 @@ mod web {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;

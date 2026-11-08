@@ -5,11 +5,13 @@ pub mod growing;
 pub mod logs;
 pub mod numbers;
 pub mod recording;
+pub mod sorted;
 pub mod traces;
 
 use crate::app::model::actions::Actions;
 use crate::app::model::logs::{LogEntry, Logs};
 use crate::app::model::recording::Recording;
+use crate::app::model::sorted::lower_bound;
 use crate::app::model::traces::Traces;
 use crate::app::time::TimeBase;
 use std::collections::HashMap;
@@ -342,9 +344,9 @@ impl Model {
         let step = step.max(1);
         let edge = |bin: usize| start.saturating_add(step.saturating_mul(bin as u64));
         for (_, timestamps) in self.traces.tables() {
-            let mut from = timestamps.partition_point(|&t| t < start);
+            let mut from = lower_bound(timestamps, start);
             for (bin, activity) in activity.iter_mut().enumerate() {
-                let to = from + timestamps[from..].partition_point(|&t| t < edge(bin + 1));
+                let to = from + lower_bound(&timestamps[from..], edge(bin + 1));
                 activity.values += (to - from) as u32;
                 from = to;
             }

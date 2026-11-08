@@ -344,3 +344,12 @@ fn label_steps_are_round() {
         assert!((found - step).abs() < step * 1.0e-9, "{min}: {found}");
     }
 }
+
+#[test]
+fn clamp_within_lets_the_lower_bound_win() {
+    assert_eq!(clamp_within(5.0, 0.0, 10.0), 5.0);
+    assert_eq!(clamp_within(-1.0, 0.0, 10.0), 0.0);
+    assert_eq!(clamp_within(11.0, 0.0, 10.0), 10.0);
+    assert_eq!(clamp_within(5.0, 10.0, 0.0), 10.0);
+    assert_eq!(clamp_within(f64::NAN, 0.0, 10.0), 10.0);
+}

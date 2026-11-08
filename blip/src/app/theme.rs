@@ -132,6 +132,96 @@ pub fn tokens(visuals: &Visuals) -> &'static Tokens {
     if visuals.dark_mode { &DARK } else { &LIGHT }
 }
 
+/// [`tokens`] as a method of what carries the visuals.
+pub trait TokensExt {
+    fn tokens(&self) -> &'static Tokens;
+}
+
+impl TokensExt for egui::Ui {
+    fn tokens(&self) -> &'static Tokens {
+        tokens(self.visuals())
+    }
+}
+
+impl TokensExt for Visuals {
+    fn tokens(&self) -> &'static Tokens {
+        tokens(self)
+    }
+}
+
+/// A single-line text field with the margins of the controls.
+pub fn field(text: &mut dyn egui::TextBuffer) -> egui::TextEdit<'_> {
+    egui::TextEdit::singleline(text).margin(FIELD_MARGIN)
+}
+
+/// A text field that takes the whole width.
+pub fn wide_field(text: &mut dyn egui::TextBuffer) -> egui::TextEdit<'_> {
+    field(text).desired_width(f32::INFINITY)
+}
+
+/// Adds `field` and keeps the focus on it. Gives `None` while editing, then whether it
+/// ended without Escape.
+pub fn focused_edit(ui: &mut egui::Ui, field: egui::TextEdit<'_>) -> Option<bool> {
+    let response = ui.add(field);
+    if response.lost_focus() {
+        return Some(!ui.input(|i| i.key_pressed(egui::Key::Escape)));
+    }
+    response.request_focus();
+    None
+}
+
+/// The widest an empty-state hint gets before it wraps.
+const HINT_WIDTH: f32 = 320.0;
+
+/// Puts `text` centred in `area` with centred lines that wrap at [`HINT_WIDTH`] or the
+/// area width, on a card patch if `patch`.
+fn put_hint(ui: &mut egui::Ui, area: egui::Rect, text: &str, patch: bool) {
+    let width = (area.width() - 2.0 * GAP).clamp(0.0, HINT_WIDTH);
+    let font = TextStyle::Body.resolve(ui.style());
+    let size = (ui.painter())
+        .layout(text.to_owned(), font, Color32::PLACEHOLDER, width)
+        .size();
+    let rect = egui::Rect::from_center_size(area.center(), size);
+    if patch {
+        let patch = rect.expand2(egui::vec2(8.0, 4.0)).intersect(area);
+        ui.painter()
+            .rect_filled(patch, CONTROL_RADIUS, ui.tokens().card);
+    }
+    // not selectable, so clicks and drags on it reach the plot below
+    let label = egui::Label::new(egui::RichText::new(text).color(ui.tokens().text_weak))
+        .wrap_mode(egui::TextWrapMode::Wrap)
+        .selectable(false);
+    let layout = egui::Layout::top_down(egui::Align::Center);
+    let builder = egui::UiBuilder::new().max_rect(rect).layout(layout);
+    ui.scope_builder(builder, |ui| ui.put(rect, label));
+}
+
+/// The hint of a view with nothing to show: one short sentence centred in the area left
+/// in `ui`.
+pub fn hint(ui: &mut egui::Ui, text: &str) {
+    let area = ui.available_rect_before_wrap();
+    ui.scope(|ui| {
+        ui.set_clip_rect(area.intersect(ui.clip_rect()));
+        put_hint(ui, area, text, false);
+    });
+}
+
+/// The hint of a view that still draws its `frame`, centred on the frame on a card patch
+/// so that the grid does not cross it.
+pub fn hint_over(ui: &mut egui::Ui, frame: egui::Rect, text: &str) {
+    ui.scope(|ui| {
+        ui.set_clip_rect(frame.intersect(ui.clip_rect()));
+        put_hint(ui, frame, text, true);
+    });
+}
+
+/// The hint of a panel or a popup with nothing to show: at the top left, wrapped to the
+/// width of the panel.
+pub fn panel_hint(ui: &mut egui::Ui, text: &str) {
+    let text = egui::RichText::new(text).color(ui.tokens().text_weak);
+    ui.add(egui::Label::new(text).wrap());
+}
+
 /// Installs the fonts, their sizes and the light and the dark theme.
 pub fn install(ctx: &egui::Context) {
     ctx.set_fonts(fonts());

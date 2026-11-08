@@ -363,3 +363,11 @@ fn thinning_out_keeps_the_last_point() {
     assert!(thinned.len() <= 4);
     assert_eq!(thinned.last(), Some(&[9.0, 0.0]));
 }
+
+#[test]
+fn axis_label_names_a_single_trace() {
+    assert_eq!(axis_label(&["x"], Some("m")), "x [m]");
+    assert_eq!(axis_label(&["x", "y"], Some("m")), "[m]");
+    assert_eq!(axis_label(&["x"], None), "x");
+    assert_eq!(axis_label(&[], None), "");
+}

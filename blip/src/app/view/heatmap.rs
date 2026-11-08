@@ -4,10 +4,12 @@
 
 use super::Selectable;
 use super::plot::{LineStyle, ShowPoints};
-use super::time_axis::{self, index_at};
+use super::plotting::{index_formatter, index_spacer, index_x_axis, plot_array, sample_at_cursor};
+use super::time_axis;
 use super::{PropertiesContext, ViewContext, Viewable, text_color_on, with_unit};
 use crate::app::model::Model;
 use crate::app::model::numbers::{DisplayFormat, Number, format_significant};
+use crate::app::model::sorted::index_at;
 use crate::app::model::traces::{Samples, Trace};
 use crate::app::theme;
 use crate::app::time::TimeRange;
@@ -122,15 +124,6 @@ impl ValueText<'_> {
     }
 }
 
-/// The elements of the sample of an array trace at the cursor time.
-pub(super) fn sample_at_cursor(trace: Trace<'_>, time: &TimeRange) -> Vec<Number> {
-    time.cursor()
-        .and_then(|t| index_at(trace.timestamps, time.timestamp(t)))
-        .and_then(|index| trace.samples.array_sample(index))
-        .map(|elements| elements.iter().collect())
-        .unwrap_or_default()
-}
-
 /// The values of an array trace of `len` elements within `(start, end)` seconds as a
 /// grid of `columns` columns, each with the sample current at its middle, and a row per
 /// element with element 0 in the bottom row. NaN where there is no sample, also after
@@ -160,47 +153,6 @@ fn over_time(
         }
     }
     grid
-}
-
-/// Labels only the integer marks of an axis, negated if `negate`.
-fn index_formatter(
-    negate: bool,
-) -> impl Fn(egui_plot::GridMark, &std::ops::RangeInclusive<f64>) -> String {
-    move |mark, _range| {
-        let value = if negate { 0.0 - mark.value } else { mark.value };
-        if value.fract() == 0.0 && value >= 0.0 {
-            format!("{value}")
-        } else {
-            String::new()
-        }
-    }
-}
-
-/// An x axis of indices labelled `label`, used with [`index_spacer`].
-pub(super) fn index_x_axis(label: &str) -> egui_plot::AxisHints<'static> {
-    egui_plot::AxisHints::new_x()
-        .label(label)
-        .formatter(index_formatter(false))
-        // indices are short, so their labels fit closer together than other numbers
-        .label_spacing(30.0..=45.0)
-}
-
-/// Marks an index axis at whole multiples of 1, 2, 5, 10, 20, … far enough apart to
-/// label each of them.
-pub(super) fn index_spacer(input: egui_plot::GridInput) -> Vec<egui_plot::GridMark> {
-    // the base step is the value of the minimum line spacing, labels need more space
-    let min_step = input.base_step_size * 6.0;
-    let step = (0..)
-        .map(|n| [1.0, 2.0, 5.0][n % 3] * 10f64.powi((n / 3) as i32))
-        .find(|&step| step >= min_step)
-        .unwrap_or(1.0);
-    let (start, end) = input.bounds;
-    ((start / step).ceil() as i64..=(end / step).floor() as i64)
-        .map(|multiple| egui_plot::GridMark {
-            value: multiple as f64 * step,
-            step_size: step,
-        })
-        .collect()
 }
 
 impl Heatmap {
@@ -414,7 +366,7 @@ impl Heatmap {
                 plot_ui.set_plot_bounds_y(min..=max);
             }
             let (style, points) = (LineStyle::Solid, ShowPoints::Always);
-            super::xy::plot_array(trace.path, &values, color, style, points, plot_ui);
+            plot_array(trace.path, &values, color, style, points, plot_ui);
         });
         super::zoom_on_wheel(&response.response);
     }
@@ -485,21 +437,22 @@ impl Viewable for Heatmap {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         let model: &Model = context.model;
         let Some(path) = self.traces.first() else {
-            ui.weak("Select an array trace in the traces panel");
+            theme::hint(ui, "Select an array trace in the traces panel");
             return;
         };
         let Some(trace) = model.traces.get(path) else {
-            ui.weak(format!("{path} has not been received"));
+            theme::hint(ui, &format!("{path} has not been received"));
             return;
         };
         let Samples::Arrays { shape, .. } = &trace.samples else {
-            ui.weak(format!("{path} is not an array"));
+            theme::hint(ui, &format!("{path} is not an array"));
             return;
         };
         if shape.contains(&0) || !(1..=2).contains(&shape.len()) {
-            ui.weak(format!(
-                "{path} has no elements or more than two dimensions"
-            ));
+            theme::hint(
+                ui,
+                &format!("{path} has no elements or more than two dimensions"),
+            );
             return;
         }
         let text = ValueText {

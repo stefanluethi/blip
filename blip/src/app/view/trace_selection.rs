@@ -1,6 +1,6 @@
 use crate::app::model::traces::{Samples, Trace, element_path};
 use crate::app::model::{Model, Version};
-use crate::app::theme;
+use crate::app::theme::{self, TokensExt};
 use crate::app::view::{Selectable, ViewType};
 use egui::{RichText, Ui};
 use egui_phosphor::regular::{
@@ -346,7 +346,7 @@ fn paint_colored_check(ui: &Ui, checkbox: &egui::Response, color: egui::Color32)
 /// that the names line up and read first.
 fn type_icon_ui(ui: &mut Ui, icon: Option<&str>) -> Option<egui::Response> {
     let icon = icon?;
-    let color = theme::tokens(ui.visuals()).text_faint;
+    let color = ui.tokens().text_faint;
     let layout = egui::Layout::right_to_left(egui::Align::Center);
     let response = ui.with_layout(layout, |ui| {
         ui.add_space(4.0);
@@ -718,9 +718,8 @@ pub fn search_ui(ui: &mut Ui, search: &mut String, compatible_only: &mut bool, f
         // the id stays the same as the clear button comes and goes, to keep the focus
         let field = ui
             .add(
-                egui::TextEdit::singleline(search)
+                theme::field(search)
                     .id_salt("trace_search")
-                    .margin(theme::FIELD_MARGIN)
                     .hint_text(format!("{MAGNIFYING_GLASS} Search paths"))
                     .desired_width(ui.available_width() - buttons * button_width),
             )
@@ -887,7 +886,7 @@ pub fn show(
     };
     let rows = rows(ui, model, key);
     if let Some(empty) = rows.empty {
-        ui.weak(empty);
+        theme::panel_hint(ui, empty);
         return;
     }
     let enabled = selection.is_some();

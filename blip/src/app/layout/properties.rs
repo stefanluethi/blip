@@ -1,7 +1,7 @@
 //! The properties panel: the properties of the selected view or group.
 
 use super::{GroupKind, Layout};
-use crate::app::theme;
+use crate::app::theme::{self, TokensExt};
 use crate::app::view::{PropertiesContext, Viewable, properties_section, property_label};
 use egui_tiles::{Tile, TileId};
 
@@ -17,7 +17,7 @@ impl Layout {
             .selected
             .filter(|&id| self.tree.tiles.get(id).is_some())
         else {
-            ui.weak("Select a view or a group to see its properties");
+            theme::panel_hint(ui, "Select a view or a group to see its properties");
             return;
         };
         egui::ScrollArea::vertical()
@@ -72,9 +72,7 @@ impl Layout {
             Some((id, name)) if *id == tile_id => name.clone(),
             _ => self.name(tile_id).to_owned(),
         };
-        let field = egui::TextEdit::singleline(&mut name)
-            .margin(theme::FIELD_MARGIN)
-            .desired_width(f32::INFINITY);
+        let field = theme::wide_field(&mut name);
         let response = ui.add(field);
         if response.changed() && !name.trim().is_empty() {
             self.set_name(tile_id, name.trim().to_owned());
@@ -97,7 +95,7 @@ fn title_row(ui: &mut egui::Ui, icon: &str, name: &str, kind: &str) {
         ui.new_child(egui::UiBuilder::new().max_rect(row).layout(layout))
     };
     let mut left = end(egui::Align::Min);
-    let accent = theme::tokens(left.visuals()).accent;
+    let accent = left.tokens().accent;
     left.label(egui::RichText::new(icon).size(15.0).color(accent));
     left.label(egui::RichText::new(name).size(14.0).strong());
     let mut right = end(egui::Align::Max);

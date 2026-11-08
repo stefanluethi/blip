@@ -1,6 +1,7 @@
 use crate::app::model::Version;
 use crate::app::model::logs::{LogEntry, LogLevel, Logs, PathLogs};
-use crate::app::theme;
+use crate::app::model::sorted::upper_bound_by;
+use crate::app::theme::{self, TokensExt};
 use crate::app::time::{TimeBase, TimeRange};
 use crate::app::view::{ViewContext, Viewable};
 use egui_extras::Column;
@@ -324,8 +325,7 @@ impl LogTable {
                 builder = builder.column(Column::remainder().at_least(150.0)); // Message
 
                 let range = time.range();
-                let timestamps =
-                    range.map(|(start, end)| (time.timestamp(start), time.timestamp(end)));
+                let timestamps = time.timestamps();
                 let in_range = |entry: &LogEntry| {
                     timestamps.is_none_or(|(start, end)| (start..=end).contains(&entry.time))
                 };
@@ -344,10 +344,9 @@ impl LogTable {
                     && (following || !time.is_playing() && range != self.last_range)
                 {
                     // scroll to the newest entry in the moved range
-                    let last_in_range = self
-                        .shown
-                        .partition_point(|&shown| entry(&slots, shown).time <= end)
-                        .saturating_sub(1);
+                    let last_in_range =
+                        upper_bound_by(&self.shown, end, |&shown| entry(&slots, shown).time)
+                            .saturating_sub(1);
                     builder = builder
                         .animate_scrolling(!following)
                         .scroll_to_row(last_in_range, Some(egui::Align::Max));
@@ -388,7 +387,7 @@ impl LogTable {
                             // the message stands out, the time and the component less,
                             // and all of an entry outside the time range stays faint
                             let text = |text: &str, ui: &egui::Ui, role: Role| {
-                                let tokens = theme::tokens(ui.visuals());
+                                let tokens = ui.tokens();
                                 let color = match role {
                                     _ if !shown => tokens.text_faint,
                                     Role::Time => tokens.text_faint,
@@ -478,7 +477,7 @@ impl LogTable {
                     .monospace()
                     .color(theme::level_color(ui.visuals(), level));
                 if ui.checkbox(&mut shown, name).changed() {
-                    toggle(hidden, level, shown);
+                    super::set_member(hidden, &level, !shown);
                 }
             }
             all_none_buttons(ui, |show| {
@@ -501,7 +500,7 @@ impl LogTable {
                 .map(|entry| entry.component.as_str())
                 .collect();
             if components.is_empty() {
-                ui.weak("No components yet");
+                theme::panel_hint(ui, "No components yet");
                 return;
             }
             egui::ScrollArea::vertical()
@@ -510,7 +509,7 @@ impl LogTable {
                     for &component in &components {
                         let mut shown = !hidden.contains(component);
                         if ui.checkbox(&mut shown, component).changed() {
-                            toggle(hidden, component.to_owned(), shown);
+                            super::set_member(hidden, component, !shown);
                         }
                     }
                 });
@@ -534,8 +533,7 @@ impl LogTable {
         filter_header(ui, "Message", !filter.message_regex.is_empty(), |ui| {
             ui.horizontal(|ui| {
                 let search = ui.add(
-                    egui::TextEdit::singleline(&mut filter.message_regex)
-                        .margin(theme::FIELD_MARGIN)
+                    theme::field(&mut filter.message_regex)
                         .hint_text(format!("{} Search (regex)", regular::MAGNIFYING_GLASS))
                         .font(egui::TextStyle::Monospace)
                         .desired_width(220.0),
@@ -561,7 +559,7 @@ impl LogTable {
                 }
             });
             if let Some(error) = error {
-                let color = theme::tokens(ui.visuals()).error;
+                let color = ui.tokens().error;
                 ui.label(
                     egui::RichText::new(format!(
                         "{} Not a valid regex, searching the text",
@@ -599,14 +597,18 @@ impl Viewable for LogTable {
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, _context: &super::PropertiesContext<'_>) {
         super::properties_section(ui, "Columns", |ui| {
-            super::property_label(ui, "Date");
-            ui.checkbox(&mut self.columns.date, "")
-                .on_hover_text("Show the date with the time, of times in Unix time");
-            ui.end_row();
-            super::property_label(ui, "Component");
-            ui.checkbox(&mut self.columns.component, "")
-                .on_hover_text("Show the component of the entries, to filter by it");
-            ui.end_row();
+            super::checkbox_row(
+                ui,
+                "Date",
+                &mut self.columns.date,
+                "Show the date with the time, of times in Unix time",
+            );
+            super::checkbox_row(
+                ui,
+                "Component",
+                &mut self.columns.component,
+                "Show the component of the entries, to filter by it",
+            );
         });
     }
 }
@@ -645,7 +647,7 @@ fn filter_header(
 ) {
     ui.style_mut().override_text_style = None;
     let color = if active {
-        theme::tokens(ui.visuals()).accent_text
+        ui.tokens().accent_text
     } else {
         ui.visuals().strong_text_color()
     };
@@ -676,15 +678,6 @@ fn all_none_buttons(ui: &mut egui::Ui, mut show: impl FnMut(bool)) {
             show(false);
         }
     });
-}
-
-/// Removes `item` from the `hidden` ones if `shown`, else adds it.
-fn toggle<T: Ord>(hidden: &mut BTreeSet<T>, item: T, shown: bool) {
-    if shown {
-        hidden.remove(&item);
-    } else {
-        hidden.insert(item);
-    }
 }
 
 /// The level of a log record as a badge: its name in the color of the level on a tint

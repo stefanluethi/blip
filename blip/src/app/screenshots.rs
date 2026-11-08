@@ -19,7 +19,7 @@
 //! looks for an outpost by default (or another port while an outpost runs there); the
 //! views and panels are rendered on their own.
 
-use super::view::{NO_FORMATS, NO_PLOTS, View, ViewContext, Viewable};
+use super::view::{NO_PLOTS, View, ViewContext, Viewable};
 use super::*;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
@@ -233,7 +233,7 @@ fn view_shot_of(name: &str, model: model::Model, json: &str, hover: Option<egui:
             |ui, shot: &mut ViewShot| {
                 let now = ui.input(|input| input.time);
                 shot.time.update(&shot.model, now);
-                let tokens = theme::tokens(ui.visuals());
+                let tokens = ui.tokens();
                 // the canvas behind the card, as in the app
                 paint_background(ui, tokens.canvas);
                 egui::Frame::NONE
@@ -243,14 +243,8 @@ fn view_shot_of(name: &str, model: model::Model, json: &str, hover: Option<egui:
                     .inner_margin(8)
                     .show(ui, |ui| {
                         ui.set_min_size(ui.available_size());
-                        let mut context = ViewContext {
-                            model: &shot.model,
-                            time: &mut shot.time,
-                            invoker: &mut shot.invoker,
-                            formats: &NO_FORMATS,
-                            titled: false,
-                            plots: &NO_PLOTS,
-                        };
+                        let mut context =
+                            ViewContext::new(&shot.model, &mut shot.time, &mut shot.invoker);
                         shot.view.view(ui, &mut context);
                     });
             },
@@ -297,6 +291,14 @@ fn screenshots_views() {
         (
             "view-distribution-both",
             r#"{"name": "Pose spread", "kind": {"Distribution": {"traces": ["robot/pose.x", "robot/pose.y"], "show": "Both"}}}"#,
+        ),
+        (
+            "view-plot-empty",
+            r#"{"name": "Pose", "kind": {"Plot": {"traces": []}}}"#,
+        ),
+        (
+            "view-table-empty",
+            r#"{"name": "Values", "kind": {"Table": {"traces": []}}}"#,
         ),
         (
             "view-heatmap-grid",
@@ -440,21 +442,15 @@ fn layout_shot(name: &str, size: egui::Vec2, json: &str) {
             |ui, shot: &mut LayoutShot| {
                 let now = ui.input(|input| input.time);
                 shot.time.update(&shot.model, now);
-                paint_background(ui, theme::tokens(ui.visuals()).canvas);
+                paint_background(ui, ui.tokens().canvas);
                 egui::Frame::NONE
                     .inner_margin(egui::Margin {
                         top: 2,
                         ..egui::Margin::same(theme::GAP as i8)
                     })
                     .show(ui, |ui| {
-                        let mut context = ViewContext {
-                            model: &shot.model,
-                            time: &mut shot.time,
-                            invoker: &mut shot.invoker,
-                            formats: &NO_FORMATS,
-                            titled: false,
-                            plots: &NO_PLOTS,
-                        };
+                        let mut context =
+                            ViewContext::new(&shot.model, &mut shot.time, &mut shot.invoker);
                         shot.layout.ui(ui, &mut context);
                     });
             },
@@ -505,7 +501,7 @@ fn screenshots_panels() {
         .build_ui_state(
             |ui, app: &mut App| {
                 // the panels are drawn on the card colour
-                paint_background(ui, theme::tokens(ui.visuals()).card);
+                paint_background(ui, ui.tokens().card);
                 app.traces_panel_ui(ui);
             },
             app,
@@ -529,7 +525,7 @@ fn screenshots_panels() {
             |ui, state: &mut State| {
                 let now = ui.input(|input| input.time);
                 state.time.update(&state.model, now);
-                paint_background(ui, theme::tokens(ui.visuals()).card);
+                paint_background(ui, ui.tokens().card);
                 state.bottom_ui(ui, true);
             },
             state,
@@ -550,7 +546,7 @@ fn screenshots_panels() {
         .wgpu()
         .build_ui_state(
             move |ui, layout: &mut layout::Layout| {
-                paint_background(ui, theme::tokens(ui.visuals()).card);
+                paint_background(ui, ui.tokens().card);
                 let connected = Default::default();
                 let context = view::PropertiesContext {
                     model: &model,

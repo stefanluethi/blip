@@ -29,6 +29,12 @@ blip
    * Actions with buttons, checkboxes, sliders, fields and choices, carried
      out only while recording.
    * Connections to several outposts at once; in the browser and native.
+   * Empty views, panels and lists show their hint in one style. Plot and States
+     now say *Check the traces to show in the tree on the left* over their
+     empty plot.
+   * Internal: shared helpers for the timestamp searches (``model/sorted``),
+     the drawing of the plot views (``view/plotting``), theme tokens, fields
+     and property rows.
 
 outpost
    * The Python library ``blip_outpost`` for scripts that connect a target:

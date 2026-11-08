@@ -306,7 +306,7 @@ fn bins_show_the_unit_only_if_all_traces_share_one() {
 fn without_traces_or_samples_the_view_says_so() {
     let mut harness = harness(State::new(Distribution::default(), Model::default()), false);
     harness.run();
-    harness.get_by_label(CHECK_TRACES);
+    harness.get_by_label(super::super::CHECK_TRACES);
 
     // only nulls in the shown window
     let mut model = Model::default();
@@ -1869,4 +1869,12 @@ fn show_and_whiskers_are_saved_and_old_histograms_load_as_bars() {
     // saved by its new name
     let json = serde_json::to_string(&view).unwrap();
     assert!(json.contains(r#""Distribution":"#), "{json}");
+}
+
+#[test]
+fn orientation_picks_and_swaps() {
+    assert_eq!(Orientation::Upright.pick(1, 2), 1);
+    assert_eq!(Orientation::Sideways.pick(1, 2), 2);
+    assert_eq!(Orientation::Upright.xy(1, 2), [1, 2]);
+    assert_eq!(Orientation::Sideways.xy(1, 2), [2, 1]);
 }

@@ -477,9 +477,7 @@ impl Presets {
     fn rename_ui(&mut self, ui: &mut egui::Ui, name: &mut String) -> Outcome {
         ui.heading("Rename preset");
         ui.add_space(4.0);
-        let field = egui::TextEdit::singleline(name)
-            .margin(super::theme::FIELD_MARGIN)
-            .desired_width(f32::INFINITY);
+        let field = super::theme::wide_field(name);
         let response = ui.add(field);
         if !response.has_focus() && !response.lost_focus() {
             response.request_focus();

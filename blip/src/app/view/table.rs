@@ -2,11 +2,11 @@
 //! column per field.
 
 use super::Selectable;
-use super::time_axis::index_at;
 use super::trace_selection::{TraceTree, record_path, type_icon};
 use super::{Formats, PropertiesContext, ViewContext, Viewable, short_names};
 use crate::app::model::Model;
 use crate::app::model::numbers::SHOWN_DIGITS;
+use crate::app::model::sorted::index_at;
 use crate::app::model::traces::{Samples, Trace};
 use crate::app::theme;
 use egui_extras::Column;
@@ -175,11 +175,7 @@ impl Table {
             let collapsed = self.collapsed.contains(&row.key);
             let caret = if collapsed { CARET_RIGHT } else { CARET_DOWN };
             if ui.add(egui::Button::new(caret).frame(false)).clicked() {
-                if collapsed {
-                    self.collapsed.remove(&row.key);
-                } else {
-                    self.collapsed.insert(row.key.clone());
-                }
+                super::set_member(&mut self.collapsed, &row.key, !collapsed);
             }
         } else {
             ui.add_space(ui.spacing().icon_width);
@@ -423,11 +419,7 @@ impl Table {
                     .on_hover_text("Drag to move the column");
                     let mut shown = !self.hidden_columns.contains(*column);
                     if ui.checkbox(&mut shown, *column).changed() {
-                        if shown {
-                            self.hidden_columns.remove(*column);
-                        } else {
-                            self.hidden_columns.insert((*column).to_owned());
-                        }
+                        super::set_member(&mut self.hidden_columns, *column, !shown);
                     }
                 });
                 let key = column_format_key(column);
@@ -544,14 +536,15 @@ impl Viewable for Table {
 
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         if self.traces.is_empty() {
-            ui.weak(match self.layout {
+            let text = match self.layout {
                 TableLayout::Traces => "Select the traces to show in the traces panel",
                 TableLayout::Records => "Select the records to show in the traces panel",
-            });
+            };
+            theme::hint(ui, text);
             return;
         }
         let time = &context.time;
-        let t = time.cursor().map(|t| time.timestamp(t));
+        let t = time.cursor_timestamp();
         let (model, formats) = (context.model, context.formats);
         // the table changes the look of the ui
         ui.scope(|ui| match self.layout {
@@ -567,10 +560,12 @@ impl Viewable for Table {
             self.change_layout(context.model, layout);
             if self.layout == TableLayout::Traces {
                 super::choice_row(ui, "Traces", &mut self.rows, &TableRows::CHOICES);
-                super::property_label(ui, "Empty");
-                ui.checkbox(&mut self.show_empty, "")
-                    .on_hover_text("Show traces without a value at the cursor time");
-                ui.end_row();
+                super::checkbox_row(
+                    ui,
+                    "Empty",
+                    &mut self.show_empty,
+                    "Show traces without a value at the cursor time",
+                );
             }
         });
     }

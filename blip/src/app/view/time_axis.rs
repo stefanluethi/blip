@@ -1,5 +1,6 @@
-//! Plots with the shared time range on the x axis, and finding samples by time.
+//! Plots with the shared time range on the x axis.
 
+use crate::app::model::sorted::within;
 use crate::app::theme;
 use crate::app::time::{self, TimeBase, TimeRange, timestamp_at};
 use std::cmp::min;
@@ -46,6 +47,8 @@ pub struct TimePlotResponse {
     pub hovered_y: Option<f64>,
     /// The shown bounds after panning and zooming in this frame.
     pub bounds: egui_plot::PlotBounds,
+    /// The screen rectangle of the plot inside its axes.
+    pub frame: egui::Rect,
     pub response: egui::Response,
     pub axis: TimeAxis,
 }
@@ -141,9 +144,7 @@ pub fn show<'a>(
 
     if let Some((start, end)) = axis.range {
         let bounds = transform.bounds();
-        let tolerance = (end - start) * 1.0e-6;
-        if (bounds.min()[0] - start).abs() > tolerance || (bounds.max()[0] - end).abs() > tolerance
-        {
+        if super::plotting::range_moved((start, end), (bounds.min()[0], bounds.max()[0])) {
             time.pan_zoom(bounds.min()[0], bounds.max()[0]);
             ui.ctx().request_repaint();
         }
@@ -171,38 +172,10 @@ pub fn show<'a>(
         hovered: response.inner.map(|point| point.x),
         hovered_y: response.inner.map(|point| point.y),
         bounds: *transform.bounds(),
+        frame: *transform.frame(),
         response: response.response,
         axis,
     }
-}
-
-/// Index of the timestamp closest to `t`, all in nanoseconds.
-pub fn closest_index(timestamps: &[u64], t: u64) -> Option<usize> {
-    // timestamps are ascending
-    let next = timestamps.partition_point(|&timestamp| timestamp < t);
-    let candidates = [next.checked_sub(1), Some(next)];
-    candidates
-        .into_iter()
-        .flatten()
-        .filter(|&index| index < timestamps.len())
-        .min_by_key(|&index| timestamps[index].abs_diff(t))
-}
-
-/// Index of the newest timestamp at or before `t`, i.e. of the sample that is current
-/// at `t`, all in nanoseconds.
-pub fn index_at(timestamps: &[u64], t: u64) -> Option<usize> {
-    // timestamps are ascending
-    timestamps
-        .partition_point(|&timestamp| timestamp <= t)
-        .checked_sub(1)
-}
-
-/// Indices of the timestamps within `[start, end]`, all in nanoseconds.
-pub fn within(timestamps: &[u64], (start, end): (u64, u64)) -> Range<usize> {
-    // timestamps are ascending
-    let first = timestamps.partition_point(|&timestamp| timestamp < start);
-    let last = timestamps.partition_point(|&timestamp| timestamp <= end);
-    first..last.max(first)
 }
 
 /// Indices of the timestamps within `range_x`, plus one neighbour on each side so the

@@ -1,7 +1,7 @@
 //! The connections panel: the WebSocket addresses of outposts and targets, to connect to
 //! any number of them at once.
 
-use super::theme;
+use super::theme::{self, TokensExt};
 use egui_phosphor::regular;
 use std::collections::{HashMap, HashSet};
 
@@ -404,7 +404,7 @@ impl Connections {
                         });
                     }
                     _ if self.connections.is_empty() => {
-                        ui.weak("Add the address of an outpost or target with +");
+                        theme::panel_hint(ui, "Add the address of an outpost or target with +");
                     }
                     _ => {}
                 }
@@ -624,19 +624,11 @@ fn edit_ui(ui: &mut egui::Ui, editing: &mut Editing, actions: &mut Vec<Action>) 
         Field::Name => "No name: traces are not put below it",
         Field::Address => DEFAULT_ADDRESS,
     };
-    let field = egui::TextEdit::singleline(&mut editing.text)
-        .hint_text(hint)
-        .margin(theme::FIELD_MARGIN)
-        .desired_width(f32::INFINITY);
-    let response = ui.add(field);
-    if response.lost_focus() {
-        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            actions.push(Action::CancelEdit);
-        } else {
-            actions.push(Action::FinishEdit);
-        }
-    } else {
-        response.request_focus();
+    let field = theme::wide_field(&mut editing.text).hint_text(hint);
+    match theme::focused_edit(ui, field) {
+        Some(true) => actions.push(Action::FinishEdit),
+        Some(false) => actions.push(Action::CancelEdit),
+        None => {}
     }
 }
 
@@ -659,10 +651,10 @@ fn status_ui(ui: &mut egui::Ui, status: &Status) {
         let center = rect.center();
         match status {
             Status::Connected => {
-                painter.circle_filled(center, radius, theme::tokens(ui.visuals()).ok);
+                painter.circle_filled(center, radius, ui.tokens().ok);
             }
             Status::Failed(_) => {
-                painter.circle_filled(center, radius, theme::tokens(ui.visuals()).error);
+                painter.circle_filled(center, radius, ui.tokens().error);
             }
             Status::Disconnected | Status::Connecting => {
                 let stroke = egui::Stroke::new(1.0, ui.visuals().weak_text_color());

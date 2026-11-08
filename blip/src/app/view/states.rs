@@ -2,13 +2,14 @@
 //! trace, one band for each run of equal values.
 
 use super::Selectable;
-use super::time_axis::{self, index_at, visible_range};
+use super::time_axis::{self, visible_range};
 use super::{Formats, PropertiesContext, ViewContext, Viewable, short_names, with_unit};
 use crate::app::model::Model;
 use crate::app::model::logs::LogLevel;
 use crate::app::model::numbers::{DisplayFormat, NumberKind, SHOWN_DIGITS};
+use crate::app::model::sorted::index_at;
 use crate::app::model::traces::{Samples, Series, Strings, Trace};
-use crate::app::theme;
+use crate::app::theme::{self, TokensExt};
 use crate::app::time::{seconds_since, timestamp_at};
 use egui::Color32;
 use std::collections::BTreeSet;
@@ -257,7 +258,7 @@ impl States {
                     visuals.text_color()
                 }
                 None => {
-                    let line = theme::tokens(&visuals).border_strong;
+                    let line = visuals.tokens().border_strong;
                     plot_ui.polygon(rect(top - edge / 2.0, top, line));
                     visuals.weak_text_color()
                 }
@@ -326,19 +327,16 @@ impl States {
                     })
                     .collect()
             })
-            .custom_y_axes(vec![
-                egui_plot::AxisHints::new_y()
-                    .placement(egui_plot::HPlacement::Left)
-                    .min_thickness(50.0)
-                    .formatter(move |mark, _range| {
-                        let row = rows as f64 - 1.0 - mark.value;
-                        names
-                            .get(row.round() as usize)
-                            .filter(|_| row >= 0.0 && row.fract() == 0.0)
-                            .cloned()
-                            .unwrap_or_default()
-                    }),
-            ]);
+            .custom_y_axes(vec![super::plotting::time_y_axis().formatter(
+                move |mark, _range| {
+                    let row = rows as f64 - 1.0 - mark.value;
+                    names
+                        .get(row.round() as usize)
+                        .filter(|_| row >= 0.0 && row.fract() == 0.0)
+                        .cloned()
+                        .unwrap_or_default()
+                },
+            )]);
 
         let latest = time.latest();
         let response = time_axis::show(id, plot, ui, time, false, |plot_ui, axis| {
@@ -354,6 +352,9 @@ impl States {
             }
         });
 
+        if self.traces.is_empty() {
+            theme::hint_over(ui, response.frame, super::CHECK_TRACES);
+        }
         if let Some(t) = response.hovered
             && !self.traces.is_empty()
         {
@@ -399,10 +400,12 @@ impl Viewable for States {
             ui.add(egui::Slider::new(&mut self.band_height, 0.2..=1.0))
                 .on_hover_text("Height of a band as a fraction of its row");
             ui.end_row();
-            super::property_label(ui, "Values");
-            ui.checkbox(&mut self.show_values, "")
-                .on_hover_text("Label the bands wide enough with their value");
-            ui.end_row();
+            super::checkbox_row(
+                ui,
+                "Values",
+                &mut self.show_values,
+                "Label the bands wide enough with their value",
+            );
         });
     }
 }

@@ -32,7 +32,7 @@ ranges.
 - `unsafe` is denied in the workspace. Clippy runs with `-D warnings -W clippy::all`.
 - Match the style of the code around you: module layout, naming, comments in plain
   short sentences.
-- UI follows `design/DESIGN.md`: colours from `theme::tokens(ui.visuals())` and the
+- UI follows `design/DESIGN.md`: colours from `ui.tokens()` and the
   `theme.rs` helpers, no colour literals, both themes. Build the design option in your
   brief as chosen; if it does not fit, report it instead of changing it.
 - If a changed part of the UI shows in no screenshot, add one to

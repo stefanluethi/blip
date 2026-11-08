@@ -1,15 +1,17 @@
 use super::Selectable;
+use super::plotting::{is_point, to_screen};
 use super::stats::{self, Measurement};
-use super::time_axis::{self, TimeAxis, closest_index, index_at, visible_range};
-use super::{Formats, PropertiesContext, ViewContext, Viewable, short_names, with_unit};
+use super::time_axis::{self, TimeAxis, visible_range};
+use super::{Formats, PropertiesContext, ViewContext, Viewable, with_unit};
 use crate::app::model::numbers::{
     DisplayFormat, NumberKind, SHOWN_DIGITS, fixed_decimals, widest_fixed,
 };
+use crate::app::model::sorted::{closest_index, index_at};
 use crate::app::model::traces::{Samples, Trace};
 use crate::app::model::{Model, traces::Series};
 use crate::app::theme;
 use crate::app::time::seconds_since;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 const Y_MARGIN_FRACTION: f64 = 0.05;
 
@@ -128,16 +130,6 @@ impl LineStyle {
     }
 }
 
-/// Whether neither coordinate of `point` is NaN, which marks a gap.
-pub fn is_point(point: &[f64; 2]) -> bool {
-    !point[0].is_nan() && !point[1].is_nan()
-}
-
-/// The position of `point` on the screen of a plot with `transform`.
-pub fn to_screen(point: [f64; 2], transform: &egui_plot::PlotTransform) -> egui::Pos2 {
-    transform.position_from_point(&egui_plot::PlotPoint::new(point[0], point[1]))
-}
-
 /// The length on the screen of a plot with `transform` of the lines through `points`,
 /// broken where a point is missing.
 fn screen_length(points: &[[f64; 2]], transform: &egui_plot::PlotTransform) -> f32 {
@@ -150,58 +142,30 @@ fn screen_length(points: &[[f64; 2]], transform: &egui_plot::PlotTransform) -> f
 
 /// The line styles of the traces of a view by their paths, solid for traces without
 /// one.
-#[derive(serde::Deserialize, serde::Serialize, Clone, Default)]
-pub struct LineStyles(BTreeMap<String, LineStyle>);
+pub type LineStyles = super::PerPath<LineStyle>;
 
-impl LineStyles {
-    pub fn of(&self, path: &str) -> LineStyle {
-        self.0.get(path).copied().unwrap_or_default()
-    }
-
-    pub fn set(&mut self, path: &str, style: LineStyle) {
-        if style == LineStyle::Solid {
-            self.0.remove(path);
-        } else {
-            self.0.insert(path.to_owned(), style);
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    /// Forgets the styles of the traces that are not among `shown`, so layouts do not
-    /// keep them and traces shown again start solid.
-    pub fn retain_shown(&mut self, shown: &BTreeSet<String>) {
-        self.0.retain(|path, _| shown.contains(path));
-    }
-
+impl super::PerPath<LineStyle> {
     /// Shows a section of the properties to choose the line style of each trace at
     /// `paths`, if there are any.
     pub fn properties_ui(&mut self, ui: &mut egui::Ui, paths: &[&str]) {
         if paths.is_empty() {
             return;
         }
-        let names = short_names(paths.iter().copied());
         super::properties_section(ui, "Line styles", |ui| {
-            for (&path, name) in paths.iter().zip(names) {
-                super::property_label(ui, name).on_hover_text(path);
-                let current = self.of(path);
-                egui::ComboBox::from_id_salt(("line style", path))
-                    .selected_text(current.name())
-                    .width(90.0)
-                    .show_ui(ui, |ui| {
-                        for style in LineStyle::ALL {
-                            if ui
-                                .selectable_label(current == style, style.name())
-                                .clicked()
-                            {
-                                self.set(path, style);
-                            }
-                        }
-                    });
-                ui.end_row();
-            }
+            super::path_rows(ui, paths, |ui, &path| {
+                let mut style = self.of(path);
+                super::choice_combo(
+                    ui,
+                    ("line style", path),
+                    Some(90.0),
+                    &mut style,
+                    LineStyle::ALL
+                        .into_iter()
+                        .map(|style| (style, style.name())),
+                    None,
+                );
+                self.set(path, style);
+            });
         });
     }
 }
@@ -362,13 +326,7 @@ impl Plot {
     /// The shown paths with their names in the legend and their indices, which pick
     /// their colors.
     fn selected_path_iter(&self) -> impl Iterator<Item = (&str, &str, usize)> {
-        let names = short_names(self.traces.iter().map(String::as_str));
-        // colors follow the order of the selection, so they do not change as traces arrive
-        self.traces
-            .iter()
-            .zip(names)
-            .enumerate()
-            .map(|(index, (path, name))| (path.as_str(), name, index))
+        super::indexed_names(&self.traces)
     }
 
     /// The shown numeric series that were received, with their names in the legend and
@@ -433,9 +391,7 @@ impl Plot {
         ui.add_space(STATS_GAP);
         let shown: Vec<_> = self.selected_path_iter().collect();
         let time = &*context.time;
-        let window = time
-            .range()
-            .map(|(start, end)| (time.timestamp(start), time.timestamp(end)));
+        let window = time.timestamps();
         let response = ui.scope(|ui| {
             stats::measurements_ui(
                 ui,
@@ -458,9 +414,7 @@ impl Plot {
     fn show_plot(&mut self, context: &mut ViewContext<'_>, ui: &mut egui::Ui) {
         let (model, formats, time) = (context.model, context.formats, &mut *context.time);
         let id = ui.id().with("plot");
-        let mut y_axis = egui_plot::AxisHints::new_y()
-            .placement(egui_plot::HPlacement::Left)
-            .min_thickness(50.0);
+        let mut y_axis = super::plotting::time_y_axis();
         let label = match self.y_label.as_str() {
             "" => super::common_unit(model, self.traces.iter().map(String::as_str)),
             label => Some(label),
@@ -510,12 +464,14 @@ impl Plot {
             ui.ctx().request_repaint();
         } else if let Some((min_y, max_y)) = shown_y {
             let (low, high) = (response.bounds.min()[1], response.bounds.max()[1]);
-            let tolerance = (max_y - min_y) * 1.0e-6;
-            if (low - min_y).abs() > tolerance || (high - max_y).abs() > tolerance {
+            if super::plotting::range_moved((min_y, max_y), (low, high)) {
                 self.y_view = Some((low, high));
             }
         }
 
+        if self.traces.is_empty() {
+            theme::hint_over(ui, response.frame, super::CHECK_TRACES);
+        }
         if let Some(t) = response.hovered
             && !self.traces.is_empty()
         {
@@ -606,29 +562,14 @@ fn legend_value(
     value: Option<&str>,
     (widest, format): (Option<&str>, DisplayFormat),
 ) {
-    let font = egui::TextStyle::Body.resolve(ui.style());
-    let width_of = |text: &str| {
-        ui.ctx().fonts_mut(|fonts| {
-            let galley =
-                fonts.layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::PLACEHOLDER);
-            galley.size().x
-        })
-    };
+    let width_of = |text: &str| super::text_size(ui, text, egui::TextStyle::Body).x;
     let needed = value
         .map_or(0.0, width_of)
         .max(widest.map_or(0.0, width_of));
     // a new range or format, e.g. of another recording, starts the slot anew
     let slot = format!("{format:?} {widest:?}");
     let id = ui.id().with(("legend value width", path));
-    let width = ui.data_mut(|data| {
-        let (last_slot, width) = data.get_temp_mut_or_default::<(String, f32)>(id);
-        if *last_slot != slot {
-            *last_slot = slot;
-            *width = 0.0;
-        }
-        *width = width.max(needed);
-        *width
-    });
+    let width = super::sticky_width(ui.ctx(), id, slot, needed);
     let size = egui::vec2(width, ui.spacing().interact_size.y);
     let layout = egui::Layout::right_to_left(egui::Align::Center);
     ui.allocate_ui_with_layout(size, layout, |ui| {
@@ -662,16 +603,14 @@ impl Viewable for Plot {
             return;
         }
         let (model, time, formats) = (context.model, &*context.time, context.formats);
-        let t = time.cursor().map(|t| time.timestamp(t));
+        let t = time.cursor_timestamp();
         // one unit shared by all traces is written once, at the end
         let unit = super::common_unit(model, self.traces.iter().map(String::as_str));
         let weak = ui.visuals().weak_text_color();
         ui.add_space(8.0);
         for (path, name, index) in self.selected_path_iter() {
             ui.add_space(6.0);
-            let (dot, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
-            let color = theme::trace_color(ui.visuals(), index);
-            ui.painter().circle_filled(dot.center(), 4.0, color);
+            super::legend_dot(ui, theme::trace_color(ui.visuals(), index));
             ui.label(egui::RichText::new(name).color(weak))
                 .on_hover_text(path);
             let Some(series) = model.traces.series(path) else {
@@ -731,13 +670,8 @@ impl Viewable for Plot {
                 self.y_view = None;
             }
             super::property_label(ui, "Label");
-            ui.add(
-                egui::TextEdit::singleline(&mut self.y_label)
-                    .hint_text(unit)
-                    .margin(theme::FIELD_MARGIN)
-                    .desired_width(f32::INFINITY),
-            )
-            .on_hover_text("The unit of the traces if they share one and this is empty");
+            ui.add(theme::wide_field(&mut self.y_label).hint_text(unit))
+                .on_hover_text("The unit of the traces if they share one and this is empty");
             ui.end_row();
         });
         super::properties_section(ui, "Lines", |ui| {
@@ -764,13 +698,16 @@ impl Viewable for Plot {
         });
         super::properties_section(ui, "Legend", |ui| {
             super::property_label(ui, "Placement");
-            egui::ComboBox::from_id_salt("plot_legend")
-                .selected_text(self.legend.name())
-                .show_ui(ui, |ui| {
-                    for placement in LegendPlacement::ALL {
-                        ui.selectable_value(&mut self.legend, placement, placement.name());
-                    }
-                });
+            super::choice_combo(
+                ui,
+                "plot_legend",
+                None,
+                &mut self.legend,
+                LegendPlacement::ALL
+                    .into_iter()
+                    .map(|placement| (placement, placement.name())),
+                None,
+            );
             ui.end_row();
         });
         let paths: Vec<&str> = self.traces.iter().map(String::as_str).collect();

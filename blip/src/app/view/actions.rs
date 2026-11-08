@@ -22,7 +22,7 @@ use crate::app::model::Model;
 use crate::app::model::actions::{ActionId, Args, Invoker, Outcome};
 use crate::app::model::numbers::{DisplayFormat, Number, SHOWN_DIGITS};
 use crate::app::model::traces::Samples;
-use crate::app::theme;
+use crate::app::theme::{self, TokensExt};
 use egui::RichText;
 use egui_phosphor::regular::{CHECK_CIRCLE, CLOCK_COUNTDOWN, PLAY, WARNING_CIRCLE};
 use proto::{ActionDescriptor, Data, Param, ParamKind};
@@ -375,9 +375,7 @@ fn input_ui(
                 Data::String(text) => text.clone(),
                 _ => String::new(),
             };
-            let field = egui::TextEdit::singleline(&mut text)
-                .margin(theme::FIELD_MARGIN)
-                .desired_width(INPUT_WIDTH);
+            let field = theme::field(&mut text).desired_width(INPUT_WIDTH);
             let response = ui.add(field);
             *value = Data::String(text);
             if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
@@ -461,7 +459,7 @@ fn needle_ui(
     number: f64,
     needle: Needle,
 ) {
-    let tokens = theme::tokens(ui.visuals());
+    let tokens = ui.tokens();
     let color = if needle.live {
         tokens.accent_text
     } else {
@@ -524,9 +522,8 @@ fn integer_field(
         .data(|data| data.get_temp(id))
         .unwrap_or_else(|| current.clone());
     let response = ui.add(
-        egui::TextEdit::singleline(&mut text)
+        theme::field(&mut text)
             .id(id)
-            .margin(theme::FIELD_MARGIN)
             .desired_width(INPUT_WIDTH - 60.0),
     );
     if !unit.is_empty() {
@@ -699,7 +696,7 @@ fn readback_ui(ui: &mut egui::Ui, readback: Option<(&str, String)>, connected: b
         ui.label("");
         return;
     };
-    let tokens = theme::tokens(ui.visuals());
+    let tokens = ui.tokens();
     let (color, hover) = if connected {
         (tokens.accent_text, format!("Readback of {path}"))
     } else {
@@ -771,7 +768,7 @@ fn armed_ui(ui: &mut egui::Ui, label: &str, left: f32) -> egui::InnerResponse<Ar
         let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 2.0), egui::Sense::hover());
         let to_go = egui::Rect::from_min_size(rect.min, egui::vec2(width * left, 2.0));
         let painter = ui.painter();
-        painter.rect_filled(rect, 1.0, theme::tokens(ui.visuals()).border);
+        painter.rect_filled(rect, 1.0, ui.tokens().border);
         painter.rect_filled(to_go, 1.0, ui.visuals().weak_text_color());
         armed
     })
@@ -1097,8 +1094,7 @@ impl Actions {
                 ui.end_row();
             }
             if let Some((x, span)) = rule {
-                let stroke =
-                    egui::Stroke::new(RULE_WIDTH, theme::tokens(ui.visuals()).border_strong);
+                let stroke = egui::Stroke::new(RULE_WIDTH, ui.tokens().border_strong);
                 ui.painter().vline(x + RULE_WIDTH / 2.0, span, stroke);
             }
         }
@@ -1248,11 +1244,7 @@ impl Actions {
             )
             .on_disabled_hover_text("Its outpost announces no readback");
         if response.changed() {
-            if on {
-                self.readbacks_off.remove(path);
-            } else {
-                self.readbacks_off.insert(path.to_owned());
-            }
+            super::set_member(&mut self.readbacks_off, path, !on);
         }
     }
 
@@ -1281,11 +1273,7 @@ impl Actions {
                     &[(false, "Send button"), (true, "On change")],
                 );
                 ui.end_row();
-                if on_change {
-                    self.on_change.insert((*path).to_owned());
-                } else {
-                    self.on_change.remove(*path);
-                }
+                super::set_member(&mut self.on_change, *path, on_change);
             }
         });
     }
@@ -1328,11 +1316,7 @@ impl Actions {
                 super::property_label(ui, &label).on_hover_text(&action.path);
                 theme::segmented(ui, &mut field, &[(false, "Slider"), (true, "Field")]);
                 ui.end_row();
-                if field {
-                    self.fields.insert(key);
-                } else {
-                    self.fields.remove(&key);
-                }
+                super::set_member(&mut self.fields, &key, field);
             }
         });
     }
@@ -1360,17 +1344,14 @@ impl Viewable for Actions {
         let model = context.model;
         let rows = self.rows(model, &context.invoker.connected);
         if rows.is_empty() {
-            ui.centered_and_justified(|ui| {
-                ui.weak(
-                    if model.actions.is_empty() && context.invoker.connected.is_empty() {
-                        "Connect to an outpost to see its actions"
-                    } else if model.actions.is_empty() {
-                        "The outposts announced no actions"
-                    } else {
-                        "Check the actions to show in the tree on the left"
-                    },
-                );
-            });
+            let text = if model.actions.is_empty() && context.invoker.connected.is_empty() {
+                "Connect to an outpost to see its actions"
+            } else if model.actions.is_empty() {
+                "The outposts announced no actions"
+            } else {
+                "Check the actions to show in the tree on the left"
+            };
+            theme::hint(ui, text);
             return;
         }
         let names = short_names(rows.iter().map(|row| row.path));
@@ -1431,20 +1412,15 @@ impl Viewable for Actions {
             ui.end_row();
             if paths.is_empty() {
                 ui.label("");
-                ui.weak("Check the actions to show in the tree on the left");
+                theme::panel_hint(ui, "Check the actions to show in the tree on the left");
                 ui.end_row();
             }
         });
         if paths.is_empty() {
             return;
         }
-        let names = short_names(paths.iter().map(String::as_str));
         properties_section(ui, "Readbacks", |ui| {
-            for (path, name) in paths.iter().zip(&names) {
-                super::property_label(ui, name).on_hover_text(path);
-                self.readback_ui(ui, context, path);
-                ui.end_row();
-            }
+            super::path_rows(ui, &paths, |ui, path| self.readback_ui(ui, context, path));
         });
         self.sending_ui(ui, context, &paths);
         self.number_inputs_ui(ui, context, &paths);

@@ -5,6 +5,7 @@
 use super::decode::{Flat, Leaf};
 use super::growing::Growing;
 use super::numbers::{DisplayFormat, Extent, Number, NumberKind, Numbers};
+use super::sorted::upper_bound;
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 
@@ -632,7 +633,7 @@ impl Traces {
             Some(&table) => {
                 let table_ref = &mut self.tables[table];
                 let timestamps = &table_ref.timestamps;
-                let newer = timestamps.len() - timestamps.partition_point(|&t| t <= timestamp);
+                let newer = timestamps.len() - upper_bound(timestamps, timestamp);
                 if newer > MAX_LATE {
                     if !table_ref.warned_late {
                         table_ref.warned_late = true;
@@ -682,7 +683,7 @@ impl Traces {
 
         let table = &mut self.tables[table];
         // searched before the new timestamp is appended, which would leave them unsorted
-        let at = table.timestamps.partition_point(|&t| t <= timestamp);
+        let at = upper_bound(&table.timestamps, timestamp);
         table.timestamps.push(timestamp);
         if at + 1 < table.timestamps.len() {
             table.timestamps.rotate_tail(at, 1);

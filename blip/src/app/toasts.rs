@@ -2,6 +2,7 @@
 //! could not be opened, shown until they expire or the user closes them. Below them, a
 //! task under way, like opening a recording, shows how far it got.
 
+use super::theme::TokensExt;
 use egui_phosphor::regular::{WARNING, WARNING_CIRCLE, X};
 
 /// How long a toast is shown in seconds, longer while the pointer rests on it.
@@ -210,7 +211,7 @@ fn progress_ui(ui: &mut egui::Ui, progress: &Progress) -> bool {
 
 /// A thin bar across `ui`, filled `fraction` of the way in the accent.
 fn bar_ui(ui: &mut egui::Ui, fraction: f32) {
-    let tokens = super::theme::tokens(ui.visuals());
+    let tokens = ui.tokens();
     let size = egui::vec2(ui.available_width(), 4.0);
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     let painter = ui.painter();
