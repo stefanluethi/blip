@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Lead a feature or change in blip from idea to reviewed code. Clarify with the user, get design options from the designer for UI changes, have the requirements engineer write the requirements, get them approved, hand the work to the specialist agents (blip-dev, sonde-dev, outpost-dev, docs-writer) and loop with the reviewer and, for blip UI changes, the design-reviewer until requirements, code and look agree. Runs only when the user types /orchestrate.
+description: Lead a feature or change in blip from idea to reviewed code. Clarify with the user, get design options from the designer for UI changes, have the requirements engineer write the requirements, get them approved, have a technical spec written on Opus, hand the slices of work on Sonnet to the specialist agents (blip-dev, sonde-dev, outpost-dev, docs-writer) and loop with the reviewer and, for blip UI changes, the design-reviewer until requirements, code and look agree. Runs only when the user types /orchestrate.
 argument-hint: <change>
 disable-model-invocation: true
 ---
@@ -64,14 +64,52 @@ Split the work by part and decide the order:
 
 Tell the user the plan in a few lines (who does what, in which order) before you start.
 
-## 5. Implement
+## 5. Spec
 
-Spawn each specialist (`blip-dev`, `sonde-dev`, `outpost-dev`) with:
+The requirements say what to build, not how. A spec settles the how, so the code can be
+written on Sonnet in small slices, and Opus spends its tokens once on the decisions
+instead of on every line.
 
+1. For each part, spawn its specialist on its default model (Opus) to write the spec,
+   not code, to `.claude/specs/<change>-<part>.md`. Its brief: the requirement IDs, the
+   chosen design option, the user's decisions, and the outline below. It reads the code
+   it will change and may run commands to work out test values, but edits no other
+   file.
+2. Read the spec. Check that every requirement and `TEST_*` item in scope is in a slice,
+   and that it decides rather than lists options. Ask the user only about decisions that
+   change what they see or what loads from old files; send the answers back with
+   SendMessage and have the spec updated.
+
+The spec has these sections:
+
+- **Decisions:** each choice the code needs that the requirements leave open (names,
+  compatibility of saved files, the drawing approach, which existing code to reuse), with
+  the choice and one line of why.
+- **Files:** new and changed files and modules, and what each holds.
+- **Types and functions:** new and changed signatures, with a line each on what they
+  do; existing functions to reuse, named by file and function.
+- **Slices:** in order, each one buildable and checked on its own, about 300 lines of
+  code at most: the requirement IDs, the files, the steps, and what done looks like.
+- **Tests:** per slice, the test names, the `TEST_*` item each fills, and the inputs
+  and expected values worked out (by running the numbers), not guessed.
+- **Not to touch:** what stays as it is.
+
+Skip the file for a small change, one slice in a few files: then the brief is the spec,
+with the same sections in short.
+
+## 6. Implement
+
+Spawn a fresh specialist per slice, in the spec's order, on Sonnet (the Agent tool's
+`model: "sonnet"`). Slices of different parts that do not share files may run in
+parallel. Each brief has:
+
+- the spec file and the slice to build; the slices before it are done;
 - the requirement IDs it implements and the `TEST_*` items it must fill in;
-- the files and modules to work in, and what not to touch;
-- the user's decisions and the acceptance criteria;
 - what other parts are changing at the same time.
+
+A slice the spec leaves open, or one that failed twice on Sonnet, goes to the
+specialist on its default model. If a specialist reports that the spec does not fit the
+code, have the spec fixed before the next slice.
 
 Read each report. If a specialist reports work needed in another part, add it to the
 plan. Look at the diff yourself; a report is not proof.
@@ -83,13 +121,13 @@ files of the change, keep the behaviour and the tests the same, run the part's c
 (`./check.sh` for blip and proto), and report what it removed or merged. Skip this for
 smaller changes.
 
-## 6. Document
+## 7. Document
 
 Spawn `docs-writer` with the requirement IDs, a summary of what was built, and the pages
 likely affected. It updates the guides, internals, reference, `ARCH_*` items and
 `changes.rst`, and regenerates diagrams and screenshots if needed.
 
-## 7. Review
+## 8. Review
 
 Every turn of an agent rereads all it has seen so far, so a long-running agent gets
 more expensive with each message. Keep review rounds small: fresh agents with short
@@ -119,8 +157,10 @@ since that round. Put the old id in the briefs of the next round.
    change. Its brief lists the findings, the files and functions they point to, the
    user's decisions and the requirement IDs. Design findings go to `blip-dev`, missing
    screenshots to `blip-dev` (`screenshots.rs`) and then `docs-writer`. Run fixes for
-   different parts in parallel. Use SendMessage only for a short follow-up right after
-   an agent's report, never to start a new round in a long-running agent.
+   different parts in parallel. Fixes the findings spell out run on Sonnet; a finding
+   that needs a design decision goes to the specialist on its default model. Use
+   SendMessage only for a short follow-up right after an agent's report, never to start
+   a new round in a long-running agent.
 4. **Re-check.** Spawn fresh reviewers on Sonnet (the Agent tool's `model: "sonnet"`).
    Brief them with the previous findings and the snapshot id to diff against. They
    check that those findings are fixed and that the fix broke nothing it touched, not
@@ -137,7 +177,7 @@ When the reviewer passes and the design reviewer says it looks good, set the `:s
 of the requirements and test cases in scope to `implemented`. Leave `verified` to the
 user.
 
-## 8. Finish
+## 9. Finish
 
 The reviewer's last pass ran the checks on the finished change; trust its results and
 do not run them again. Setting the statuses changed only the requirements, so run
@@ -155,4 +195,6 @@ Report to the user: what was built, per requirement ID, the reviewer's coverage 
 the design reviewer's verdict, the reviewer's check results, the polish and Info
 findings you collected, and anything left open (e.g. diagrams that need the draw.io
 app). Do not commit unless the user asks. If they do, use a short imperative subject
-and a body that explains what changed and why, as `CLAUDE.md` says.
+and a body that explains what changed and why, as `CLAUDE.md` says. The specs in
+`.claude/specs` are working files: once the code and docs describe the change, delete
+them unless the user wants to keep them.

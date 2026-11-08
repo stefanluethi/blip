@@ -54,6 +54,9 @@ changes.
 
 - Update the docs in `doc/source` (guides, architecture, requirements and tests) along
   with the code they describe.
+- Rust unit tests live in their own file: `src/x/foo/tests.rs`, declared in `foo.rs` as
+  `#[cfg(test)] mod tests;`, not inline, so reading code doesn't load its tests. Skip
+  `tests.rs` files when searching or reading code you don't test.
 - Commit messages: a short imperative subject in plain words, then a body that explains
   what changed and why.
 
@@ -63,7 +66,8 @@ changes.
 `blip-dev`, `sonde-dev`, `outpost-dev`, `docs-writer`, `reviewer` and
 `design-reviewer`. `/orchestrate <change>` (`.claude/skills/orchestrate`) leads a change
 through them: clarify with the user, pick a design for UI changes, write and approve the
-requirements, implement, document, then review until every requirement in scope is
-implemented, tested, traced and documented, and the UI looks right.
+requirements, spec the code on Opus (`.claude/specs`), implement it in slices on Sonnet,
+document, then review until every requirement in scope is implemented, tested, traced
+and documented, and the UI looks right.
 
 `design/DESIGN.md` describes the look of blip and the UI rules; follow it for UI work.

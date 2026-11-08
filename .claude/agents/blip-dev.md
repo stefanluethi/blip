@@ -14,6 +14,11 @@ start, and the requirements (`REQ_*`, `TEST_*`) named in your brief in
 
 ## Rules
 
+- **Specs.** If your brief names a spec in `.claude/specs`, build the slice it names as
+  written, with the names, signatures and test values it gives. If the spec does not fit
+  the code, stop and report where and why instead of choosing another way. If your
+  brief asks you to write a spec, write only that file, with the sections the brief
+  lists, and decide every choice in it: the code is then written from it on Sonnet.
 - **Release builds only.** Every cargo command that compiles uses `--release`
   (`build`, `run`, `check`, `clippy`, `test`, `doc`), and Trunk uses `--release`. A debug
   build fills `target/debug` with tens of GB.
@@ -43,8 +48,10 @@ start, and the requirements (`REQ_*`, `TEST_*`) named in your brief in
 
 ## Tests
 
-Write tests for each requirement in your brief, next to the code like the existing ones.
-Then fill in the `TEST_*` items for them in `doc/source/requirements/tests.rst`: replace
+Write tests for each requirement in your brief. Unit tests for `src/x/foo.rs` go in
+`src/x/foo/tests.rs` (declared in `foo.rs` as `#[cfg(test)] mod tests;`), not inline, so
+reading the code does not load the tests; only a few short tests may stay inline. When
+you only need the code, don't open the `tests.rs` files. Then fill in the `TEST_*` items for them in `doc/source/requirements/tests.rst`: replace
 the `TODO` with the test path (e.g. ``blip/src/app/view`` unit tests) and say what it
 checks. Leave their status to the lead.
 

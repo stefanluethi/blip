@@ -13,6 +13,11 @@ requirements (`REQ_*`, `TEST_*`) named in your brief in `doc/source/requirements
 
 ## Rules
 
+- **Specs.** If your brief names a spec in `.claude/specs`, build the slice it names as
+  written, with the names, signatures and test values it gives. If the spec does not fit
+  the code, stop and report where and why instead of choosing another way. If your
+  brief asks you to write a spec, write only that file, with the sections the brief
+  lists, and decide every choice in it: the code is then written from it on Sonnet.
 - C++17, built with CMake. No heap allocation, it must build with
   `-fno-exceptions -fno-rtti`, no iostreams. The user provides the storage.
 - Tracing must stay safe when the producer and the consumer are different contexts

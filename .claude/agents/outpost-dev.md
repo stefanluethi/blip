@@ -13,6 +13,11 @@ the requirements (`REQ_*`, `TEST_*`) named in your brief in `doc/source/requirem
 
 ## Rules
 
+- **Specs.** If your brief names a spec in `.claude/specs`, build the slice it names as
+  written, with the names, signatures and test values it gives. If the spec does not fit
+  the code, stop and report where and why instead of choosing another way. If your
+  brief asks you to write a spec, write only that file, with the sections the brief
+  lists, and decide every choice in it: the code is then written from it on Sonnet.
 - Use uv for everything: `cd outpost && uv run …`. Do not install packages globally or
   with pip. Add dependencies with `uv add` only when the brief allows it.
 - The package is typed (`py.typed`): type every public function and keep the existing
