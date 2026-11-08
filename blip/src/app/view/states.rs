@@ -3,6 +3,7 @@
 
 use super::Selectable;
 use super::time_axis::{self, visible_range};
+use super::tooltip::{Header, Label, Row, Tooltip, Value};
 use super::{Formats, PropertiesContext, ViewContext, Viewable, short_names, with_unit};
 use crate::app::model::Model;
 use crate::app::model::logs::LogLevel;
@@ -10,7 +11,7 @@ use crate::app::model::numbers::{DisplayFormat, NumberKind, SHOWN_DIGITS};
 use crate::app::model::sorted::index_at;
 use crate::app::model::traces::{Samples, Series, Strings, Trace};
 use crate::app::theme::{self, TokensExt};
-use crate::app::time::{seconds_since, timestamp_at};
+use crate::app::time::{TimeBase, seconds_since, timestamp_at};
 use egui::Color32;
 use std::collections::BTreeSet;
 
@@ -278,6 +279,29 @@ impl States {
         }
     }
 
+    /// The tooltip with the values of the shown traces current at `t` nanoseconds, a
+    /// faint dash for a trace without a sample then.
+    fn tooltip(&self, model: &Model, formats: &Formats, t: u64, base: TimeBase) -> Tooltip {
+        let names = short_names(self.traces.iter().map(String::as_str));
+        let rows = self
+            .traces
+            .iter()
+            .zip(names)
+            .map(|(path, name)| {
+                let value = StateSamples::of(model, path, formats.of(path))
+                    .and_then(|samples| {
+                        let index = index_at(samples.timestamps(), t)?;
+                        let null = samples.is_null(index);
+                        let unit = model.traces.unit(path).filter(|_| !null);
+                        Some(Value::text(with_unit(samples.text(index), unit)).faint_if(null))
+                    })
+                    .unwrap_or_else(Value::missing);
+                Row::new(Label::Weak(name.to_owned()), [value])
+            })
+            .collect();
+        Tooltip::new(Header::Text(base.format(t, 3))).group(rows)
+    }
+
     /// Shows the values of the shown traces current at `t` seconds.
     fn tooltip_ui(
         &self,
@@ -287,24 +311,8 @@ impl States {
         t: f64,
         axis: time_axis::TimeAxis,
     ) {
-        let t = axis.timestamp(t);
-        ui.label(axis.base.format(t, 3));
-        let names = short_names(self.traces.iter().map(String::as_str));
-        egui::Grid::new("states_tooltip")
-            .num_columns(2)
-            .show(ui, |ui| {
-                for (path, name) in self.traces.iter().zip(names) {
-                    let Some(samples) = StateSamples::of(model, path, formats.of(path)) else {
-                        continue;
-                    };
-                    if let Some(index) = index_at(samples.timestamps(), t) {
-                        let unit = model.traces.unit(path).filter(|_| !samples.is_null(index));
-                        ui.label(name);
-                        ui.label(with_unit(samples.text(index), unit));
-                        ui.end_row();
-                    }
-                }
-            });
+        self.tooltip(model, formats, axis.timestamp(t), axis.base)
+            .ui(ui);
     }
 
     fn show_states(&self, context: &mut ViewContext<'_>, ui: &mut egui::Ui) {

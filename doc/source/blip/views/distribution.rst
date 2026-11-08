@@ -31,7 +31,7 @@ infinite samples, whatever the range.
 
 * **Hover** a bin to highlight it and read its range of values and, for each
   trace, its percentage and count of the samples, e.g. *12.5 %* and *42 of
-  336*.
+  336*. The tooltip looks like those of the other views.
 * **Scroll the mouse wheel** to zoom the value axis, and **drag** to pan it;
   the bins are magnified, not counted anew. **Double-click** to fit it again.
   None of them changes the time range or the time cursor.

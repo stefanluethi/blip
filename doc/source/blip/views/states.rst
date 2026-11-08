@@ -9,8 +9,8 @@ States
 The values of strings, bools and integers over time, as a row of coloured
 bands per trace, one band for each run of equal values, e.g. the state of a
 state machine. Runs too short to tell apart are drawn as one band showing
-that the value changes too often. Hover a band for its value and time; click
-to put the time cursor there.
+that the value changes too often. Hover for a tooltip with the time and the state of each
+trace, a faint *—* for a trace without a sample; click to put the time cursor there.
 
 Each value keeps its colour: a light band under an edge in the full colour.
 A ``false`` bool leaves its band empty, so ``true`` reads as on, and log

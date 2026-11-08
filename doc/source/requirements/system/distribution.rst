@@ -71,7 +71,8 @@ The distribution view and its boxes.
    :satisfies: STK_LIVE_OBSERVE
 
    Hovering anywhere in the row of a trace in Boxes or in the box strip of Both
-   shall light the row, as a bin column is lit, and show a tooltip with the dot
+   shall light the row, as a bin column is lit, and show a tooltip
+   (:need:`REQ_VIS_TOOLTIP`) with the dot
    and name of the trace and a grid of names and right-aligned values in the
    number format of the trace with its unit: min, low whisker, Q1, median,
    mean, Q3, high whisker and max, in the order drawn (low to high upright,

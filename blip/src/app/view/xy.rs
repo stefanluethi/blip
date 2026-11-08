@@ -4,13 +4,14 @@
 use super::Selectable;
 use super::plot::{LineStyle, LineStyles, ShowPoints};
 use super::plotting::{
-    index_spacer, index_x_axis, is_point, plot_array, plot_lines, plot_points, sample_at_cursor,
-    to_screen,
+    index_spacer, index_under, index_x_axis, is_point, nearest_point, plot_array, plot_lines,
+    plot_points, sample_at_cursor, to_screen,
 };
+use super::tooltip::{Header, Label, Row, Tooltip, TraceName, Value};
 use super::trace_selection::MAX_LISTED_ELEMENTS;
-use super::{PropertiesContext, ViewContext, ViewType, Viewable, short_names};
+use super::{PropertiesContext, ViewContext, ViewType, Viewable, short_names, with_unit};
 use crate::app::model::Model;
-use crate::app::model::numbers::{SHOWN_DIGITS, format_significant};
+use crate::app::model::numbers::{DisplayFormat, Number, SHOWN_DIGITS, format_significant};
 use crate::app::model::sorted::{index_at, upper_bound, within};
 use crate::app::model::traces::{Samples, Series, Trace};
 use crate::app::theme;
@@ -248,6 +249,54 @@ fn axis_label(names: &[&str], unit: Option<&str>) -> String {
     }
 }
 
+/// The point nearest the pointer: the index of its line and its coordinates.
+#[derive(Clone, Copy)]
+struct Hovered {
+    line: usize,
+    point: [f64; 2],
+}
+
+/// `point` of the line `name` of `y` against `x`, the line's `index` picking its
+/// colour: the line as header, the names of both traces with their values and units.
+fn point_tooltip(
+    model: &Model,
+    (x, y): (&str, &str),
+    name: &str,
+    index: usize,
+    point: [f64; 2],
+) -> Tooltip {
+    let header = TraceName::new(name, y, index);
+    let names = short_names([x, y]);
+    let row = |path: &str, name: &str, value: f64| {
+        let text = with_unit(
+            format_significant(value, SHOWN_DIGITS),
+            model.traces.unit(path),
+        );
+        Row::new(Label::Weak(name.to_owned()), [Value::text(text)])
+    };
+    let rows = vec![row(x, names[0], point[0]), row(y, names[1], point[1])];
+    Tooltip::new(Header::Trace(header)).group(rows)
+}
+
+/// Element `index` of the `arrays`, each its path, name and elements at the cursor:
+/// the index as header, a row per array that has the element.
+fn element_tooltip(model: &Model, index: usize, arrays: &[(&str, &str, Vec<Number>)]) -> Tooltip {
+    let rows = (arrays.iter().enumerate())
+        .filter_map(|(line, (path, name, numbers))| {
+            let number = *numbers.get(index)?;
+            let trace = TraceName::new(name, path, line);
+            let value = Value::number(
+                number,
+                SHOWN_DIGITS,
+                DisplayFormat::Default,
+                model.traces.unit(path),
+            );
+            Some(Row::new(Label::Trace(trace), [value]))
+        })
+        .collect();
+    Tooltip::new(Header::Text(format!("[{index}]"))).group(rows)
+}
+
 impl Xy {
     /// Paths of the shown traces that are whole arrays, plotted over the indices of
     /// their elements instead of against the x trace.
@@ -359,12 +408,10 @@ impl Xy {
             .collect()
     }
 
-    /// A plot with `x_axis` and the y axis labelled `y_label`, whose tooltips name the
-    /// x coordinate `x_name`.
+    /// A plot with `x_axis` and the y axis labelled `y_label`.
     fn plot(
         &self,
         ui: &egui::Ui,
-        x_name: &'static str,
         x_axis: egui_plot::AxisHints<'static>,
         y_label: String,
     ) -> egui_plot::Plot<'static> {
@@ -376,22 +423,7 @@ impl Xy {
                     .color_conflict_handling(egui_plot::ColorConflictHandling::PickFirst),
             )
             .custom_x_axes(vec![x_axis])
-            .y_axis_label(y_label)
-            .label_formatter(move |hover| {
-                let (name, point) = match hover {
-                    egui_plot::HoverPosition::NearDataPoint {
-                        plot_name,
-                        position,
-                        ..
-                    } => (*plot_name, position),
-                    egui_plot::HoverPosition::Elsewhere { position } => ("", position),
-                };
-                Some(format!(
-                    "{name}\n{x_name} = {}\ny = {}",
-                    format_significant(point.x, SHOWN_DIGITS),
-                    format_significant(point.y, SHOWN_DIGITS)
-                ))
-            });
+            .y_axis_label(y_label);
         if self.equal_axes {
             plot.data_aspect(1.0)
         } else {
@@ -451,7 +483,7 @@ impl Xy {
         let y_unit = super::common_unit(model, y_paths.iter().copied());
         let y_label = axis_label(&short_names(y_paths.iter().copied()), y_unit);
         let x_axis = egui_plot::AxisHints::new_x().label(x_label);
-        let mut plot = self.plot(ui, "x", x_axis, y_label);
+        let mut plot = self.plot(ui, x_axis, y_label);
 
         // the plot fits all values, also outside the shown window, until panned or
         // zoomed, and again after a double click
@@ -465,10 +497,10 @@ impl Xy {
         let cursor = time.cursor_timestamp();
         let ring_color = ui.visuals().strong_text_color();
         let visuals = ui.visuals().clone();
+        let radius = ui.style().interaction.interact_radius;
         let response = plot.show(ui, |plot_ui| {
-            let Some(range) = range else {
-                return;
-            };
+            let range = range?;
+            let mut hovered: Option<(Hovered, f32)> = None;
             for (index, (&(x_path, y_path), name)) in lines.iter().zip(&names).enumerate() {
                 let (Some(x), Some(y)) = (model.traces.series(x_path), model.traces.series(y_path))
                 else {
@@ -476,6 +508,14 @@ impl Xy {
                 };
                 let color = theme::trace_color(&visuals, index);
                 let points = thin_out(pair(x, y, within(y.timestamps, range)), MAX_POINTS);
+                let near = (plot_ui.response().hover_pos())
+                    .and_then(|pos| nearest_point(&points, pos, plot_ui.transform(), radius));
+                if let Some((point, distance)) = near {
+                    if hovered.is_none_or(|(_, best)| distance <= best) {
+                        let point = points[point];
+                        hovered = Some((Hovered { line: index, point }, distance));
+                    }
+                }
                 let style = self.line_styles.of(y_path);
                 self.plot_trail(name, &points, color, style, plot_ui);
 
@@ -494,8 +534,13 @@ impl Xy {
                     );
                 }
             }
+            hovered.map(|(hovered, _)| hovered)
         });
         super::zoom_on_wheel(&response.response);
+        if let Some(Hovered { line, point }) = response.inner {
+            let tooltip = point_tooltip(model, lines[line], names[line], line, point);
+            (response.response).on_hover_ui_at_pointer(|ui| tooltip.ui(ui));
+        }
     }
 
     /// Shows the elements of the arrays at `paths` at the cursor time over their
@@ -505,7 +550,7 @@ impl Xy {
         let unit = super::common_unit(model, paths.iter().copied());
         let y_label = axis_label(&names, unit);
         let mut plot = self
-            .plot(ui, "index", index_x_axis("index"), y_label)
+            .plot(ui, index_x_axis("index"), y_label)
             .x_grid_spacer(index_spacer);
         // the plot fits all elements and all their values until panned or zoomed
         for trace in paths.iter().filter_map(|path| model.traces.get(path)) {
@@ -518,20 +563,31 @@ impl Xy {
             }
         }
         let visuals = ui.visuals().clone();
+        let arrays: Vec<(&str, &str, Vec<Number>)> = (paths.iter().zip(&names))
+            .filter_map(|(&path, &name)| {
+                Some((path, name, sample_at_cursor(model.traces.get(path)?, time)))
+            })
+            .collect();
+        let longest = arrays.iter().map(|(_, _, numbers)| numbers.len()).max();
         let response = plot.show(ui, |plot_ui| {
-            for (index, (path, name)) in paths.iter().zip(&names).enumerate() {
-                let Some(trace) = model.traces.get(path) else {
-                    continue;
-                };
-                let values: Vec<f64> = (sample_at_cursor(trace, time).iter())
-                    .map(|number| number.as_f64())
-                    .collect();
+            for (index, (path, name, numbers)) in arrays.iter().enumerate() {
+                let values: Vec<f64> = numbers.iter().map(|number| number.as_f64()).collect();
                 let color = theme::trace_color(&visuals, index);
                 let style = self.line_styles.of(path);
                 plot_array(name, &values, color, style, self.points, plot_ui);
             }
+            let pointer = plot_ui
+                .response()
+                .hovered()
+                .then(|| plot_ui.pointer_coordinate())
+                .flatten()?;
+            index_under(pointer.x, longest?)
         });
         super::zoom_on_wheel(&response.response);
+        if let Some(index) = response.inner {
+            let tooltip = element_tooltip(model, index, &arrays);
+            (response.response).on_hover_ui_at_pointer(|ui| tooltip.ui(ui));
+        }
     }
 }
 

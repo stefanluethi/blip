@@ -112,3 +112,96 @@ fn false_bools_are_empty_and_log_levels_take_their_colors() {
     assert_eq!(state_color("DEBUG", false, &visuals), Some(debug));
     assert_eq!(state_color("debug", false, &visuals), Some(debug));
 }
+
+/// `state` is "idle" at 0 s and null at 2 s, `on` true at 1 s, `speed` 1200 rpm at 3 s,
+/// `temp` never received.
+fn tooltip_view_model() -> (States, Model) {
+    let mut model = Model::default();
+    let mut append = |second: u64, path: &str, value: Data| {
+        model.traces.append(&proto::Value {
+            timestamp: second * 1_000_000_000,
+            path: path.to_owned(),
+            value,
+        });
+    };
+    append(0, "motor.state", Data::from("idle"));
+    append(1, "motor.on", Data::Bool(true));
+    append(2, "motor.state", Data::Null);
+    append(3, "motor.speed", Data::Int(1200));
+    model.traces.set_unit("motor.speed", "rpm");
+    let mut states = States::default();
+    states
+        .traces
+        .extend(["motor.on", "motor.speed", "motor.state", "motor.temp"].map(str::to_owned));
+    (states, model)
+}
+
+#[test]
+fn the_tooltip_has_the_time_and_the_state_of_each_trace() {
+    use super::super::tooltip::{Header, Label, Row, Value};
+    let (states, model) = tooltip_view_model();
+    let tooltip = |t| states.tooltip(&model, &super::super::NO_FORMATS, t, TimeBase::SinceBoot);
+    let rows = |speed: Value| {
+        let row = |name: &str, value| Row::new(Label::Weak(name.into()), [value]);
+        vec![
+            row("on", Value::text("true")),
+            row("speed", speed),
+            row("state", Value::faint("null")),
+            row("temp", Value::missing()),
+        ]
+    };
+    let early = tooltip(2_500_000_000);
+    assert_eq!(early.header, Some(Header::Text("0:00:02.500".into())));
+    assert_eq!(early.groups, [rows(Value::missing())]);
+    let late = tooltip(3_500_000_000);
+    assert_eq!(late.groups, [rows(Value::text("1200 rpm"))]);
+}
+
+#[test]
+fn hovering_the_states_shows_the_tooltip() {
+    struct State {
+        states: States,
+        model: Model,
+        time: crate::app::time::TimeRange,
+        invoker: crate::app::model::actions::Invoker,
+    }
+    let (states, model) = tooltip_view_model();
+    let state = State {
+        states,
+        model,
+        time: Default::default(),
+        invoker: Default::default(),
+    };
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(400.0, 300.0))
+        .with_step_dt(1.0 / 60.0)
+        .with_max_steps(60)
+        .build_ui_state(
+            |ui, state: &mut State| {
+                state
+                    .time
+                    .update(&state.model, ui.input(|input| input.time));
+                let mut context = ViewContext {
+                    model: &state.model,
+                    time: &mut state.time,
+                    invoker: &mut state.invoker,
+                    formats: &super::super::NO_FORMATS,
+                    titled: false,
+                    plots: &super::super::NO_PLOTS,
+                };
+                state.states.view(ui, &mut context);
+            },
+            state,
+        );
+    harness.run();
+    harness.hover_at(egui::pos2(200.0, 150.0));
+    harness.run_steps(40);
+    let texts = super::super::tooltip::shown_texts(&harness);
+    for name in ["on", "speed", "state", "temp"] {
+        assert!(
+            texts.iter().any(|(shown, _)| shown == name),
+            "{name} in {texts:?}"
+        );
+    }
+    assert!(texts[0].0.starts_with("0:00:"), "{texts:?}");
+}

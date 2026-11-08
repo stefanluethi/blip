@@ -4,16 +4,19 @@
 
 use super::Selectable;
 use super::plot::{LineStyle, ShowPoints};
-use super::plotting::{index_formatter, index_spacer, index_x_axis, plot_array, sample_at_cursor};
+use super::plotting::{
+    index_formatter, index_spacer, index_under, index_x_axis, plot_array, sample_at_cursor,
+};
 use super::time_axis;
-use super::{PropertiesContext, ViewContext, Viewable, text_color_on, with_unit};
+use super::tooltip::{Header, Label, Row, Tooltip, TraceName, Value};
+use super::{PropertiesContext, ViewContext, Viewable, short_names, text_color_on};
 use crate::app::model::Model;
 use crate::app::model::numbers::{DisplayFormat, Number, format_significant};
 use crate::app::model::sorted::index_at;
 use crate::app::model::traces::{Samples, Trace};
 use crate::app::theme;
-use crate::app::time::TimeRange;
 use crate::app::time::timestamp_at;
+use crate::app::time::{TimeBase, TimeRange};
 use egui::Color32;
 use std::collections::BTreeSet;
 
@@ -118,10 +121,54 @@ impl ValueText<'_> {
         value.format(Some(DIGITS), self.format)
     }
 
-    /// `value` written for a tooltip, with its unit.
-    fn with_unit(self, value: Number) -> String {
-        with_unit(self.write(value), self.unit.filter(|_| !value.is_null()))
+    /// `value` as a tooltip shows it, with its unit.
+    fn tooltip_value(self, value: Number) -> Value {
+        Value::number(value, DIGITS, self.format, self.unit)
     }
+}
+
+/// The tooltip of element `element` of the 1D array `trace` at `t` nanoseconds in the
+/// bands: the time and the element, a dash without a sample at `t`.
+fn band_tooltip(
+    trace: Trace<'_>,
+    text: ValueText<'_>,
+    base: TimeBase,
+    t: u64,
+    element: usize,
+) -> Tooltip {
+    let value = index_at(trace.timestamps, t)
+        .and_then(|index| trace.samples.array_sample(index))
+        .and_then(|elements| elements.get(element))
+        .map_or_else(Value::missing, |number| text.tooltip_value(number));
+    let row = Row::new(Label::Weak(format!("[{element}]")), [value]);
+    Tooltip::new(Header::Text(base.format(t, 3))).group(vec![row])
+}
+
+/// The tooltip of the cell at `(row, column)` of the 2D array `name` with `value`.
+fn cell_tooltip(
+    name: &str,
+    text: ValueText<'_>,
+    (row, column): (usize, usize),
+    value: Number,
+) -> Tooltip {
+    let rows = vec![Row::new(
+        Label::Weak(name.to_owned()),
+        [text.tooltip_value(value)],
+    )];
+    Tooltip::new(Header::Text(format!("[{row}][{column}]"))).group(rows)
+}
+
+/// The tooltip of element `index` of the 1D array trace `name` at `path` with `value`.
+fn element_tooltip(
+    name: &str,
+    path: &str,
+    text: ValueText<'_>,
+    index: usize,
+    value: Number,
+) -> Tooltip {
+    let trace = TraceName::new(name, path, 0);
+    let row = Row::new(Label::Trace(trace), [text.tooltip_value(value)]);
+    Tooltip::new(Header::Text(format!("[{index}]"))).group(vec![row])
 }
 
 /// The values of an array trace of `len` elements within `(start, end)` seconds as a
@@ -240,19 +287,13 @@ impl Heatmap {
         });
 
         if let (Some(t), Some(y)) = (response.hovered, response.hovered_y) {
-            let element = y.round();
-            let t = response.axis.timestamp(t);
-            let value = index_at(trace.timestamps, t)
-                .and_then(|index| trace.samples.array_sample(index))
-                .filter(|_| element >= 0.0)
-                .and_then(|elements| elements.get(element as usize));
-            let base = response.axis.base;
-            response.response.on_hover_ui_at_pointer(|ui| {
-                ui.label(base.format(t, 3));
-                if let Some(value) = value {
-                    ui.label(format!("[{element}] = {}", text.with_unit(value)));
-                }
-            });
+            if let Some(element) = index_under(y, len) {
+                let t = response.axis.timestamp(t);
+                let tooltip = band_tooltip(trace, text, response.axis.base, t, element);
+                response
+                    .response
+                    .on_hover_ui_at_pointer(|ui| tooltip.ui(ui));
+            }
         }
     }
 
@@ -314,23 +355,18 @@ impl Heatmap {
                 .hovered()
                 .then(|| plot_ui.pointer_coordinate())
                 .flatten()?;
-            let (row, column) = ((-pointer.y).round(), pointer.x.round());
-            let inside =
-                (0.0..rows as f64).contains(&row) && (0.0..columns as f64).contains(&column);
-            inside.then(|| {
-                (
-                    row,
-                    column,
-                    numbers[row as usize * columns + column as usize],
-                )
-            })
+            let row = index_under(-pointer.y, rows)?;
+            let column = index_under(pointer.x, columns)?;
+            Some((row, column, numbers[row * columns + column]))
         });
 
         super::zoom_on_wheel(&response.response);
         if let Some((row, column, value)) = response.inner {
-            response.response.on_hover_ui_at_pointer(|ui| {
-                ui.label(format!("[{row}][{column}] = {}", text.with_unit(value)));
-            });
+            let name = short_names([trace.path])[0];
+            let tooltip = cell_tooltip(name, text, (row, column), value);
+            response
+                .response
+                .on_hover_ui_at_pointer(|ui| tooltip.ui(ui));
         }
     }
 
@@ -353,22 +389,28 @@ impl Heatmap {
             .grid_color(theme::grid_color(ui.visuals()))
             .custom_x_axes(vec![index_x_axis("index")])
             .x_grid_spacer(index_spacer)
-            .allow_boxed_zoom(false)
-            .label_formatter(move |hover| match hover {
-                egui_plot::HoverPosition::NearDataPoint { position, .. } => {
-                    let number = numbers.get(position.x.round() as usize)?;
-                    Some(format!("[{}] = {}", position.x, text.with_unit(*number)))
-                }
-                egui_plot::HoverPosition::Elsewhere { .. } => None,
-            });
+            .allow_boxed_zoom(false);
         let response = plot.show(ui, |plot_ui| {
             if let Some((min, max)) = fixed_range {
                 plot_ui.set_plot_bounds_y(min..=max);
             }
             let (style, points) = (LineStyle::Solid, ShowPoints::Always);
             plot_array(trace.path, &values, color, style, points, plot_ui);
+            let pointer = plot_ui
+                .response()
+                .hovered()
+                .then(|| plot_ui.pointer_coordinate())
+                .flatten()?;
+            index_under(pointer.x, numbers.len())
         });
         super::zoom_on_wheel(&response.response);
+        if let Some(index) = response.inner {
+            let name = short_names([trace.path])[0];
+            let tooltip = element_tooltip(name, trace.path, text, index, numbers[index]);
+            response
+                .response
+                .on_hover_ui_at_pointer(|ui| tooltip.ui(ui));
+        }
     }
 
     /// Shows the colour scale from the low values at the bottom to the high ones at the
@@ -516,49 +558,4 @@ impl Heatmap {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::app::model::traces::Traces;
-    use proto::Data;
-
-    #[test]
-    fn colors_follow_the_scale() {
-        assert_eq!(color_of(0.0, (0.0, 1.0)), COLOR_MAP[0]);
-        assert_eq!(color_of(1.0, (0.0, 1.0)), COLOR_MAP[8]);
-        assert_eq!(color_of(5.0, (0.0, 1.0)), COLOR_MAP[8]);
-        assert_eq!(color_of(0.5, (0.0, 1.0)), COLOR_MAP[4]);
-        assert_eq!(color_of(f64::NAN, (0.0, 1.0)), Color32::TRANSPARENT);
-        assert_eq!(color_of(3.0, (3.0, 3.0)), COLOR_MAP[4]);
-    }
-
-    #[test]
-    fn value_range_skips_nulls() {
-        assert_eq!(value_range(&[f64::NAN, 2.0, -1.0]), Some((-1.0, 2.0)));
-        assert_eq!(value_range(&[f64::NAN]), None);
-    }
-
-    #[test]
-    fn over_time_holds_each_sample_until_the_next() {
-        let mut traces = Traces::default();
-        for (second, elements) in [(1, [1.0, 2.0]), (3, [3.0, 4.0])] {
-            traces.append(&proto::Value {
-                timestamp: second * 1_000_000_000,
-                path: "a".to_owned(),
-                value: Data::Array(elements.iter().copied().map(Data::Float).collect()),
-            });
-        }
-        let trace = traces.get("a").unwrap();
-        // columns centered at 0.5, 1.5, ... 5.5 seconds
-        let grid = over_time(trace, 2, (0.0, 6.0), 4.0, 6, 0);
-        let bits = |values: &[f64]| {
-            values
-                .iter()
-                .map(|value| value.to_bits())
-                .collect::<Vec<_>>()
-        };
-        let nan = f64::NAN;
-        // element 1 is the top row
-        assert_eq!(bits(&grid[..6]), bits(&[nan, 2.0, 2.0, 4.0, nan, nan]));
-        assert_eq!(bits(&grid[6..]), bits(&[nan, 1.0, 1.0, 3.0, nan, nan]));
-    }
-}
+mod tests;

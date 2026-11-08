@@ -333,6 +333,19 @@ fn screenshots_views() {
         r#"{"name": "Loop timing", "kind": {"Distribution": {"traces": ["adc/conversion", "loop/period", "motor/current_controller_integrator_feedback_period_measured"], "show": "Boxes"}}}"#,
         Some(VIEW.to_pos2() * 0.5),
     );
+    // the tooltip of a plot and of a heatmap cell, under the pointer
+    view_shot_of(
+        "view-plot-tooltip",
+        demo_model(),
+        r#"{"name": "Pose", "kind": {"Plot": {"traces": ["robot/pose.x", "robot/pose.y", "robot/pose.heading"]}}}"#,
+        Some(VIEW.to_pos2() * 0.5),
+    );
+    view_shot_of(
+        "view-heatmap-grid-tooltip",
+        demo_model(),
+        r#"{"name": "Thermal", "kind": {"Heatmap": {"traces": ["thermal/frame"]}}}"#,
+        Some(VIEW.to_pos2() * 0.5),
+    );
 }
 
 /// A model of 30 s of loop timings in µs at 100 Hz, made up for the edge cases of the

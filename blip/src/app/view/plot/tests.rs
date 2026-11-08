@@ -77,6 +77,11 @@ fn plot_harness() -> egui_kittest::Harness<'static, State> {
     }
     let mut plot = Plot::default();
     plot.traces.insert("a".to_owned());
+    plot_harness_of(plot, model)
+}
+
+/// A harness showing `plot` of `model`.
+fn plot_harness_of(plot: Plot, model: Model) -> egui_kittest::Harness<'static, State> {
     let state = State {
         plot,
         model,
@@ -372,4 +377,84 @@ fn steps_hold_each_value() {
         stepped,
         [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [3.0, 0.0], [3.0, 1.0]]
     );
+}
+
+/// `a` is 1.5 V every second, `b` 2 until 20 s and null from 21 s, `c` never received.
+fn tooltip_model() -> (Plot, Model) {
+    let mut model = Model::default();
+    for second in 0..=40u64 {
+        let timestamp = second * 1_000_000_000;
+        let path = |path: &str| path.to_owned();
+        model.traces.append(&proto::Value {
+            timestamp,
+            path: path("a"),
+            value: proto::Data::Float(1.5),
+        });
+        let value = if second <= 20 {
+            proto::Data::Float(2.0)
+        } else {
+            proto::Data::Null
+        };
+        model.traces.append(&proto::Value {
+            timestamp,
+            path: path("b"),
+            value,
+        });
+    }
+    model.traces.set_unit("a", "V");
+    let mut plot = Plot::default();
+    plot.traces.extend(["a", "b", "c"].map(str::to_owned));
+    (plot, model)
+}
+
+#[test]
+fn the_tooltip_has_the_time_and_a_row_per_trace() {
+    use super::super::tooltip::{Header, Label, Row, TraceName, Value};
+    let (plot, model) = tooltip_model();
+    let tooltip = plot.tooltip(
+        &model,
+        &super::super::NO_FORMATS,
+        30_000_000_000,
+        TimeBase::SinceBoot,
+    );
+    let label = |name: &str, index| {
+        Label::Trace(TraceName {
+            name: name.into(),
+            path: name.into(),
+            index,
+        })
+    };
+    assert_eq!(tooltip.header, Some(Header::Text("0:00:30.000".into())));
+    assert_eq!(
+        tooltip.groups,
+        [vec![
+            Row::new(label("a", 0), [Value::text("1.5 V")]),
+            Row::new(label("b", 1), [Value::faint("null")]),
+            Row::new(label("c", 2), [Value::missing()]),
+        ]]
+    );
+}
+
+#[test]
+fn hovering_the_plot_shows_the_tooltip() {
+    let (plot, model) = tooltip_model();
+    let mut harness = plot_harness_of(plot, model);
+    harness.run();
+    harness.hover_at(egui::pos2(200.0, 150.0));
+    harness.run_steps(40);
+    let texts = super::super::tooltip::shown_texts(&harness);
+    let find = |text: &str| {
+        texts
+            .iter()
+            .find(|(shown, _)| shown == text)
+            .unwrap_or_else(|| panic!("{text} in {texts:?}"))
+            .1
+    };
+    for name in ["a", "b", "c"] {
+        find(name);
+    }
+    assert!(texts[0].0.starts_with("0:00:"), "{texts:?}");
+    let right = find("1.5 V").right();
+    assert_eq!(find("null").right(), right);
+    assert_eq!(find("—").right(), right);
 }

@@ -130,7 +130,8 @@ The histogram view.
    :component: blip
    :satisfies: STK_LIVE_OBSERVE
 
-   Hovering over a bin of the Bars of a Distribution view shall highlight the bin and show its
+   Hovering over a bin of the Bars of a Distribution view shall highlight the bin and show a tooltip
+   (:need:`REQ_VIS_TOOLTIP`) with its
    range of values, with the unit the traces share, and for each trace its
    percentage of the samples of the trace and its count of them, such as
    "12.5 %" and "42 of 336". The

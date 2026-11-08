@@ -8,8 +8,16 @@ Plot
 
 A time-series plot of the checked number and bool traces. Numbers are drawn
 as lines and bools as steps between 0 and 1, both with gaps where a ``null``
-was received. Hovering the plot shows the values of its traces at the
-pointer.
+was received.
+
+.. figure:: /screenshots/view-plot-tooltip.png
+   :target: ../../_images/view-plot-tooltip.png
+   :class: screenshot
+   :alt: The tooltip of a plot, with the time and a row per trace with its value.
+
+Hovering the plot shows a tooltip with the time and a row per shown trace: its
+dot and name, and its value at the pointer with the unit. A trace without a
+value there shows a faint *—*.
 
 * **Drag sideways** to move the time range (this pauses), and **scroll the
   mouse wheel** to zoom it, which changes the window length. See

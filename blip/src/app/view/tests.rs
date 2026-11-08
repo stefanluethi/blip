@@ -172,6 +172,17 @@ fn range_moved_ignores_rounding() {
 }
 
 #[test]
+fn the_index_under_the_pointer_is_the_nearest_element() {
+    use super::plotting::index_under;
+    assert_eq!(index_under(2.4, 4), Some(2));
+    assert_eq!(index_under(2.6, 4), Some(3));
+    assert_eq!(index_under(-0.4, 4), Some(0));
+    assert_eq!(index_under(-0.6, 4), None);
+    assert_eq!(index_under(3.5, 4), None);
+    assert_eq!(index_under(0.0, 0), None);
+}
+
+#[test]
 fn indexed_names_follow_the_order_of_the_selection() {
     let paths: BTreeSet<String> = ["b/x", "a/x", "c/y"].map(str::to_owned).into();
     let named: Vec<_> = indexed_names(&paths).collect();
@@ -242,4 +253,25 @@ fn per_path_writes_the_bytes_of_the_old_newtypes() {
     let read: Formats = serde_json::from_str(r#"{"a":"Hex","c":"Binary"}"#).unwrap();
     assert_eq!(read.of("a"), DisplayFormat::Hex);
     assert_eq!(read.of("c"), DisplayFormat::Binary);
+}
+
+#[test]
+fn the_nearest_point_is_within_the_radius() {
+    let transform = egui_plot::PlotTransform::new(
+        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0)),
+        egui_plot::PlotBounds::from_min_max([0.0, 0.0], [100.0, 100.0]),
+        egui::Vec2b::FALSE,
+    );
+    let points = [[10.0, 10.0], [50.0, 50.0], [f64::NAN, 90.0]];
+    let near = |pointer: egui::Pos2| plotting::nearest_point(&points, pointer, &transform, 5.0);
+    assert_eq!(near(egui::pos2(12.0, 88.0)), Some((0, 8.0)));
+    assert_eq!(near(egui::pos2(52.0, 52.0)), Some((1, 8.0)));
+    assert_eq!(near(egui::pos2(13.0, 94.0)), Some((0, 25.0)));
+    assert_eq!(near(egui::pos2(30.0, 70.0)), None);
+    let gap = [[f64::NAN, 10.0]];
+    let pointer = egui::pos2(10.0, 90.0);
+    assert_eq!(
+        plotting::nearest_point(&gap, pointer, &transform, 5.0),
+        None
+    );
 }

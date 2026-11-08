@@ -84,6 +84,32 @@ pub(super) fn plot_array(
     }
 }
 
+/// The index of the element of `len` nearest to `position` on an index axis, or `None`
+/// outside the elements.
+pub(super) fn index_under(position: f64, len: usize) -> Option<usize> {
+    let index = position.round();
+    (index >= 0.0 && index < len as f64).then_some(index as usize)
+}
+
+/// The index of the point of `points` nearest to `pointer` on the screen of a plot with
+/// `transform`, with its squared distance, if within `radius` points. Gaps are skipped;
+/// of equally near points the first.
+pub(super) fn nearest_point(
+    points: &[[f64; 2]],
+    pointer: egui::Pos2,
+    transform: &egui_plot::PlotTransform,
+    radius: f32,
+) -> Option<(usize, f32)> {
+    let mut nearest: Option<(usize, f32)> = None;
+    for (index, point) in points.iter().enumerate().filter(|(_, p)| is_point(p)) {
+        let distance = to_screen(*point, transform).distance_sq(pointer);
+        if distance <= radius * radius && nearest.is_none_or(|(_, best)| distance < best) {
+            nearest = Some((index, distance));
+        }
+    }
+    nearest
+}
+
 /// The elements of the sample of an array trace at the cursor time.
 pub(super) fn sample_at_cursor(trace: Trace<'_>, time: &TimeRange) -> Vec<Number> {
     time.cursor_timestamp()

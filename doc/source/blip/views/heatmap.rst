@@ -15,6 +15,15 @@ bar of the scale.
 * A **2D array** is shown as a grid at the cursor time, e.g. a frame of a
   thermal camera. Cells wide enough show their value.
 
+.. figure:: /screenshots/view-heatmap-grid-tooltip.png
+   :target: ../../_images/view-heatmap-grid-tooltip.png
+   :class: screenshot
+   :alt: The tooltip of a heatmap grid, with the cell's row and column and its value.
+
+Hover a cell or band for a tooltip: over time it shows the time and the value
+of element ``[i]``; a grid shows ``[r][c]`` and the value of the cell; the
+line at the cursor shows ``[i]`` and the value, with the trace's dot and name.
+
 Properties: **Array** -- **Show** *Over time* or *At cursor* (1D arrays), and
 **Colour scale** -- fitted to the shown values, or fixed between a min and a
 max.

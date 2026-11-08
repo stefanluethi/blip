@@ -3,6 +3,7 @@
 //! in their colours, as boxes, a box plot of each trace in a row of its own, or both.
 
 use super::Selectable;
+use super::tooltip::{Header, Label, Row, Tone, Tooltip, TraceName, Value};
 use super::{
     Formats, LEGEND_DOT_SIZE, Plots, PropertiesContext, ViewContext, ViewId, Viewable, legend_dot,
     text_size,
@@ -625,6 +626,13 @@ struct Shown<'a> {
     /// Picks its colour.
     index: usize,
     series: Series<'a>,
+}
+
+impl Shown<'_> {
+    /// The trace as a tooltip names it.
+    fn trace_name(&self) -> TraceName {
+        TraceName::new(&self.name, &self.path, self.index)
+    }
 }
 
 /// The values of the samples of `series`, NaN for nulls.
@@ -1353,7 +1361,7 @@ impl Distribution {
                     return;
                 };
                 let tip = boxes::Tip {
-                    trace,
+                    trace: trace.trace_name(),
                     stats: boxes.get(row).and_then(Option::as_ref),
                     whiskers: self.whiskers,
                     orientation: self.orientation,
@@ -1880,58 +1888,31 @@ impl Bin<'_> {
         [share, format!("{count} of {}", counts.total())]
     }
 
+    /// The range of the bin as header and a row per trace of `traces` with its share
+    /// and count, faint where it has none in the bin.
+    fn tooltip(&self, traces: &[TraceName]) -> Tooltip {
+        let rows = (traces.iter().zip(&self.counted.traces))
+            .map(|(trace, counts)| {
+                let [share, count] = self.share_texts(counts);
+                let empty = counts.bins[self.index] == 0;
+                let values = match empty {
+                    true => [Value::faint(share), Value::faint(count)],
+                    false => [
+                        Value::new(share, Tone::Strong),
+                        Value::new(count, Tone::Weak),
+                    ],
+                };
+                let row = Row::new(Label::Trace(trace.clone()), values);
+                if empty { row.faint() } else { row }
+            })
+            .collect();
+        Tooltip::new(Header::Text(self.range_text())).group(rows)
+    }
+
     /// Shows the values of the bin and the share and count of each shown trace in it.
     fn tooltip_ui(&self, ui: &mut egui::Ui, shown: &[Shown<'_>]) {
-        let faint = ui.tokens().text_faint;
-        let weak = ui.visuals().weak_text_color();
-        ui.label(egui::RichText::new(self.range_text()).color(weak));
-        let texts: Vec<[String; 2]> = (self.counted.traces.iter())
-            .map(|counts| self.share_texts(counts))
-            .collect();
-        // the values are right aligned in columns as wide as their widest text: a right
-        // to left layout fills the width it is given, and the grid gives the last column
-        // all of the tooltip's, which is the widest a tooltip can be when it opens
-        let widths = [0, 1].map(|column| {
-            (texts.iter())
-                .map(|texts| text_size(ui, &texts[column], egui::TextStyle::Body).x)
-                .fold(0.0, f32::max)
-        });
-        egui::Grid::new("bin tooltip")
-            .num_columns(3)
-            .spacing([12.0, 2.0])
-            .show(ui, |ui| {
-                for ((trace, counts), [share, count]) in
-                    shown.iter().zip(&self.counted.traces).zip(texts)
-                {
-                    let empty = counts.bins[self.index] == 0;
-                    let (name, share, count) = if empty {
-                        (
-                            egui::RichText::new(&trace.name).color(faint),
-                            egui::RichText::new(share).color(faint),
-                            egui::RichText::new(count).color(faint),
-                        )
-                    } else {
-                        (
-                            egui::RichText::new(&trace.name),
-                            egui::RichText::new(share).strong(),
-                            egui::RichText::new(count).color(weak),
-                        )
-                    };
-                    ui.horizontal(|ui| {
-                        legend_dot(ui, theme::trace_color(ui.visuals(), trace.index));
-                        ui.label(name).on_hover_text(&trace.path);
-                    });
-                    // as high as the row of the name, so that the texts line up
-                    let height = ui.spacing().interact_size.y;
-                    for (value, width) in [share, count].into_iter().zip(widths) {
-                        let layout = egui::Layout::right_to_left(egui::Align::Center);
-                        ui.allocate_ui_with_layout(egui::vec2(width, height), layout, |ui| {
-                            ui.label(value);
-                        });
-                    }
-                    ui.end_row();
-                }
-            });
+        let names: Vec<TraceName> = shown.iter().map(Shown::trace_name).collect();
+        self.tooltip(&names).ui(ui);
     }
 }
 

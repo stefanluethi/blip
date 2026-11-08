@@ -58,6 +58,24 @@ What the views show and how blip displays values.
    blip shall display array traces of one dimension as heatmaps over time
    and arrays of two dimensions as heatmaps at a point in time.
 
+.. req:: Tooltips of the plot-like views
+   :id: REQ_VIS_TOOLTIP
+   :status: implemented
+   :component: blip
+   :satisfies: STK_LIVE_OBSERVE
+   :rationale: One look for what a hover shows lets the user read any view's
+      tooltip the same way.
+
+   The tooltips of Plot, States, Heatmap (bands, grid and the array line), XY
+   and Distribution (bins and boxes) shall look alike: a framed popup at the
+   pointer, never a frameless label. On top a header: the time, the bin range
+   or the element index in weak text, or the dot and name of a trace. Below it
+   rows with the dot and name of a trace, or a weak label, on the left and the
+   value on the right, right aligned in a column as wide as its widest text,
+   with its unit. A missing or empty value shall be faint. A rule may split
+   groups of rows. XY and the array line of a Heatmap shall show the name of
+   the trace with its x and y values, and the element index with its value.
+
 .. req:: Exact integers
    :id: REQ_VIS_INT
    :status: implemented

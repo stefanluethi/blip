@@ -2,6 +2,7 @@ use super::Selectable;
 use super::plotting::{is_point, to_screen};
 use super::stats::{self, Measurement};
 use super::time_axis::{self, TimeAxis, visible_range};
+use super::tooltip::{Header, Label, Row, Tooltip, TraceName, Value};
 use super::{Formats, PropertiesContext, ViewContext, Viewable, with_unit};
 use crate::app::model::numbers::{
     DisplayFormat, NumberKind, SHOWN_DIGITS, fixed_decimals, widest_fixed,
@@ -10,7 +11,7 @@ use crate::app::model::sorted::{closest_index, index_at};
 use crate::app::model::traces::{Samples, Trace};
 use crate::app::model::{Model, traces::Series};
 use crate::app::theme;
-use crate::app::time::seconds_since;
+use crate::app::time::{TimeBase, seconds_since};
 use std::collections::BTreeSet;
 
 const Y_MARGIN_FRACTION: f64 = 0.05;
@@ -339,6 +340,27 @@ impl Plot {
             .filter_map(|(path, name, index)| Some((name, model.traces.series(path)?, index)))
     }
 
+    /// The tooltip with the values of the shown traces at `t` nanoseconds, a faint dash
+    /// for a trace without a series.
+    fn tooltip(&self, model: &Model, formats: &Formats, t: u64, base: TimeBase) -> Tooltip {
+        let rows = self
+            .selected_path_iter()
+            .map(|(path, name, index)| {
+                let value = model
+                    .traces
+                    .series(path)
+                    .and_then(|series| {
+                        let number = series.number(closest_index(series.timestamps, t)?);
+                        let unit = model.traces.unit(path);
+                        Some(Value::number(number, SHOWN_DIGITS, formats.of(path), unit))
+                    })
+                    .unwrap_or_else(Value::missing);
+                Row::new(Label::Trace(TraceName::new(name, path, index)), [value])
+            })
+            .collect();
+        Tooltip::new(Header::Text(base.format(t, 3))).group(rows)
+    }
+
     /// Shows the values of the shown traces at `t` seconds.
     fn tooltip_ui(
         &self,
@@ -348,25 +370,8 @@ impl Plot {
         t: f64,
         axis: TimeAxis,
     ) {
-        let t = axis.timestamp(t);
-        ui.label(axis.base.format(t, 3));
-        egui::Grid::new("plot_tooltip")
-            .num_columns(2)
-            .show(ui, |ui| {
-                for (path, name, index) in self.selected_path_iter() {
-                    let value = model.traces.series(path).and_then(|series| {
-                        let value = series.number(closest_index(series.timestamps, t)?);
-                        let text = value.format(Some(SHOWN_DIGITS), formats.of(path));
-                        let unit = model.traces.unit(path).filter(|_| !value.is_null());
-                        Some(with_unit(text, unit))
-                    });
-                    if let Some(value) = value {
-                        ui.colored_label(theme::trace_color(ui.visuals(), index), name);
-                        ui.label(value);
-                        ui.end_row();
-                    }
-                }
-            });
+        self.tooltip(model, formats, axis.timestamp(t), axis.base)
+            .ui(ui);
     }
 
     /// Whether a stat of a shown trace is shown below the plot.

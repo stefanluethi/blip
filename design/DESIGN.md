@@ -89,6 +89,14 @@ oscilloscope, not like a web app.
   the grid does not cross it (`hint_over`). Panels and popups put it at the top left,
   under their header or search field (`panel_hint`). Hard line breaks are not used; the
   text wraps.
+- Tooltips over the plot-like views (Plot, States, Heatmap, XY, Distribution) look alike
+  and are built by one helper, modelled on the box tooltip: an egui popup frame at the
+  pointer, never egui_plot's frameless label. On top a header: the time, the bin range or
+  the element index in `text_weak`, or a trace's dot and name. Below it a grid of rows:
+  on the left a trace's dot and name, or a label in `text_weak`; on the right the value,
+  right aligned in a column as wide as its widest text, with its unit. Values that are
+  missing or empty are `text_faint`. A rule may split groups of rows. The timeline's log
+  list, table cells and the hints on controls keep their own look.
 
 ## Words
 

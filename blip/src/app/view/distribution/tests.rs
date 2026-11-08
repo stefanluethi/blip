@@ -1,6 +1,7 @@
 use super::*;
 use crate::app::model::actions::Invoker;
 use crate::app::view::stats::Stats;
+use crate::app::view::tooltip::{self, Header, Label, Row, Tone, TraceName, Value};
 use crate::app::view::{NO_PLOTS, PlotInfo, ViewType};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
@@ -604,6 +605,61 @@ fn the_tooltip_shows_the_share_and_the_count_of_each_trace() {
 }
 
 #[test]
+fn the_tooltip_of_a_bin_has_its_range_and_a_row_per_trace() {
+    let counted = Counted {
+        bins: Bins {
+            start: 0.0,
+            width: 1.0,
+            count: 3,
+        },
+        traces: vec![
+            Counts {
+                bins: vec![1, 2, 3],
+                ..Counts::default()
+            },
+            Counts {
+                bins: vec![0, 2, 0],
+                below: 3,
+                above: 3,
+                ..Counts::default()
+            },
+        ],
+        single: false,
+    };
+    let bin = Bin {
+        index: 0,
+        counted: &counted,
+        unit: None,
+        format: DisplayFormat::Default,
+    };
+    let name = |name: &str, index| TraceName {
+        name: name.into(),
+        path: name.into(),
+        index,
+    };
+    let (a, b) = (name("a", 0), name("b", 1));
+    let tooltip = bin.tooltip(&[a.clone(), b.clone()]);
+    assert_eq!(tooltip.header, Some(Header::Text("0 to 1".into())));
+    assert_eq!(
+        tooltip.groups,
+        [vec![
+            Row::new(
+                Label::Trace(a),
+                [
+                    Value::new("16.7 %", Tone::Strong),
+                    Value::new("1 of 6", Tone::Weak)
+                ]
+            ),
+            Row::new(
+                Label::Trace(b),
+                [Value::faint("0 %"), Value::faint("0 of 8")]
+            )
+            .faint(),
+        ]]
+    );
+}
+
+#[test]
 fn mean_and_sigma_count_each_binned_sample_once() {
     assert_eq!(Distribution::default().markers, Markers::Off);
     let bins = Bins {
@@ -862,15 +918,7 @@ fn pose_harness() -> Harness<'static, State> {
 
 /// The rect of the tooltip shown in `harness`.
 fn tooltip_rect(harness: &Harness<'_, State>) -> egui::Rect {
-    let layers = harness
-        .ctx
-        .memory(|memory| memory.areas().visible_layer_ids());
-    let tooltip = (layers.into_iter())
-        .find(|layer| layer.order == egui::Order::Tooltip)
-        .expect("a tooltip");
-    egui::AreaState::load(&harness.ctx, tooltip.id)
-        .expect("the area of the tooltip")
-        .rect()
+    tooltip::shown_rect(&harness.ctx).expect("a tooltip")
 }
 
 #[test]

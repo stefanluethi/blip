@@ -8,6 +8,7 @@ pub mod states;
 pub mod stats;
 pub mod table;
 pub mod time_axis;
+pub mod tooltip;
 pub mod trace_selection;
 pub mod xy;
 

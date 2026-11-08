@@ -22,6 +22,10 @@ Checking one-dimensional arrays instead plots each array at the cursor time
 over the indices of its elements, e.g. a snapshot of ADC samples or a
 spectrum. The axes of the other traces are kept for when no array is checked.
 
+Hover a point for a tooltip with the name of its line and the short names,
+values and units of its x and y traces; away from points there is none. For
+arrays it shows the index ``[i]`` and a row per array.
+
 The view fits all data of its traces until it is dragged or zoomed.
 
 Properties:

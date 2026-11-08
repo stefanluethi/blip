@@ -298,6 +298,11 @@ fn xy_harness(xy: Xy) -> egui_kittest::Harness<'static, State> {
             });
         }
     }
+    xy_harness_of(xy, model)
+}
+
+/// A harness showing `xy` of the traces of `model`.
+fn xy_harness_of(xy: Xy, model: Model) -> egui_kittest::Harness<'static, State> {
     let state = State {
         xy,
         model,
@@ -370,4 +375,121 @@ fn axis_label_names_a_single_trace() {
     assert_eq!(axis_label(&["x", "y"], Some("m")), "[m]");
     assert_eq!(axis_label(&["x"], None), "x");
     assert_eq!(axis_label(&[], None), "");
+}
+
+#[test]
+fn the_tooltips_of_points_and_elements() {
+    use super::super::tooltip::{Header, Label, Row, TraceName, Value};
+    use crate::app::model::numbers::Number::{Float, Int, Null};
+    let mut model = Model::default();
+    for (path, unit) in [("pose.x", "m"), ("pose.y", "m"), ("adc", "V")] {
+        model.traces.set_unit(path, unit);
+    }
+    let tooltip = point_tooltip(&model, ("pose.x", "pose.y"), "pose", 0, [1.25, -0.5]);
+    let name = TraceName {
+        name: "pose".into(),
+        path: "pose.y".into(),
+        index: 0,
+    };
+    assert_eq!(tooltip.header, Some(Header::Trace(name)));
+    assert_eq!(
+        tooltip.groups,
+        [vec![
+            Row::new(Label::Weak("x".into()), [Value::text("1.25 m")]),
+            Row::new(Label::Weak("y".into()), [Value::text("-0.5 m")]),
+        ]]
+    );
+
+    let trace = |name: &str, index| {
+        Label::Trace(TraceName {
+            name: name.into(),
+            path: name.into(),
+            index,
+        })
+    };
+    let arrays = [
+        ("adc", "adc", vec![Float(0.5), Null]),
+        ("b", "b", vec![Int(3)]),
+    ];
+    let tooltip = element_tooltip(&model, 1, &arrays);
+    assert_eq!(tooltip.header, Some(Header::Text("[1]".into())));
+    assert_eq!(
+        tooltip.groups,
+        [vec![Row::new(trace("adc", 0), [Value::faint("null")])]]
+    );
+    let tooltip = element_tooltip(&model, 0, &arrays);
+    assert_eq!(
+        tooltip.groups,
+        [vec![
+            Row::new(trace("adc", 0), [Value::text("0.5 V")]),
+            Row::new(trace("b", 1), [Value::text("3")]),
+        ]]
+    );
+}
+
+#[test]
+fn hovering_a_point_shows_the_trace_and_its_x_and_y() {
+    use egui_kittest::kittest::Queryable;
+
+    let mut model = Model::default();
+    for i in 0..10_201_u64 {
+        for (path, value) in [("pose.x", i % 101), ("pose.y", i / 101)] {
+            model.traces.append(&proto::Value {
+                timestamp: i * 1_000_000,
+                path: path.to_owned(),
+                value: Data::Float(value as f64),
+            });
+        }
+    }
+    model.traces.set_unit("pose.x", "m");
+    model.traces.set_unit("pose.y", "m");
+    let xy = Xy {
+        traces: ["pose.x".to_owned(), "pose.y".to_owned()].into(),
+        ..Xy::default()
+    };
+    let mut harness = xy_harness_of(xy, model);
+    harness.run();
+    harness.hover_at(egui::pos2(200.0, 150.0));
+    harness.run_steps(40);
+    let texts: Vec<String> = super::super::tooltip::shown_texts(&harness)
+        .into_iter()
+        .map(|(text, _)| text)
+        .collect();
+    for name in ["pose", "x", "y"] {
+        assert!(texts.iter().any(|text| text == name), "{name} in {texts:?}");
+    }
+    assert_eq!(
+        texts.iter().filter(|t| t.ends_with(" m")).count(),
+        2,
+        "{texts:?}"
+    );
+    assert!(harness.query_by_label_contains(" = ").is_none());
+}
+
+#[test]
+fn hovering_arrays_shows_the_element_under_the_pointer() {
+    use egui_kittest::kittest::Queryable;
+
+    let xy = Xy {
+        traces: ["adc".to_owned()].into(),
+        ..Xy::default()
+    };
+    let mut harness = xy_harness(xy);
+    harness.run();
+    harness.hover_at(egui::pos2(200.0, 150.0));
+    harness.run_steps(40);
+    let texts: Vec<String> = super::super::tooltip::shown_texts(&harness)
+        .into_iter()
+        .map(|(text, _)| text)
+        .collect();
+    let index: usize = texts[0]
+        .strip_prefix('[')
+        .and_then(|text| text.strip_suffix(']'))
+        .and_then(|text| text.parse().ok())
+        .unwrap_or_else(|| panic!("{texts:?}"));
+    assert!(index < 32, "{texts:?}");
+    assert!(texts.iter().any(|text| text == "adc"), "{texts:?}");
+    let value = (2 * index).to_string();
+    assert!(texts.contains(&value), "{value} in {texts:?}");
+    assert!(harness.query_by_label_contains(" = ").is_none());
 }

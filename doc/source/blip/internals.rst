@@ -286,6 +286,16 @@ dispatch. The name of the line is saved in presets. Its settings are saved
 with the layout through serde; give new fields defaults (``#[serde(default)]``)
 so older presets still load.
 
+Tooltips
+~~~~~~~~
+
+``view/tooltip.rs`` draws the hover tooltips of the plot-like views. A
+``Tooltip`` has a ``Header`` and groups of ``Row``\ s with a rule between the
+groups. A row is a ``Label``, either a trace's dot and name or weak text, and
+right-aligned ``Value``\ s in the tones strong, text, weak or faint. A view
+builds the tooltip from what is under the pointer, so all of them keep the
+same frame, spacing and colours.
+
 Links between views
 ~~~~~~~~~~~~~~~~~~~
 

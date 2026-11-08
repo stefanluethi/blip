@@ -32,6 +32,10 @@ blip
    * Empty views, panels and lists show their hint in one style. Plot and States
      now say *Check the traces to show in the tree on the left* over their
      empty plot.
+   * Hover tooltips of the plot, states, XY and heatmap views and of the
+     distributions look alike: a framed card with a header and right-aligned
+     values. A trace without a value at the pointer is now listed with a faint
+     *—*. XY plots and the array line of heatmaps get the same framed tooltip.
    * Internal: shared helpers for the timestamp searches (``model/sorted``),
      the drawing of the plot views (``view/plotting``), theme tokens, fields
      and property rows.

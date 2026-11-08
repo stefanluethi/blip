@@ -8,7 +8,8 @@ use super::{
 use crate::app::model::Version;
 use crate::app::model::numbers::DisplayFormat;
 use crate::app::theme::{self, TokensExt};
-use crate::app::view::{legend_dot, text_size};
+use crate::app::view::tooltip::{Header, Label, Row, Tone, Tooltip, TraceName, Value};
+use crate::app::view::with_unit;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -482,7 +483,7 @@ pub fn value_step(stats: &BoxStats) -> f64 {
 
 /// The trace of a row under the pointer, for its tooltip.
 pub struct Tip<'a> {
-    pub trace: &'a Shown<'a>,
+    pub trace: TraceName,
     pub stats: Option<&'a BoxStats>,
     pub whiskers: Whiskers,
     pub orientation: Orientation,
@@ -491,80 +492,41 @@ pub struct Tip<'a> {
 }
 
 impl Tip<'_> {
-    /// Shows the dot and the name of the trace, the values of its box and, under a rule,
-    /// its samples and outliers.
-    pub fn ui(&self, ui: &mut egui::Ui) {
-        let faint = ui.tokens().text_faint;
-        let (weak, text) = (ui.visuals().weak_text_color(), ui.visuals().text_color());
-        ui.horizontal(|ui| {
-            legend_dot(ui, theme::trace_color(ui.visuals(), self.trace.index));
-            ui.label(&self.trace.name).on_hover_text(&self.trace.path);
-        });
+    /// The dot and the name of the trace, the values of its box and, in a second group,
+    /// its samples and outliers; or "No samples".
+    pub fn tooltip(&self) -> Tooltip {
+        let tooltip = Tooltip::new(Header::Trace(self.trace.clone()));
         let Some(stats) = self.stats else {
-            ui.label(egui::RichText::new(NO_SAMPLES).color(faint));
-            return;
+            return tooltip.note(NO_SAMPLES);
         };
         let step = value_step(stats);
-        let write =
-            |value: f64| super::super::with_unit(write_value(value, step, self.format), self.unit);
-        let values: Vec<(&str, String, egui::Color32)> =
-            (tooltip_rows(stats, self.whiskers, self.orientation).into_iter())
-                .map(|(name, value, weight)| {
-                    let color = match weight {
-                        Weight::Box => text,
-                        Weight::End => weak,
-                    };
-                    (name, write(value), color)
-                })
-                .collect();
-        let mut counts = vec![("Samples", stats.samples.to_string(), text)];
+        let values = (tooltip_rows(stats, self.whiskers, self.orientation).into_iter())
+            .map(|(name, value, weight)| {
+                let text = with_unit(write_value(value, step, self.format), self.unit);
+                let tone = match weight {
+                    Weight::Box => Tone::Text,
+                    Weight::End => Tone::Weak,
+                };
+                Row::new(Label::Weak(name.to_owned()), [Value::new(text, tone)])
+            })
+            .collect();
+        let mut counts = vec![Row::new(
+            Label::Weak("Samples".to_owned()),
+            [Value::text(stats.samples.to_string())],
+        )];
         if self.whiskers != Whiskers::MinMax {
             let outliers = stats.outliers.len();
-            let color = if outliers == 0 { faint } else { text };
-            counts.push(("Outliers", outliers.to_string(), color));
+            counts.push(Row::new(
+                Label::Weak("Outliers".to_owned()),
+                [Value::text(outliers.to_string()).faint_if(outliers == 0)],
+            ));
         }
-        // both grids have columns as wide as the widest name and value, so that they
-        // line up, and the values are right aligned in theirs
-        let widest = |texts: &mut dyn Iterator<Item = &str>| {
-            texts
-                .map(|text| text_size(ui, text, egui::TextStyle::Body).x)
-                .fold(0.0, f32::max)
-        };
-        let rows = || values.iter().chain(&counts);
-        let widths = [
-            widest(&mut rows().map(|row| row.0)),
-            widest(&mut rows().map(|row| row.1.as_str())),
-        ];
-        let spacing = 12.0;
-        let grid = |ui: &mut egui::Ui, id: &str, rows: Vec<(&str, String, egui::Color32)>| {
-            egui::Grid::new(id)
-                .num_columns(2)
-                .spacing([spacing, 2.0])
-                .show(ui, |ui| {
-                    let height = ui.spacing().interact_size.y;
-                    for (name, value, color) in rows {
-                        let left = egui::Layout::left_to_right(egui::Align::Center);
-                        ui.allocate_ui_with_layout(egui::vec2(widths[0], height), left, |ui| {
-                            // as wide as the widest name, also in the other grid
-                            ui.set_min_width(widths[0]);
-                            ui.label(egui::RichText::new(name).color(weak));
-                        });
-                        let right = egui::Layout::right_to_left(egui::Align::Center);
-                        ui.allocate_ui_with_layout(egui::vec2(widths[1], height), right, |ui| {
-                            ui.label(egui::RichText::new(value).color(color));
-                        });
-                        ui.end_row();
-                    }
-                });
-        };
-        grid(ui, "box tooltip values", values);
-        let (rule, _) = ui.allocate_exact_size(
-            egui::vec2(widths[0] + spacing + widths[1], 7.0),
-            egui::Sense::hover(),
-        );
-        let line = ui.visuals().widgets.noninteractive.bg_stroke;
-        ui.painter().hline(rule.x_range(), rule.center().y, line);
-        grid(ui, "box tooltip counts", counts);
+        tooltip.group(values).group(counts)
+    }
+
+    /// Shows the tooltip.
+    pub fn ui(&self, ui: &mut egui::Ui) {
+        self.tooltip().ui(ui);
     }
 }
 
