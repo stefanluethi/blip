@@ -90,8 +90,8 @@ Split the work by part and decide the order:
 - A proto change goes first (`blip-dev`), then the outpost and sonde follow it.
 - Parts that do not touch the same files may run in parallel: spawn them in one message.
   Two specialists never edit the same file at the same time.
-- `doc/source/requirements/tests.rst` is shared: each developer only edits the `TEST_*`
-  items of its own part.
+- The test pages in `doc/source/requirements/tests/` are shared: each developer only
+  edits the `TEST_*` items of its own part.
 
 Tell the user the plan in a few lines (who does what, in which order) before you start.
 

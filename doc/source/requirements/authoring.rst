@@ -26,6 +26,17 @@ Need types
 
 IDs are mandatory and must match ``^(STK|REQ|ARCH|TEST)_[A-Z0-9_]+$``.
 
+Where items go
+--------------
+
+Stakeholder needs are in :doc:`stakeholder` and architecture elements in
+:doc:`architecture`. Requirements have one page per area in ``system/`` (and
+``documentation/`` for the documentation), tests one page per area in
+``tests/``, named like the requirements page of the first requirement each
+verifies. A new area gets a page in ``system/`` and in ``tests/``, listed in the
+toctree of both ``index.rst`` files. Keep a page to a few hundred lines; split
+one that grows past that by topic.
+
 Options and links
 -----------------
 

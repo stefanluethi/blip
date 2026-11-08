@@ -96,7 +96,7 @@ the same format.
        that arrive later, by path; ``""`` is the root.
 
 The settings of each type of view are those of its properties (see
-:doc:`/blip/views`), e.g. ``traces`` (the paths shown), ``interpolation``
+:doc:`/blip/views/index`), e.g. ``traces`` (the paths shown), ``interpolation``
 of a plot, ``xs``, ``against`` and ``equal_axes`` of an XY view, ``mode`` of
 a heatmap, ``layout`` of a table, ``shown`` of an actions view. A setting
 left out takes its default, so a generated preset only needs what differs.

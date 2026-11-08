@@ -43,7 +43,7 @@ Checking traces
 * **Checking a branch also checks what is added below it later**, e.g. a trace
   that arrives after it was checked. Unchecking anything below it ends that.
 * A table in the **Records** layout checks records as a whole instead of their
-  fields, see :doc:`/blip/views`.
+  fields, see :doc:`/blip/views/table`.
 
 Searching and filtering
 -----------------------
@@ -67,5 +67,5 @@ greyed out, so they can be unchecked.
 Next steps
 ----------
 
-* :doc:`/blip/views` -- what each type of view shows and its settings.
+* :doc:`/blip/views/index` -- what each type of view shows and its settings.
 * :doc:`/blip/layout` -- add and arrange views.

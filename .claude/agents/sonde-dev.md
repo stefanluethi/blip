@@ -61,7 +61,8 @@ If it is not installed, say so in your report.
 ## Tests
 
 Write Catch2 tests in `sonde/tests` for each requirement in your brief. Then fill in the
-`TEST_*` items for them in `doc/source/requirements/tests.rst`: replace the `TODO` with
+`TEST_*` items for them in `doc/source/requirements/tests/` (find them with
+`grep -rn TEST_ID doc/source/requirements/tests`): replace the `TODO` with
 the test file and case names and say what they check. Leave their status to the lead.
 
 ## Done

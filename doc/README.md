@@ -115,7 +115,7 @@ its actions, and replace `demo.blip`; keep it short, as it is committed.
 ## Keeping it right
 
 The expectations for this documentation are in
-`source/requirements/documentation.rst`. In short: update the pages in the same
+`source/requirements/documentation/`. In short: update the pages in the same
 commit as the code; a page that moves leaves an entry in `redirects` in
 `conf.py`; the outpost's API reference comes from its docstrings, sonde's from
 its headers; `outpost/tests/test_docs.py` fails when an option of

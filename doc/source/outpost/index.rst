@@ -155,7 +155,7 @@ Records and batches
 
 Values that belong together, e.g. the fields of one frame of the target, go in
 a record: one message, one timestamp, and a trace per field, its path joined
-with ``.``. blip shows records as rows of a table, see :doc:`/blip/views`.
+with ``.``. blip shows records as rows of a table, see :doc:`/blip/views/table`.
 
 .. code-block:: python
 

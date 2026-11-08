@@ -40,7 +40,8 @@ sections your spec or brief names, or the ones on what you change.
 
 Write pytest tests in `outpost/tests` for each requirement in your brief, in the style of
 the existing ones (`blip_client.py` is the test client). Then fill in the `TEST_*` items
-for them in `doc/source/requirements/tests.rst`: replace the `TODO` with the test path
+for them in `doc/source/requirements/tests/` (find them with
+`grep -rn TEST_ID doc/source/requirements/tests`): replace the `TODO` with the test path
 (e.g. ``outpost/tests/test_simulator.py::test_simulator_outpost``) and say what it checks.
 Leave their status to the lead.
 

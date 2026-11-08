@@ -38,7 +38,7 @@ The window
 
 ③ Properties
    The settings of the selected view or group. See :doc:`/blip/layout` and, for the
-   settings of each view type, :doc:`/blip/views`.
+   settings of each view type, :doc:`/blip/views/index`.
 
 ④ Views
    The plots, tables, logs and other views, in tabs. **⋯** on the title of a
@@ -60,7 +60,7 @@ View
    A pane in the center that shows traces, logs or actions: a plot, a states
    view, a table, an XY plot, a distribution, a heatmap, a log view or an actions
    view. Each view has its own selection and its own settings. See
-   :doc:`views`.
+   :doc:`views/index`.
 
 Selection
    What a view shows is chosen in the **Traces & actions** tree while the view
@@ -113,7 +113,7 @@ The usual workflow
 #. Connect to one or more outposts (:doc:`/blip/connecting`).
 #. Start **Record** to keep what arrives (:doc:`/blip/time`).
 #. Select a view and check its traces in the tree (:doc:`/blip/traces`); add and
-   arrange views as needed (:doc:`/blip/layout`, :doc:`/blip/views`).
+   arrange views as needed (:doc:`/blip/layout`, :doc:`/blip/views/index`).
 #. Pause, scroll back, set the time cursor to inspect (:doc:`/blip/time`).
 #. Invoke actions on the target from an actions view (:doc:`/blip/actions`).
 #. Save the recording (:doc:`/blip/files`) and export the preset
@@ -124,7 +124,7 @@ The usual workflow
 
    connecting
    traces
-   views
+   views/index
    actions
    layout
    presets

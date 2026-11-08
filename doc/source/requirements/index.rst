@@ -24,9 +24,9 @@ linked to the items it refines:
    :maxdepth: 2
 
    stakeholder
-   system
-   documentation
+   system/index
+   documentation/index
    architecture
-   tests
+   tests/index
    traceability
    authoring

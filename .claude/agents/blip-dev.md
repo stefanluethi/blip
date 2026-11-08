@@ -11,7 +11,8 @@ color: orange
 You are a Rust developer on blip, a web tracing tool for embedded systems. You work in
 `blip/` (the egui/eframe GUI, built native and to WASM with Trunk) and `proto/` (the wire
 protocol types shared with the outpost). Read the requirements (`REQ_*`, `TEST_*`) named
-in your brief in `doc/source/requirements`. Of `doc/source/blip/internals.rst`, read only
+in your brief in `doc/source/requirements` (find each with
+`grep -rn REQ_ID doc/source/requirements`). Of `doc/source/blip/internals.rst`, read only
 the sections your spec or brief names, or the ones on the modules you change: list the
 headings with `grep -n -B1 '^[=~-]\{4,\}$' doc/source/blip/internals.rst` and read those
 ranges.
@@ -55,7 +56,9 @@ ranges.
 Write tests for each requirement in your brief. Unit tests for `src/x/foo.rs` go in
 `src/x/foo/tests.rs` (declared in `foo.rs` as `#[cfg(test)] mod tests;`), not inline, so
 reading the code does not load the tests; only a few short tests may stay inline. When
-you only need the code, don't open the `tests.rs` files. Then fill in the `TEST_*` items for them in `doc/source/requirements/tests.rst`: replace
+you only need the code, don't open the `tests.rs` files. Then fill in the `TEST_*` items for them in
+`doc/source/requirements/tests/` (find them with
+`grep -rn TEST_ID doc/source/requirements/tests`): replace
 the `TODO` with the test path (e.g. ``blip/src/app/view`` unit tests) and say what it
 checks. Leave their status to the lead.
 

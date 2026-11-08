@@ -3,7 +3,7 @@ Layout and properties
 
 The views are arranged in **tabs** in the center. A tab holds its views in
 **groups**, stacked vertically or side by side, or shown as tabs again. blip
-starts with an empty layout that shows the view types (see :doc:`/blip/views`);
+starts with an empty layout that shows the view types (see :doc:`/blip/views/index`);
 click one to add a view of that type in a new tab. The layout belongs to the
 active preset, see :doc:`/blip/presets`. **View › Clear layout** returns to
 the empty layout and keeps the connections; **Presets › New preset** starts
@@ -13,7 +13,7 @@ Adding views and tabs
 ---------------------
 
 Click **+** after the tabs to add a tab. An empty tab shows the view types
-(see :doc:`/blip/views`); click one to add a view of that type.
+(see :doc:`/blip/views/index`); click one to add a view of that type.
 
 To add a view next to another, click **⋯** at the right of the title of that
 view, or right-click the title (or its tab, if it is shown as a tab), and
@@ -67,7 +67,7 @@ preset.
 * A **group** has its **Name** and **Arrange**: whether it shows its children
   as *Tabs*, *Vertical* or *Horizontal*.
 * A **view** has its **Name**, the sections of its type, and the **Number
-  format** of its traces, see :doc:`/blip/views`.
+  format** of its traces, see :doc:`/blip/views/index`.
 
 Log views keep their search and filters in the view itself.
 
