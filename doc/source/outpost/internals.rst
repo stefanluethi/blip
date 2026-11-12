@@ -46,7 +46,7 @@ Structure
        ``register``; ``drain`` and ``wait_for_client``; ``on_invoke`` to carry
        out invocations in place of the actions.
    * - ``tracer.py``
-     - ``Tracer``: adds its name to the paths and its component to the log
+     - ``Tracer``: adds its name to the paths, also of its log
        records, and sends with its outpost. ``LogHandler``: a handler of
        Python's ``logging`` that sends the records.
    * - ``records.py``

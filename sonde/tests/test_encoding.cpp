@@ -220,39 +220,47 @@ TEST_CASE("metadata") {
               "64756e6974" "6372706d"));            // "unit": "rpm"}}
 }
 
-TEST_CASE("logs leave out an empty path and component") {
+TEST_CASE("logs have no component and leave out an empty path") {
+    // {"Log": {"timestamp": 3, "path": "log/imu", "level": 3, "message": "hot"}}
     CHECK(traced([](sonde::Queue& queue) {
-              queue.log(sonde::Timestamp{3}, sonde::Level::Warn, "motor", "hot");
-          }) == hex("a1634c6f67"                                // {"Log":
-                    "a4" "6974696d657374616d70" "03"          // {"timestamp": 3,
-                    "656c6576656c" "03"                        // "level": 3,
-                    "69636f6d706f6e656e74" "656d6f746f72"      // "component": "motor",
-                    "676d657373616765" "63686f74"));            // "message": "hot"}}
+              queue.log(sonde::Timestamp{3}, "log/imu", sonde::Level::Warn, "hot");
+          }) == hex("a1634c6f67"
+                    "a4" "6974696d657374616d70" "03"
+                    "6470617468" "676c6f672f696d75"
+                    "656c6576656c" "03"
+                    "676d657373616765" "63686f74"));
+    // the same at a path given without a timestamp, read from the clock (0 here)
     CHECK(traced([](sonde::Queue& queue) {
-              queue.log(sonde::Level::Error, "", "hot");
+              queue.log("log/imu", sonde::Level::Warn, "hot");
+          }) == hex("a1634c6f67"
+                    "a4" "6974696d657374616d70" "00"
+                    "6470617468" "676c6f672f696d75"
+                    "656c6576656c" "03"
+                    "676d657373616765" "63686f74"));
+    CHECK(traced([](sonde::Queue& queue) {
+              queue.log(sonde::Level::Error, "hot");
           }) == hex("a1634c6f67"
                     "a3" "6974696d657374616d70" "00"
                     "656c6576656c" "04"
                     "676d657373616765" "63686f74"));
     CHECK(traced([](sonde::Queue& queue) {
-              queue.log(sonde::Timestamp{3}, "arm", sonde::Level::Warn, "", "hot");
-          }) == hex("a1634c6f67"                                // {"Log":
-                    "a4" "6974696d657374616d70" "03"          // {"timestamp": 3,
-                    "6470617468" "6361726d"                    // "path": "arm",
-                    "656c6576656c" "03"                        // "level": 3,
-                    "676d657373616765" "63686f74"));            // "message": "hot"}}
+              queue.log(sonde::Timestamp{3}, sonde::Level::Warn, "hot");
+          }) == hex("a1634c6f67"
+                    "a3" "6974696d657374616d70" "03"
+                    "656c6576656c" "03"
+                    "676d657373616765" "63686f74"));
 }
 
 TEST_CASE("logf formats into a message") {
     CHECK(traced([](sonde::Queue& queue) {
-              queue.logf(sonde::Level::Info, "", "%d mA", 12);
+              queue.logf(sonde::Level::Info, "%d mA", 12);
           }) == traced([](sonde::Queue& queue) {
-              queue.log(sonde::Level::Info, "", "12 mA");
+              queue.log(sonde::Level::Info, "12 mA");
           }));
     CHECK(traced([](sonde::Queue& queue) {
-              queue.logf("arm", sonde::Level::Info, "", "%d mA", 12);
+              queue.logf("arm", sonde::Level::Info, "%d mA", 12);
           }) == traced([](sonde::Queue& queue) {
-              queue.log("arm", sonde::Level::Info, "", "12 mA");
+              queue.log("arm", sonde::Level::Info, "12 mA");
           }));
 }
 
@@ -260,15 +268,15 @@ TEST_CASE("logf cuts off long messages before a UTF-8 sequence") {
     // 126 bytes and a 2-byte sequence, of which the buffer of 128 bytes keeps 127
     const std::string text = std::string(126, 'x') + "\xc3\xa4" "x";
     CHECK(traced([&](sonde::Queue& queue) {
-              queue.logf(sonde::Level::Info, "", "%s", text.c_str());
+              queue.logf(sonde::Level::Info, "%s", text.c_str());
           }) == traced([](sonde::Queue& queue) {
-              queue.log(sonde::Level::Info, "", std::string(126, 'x'));
+              queue.log(sonde::Level::Info, std::string(126, 'x'));
           }));
     const std::string ascii(200, 'y');
     CHECK(traced([&](sonde::Queue& queue) {
-              queue.logf(sonde::Level::Info, "", "%s", ascii.c_str());
+              queue.logf(sonde::Level::Info, "%s", ascii.c_str());
           }) == traced([](sonde::Queue& queue) {
-              queue.log(sonde::Level::Info, "", std::string(127, 'y'));
+              queue.log(sonde::Level::Info, std::string(127, 'y'));
           }));
 }
 

@@ -42,7 +42,7 @@ Everything a target sends is one of five messages, encoded in CBOR:
      - The unit of a trace, e.g. ``rpm``. Sent once or now and then.
      - ``unit`` / ``unit``
    * - ``Log``
-     - A log record: timestamp, path, level, component and message text.
+     - A log record: timestamp, path, level and message text.
      - ``log`` / ``log``, ``logf``
    * - ``Actions``
      - The list of all actions the target can carry out now.
@@ -104,12 +104,13 @@ Log records
 -----------
 
 A log record has a timestamp, an optional path, one of the levels ``TRACE``,
-``DEBUG``, ``INFO``, ``WARN`` and ``ERROR``, an optional component, e.g.
-``driver``, and a message.
+``DEBUG``, ``INFO``, ``WARN`` and ``ERROR`` and a message.
 
 The path says where a record comes from, like the path of a trace, e.g.
 ``motor`` or ``robot/arm``; a record without a path is of the target as a
-whole. The component is finer: the part of the software that wrote the record.
+whole. By convention log records are at ``log/<part>``, e.g. ``log/imu``, so
+the part of the software that wrote a record is in its path. blip shows a
+record without a path at ``log/default``.
 
 Timestamps
 ----------

@@ -64,9 +64,9 @@ void trace(sonde::Queue& queue) {
     queue.value("motor", Motor{1500, true, "running"});
     queue.value("offset", -42);
     queue.value("ratio", 0.1);
-    queue.log("robot/arm", sonde::Level::Info, "motor", "started");
-    queue.log(sonde::Level::Warn, "", "no component");
-    queue.logf(sonde::Level::Error, "adc", "overrun %d", 3);
+    queue.log("robot/arm", sonde::Level::Info, "started");
+    queue.log(sonde::Level::Warn, "no path");
+    queue.logf(sonde::Level::Error, "overrun %d", 3);
     queue.value("adc/samples", std::array<std::uint16_t, 4>{0, 1023, 2048, 4095});
     queue.commit();
 }

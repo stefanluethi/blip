@@ -20,6 +20,7 @@ pub struct Value {
     pub value: Data,
 }
 
+/// A log record. Records of older targets may carry a `component`, which is ignored.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct LogRecord {
     pub timestamp: u64,
@@ -29,8 +30,6 @@ pub struct LogRecord {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub path: String,
     pub level: u8,
-    #[serde(default)]
-    pub component: String,
     pub message: String,
 }
 

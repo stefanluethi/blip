@@ -25,5 +25,5 @@ def test_the_app_traces_its_parts_below_their_names():
     paths = [m["Value"]["path"] for m in messages if "Value" in m]
     assert paths[:2] == ["heater/state", "room/setpoint"]
     assert paths[2:] == ["room/sensor/vibration"] * 50
-    logs = [(m["Log"]["path"], m["Log"]["component"]) for m in messages if "Log" in m]
-    assert ("heater", "controller") in logs
+    logs = [m["Log"]["path"] for m in messages if "Log" in m]
+    assert "heater" in logs

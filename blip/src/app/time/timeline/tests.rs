@@ -27,7 +27,6 @@ fn harness_until(last: u64) -> Harness<'static, State> {
         timestamp: 30_000_000_000,
         path: String::new(),
         level: 4,
-        component: String::new(),
         message: "oops".to_owned(),
     }));
     let mut harness = Harness::builder()

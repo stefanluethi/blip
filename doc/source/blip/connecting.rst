@@ -71,7 +71,7 @@ open connection (or their number) and the messages received per second, or
 Several outposts
 ----------------
 
-The paths of the traces, the components of the logs and the paths of the
+The paths of the traces, the paths of the logs and of the
 actions are shown as the outposts send them, e.g. ``cpu/load``, without the
 name of the connection: organizing them is up to you, e.g. by the paths each
 outpost sends. Traces of the same path from several connections are one

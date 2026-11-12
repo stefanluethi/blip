@@ -125,9 +125,10 @@ Drag a view by its title onto the side of another view to arrange them, see
    and drag again; plot ``motor`` › ``.speed_rpm`` to watch the motor follow.
 #. Check ``imu`` › ``calibrate``: it asks for confirmation before it is sent.
 
-Every invocation also appears as a log record with the component
-``actions``; add a **Logs** view to see them, next to the log records of the
-components ``sensor``, ``net``, ``storage`` and ``power``. See
+Invocations also leave log records, e.g. at ``log/motor``, ``log/imu``
+and ``log/user``; check the ``log`` folder in the tree and add a **Logs** view to
+see them, next to the log records at ``log/sensor``, ``log/net``,
+``log/storage`` and ``log/power``. See
 :doc:`/blip/actions`.
 
 7. Inspect and keep what you saw

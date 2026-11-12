@@ -8,7 +8,7 @@ satisfies. How each is built is described on the internals page of its part.
    :id: ARCH_BLIP
    :status: implemented
    :component: blip
-   :satisfies: REQ_VIS_PLOT, REQ_VIS_LOG, REQ_VIS_STATES, REQ_VIS_TABLE, REQ_VIS_XY, REQ_VIS_HEATMAP, REQ_VIS_HIST, REQ_VIS_HIST_BINS, REQ_VIS_HIST_COUNTS, REQ_VIS_HIST_MARKERS, REQ_VIS_HIST_ORIENT, REQ_VIS_HIST_LINK, REQ_VIS_HIST_HOVER, REQ_VIS_HIST_EMPTY, REQ_VIS_HIST_SAVED, REQ_VIS_DIST_SHOW, REQ_VIS_DIST_BOX, REQ_VIS_DIST_WHISKERS, REQ_VIS_DIST_STATS, REQ_VIS_DIST_BOX_HOVER, REQ_VIS_DIST_BOX_EMPTY, REQ_VIS_DIST_PROPS, REQ_VIS_CURSOR, REQ_VIS_TOOLTIP, REQ_CONN_WS, REQ_PLAT_WEB, REQ_PLAT_NATIVE, REQ_PERSIST_STATE, REQ_PRESETS, REQ_CTRL_ACTION, REQ_CTRL_FEEDBACK, REQ_CTRL_VIEW, REQ_CTRL_SAFE
+   :satisfies: REQ_VIS_PLOT, REQ_VIS_LOG, REQ_VIS_LOG_DEFAULT, REQ_VIS_LOG_PICK, REQ_VIS_LOG_PATH_FILTER, REQ_VIS_STATES, REQ_VIS_TABLE, REQ_VIS_XY, REQ_VIS_HEATMAP, REQ_VIS_HIST, REQ_VIS_HIST_BINS, REQ_VIS_HIST_COUNTS, REQ_VIS_HIST_MARKERS, REQ_VIS_HIST_ORIENT, REQ_VIS_HIST_LINK, REQ_VIS_HIST_HOVER, REQ_VIS_HIST_EMPTY, REQ_VIS_HIST_SAVED, REQ_VIS_DIST_SHOW, REQ_VIS_DIST_BOX, REQ_VIS_DIST_WHISKERS, REQ_VIS_DIST_STATS, REQ_VIS_DIST_BOX_HOVER, REQ_VIS_DIST_BOX_EMPTY, REQ_VIS_DIST_PROPS, REQ_VIS_CURSOR, REQ_VIS_TOOLTIP, REQ_CONN_WS, REQ_PLAT_WEB, REQ_PLAT_NATIVE, REQ_PERSIST_STATE, REQ_PRESETS, REQ_CTRL_ACTION, REQ_CTRL_FEEDBACK, REQ_CTRL_VIEW, REQ_CTRL_SAFE
 
    egui/eframe application compiled to WebAssembly (served by Trunk) or to a
    native binary. Main modules in ``blip/src``, see :doc:`/blip/internals`:
@@ -39,7 +39,7 @@ satisfies. How each is built is described on the internals page of its part.
    :id: ARCH_PROTO
    :status: implemented
    :component: proto
-   :satisfies: REQ_PROTO_CBOR, REQ_CTRL_ANNOUNCE
+   :satisfies: REQ_PROTO_CBOR, REQ_PROTO_LOG, REQ_CTRL_ANNOUNCE
 
    Rust crate defining the serde-serialisable wire types. It is the single
    source of truth for the message schema; the outpost mirrors it in
@@ -49,7 +49,7 @@ satisfies. How each is built is described on the internals page of its part.
    :id: ARCH_OUTPOST
    :status: implemented
    :component: outpost
-   :satisfies: REQ_OUTPOST_SOCKET, REQ_OUTPOST_SIM, REQ_OUTPOST_PROTOCOL, REQ_OUTPOST_BATCH, REQ_OUTPOST_TRACERS, REQ_CONN_WS, REQ_CTRL_ANNOUNCE, REQ_CTRL_ACTION, REQ_CTRL_FEEDBACK
+   :satisfies: REQ_OUTPOST_SOCKET, REQ_OUTPOST_SIM, REQ_OUTPOST_PROTOCOL, REQ_OUTPOST_BATCH, REQ_OUTPOST_TRACERS, REQ_OUTPOST_LOGGING, REQ_CONN_WS, REQ_CTRL_ANNOUNCE, REQ_CTRL_ACTION, REQ_CTRL_FEEDBACK
 
    Python library ``blip-outpost`` (``outpost/src/blip_outpost``) managed
    with ``uv``, see :doc:`/outpost/internals`. The user's script talks to the target and
@@ -82,7 +82,7 @@ satisfies. How each is built is described on the internals page of its part.
    :id: ARCH_SONDE
    :status: implemented
    :component: sonde
-   :satisfies: REQ_PROTO_CBOR, REQ_PROTO_TYPES
+   :satisfies: REQ_PROTO_CBOR, REQ_PROTO_TYPES, REQ_SONDE_LOG
 
    C++17 library (``sonde``) for firmware and unit tests, see :doc:`/sonde/internals`.
    Encodes ``proto`` messages with tinycbor into batches of whole messages, a

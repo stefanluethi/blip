@@ -105,9 +105,9 @@ impl Model {
     }
 
     /// Records a frame received from `source`, the name of its connection, and applies
-    /// the message in it. The paths of its traces, actions and logs and the components
-    /// of its logs are kept as the outpost sends them, without the source: how they are
-    /// organized is up to the user, also when outposts send the same paths. Returns
+    /// the message in it. The paths of its traces,
+    /// actions and logs are kept as the outpost sends them, without the source: how they
+    /// are organized is up to the user, also when outposts send the same paths. Returns
     /// the answer to an invocation, for the invoker.
     pub fn receive(&mut self, source: &str, frame: &[u8]) -> Option<proto::ActionResult> {
         self.apply(source, frame, true)
@@ -160,7 +160,6 @@ impl Model {
                 timestamp,
                 path,
                 level,
-                component,
                 message,
             }) => {
                 if timestamp > 0 && !self.fits_time_base(timestamp, path) {
@@ -169,7 +168,7 @@ impl Model {
                 // a log without a timestamp happened about when the newest data did, in
                 // the time domain of the device
                 let now = self.time_span().map(|(_, newest)| newest);
-                let entry = LogEntry::new(timestamp, level, component, message, now);
+                let entry = LogEntry::new(timestamp, level, message, now);
                 if timestamp > 0 {
                     // not the wall clock of a record without a timestamp, which may be
                     // far from the time domain of the target

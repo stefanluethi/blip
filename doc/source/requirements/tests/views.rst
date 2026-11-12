@@ -25,9 +25,27 @@ Tests of the requirements in :doc:`/requirements/system/views`.
    tests -- keep records by path in the order of their times, changing the
    order of a path only when a record arrives before others of it; show the
    records of the picked paths merged by time, filter only new records unless
-   the filter or the paths change, filter by level, component and message, show
-   the path while several are shown, and show or hide the date and the
-   component as the properties say.
+   the filter or the paths change, filter by level and message, always show the
+   path, show or hide the date as the properties say, and
+   show no component column or property.
+
+.. test:: Log paths are defaulted, picked and filtered
+   :id: TEST_BLIP_LOG_PATHS
+   :status: implemented
+   :component: blip
+   :verifies: REQ_VIS_LOG_DEFAULT, REQ_VIS_LOG_PICK, REQ_VIS_LOG_PATH_FILTER
+
+   ``blip/src/app/model/logs``, ``blip/src/app/model``,
+   ``blip/src/app/view/trace_selection`` and ``blip/src/app/view/log_table``
+   unit tests -- checks that a record without a path is kept at ``log/default``
+   and one with a path at exactly that path (``log/imu``, ``motor``); that
+   checking the folder ``log`` picks the log paths below it, also those that
+   appear after; that the path filter lists the paths of the shown records
+   relative to the folder they share, hides and shows paths by checkbox, and
+   checks all or none with its buttons; that the hidden paths are saved in the
+   layout and restored, and a path that appears later is shown; that clearing
+   the filters clears the path filter; and that a layout with hidden components
+   loads without them.
 
 .. test:: Integers are kept exactly
    :id: TEST_BLIP_NUMBERS

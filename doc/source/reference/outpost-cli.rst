@@ -71,8 +71,8 @@ For targets that speak the blip protocol themselves, e.g. firmware using
   unchanged and drops data that is no CBOR. As a TCP client it reconnects
   every three seconds after an error.
 * When the target restarts and its timestamps start over, the outpost shifts
-  them so that they follow the ones before, and logs a warning (component
-  ``outpost``). A timestamp more than a second behind the newest one is a
+  them so that they follow the ones before, and sends a warning (a log record
+  without a path, shown at ``log/default``). A timestamp more than a second behind the newest one is a
   restart, as is one at least 10 ms behind and less than half of it (a run
   shorter than a second), and after a new TCP connection one more than 100 ms
   behind. Each host the target sends from has a clock of its own, so targets
@@ -211,7 +211,7 @@ The rules:
   connection, and any earlier one after a sequence number that started over.
   The outpost shifts the timestamps of
   the new run to follow the ones before, by the time that passed in between,
-  and logs a warning (component ``outpost``).
+  and sends a warning (a log record without a path).
 * **Series.** With ``ROLE_PERIOD`` as well, the repeated fields are samples,
   sample ``i`` at ``timestamp + i × period``: one value per sample.
 * **Sequence.** A field with ``ROLE_SEQUENCE`` in the uplink message counts
@@ -220,7 +220,9 @@ The rules:
 * **Log records.** A message of ``kind: KIND_LOG`` is a log record of its
   fields of the roles ``ROLE_LEVEL`` (0 trace … 4 error; larger values are
   errors), ``ROLE_COMPONENT`` and ``ROLE_MESSAGE``, at the path of the
-  message like values: its ``path``, else that of the field holding it.
+  message like values: its ``path``, else that of the field holding it. The
+  component is one more level of the path, ``log/<component>`` when the path
+  is empty.
 * **Actions.** The ``KIND_INVOKE`` message in the downlink message has a field
   of ``ROLE_ACTION_ID`` and a oneof: each message member is an action at its
   ``path`` (else its field name) with its ``description``, ``confirm`` and

@@ -20,7 +20,7 @@ def frames() -> list[bytes]:
         Message.create_metadata("speed", "rpm").encode_cbor(),
         Message.create_value("speed", 1500, timestamp_ns=1_000_000).encode_cbor(),
         Message.create_value("imu", {"acc": [0.5, -1.0]}, timestamp_ns=2_000_000).encode_cbor(),
-        Message.create_log(1, "started", timestamp_ns=3_000_000, component="motor").encode_cbor(),
+        Message.create_log(1, "started", timestamp_ns=3_000_000, path="log/motor").encode_cbor(),
     ]
 
 
@@ -109,18 +109,17 @@ def test_recordings_of_sonde_are_read():
             "timestamp": 3_000_000,
             "path": "robot/arm",
             "level": 2,
-            "component": "motor",
             "message": "started",
         }
     }
-    # sonde leaves out an empty path and component, as the outpost does an empty path
+    # sonde leaves out an empty path, as the outpost does
     assert cbor2.loads(read[9]) == {
-        "Log": {"timestamp": 3_000_000, "level": 3, "message": "no component"}
+        "Log": {"timestamp": 3_000_000, "level": 3, "message": "no path"}
     }
-    assert cbor2.loads(Message.create_log(3, "no component", 3_000_000).encode_cbor()) == {
-        "Log": {"timestamp": 3_000_000, "level": 3, "component": "", "message": "no component"}
+    assert cbor2.loads(Message.create_log(3, "no path", 3_000_000).encode_cbor()) == {
+        "Log": {"timestamp": 3_000_000, "level": 3, "message": "no path"}
     }
-    assert cbor2.loads(Message.create_log(2, "started", 3_000_000, "motor", "robot/arm").encode_cbor()) == (
+    assert cbor2.loads(Message.create_log(2, "started", 3_000_000, "robot/arm").encode_cbor()) == (
         cbor2.loads(read[8])
     )
     # the batches of sonde are the messages one after another

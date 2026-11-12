@@ -40,7 +40,7 @@ in the documentation: [sonde](https://stefanluethi.github.io/blip/docs/sonde/ind
 | Concept   | Meaning |
 |-----------|---------|
 | `Queue`   | Encodes messages into batches, each with its full path. One queue per context that traces. |
-| `Tracer`  | A named part of the code on a queue, as a logger: its traces are below its name, its log records at its name and of its component. Any number per queue. |
+| `Tracer`  | A named part of the code on a queue, as a logger: its traces are below its name, its log records at its name, e.g. `log/motor`. Any number per queue. |
 | batch     | A slot of the storage holding complete messages, a CBOR sequence ready to send or write. |
 | `Storage` | The batches of a queue, provided by the user: `Batches` slots of `BatchBytes` bytes each. |
 | producer  | The context that traces into a queue: a task, a thread or an ISR. |
@@ -54,7 +54,7 @@ in the documentation: [sonde](https://stefanluethi.github.io/blip/docs/sonde/ind
 |-----------------------|------------|
 | `Value { timestamp, path, value }` | `queue.value(path, value)` / `queue.value(timestamp, path, value)`; `tracer.value(…)` with the path below the tracer |
 | `ValueMetadata { path, unit }`     | `queue.unit(path, unit)`, `tracer.unit(…)` |
-| `Log { timestamp, path, level, component, message }` | `queue.log(level, component, message)` / `queue.log(path, level, component, message)` / `queue.log(timestamp, …)`; `tracer.log(level, message)`, `tracer.info(message)`, … at the tracer's name, of its component |
+| `Log { timestamp, path, level, message }` | `queue.log(level, message)` / `queue.log(path, level, message)` / `queue.log(timestamp, …)`; `tracer.log(level, message)`, `tracer.info(message)`, … at the tracer's name. By convention the path is `log/<part>`; blip shows a record without a path at `log/default` |
 | `Actions`, `ActionResult`, `Request::Invoke` | later, see [Actions](#later-actions) |
 
 | `proto::Data` | C++ |
@@ -274,19 +274,17 @@ public:
     Status unit(std::string_view path, std::string_view unit);
 
     // proto: Message::Log, at `path` like a value, e.g. "motor", or without one of the
-    // target as a whole; an empty path or component is left out on the wire
-    Status log(Level level, std::string_view component, std::string_view message);
-    Status log(Timestamp timestamp, Level level, std::string_view component,
-               std::string_view message);
-    Status log(std::string_view path, Level level, std::string_view component,
-               std::string_view message);
+    // target as a whole; an empty path is left out on the wire. By convention a log is at
+    // "log/<part>", e.g. "log/imu"; blip shows one without a path at "log/default".
+    Status log(Level level, std::string_view message);
+    Status log(Timestamp timestamp, Level level, std::string_view message);
+    Status log(std::string_view path, Level level, std::string_view message);
     Status log(Timestamp timestamp, std::string_view path, Level level,
-               std::string_view component, std::string_view message);
+               std::string_view message);
     /// printf-like, formatted into a buffer of SONDE_LOGF_MAX bytes on the stack,
     /// longer messages are cut off.
-    Status logf(Level level, std::string_view component, const char* format, ...);
-    Status logf(std::string_view path, Level level, std::string_view component,
-                const char* format, ...);
+    Status logf(Level level, const char* format, ...);
+    Status logf(std::string_view path, Level level, const char* format, ...);
 
     /// Makes the open batch ready, if it holds messages. With a sink, writes it.
     Status commit();
@@ -317,18 +315,16 @@ namespace sonde {
 
 /// A named part of the code that traces, on the queue of its context. Any number of them
 /// may share a queue; a child adds its name below the one of its parent, which outlives
-/// it, as do the strings of the name and the component (it keeps views of them). The
+/// it, as does the string of the name (it keeps a view of it). The
 /// full path is joined on the stack, in SONDE_PATH_MAX bytes; a message with a longer one
 /// is dropped as Status::TooLarge. A child keeps only the address of its parent, so static
 /// tracers are constant-initialized; the calls are const.
 class Tracer {
 public:
     /// A tracer named `name`, e.g. "motor"; without a name, of the target as a whole.
-    constexpr explicit Tracer(Queue& queue, std::string_view name = {},
-                              std::string_view component = {});
-    /// A tracer below `parent`, e.g. "motor/left", with the parent's component unless given.
+    constexpr explicit Tracer(Queue& queue, std::string_view name = {});
+    /// A tracer below `parent`, e.g. "motor/left".
     constexpr Tracer(const Tracer& parent, std::string_view name);
-    constexpr Tracer(const Tracer& parent, std::string_view name, std::string_view component);
 
     // proto: Message::Value of the trace `path` below the tracer
     template <typename T>
@@ -339,7 +335,7 @@ public:
     // proto: Message::ValueMetadata
     Status unit(std::string_view path, std::string_view unit) const;
 
-    // proto: Message::Log at the name of the tracer, of its component
+    // proto: Message::Log at the name of the tracer
     Status log(Level level, std::string_view message) const;
     Status log(Timestamp timestamp, Level level, std::string_view message) const;
     Status logf(Level level, const char* format, ...) const;
@@ -348,14 +344,13 @@ public:
 
     constexpr Queue& queue() const;
     constexpr std::string_view name() const;
-    constexpr std::string_view component() const;
     constexpr const Tracer* parent() const;
 };
 
 }  // namespace sonde
 ```
 
-The queue is the API for messages that carry their own path and component, e.g. what a
+The queue is the API for messages that carry their own path, e.g. what a
 gateway passes on for other nodes; a tracer is the API for code that traces itself, as
 the tracers of the outpost are for a Python program.
 
@@ -481,19 +476,20 @@ with correct distances between them.
 
 static sonde::Storage<512, 2> storage;
 static sonde::Queue queue{storage, &uptime_ns};
-static sonde::Tracer motor{queue, "motor", "driver"};
-static sonde::Tracer arm{queue, "robot/arm", "driver"};
+static sonde::Tracer motor{queue, "motor"};
+static sonde::Tracer motor_log{queue, "log/motor"};  // log records at log/motor
+static sonde::Tracer arm{queue, "robot/arm"};
 
 motor.unit("speed", "rpm");
 motor.value("speed", 1500u);                       // motor/speed
 motor.value("temperature", sonde::null);           // failed measurement, a gap in the plot
 motor.value(sonde::Timestamp{t_ns}, "current", current);
-motor.info("started");                             // a log record at motor, of driver
-motor.warnf("overcurrent: %d mA", current_ma);
+motor_log.info("started");                         // a log record at log/motor
+motor_log.warnf("overcurrent: %d mA", current_ma);
 arm.info("homed");                                 // at robot/arm
 
 queue.value("cpu_load", 12.5f);                    // the queue takes full paths
-queue.log("node3/motor", sonde::Level::Warn, "driver", "hot");  // and log records as they are
+queue.log("log/node3", sonde::Level::Warn, "hot");  // and log records as they are
 ```
 
 ### Arrays, records and user types
@@ -710,7 +706,7 @@ target_link_libraries(firmware PRIVATE sonde::sonde)
 - Batches: messages stay whole when a batch is full, the next batch opens, `Full` when none
   is free, `TooLarge`, `commit()`, `request_commit()`, `dropped()`.
 - Wrong field and element counts give `Invalid` and leave the batch unchanged.
-- Tracers send what the queue sends with the full path and their component, also as
+- Tracers send what the queue sends with the full path, also as
   children of other tracers; a full path longer than `SONDE_PATH_MAX` is `TooLarge`.
 - Producer and consumer on two threads for a while (also under ThreadSanitizer): every
   batch the consumer takes decodes, and the messages taken plus `dropped()` add up to
@@ -762,7 +758,7 @@ if (sonde::decode_request(rx, rx_size, invocation)) {
 4. **Contexts are managed by the user** with queue instances; a queue is a lock-free
    single-producer single-consumer queue of batches.
 5. **Recordings are uncompressed.**
-6. **Tracers name the parts of the code.** A `Tracer` holds a name and a component on a
+6. **Tracers name the parts of the code.** A `Tracer` holds a name on a
    queue, as a logger does, and has the calls of the tracers of the outpost; the queue
    keeps the calls with full paths for messages forwarded from elsewhere. Joining the
    path on the stack costs a copy of at most `SONDE_PATH_MAX` bytes per message.

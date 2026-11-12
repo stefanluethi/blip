@@ -379,9 +379,8 @@ protected:
 /// consumer takes the ready batches and releases them once they are sent. With a sink,
 /// producer and consumer are one context and each ready batch goes to the sink.
 ///
-/// Each message carries its full path, and a log record its component, e.g. to forward
-/// the messages of other nodes. A `Queue` on the queue adds its name and its component
-/// instead, for code that traces itself.
+/// Each message carries its full path, e.g. to forward the messages of other nodes. A
+/// `Tracer` on the queue adds its name instead, for code that traces itself.
 ///
 /// The constructors are constexpr, so a static queue is initialized before any code
 /// runs, e.g. an ISR that fires before the static constructors.
@@ -419,20 +418,18 @@ public:
     Status unit(std::string_view path, std::string_view unit);
 
     // proto: Message::Log, at `path` like a value, e.g. "motor", or without one of the
-    // target as a whole; an empty path or component is left out on the wire
-    Status log(Level level, std::string_view component, std::string_view message);
-    Status log(Timestamp timestamp, Level level, std::string_view component,
-               std::string_view message);
-    Status log(std::string_view path, Level level, std::string_view component,
-               std::string_view message);
+    // target as a whole; an empty path is left out on the wire. By convention the path of
+    // a log is "log/<part>", e.g. "log/imu"; blip shows one without a path at "log/default".
+    Status log(Level level, std::string_view message);
+    Status log(Timestamp timestamp, Level level, std::string_view message);
+    Status log(std::string_view path, Level level, std::string_view message);
     Status log(Timestamp timestamp, std::string_view path, Level level,
-               std::string_view component, std::string_view message);
+               std::string_view message);
     /// printf-like, formatted into a buffer of SONDE_LOGF_MAX bytes on the stack,
     /// longer messages are cut off.
-    Status logf(Level level, std::string_view component, const char* format, ...)
+    Status logf(Level level, const char* format, ...) SONDE_PRINTF(3, 4);
+    Status logf(std::string_view path, Level level, const char* format, ...)
         SONDE_PRINTF(4, 5);
-    Status logf(std::string_view path, Level level, std::string_view component,
-                const char* format, ...) SONDE_PRINTF(5, 6);
 
     /// Makes the open batch ready, if it holds messages. With a sink, writes it.
     Status commit();
@@ -473,9 +470,8 @@ private:
     Status value_with(const Timestamp* timestamp, std::string_view path,
                       detail::EncodeFn encode, const void* value);
     Status log_with(const Timestamp* timestamp, std::string_view path, Level level,
-                    std::string_view component, std::string_view message);
-    Status logv(std::string_view path, Level level, std::string_view component,
-                const char* format, std::va_list args);
+                    std::string_view message);
+    Status logv(std::string_view path, Level level, const char* format, std::va_list args);
     /// Encodes a message into the open batch and commits on request. If `clock_time` is
     /// not nullptr, it is set from the clock before the message is encoded.
     Status emit(detail::EncodeFn encode, const void* message, Timestamp* clock_time);
@@ -535,13 +531,14 @@ private:
 // --- Tracer -------------------------------------------------------------------------
 
 /// A named part of the code that traces, on the queue of its context, e.g. "motor": its
-/// traces are below its name, e.g. "motor/speed", and its log records are at its name
-/// and of its component, the part of the software that writes them.
+/// traces are below its name, e.g. "motor/speed", and its log records are at its name,
+/// "motor". A tracer for logs only follows the convention "log/<part>", e.g.
+/// "log/motor".
 ///
 /// A tracer is a few pointers. Any number of them may share a queue, all used from the
 /// producer context of that queue. A child adds its name below the one of its parent,
-/// which has to outlive it, as do the strings of the name and the component: a tracer
-/// keeps views of them, e.g. of string literals. The full path is joined on the stack, in
+/// which has to outlive it, as does the string of the name: a tracer keeps a view
+/// of it, e.g. of string literals. The full path is joined on the stack, in
 /// SONDE_PATH_MAX bytes; a message with a longer one is dropped as Status::TooLarge.
 ///
 /// The constructors are constexpr and a child only keeps the address of its parent, so
@@ -551,17 +548,12 @@ class Tracer {
 public:
     /// A tracer on `queue` named `name`, a path such as "motor" or "robot/arm"; without a
     /// name, of the target as a whole.
-    constexpr explicit Tracer(Queue& queue, std::string_view name = {},
-                              std::string_view component = {})
-        : queue_{&queue}, parent_{nullptr}, name_{name}, component_{component} {}
+    constexpr explicit Tracer(Queue& queue, std::string_view name = {})
+        : queue_{&queue}, parent_{nullptr}, name_{name} {}
 
-    /// A tracer below `parent`, e.g. "motor/left" for "left", with the component of the
-    /// parent.
+    /// A tracer below `parent`, e.g. "motor/left" for "left".
     constexpr Tracer(const Tracer& parent, std::string_view name)
-        : parent_{&parent}, name_{name}, inherits_component_{true} {}
-
-    constexpr Tracer(const Tracer& parent, std::string_view name, std::string_view component)
-        : parent_{&parent}, name_{name}, component_{component} {}
+        : parent_{&parent}, name_{name} {}
 
     // proto: Message::Value of the trace `path` below the tracer, timestamped by the
     // clock of the queue or explicitly
@@ -577,7 +569,7 @@ public:
     // proto: Message::ValueMetadata, the unit of the trace `path` below the tracer
     Status unit(std::string_view path, std::string_view unit) const;
 
-    // proto: Message::Log at the name of the tracer, of its component
+    // proto: Message::Log at the name of the tracer
     Status log(Level level, std::string_view message) const;
     Status log(Timestamp timestamp, Level level, std::string_view message) const;
     /// printf-like, formatted into a buffer of SONDE_LOGF_MAX bytes on the stack, longer
@@ -598,10 +590,6 @@ public:
     constexpr Queue& queue() const { return parent_ != nullptr ? parent_->queue() : *queue_; }
     /// The name of the tracer below its parent.
     constexpr std::string_view name() const { return name_; }
-    /// The component of its log records, the one of its parent unless given.
-    constexpr std::string_view component() const {
-        return inherits_component_ ? parent_->component() : component_;
-    }
     constexpr const Tracer* parent() const { return parent_; }
 
 private:
@@ -622,8 +610,6 @@ private:
     Queue* queue_ = nullptr;
     const Tracer* parent_;
     std::string_view name_;
-    std::string_view component_;
-    bool inherits_component_ = false;
 };
 
 }  // namespace sonde

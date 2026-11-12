@@ -11,6 +11,7 @@ import websockets
 
 import blip_outpost
 from blip_outpost import LogHandler, LogLevel, Outpost, Unit
+from blip_outpost.proto import Message
 
 from blip_client import receive
 
@@ -27,7 +28,6 @@ def test_the_same_name_gives_the_same_tracer():
     motor = outpost.get_tracer("motor")
     assert outpost.get_tracer("motor") is motor
     assert outpost.get_tracer("/motor/") is motor
-    assert outpost.get_tracer("motor", component="driver") is not motor
     assert motor.child("left") is outpost.get_tracer("motor/left")
     assert motor.child("left").outpost is outpost
 
@@ -39,7 +39,7 @@ def test_the_module_tracers_use_the_outpost_of_the_module():
 def test_a_tracer_sends_below_its_name():
     outpost = Outpost()
     messages = sent(outpost)
-    motor = outpost.get_tracer("motor", component="driver")
+    motor = outpost.get_tracer("motor")
     motor.unit("speed", "rpm")
     motor.value("speed", 1432, timestamp_ns=5)
     motor.value("state", {"on": True}, timestamp_ns=6)
@@ -52,10 +52,10 @@ def test_a_tracer_sends_below_its_name():
     ]
 
 
-def test_a_tracer_logs_at_its_name_and_of_its_component():
+def test_a_tracer_logs_at_its_name():
     outpost = Outpost()
     messages = sent(outpost)
-    motor = outpost.get_tracer("motor", component="driver")
+    motor = outpost.get_tracer("motor")
     motor.info("homed", timestamp_ns=1)
     motor.warn("hot: %d °C", 71, timestamp_ns=2)
     motor.warning("%s", "50%", timestamp_ns=3)
@@ -63,23 +63,23 @@ def test_a_tracer_logs_at_its_name_and_of_its_component():
     motor.debug("100%", timestamp_ns=5)  # no args: not formatted
     motor.log(LogLevel.TRACE, "step", timestamp_ns=6)
     assert [m["Log"] for m in messages] == [
-        {"timestamp": 1, "path": "motor", "level": 2, "component": "driver", "message": "homed"},
-        {"timestamp": 2, "path": "motor", "level": 3, "component": "driver", "message": "hot: 71 °C"},
-        {"timestamp": 3, "path": "motor", "level": 3, "component": "driver", "message": "50%"},
-        {"timestamp": 4, "path": "motor/left", "level": 4, "component": "driver", "message": "stalled"},
-        {"timestamp": 5, "path": "motor", "level": 1, "component": "driver", "message": "100%"},
-        {"timestamp": 6, "path": "motor", "level": 0, "component": "driver", "message": "step"},
+        {"timestamp": 1, "path": "motor", "level": 2, "message": "homed"},
+        {"timestamp": 2, "path": "motor", "level": 3, "message": "hot: 71 °C"},
+        {"timestamp": 3, "path": "motor", "level": 3, "message": "50%"},
+        {"timestamp": 4, "path": "motor/left", "level": 4, "message": "stalled"},
+        {"timestamp": 5, "path": "motor", "level": 1, "message": "100%"},
+        {"timestamp": 6, "path": "motor", "level": 0, "message": "step"},
     ]
 
 
-def test_forwarded_logs_carry_their_path_and_component():
+def test_forwarded_logs_carry_their_path():
     outpost = Outpost()
     messages = sent(outpost)
-    outpost.log(3, "hot", path="node3/motor", component="driver", timestamp_ns=1)
+    outpost.log(3, "hot", path="node3/motor", timestamp_ns=1)
     outpost.log(LogLevel.INFO, "booted", timestamp_ns=2)
     assert [m["Log"] for m in messages] == [
-        {"timestamp": 1, "path": "node3/motor", "level": 3, "component": "driver", "message": "hot"},
-        {"timestamp": 2, "level": 2, "component": "", "message": "booted"},
+        {"timestamp": 1, "path": "node3/motor", "level": 3, "message": "hot"},
+        {"timestamp": 2, "level": 2, "message": "booted"},
     ]
 
 
@@ -251,11 +251,11 @@ def test_the_log_handler_sends_the_records_of_logging():
         logger.removeHandler(handler)
     # the outpost's own records are not sent
     handler.handle(logging.makeLogRecord({"name": "blip_outpost.server", "msg": "dropping", "levelno": 30}))
-    assert [(m["Log"]["level"], m["Log"]["component"], m["Log"]["path"], m["Log"]["message"]) for m in messages] == [
-        (1, "test_tracer.app", "app", "starting"),
-        (3, "test_tracer.app", "app", "disk 91% full"),
-        (4, "test_tracer.app", "app", "down"),
-        (0, "test_tracer.app", "app", "fine"),
+    assert [(m["Log"]["level"], m["Log"]["path"], m["Log"]["message"]) for m in messages] == [
+        (1, "app/test_tracer/app", "starting"),
+        (3, "app/test_tracer/app", "disk 91% full"),
+        (4, "app/test_tracer/app", "down"),
+        (0, "app/test_tracer/app", "fine"),
     ]
 
 
@@ -314,3 +314,42 @@ def test_a_series_of_dataclasses_sends_their_units_once():
         {"Value": {"timestamp": 10, "path": "pose", "value": {"x": 1.0, "y": 2.0}}},
         {"Value": {"timestamp": 15, "path": "pose", "value": {"x": 3.0, "y": 4.0}}},
     ]
+
+
+def logged(handler_path: str, logger_name: str) -> str:
+    outpost = Outpost()
+    messages = sent(outpost)
+    handler = LogHandler(path=handler_path, outpost=outpost)
+    handler.handle(logging.makeLogRecord({"name": logger_name, "msg": "x", "levelno": 20}))
+    return messages[0]["Log"].get("path", "")
+
+
+def test_the_log_handler_sends_loggers_below_log_by_default():
+    assert logged("", "app.motor") == "log/app/motor"
+    assert logged("", "app") == "log/app"
+    assert logged("robot", "app.motor") == "robot/app/motor"
+
+
+def test_the_root_logger_is_at_the_prefix_or_the_target_as_a_whole():
+    assert logged("", "root") == ""
+    assert logged("robot", "root") == "robot"
+
+
+def test_log_records_have_no_component():
+    outpost = Outpost()
+    messages = sent(outpost)
+    outpost.log(2, "hi", timestamp_ns=1)
+    assert messages == [{"Log": {"timestamp": 1, "level": 2, "message": "hi"}}]
+    assert "component" not in cbor2.loads(Message.create_log(2, "hi", 1, "a").encode_cbor())["Log"]
+
+
+def test_log_and_get_tracer_reject_a_component():
+    outpost = Outpost()
+    with pytest.raises(TypeError):
+        outpost.log(2, "hi", component="x")  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        blip_outpost.log(2, "hi", component="x")  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        outpost.get_tracer("motor", component="driver")  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        blip_outpost.get_tracer("motor", component="driver")  # type: ignore[call-arg]

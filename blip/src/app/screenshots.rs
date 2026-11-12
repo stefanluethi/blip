@@ -208,6 +208,22 @@ fn view_shot(name: &str, json: &str) {
 /// Renders the view of `json` on its own as [`view_shot`] does, with the last 20 s of
 /// `model`, and the pointer at `hover` if given.
 fn view_shot_of(name: &str, model: model::Model, json: &str, hover: Option<egui::Pos2>) {
+    view_shot_with(name, model, json, |harness| {
+        if let Some(at) = hover {
+            harness.hover_at(at);
+            // long enough for the tooltip to open
+            harness.run_steps(40);
+        }
+    });
+}
+
+/// Renders the view as [`view_shot_of`] does, after `act` acted on the harness.
+fn view_shot_with(
+    name: &str,
+    model: model::Model,
+    json: &str,
+    act: impl FnOnce(&mut Harness<'_, ViewShot>),
+) {
     let mut time = time::TimeRange::default();
     time.fit(&model);
     let latest = time.latest().expect("the recording has data");
@@ -252,11 +268,7 @@ fn view_shot_of(name: &str, model: model::Model, json: &str, hover: Option<egui:
         );
     theme::install(&harness.ctx);
     harness.run_steps(4);
-    if let Some(at) = hover {
-        harness.hover_at(at);
-        // long enough for the tooltip to open
-        harness.run_steps(40);
-    }
+    act(&mut harness);
     save_both(&mut harness, name);
 }
 
@@ -345,6 +357,32 @@ fn screenshots_views() {
         demo_model(),
         r#"{"name": "Thermal", "kind": {"Heatmap": {"traces": ["thermal/frame"]}}}"#,
         Some(VIEW.to_pos2() * 0.5),
+    );
+    // the filter of the path column, open, with records at several paths
+    let mut model = demo_model();
+    let (_, newest) = model.time_span().expect("the recording has data");
+    for (seconds, path, level, message) in [
+        (9, "log/imu", 3, "accelerometer saturated on z"),
+        (7, "log/motor/left", 2, "speed limit reached"),
+        (4, "log/motor/right", 4, "overcurrent 4.2 A"),
+    ] {
+        let record = proto::Message::Log(proto::LogRecord {
+            timestamp: newest - seconds * 1_000_000_000,
+            path: path.to_owned(),
+            level,
+            message: message.to_owned(),
+        });
+        model.receive("", &serde_cbor_2::to_vec(&record).expect("a record"));
+    }
+    view_shot_with(
+        "view-logs-path-filter",
+        model,
+        r#"{"name": "Log", "kind": {"Logs": {}}, "wildcards": [""]}"#,
+        |harness| {
+            let header = format!("Path {}", egui_phosphor::regular::CARET_DOWN);
+            harness.get_by_label(&header).click();
+            harness.run_steps(4);
+        },
     );
 }
 

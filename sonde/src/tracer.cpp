@@ -81,19 +81,19 @@ Status Tracer::unit(std::string_view path, std::string_view unit) const {
 
 Status Tracer::log(Level level, std::string_view message) const {
     return with_path({}, [&](Queue& queue, std::string_view full) {
-        return queue.log_with(nullptr, full, level, component(), message);
+        return queue.log_with(nullptr, full, level, message);
     });
 }
 
 Status Tracer::log(Timestamp timestamp, Level level, std::string_view message) const {
     return with_path({}, [&](Queue& queue, std::string_view full) {
-        return queue.log_with(&timestamp, full, level, component(), message);
+        return queue.log_with(&timestamp, full, level, message);
     });
 }
 
 Status Tracer::logv(Level level, const char* format, std::va_list args) const {
     return with_path({}, [&](Queue& queue, std::string_view full) {
-        return queue.logv(full, level, component(), format, args);
+        return queue.logv(full, level, format, args);
     });
 }
 

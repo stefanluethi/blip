@@ -211,7 +211,16 @@ fn reads_recordings_of_the_python_outpost() {
     assert!(
         matches!(&messages[0], proto::Message::ValueMetadata(metadata) if metadata.unit == "rpm")
     );
-    assert!(matches!(&messages[2], proto::Message::Log(record) if record.message == "hi"));
+    // a record of the time logs had a component, which is ignored
+    assert_eq!(
+        messages[2],
+        proto::Message::Log(proto::LogRecord {
+            timestamp: 2,
+            path: String::new(),
+            level: 2,
+            message: "hi".to_owned(),
+        })
+    );
 }
 
 #[test]

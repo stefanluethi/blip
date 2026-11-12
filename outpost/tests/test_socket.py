@@ -17,7 +17,7 @@ def messages() -> list[bytes]:
         Message.create_metadata("speed", "rpm").encode_cbor(),
         Message.create_value("speed", 1500, timestamp_ns=1_000_000).encode_cbor(),
         Message.create_value("imu", {"acc": [0.5, -1.0]}, timestamp_ns=2_000_000).encode_cbor(),
-        Message.create_log(1, "started", timestamp_ns=3_000_000, component="motor").encode_cbor(),
+        Message.create_log(1, "started", timestamp_ns=3_000_000, path="log/motor").encode_cbor(),
     ]
 
 

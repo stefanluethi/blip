@@ -44,7 +44,7 @@ Each call carries all of a message, as a script forwarding a target needs it:
 ```python
 outpost.value("motor", {"speed": 1432, "current": 2.1})      # a record: motor.speed, motor.current
 outpost.series("adc/raw", block, start_ns=t0, period_ns=50_000)
-outpost.log(LogLevel.WARN, "hot", path="node3/motor", component="driver")
+outpost.log(LogLevel.WARN, "hot", path="node3/motor")
 
 with outpost.batch(timestamp_ns=frame.t_ns):                 # handed over at once, one timestamp
     outpost.value("motor/speed", frame.speed)
@@ -59,16 +59,16 @@ unless given. What has a `tolist` method, e.g. a numpy array, is sent as what it
 ## Trace a Python program
 
 A program that traces itself gets tracers by name, as it gets loggers. Its traces are
-below the name, its log records at the name and of its component:
+below the name, and its log records at the name:
 
 ```python
-motor = outpost.get_tracer("motor", component="driver")     # the same one for the same name
+motor = outpost.get_tracer("motor")                                  # the same one for the same name
 motor.unit("speed", "rpm")
 motor.value("speed", 1432)                                  # motor/speed
-motor.warn("hot: %d °C", temperature)                       # a log record at motor, of driver
+motor.warn("hot: %d °C", temperature)                       # a log record at motor
 motor.child("left").value("current", 2.1)                   # motor/left/current
 
-logging.getLogger().addHandler(outpost.LogHandler())        # Python's logging, too
+logging.getLogger().addHandler(outpost.LogHandler())        # Python's logging, too: logger app.motor at log/app/motor
 ```
 
 A dataclass is a record; `Annotated[float, Unit("W")]` on a field sends its unit.
@@ -199,7 +199,7 @@ Messages sent in binary WebSocket frames match the Rust `proto` crate, see the
 
 - **Value**: `{ timestamp: int (ns), path: str, value: any }`, where `value` is a plain CBOR item: `None`, `int`, `float`, `bool`, `str`, a `list` of fixed length or a `dict` with `str` keys, nested freely
 - **ValueMetadata**: `{ path: str, unit: str }`
-- **LogRecord**: `{ timestamp: int (ns), level: int, component: str, message: str }`
+- **LogRecord**: `{ timestamp: int (ns), level: int, path: str (optional), message: str }`
 - **Actions**: the list of all actions and their parameters
 - **ActionResult**: `{ id: int, result: {"Ok": null} | {"Err": str} }`, the answer to an invocation
 - **Request** (blip to the outpost): `{"Invoke": { id: int, path: str, args: dict }}`

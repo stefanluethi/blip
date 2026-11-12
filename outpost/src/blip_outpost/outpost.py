@@ -101,7 +101,7 @@ class Outpost:
         self._local = threading.local()
         # the paths and dataclasses whose units are sent
         self._record_units: Set[Tuple[str, type]] = set()
-        self._tracers: Dict[Tuple[str, str], Tracer] = {}
+        self._tracers: Dict[str, Tracer] = {}
         self._tracers_lock = threading.Lock()
         self._flush_scheduled = False
         # set while a blip is connected
@@ -287,18 +287,16 @@ class Outpost:
         message: str,
         *,
         path: str = "",
-        component: str = "",
         timestamp_ns: Optional[int] = None,
     ) -> None:
         """Sends a log record of a `LogLevel`, or its number, timestamped now unless
         given (ns), see `target_time` and `batch`: at `path` like a trace, e.g.
-        ``motor``, or of the target as a whole without one, and of `component`, the
-        part of the software that wrote it, e.g. ``driver``. The message is sent as it
+        ``motor``, or of the target as a whole without one. The message is sent as it
         is."""
         timestamp_ns = self._resolve(timestamp_ns)
         if timestamp_ns is None:
             return
-        self._send_frame(Message.create_log(int(level), message, timestamp_ns, component, path).encode_cbor())
+        self._send_frame(Message.create_log(int(level), message, timestamp_ns, path).encode_cbor())
 
     def send(self, message: Union[Message, bytes]) -> None:
         """Sends a `Message`, or the bytes of complete messages: one or several one
@@ -468,16 +466,15 @@ class Outpost:
 
     # Tracers
 
-    def get_tracer(self, name: str = "", component: str = "") -> "Tracer":
+    def get_tracer(self, name: str = "") -> "Tracer":
         """The tracer `name` of this outpost, a path such as ``motor`` or
-        ``robot/arm``, whose log records are of `component`: the same tracer for the
-        same name and component, from anywhere in the program. See `Tracer`."""
+        ``robot/arm``, whose log records are at its name: the same tracer for the
+        same name, from anywhere in the program. See `Tracer`."""
         name = name.strip("/")
-        key = (name, component)
         with self._tracers_lock:
-            tracer = self._tracers.get(key)
+            tracer = self._tracers.get(name)
             if tracer is None:
-                tracer = self._tracers[key] = Tracer(self, name, component)
+                tracer = self._tracers[name] = Tracer(self, name)
         return tracer
 
     # Actions

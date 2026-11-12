@@ -86,7 +86,7 @@ SPECTRUM_SWEEP_SEC = 10.0
 THERMAL_SIZE = 8
 THERMAL_CIRCLE_SEC = 8.0
 
-# Background log messages: (weight, level, component, message template)
+# Background log messages: (weight, level, log path part, message template)
 _RANDOM_LOGS = [
     (30, TRACE, "sensor", "accelerometer sample {accel:.3f} m/s^2"),
     (20, DEBUG, "sensor", "accelerometer FIFO level {fifo}/32"),
@@ -296,7 +296,7 @@ class Simulator:
         """Sends a log record"""
         if not text.strip():
             raise ActionError("the text is empty")
-        self.outpost.log(level, text, component="user")
+        self.outpost.log(level, text, path="log/user")
 
     @action("imu/calibrate", confirm=True)
     async def calibrate_imu(self) -> None:
@@ -312,11 +312,11 @@ class Simulator:
         finally:
             self.outpost.actions.set_enabled(True, "imu/calibrate")
 
-    def _send_log(self, level: int, component: str, message: str) -> None:
+    def _send_log(self, level: int, part: str, message: str) -> None:
         """Sends a single log record, unless below the log level."""
         if level < self._log_level:
             return
-        self.outpost.log(level, message, component=component)
+        self.outpost.log(level, message, path=f"log/{part}")
 
     def _log_cpu_transitions(self, cpu_percentages: list[float]) -> None:
         """Log when a core's smoothed load enters or leaves the high-load range."""
@@ -335,7 +335,7 @@ class Simulator:
     def _send_random_log(self, accel_val: float) -> None:
         """Pick a weighted random background log message and send it."""
         self._seq += 1
-        _, level, component, template = random.choices(
+        _, level, part, template = random.choices(
             _RANDOM_LOGS, weights=[entry[0] for entry in _RANDOM_LOGS]
         )[0]
         message = template.format(
@@ -348,7 +348,7 @@ class Simulator:
             addr=0x19,
             flash_addr=random.randrange(0x08000000, 0x08100000, 0x100),
         )
-        self._send_log(level, component, message)
+        self._send_log(level, part, message)
 
 
 async def main(args: argparse.Namespace) -> None:

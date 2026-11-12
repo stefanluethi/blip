@@ -25,7 +25,7 @@ Everything a script needs is exported by the ``blip_outpost`` package:
      - hand what a thread sends in a block over at once, with one timestamp
    * - ``get_tracer``, ``Tracer``
      - a tracer by name, for a program that traces itself: paths below its
-       name, log records of its component, ``debug`` … ``error``
+       name, log records at it, ``debug`` … ``error``
    * - ``LogHandler``
      - sends the records of Python's ``logging`` to blip
    * - ``action``, ``register``

@@ -116,7 +116,7 @@ def test_the_timestamp_of_a_value_or_log_is_changed_in_place():
     value = Message.create_value("speed", 1.5, timestamp_ns=7).encode_cbor()
     assert cbor2.loads(retime(value, lambda t: t + 1_000_000_000_000))["Value"] == {
         "timestamp": 1_000_000_000_007, "path": "speed", "value": 1.5}
-    log = Message.create_log(2, "hi", timestamp_ns=1_000_000, component="motor").encode_cbor()
+    log = Message.create_log(2, "hi", timestamp_ns=1_000_000, path="log/motor").encode_cbor()
     assert cbor2.loads(retime(log, lambda t: t - 1))["Log"]["timestamp"] == 999_999
     # unchanged, the same bytes
     assert retime(value, lambda t: t) is value

@@ -328,7 +328,10 @@ class Translator:
             raw = getattr(message, f.name)
             component = f.enum_names.get(raw, str(raw)) if f.enum_names is not None else str(raw)
         text = str(getattr(message, plan.message.name)) if plan.message is not None else ""
-        self.outpost.log(level, text, path=path, component=component, timestamp_ns=t)
+        if component:
+            # the mapping's component is one more level of the path of the record
+            path = f"{path}/{component}" if path else f"log/{component}"
+        self.outpost.log(level, text, path=path, timestamp_ns=t)
 
     def _action_result(self, message: Any, plan: MessagePlan) -> None:
         if plan.action_id is None:

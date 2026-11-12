@@ -633,7 +633,6 @@ fn add_log(model: &mut Model, path: &str) {
         timestamp: 1,
         path: path.to_owned(),
         level: 2,
-        component: String::new(),
         message: "hi".to_owned(),
     });
     model.receive("", &serde_cbor_2::to_vec(&record).unwrap());
@@ -655,13 +654,38 @@ fn new_log_views_check_the_logs_of_all_paths_also_later_ones() {
     // without a path, of the target as a whole
     add_log(&mut harness.state_mut().0, "");
     harness.run();
-    assert_eq!(harness.state().1, set(&["log", "motor", "robot/arm"]));
+    assert_eq!(
+        harness.state().1,
+        set(&["log/default", "motor", "robot/arm"])
+    );
 
     // unchecking the logs of a path ends the wildcard
     harness.get_by_label("arm").click();
     harness.run();
-    assert_eq!(harness.state().1, set(&["log", "motor"]));
+    assert_eq!(harness.state().1, set(&["log/default", "motor"]));
     assert!(harness.state().2.is_empty());
+}
+
+#[test]
+fn checking_the_log_folder_picks_the_log_paths_below_it_also_later_ones() {
+    use egui_kittest::kittest::Queryable;
+
+    let mut model = Model::default();
+    for path in ["", "log/imu", "motor"] {
+        add_log(&mut model, path);
+    }
+    let mut harness = pick_harness(model, ViewType::Logs.into());
+    harness.get_by_label("log").click();
+    harness.run();
+    assert_eq!(harness.state().1, set(&["log/default", "log/imu"]));
+    assert_eq!(harness.state().2, set(&["/log"]));
+    add_log(&mut harness.state_mut().0, "log/motor/left");
+    add_log(&mut harness.state_mut().0, "other");
+    harness.run();
+    assert_eq!(
+        harness.state().1,
+        set(&["log/default", "log/imu", "log/motor/left"])
+    );
 }
 
 #[test]

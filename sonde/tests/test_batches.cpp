@@ -283,7 +283,7 @@ TEST_CASE("the clock is not read for a message without a batch") {
     CHECK(queue.value("a", 2u) == Status::Full);  // commits the first batch
     CHECK(clock_reads == 2);
     CHECK(queue.value("a", 3u) == Status::Full);
-    CHECK(queue.log(sonde::Level::Info, "", "x") == Status::Full);
+    CHECK(queue.log(sonde::Level::Info, "x") == Status::Full);
     CHECK(clock_reads == 2);
     CHECK(queue.value(sonde::Timestamp{0}, "a", 4u) == Status::Full);
     CHECK(clock_reads == 2);

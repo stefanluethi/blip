@@ -129,4 +129,4 @@ def report_restart(outpost: Any, clock: TargetClock, mapped: int) -> None:
             "from now on, to follow the ones before")
     logger.warning(text)
     # a warning of the target as a whole
-    outpost.log(LogLevel.WARN, text, component="outpost", timestamp_ns=mapped)
+    outpost.log(LogLevel.WARN, text, timestamp_ns=mapped)

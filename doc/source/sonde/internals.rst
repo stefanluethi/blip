@@ -83,14 +83,12 @@ Tracers
 -------
 
 A ``Tracer`` without a parent holds a pointer to its queue, a child one to its
-parent, which gives it the queue and, unless the child has its own, the
-component; both hold views of their name and component. A child's constructor
+parent, which gives it the queue; both hold a view of their name. A child's constructor
 only takes the address of its parent, so a static child is constant-initialized
 also when its parent is not ``constexpr``. A tracer owns nothing and its calls
 are ``const``, so any number of them may share a queue. Its calls join the full path -- the names of its parents, its own and
 the path of the call, separated by ``/`` -- into a buffer of ``SONDE_PATH_MAX``
-bytes on the stack and call the queue with it, and with its component for log
-records. A tracer without a parent passes the path on as it is when one of the
+bytes on the stack and call the queue with it. A tracer without a parent passes the path on as it is when one of the
 two is empty, without copying it. A full path longer than the buffer drops the
 message as ``TooLarge``, counted in ``dropped()`` of the queue.
 
@@ -108,7 +106,7 @@ The Catch2 tests compare the encoding of each message and kind of value byte
 for byte with the ``proto`` crate, check the batch rules (whole messages,
 ``Full``, ``TooLarge``, commits, drops), run a producer and a consumer on two
 threads (also under ThreadSanitizer), check that tracers send what the queue
-sends with their full paths and components, and check that ``FileSink`` writes the
+sends with their full paths, and check that ``FileSink`` writes the
 fixture ``tests/data/recording.blip``, which a Rust test in ``proto`` decodes
 and the outpost reads. CI also builds the library with ``-fno-exceptions
 -fno-rtti`` and for Cortex-M0 and M4 with ``arm-none-eabi-gcc``.

@@ -3,12 +3,12 @@
 Get a tracer by its name, a path, anywhere in the program; the same name gives the same
 tracer::
 
-    motor = blip_outpost.get_tracer("motor", component="driver")
+    motor = blip_outpost.get_tracer("motor")
     motor.unit("speed", "rpm")
     motor.value("speed", 1432)              # the trace motor/speed
-    motor.warn("hot: %d °C", temperature)   # a log record at motor, of driver
+    motor.warn("hot: %d °C", temperature)   # a log record at motor
 
-A tracer only adds its name to the paths and its component to the log records, and
+A tracer only adds its name to the paths, and
 sends with its outpost, see `Outpost.value`, `Outpost.log` and the others. Tracers may be
 created and used before the outpost serves, e.g. when a module is imported.
 """
@@ -33,28 +33,21 @@ def join_path(prefix: str, path: str) -> str:
 
 class Tracer:
     """Sends the traces and log records of a part of the program: its traces are below
-    its `name`, its log records at `name` and of its `component`. Get one with
+    its `name`, its log records at `name`. Get one with
     `get_tracer` or `Outpost.get_tracer`. It may be used from any thread."""
 
-    def __init__(self, outpost: "Outpost", name: str = "", component: str = "") -> None:
+    def __init__(self, outpost: "Outpost", name: str = "") -> None:
         self._outpost = outpost
         self._name = name
-        self._component = component
 
     def __repr__(self) -> str:
-        component = f" ({self._component})" if self._component else ""
-        return f"<Tracer {self._name or '/'}{component}>"
+        return f"<Tracer {self._name or '/'}>"
 
     @property
     def name(self) -> str:
         """The path the traces of this tracer are below, e.g. ``motor``; empty for the
         target as a whole."""
         return self._name
-
-    @property
-    def component(self) -> str:
-        """The component of the log records, the part of the software that writes them."""
-        return self._component
 
     @property
     def outpost(self) -> "Outpost":
@@ -64,12 +57,9 @@ class Tracer:
         """The full path of the trace `path` of this tracer."""
         return join_path(self._name, path)
 
-    def child(self, name: str, component: Optional[str] = None) -> "Tracer":
-        """The tracer `name` below this one, e.g. ``motor/left`` for ``left``, with the
-        component of this one unless given."""
-        return self._outpost.get_tracer(
-            join_path(self._name, name.strip("/")), self._component if component is None else component
-        )
+    def child(self, name: str) -> "Tracer":
+        """The tracer `name` below this one, e.g. ``motor/left`` for ``left``."""
+        return self._outpost.get_tracer(join_path(self._name, name.strip("/")))
 
     # Traces
 
@@ -103,16 +93,15 @@ class Tracer:
     # Log records
 
     def log(self, level: int, message: str, *args: Any, timestamp_ns: Optional[int] = None) -> None:
-        """Sends a log record of a `LogLevel` at the path of this tracer and of its
-        component. With `args`, the message is formatted with them as `logging` does,
-        ``message % args``, e.g. ``log(LogLevel.WARN, "hot: %d °C", t)``."""
+        """Sends a log record of a `LogLevel` at the path of this tracer. With `args`, the message is
+        formatted with them as `logging` does, ``message % args``, e.g. ``log(LogLevel.WARN, "hot: %d °C", t)``."""
         if args:
             # as logging does: a single mapping is the mapping of %(name)s
             if len(args) == 1 and isinstance(args[0], Mapping) and args[0]:
                 message = message % args[0]
             else:
                 message = message % args
-        self._outpost.log(level, message, path=self._name, component=self._component, timestamp_ns=timestamp_ns)
+        self._outpost.log(level, message, path=self._name, timestamp_ns=timestamp_ns)
 
     def debug(self, message: str, *args: Any, timestamp_ns: Optional[int] = None) -> None:
         self.log(LogLevel.DEBUG, message, *args, timestamp_ns=timestamp_ns)
@@ -170,8 +159,10 @@ def blip_level(levelno: int) -> LogLevel:
 
 
 class LogHandler(logging.Handler):
-    """Sends the records of Python's `logging` to blip, with the name of the logger as
-    the component, at `path`, or of the target as a whole without one::
+    """Sends the records of Python's `logging` to blip, at the name of the logger as
+    a path below `path`, ``log`` by default, with the dots as slashes: the logger
+    ``app.motor`` is at ``log/app/motor``. The root logger is at `path` if given, else at
+    the path of the target as a whole (blip shows it at ``log/default``)::
 
         logging.getLogger().addHandler(blip_outpost.LogHandler())
 
@@ -182,7 +173,13 @@ class LogHandler(logging.Handler):
     def __init__(self, path: str = "", outpost: Optional["Outpost"] = None, level: int = logging.NOTSET) -> None:
         super().__init__(level)
         self.path = path
+        self._prefix = path or "log"
         self._outpost = outpost
+
+    def _log_path(self, name: str) -> str:
+        if name == "root":
+            return self.path
+        return join_path(self._prefix, name.replace(".", "/"))
 
     def emit(self, record: logging.LogRecord) -> None:
         name = record.name
@@ -197,8 +194,7 @@ class LogHandler(logging.Handler):
             outpost.log(
                 blip_level(record.levelno),
                 self.format(record),
-                path=self.path,
-                component="" if name == "root" else name,
+                path=self._log_path(name),
             )
         except Exception:
             self.handleError(record)

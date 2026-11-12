@@ -22,8 +22,8 @@ Target to blip: ``Message``
      - ``path: String``, ``unit: String``
    * - ``Log``
      - ``timestamp: u64`` (ns), ``path: String`` (optional, left out when
-       empty), ``level: u8``, ``component: String`` (optional),
-       ``message: String``
+       empty), ``level: u8``, ``message: String``. A ``component`` key of an
+       older sender is ignored.
    * - ``Actions``
      - ``Vec<ActionDescriptor>``, all actions the target can carry out (see
        `Actions`_)

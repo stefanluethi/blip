@@ -66,6 +66,27 @@ Connections to targets and the wire protocol.
    sequence (RFC 8742), and apply them in their order. A frame that cannot be
    read to its end shall keep the messages before.
 
+.. req:: Log records
+   :id: REQ_PROTO_LOG
+   :status: implemented
+   :component: proto
+   :satisfies: STK_LIVE_OBSERVE
+   :rationale: The path tells the sources of log records apart, so a record
+      has no component. Old recordings and targets still send one.
+
+   A ``Log`` record shall carry a timestamp, a path that is left out when it
+   is empty, a level and a message, and no component. blip shall accept a
+   record that still has a ``component`` field and ignore the field.
+
+.. req:: Log API of sonde
+   :id: REQ_SONDE_LOG
+   :status: implemented
+   :component: sonde
+   :satisfies: STK_LIVE_OBSERVE, STK_DEVICE_IF
+
+   The log functions of the sonde library shall take no component. A log
+   record of a ``Tracer`` shall be at the name of the tracer.
+
 .. req:: Typed trace values
    :id: REQ_PROTO_TYPES
    :status: implemented

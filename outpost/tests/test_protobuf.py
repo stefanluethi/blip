@@ -161,15 +161,21 @@ def test_a_map_of_values_is_a_record_and_a_map_of_messages_a_level_per_key(schem
     assert t.counters["decode_errors"] == 0
 
 
-def test_log_records_take_level_component_and_text(schema):
+def test_log_records_take_level_text_and_the_component_as_a_path_level(schema):
     t, sent = translator(schema)
     log = schema.message_class("test.link.Log")
     t.feed(up(schema, log=log(t_ns=9, level=5, component=1, text="overflow")))
     logs = [m["Log"] for m in sent if "Log" in m]
     # blip has no FATAL; the path is the one of the field holding the record
     assert logs == [
-        {"timestamp": 9, "path": "items/log", "level": 4, "component": "imu", "message": "overflow"}
+        {"timestamp": 9, "path": "items/log/imu", "level": 4, "message": "overflow"}
     ]
+    assert all("component" not in log for log in logs)
+    # without a path, below log
+    t, sent = translator(schema)
+    plan = schema.plan("test.link.Log")
+    t._log(log(t_ns=9, level=2, component=1, text="x"), plan, "", 9)
+    assert [m["Log"]["path"] for m in sent if "Log" in m] == ["log/imu"]
 
 
 def test_action_results_go_to_the_callback(schema):

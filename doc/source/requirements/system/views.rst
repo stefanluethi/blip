@@ -19,8 +19,46 @@ What the views show and how blip displays values.
    :satisfies: STK_LIVE_OBSERVE
 
    blip shall display received ``Log`` messages in a table showing timestamp,
-   level, component and message. The date of the timestamp and the component
-   can be shown or hidden.
+   path, level and message. The date of the timestamp can be shown or hidden.
+
+.. req:: Log records without a path
+   :id: REQ_VIS_LOG_DEFAULT
+   :status: implemented
+   :component: blip
+   :satisfies: STK_LIVE_OBSERVE
+   :rationale: The path tells the sources of log records apart. A record
+      without one still needs a place in the tree of the traces.
+
+   blip shall show a log record that has no path at ``log/default``. blip
+   shall keep any other path exactly as the target sends it, so ``log/imu``
+   stays ``log/imu`` and ``motor`` stays ``motor``.
+
+.. req:: Pick log paths by folder
+   :id: REQ_VIS_LOG_PICK
+   :status: implemented
+   :component: blip
+   :satisfies: STK_LIVE_OBSERVE
+
+   When the user checks a folder of the tree of the traces, e.g. ``log``, a
+   log table shall show the records of all log paths below it, also of paths
+   that appear later.
+
+.. req:: Filter the log table by path
+   :id: REQ_VIS_LOG_PATH_FILTER
+   :status: implemented
+   :component: blip
+   :satisfies: STK_LIVE_OBSERVE
+   :rationale: With the component gone, the path is how the user narrows a
+      log table to some of its sources.
+
+   The header of the path column of a log table shall offer a filter like the
+   one of the level: a checkbox for each path of the shown records, written
+   relative to the folder all of them share (``default``, ``imu`` and
+   ``motor/left`` for ``log/default``, ``log/imu`` and ``log/motor/left``), and
+   buttons to check all or none. The paths the user unchecked
+   shall be saved with the layout, so that paths that appear later are shown.
+   Clearing the filters of the table shall also clear the path filter. A layout
+   saved with hidden components shall load without them and without a notice.
 
 .. req:: Show states over time
    :id: REQ_VIS_STATES

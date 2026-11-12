@@ -82,7 +82,6 @@ class Value:
 class LogRecord:
     timestamp: int  # Nanoseconds in the producer's time domain
     level: int
-    component: str
     message: str
     # Where the record comes from, e.g. "motor"; empty for the target as a whole
     path: str = ""
@@ -93,7 +92,6 @@ class LogRecord:
         if self.path:
             record["path"] = self.path
         record["level"] = self.level
-        record["component"] = self.component
         record["message"] = self.message
         return record
 
@@ -137,7 +135,6 @@ class Message:
         level: int,
         message: str,
         timestamp_ns: Optional[int] = None,
-        component: str = "",
         path: str = "",
     ) -> "Message":
         if timestamp_ns is None:
@@ -147,7 +144,6 @@ class Message:
             data=LogRecord(
                 timestamp=timestamp_ns,
                 level=level,
-                component=component,
                 message=message,
                 path=path,
             )

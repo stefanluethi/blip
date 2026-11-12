@@ -77,7 +77,7 @@ the reference for scripts with asyncio and for actions as methods
      - string
      - on change
 
-It also sends log records of a few components at all levels, every
+It also sends log records at a few paths below ``log`` at all levels, every
 ``--log-interval-ms`` (500 ms) on average, and a warning when the load of a
 core stays high. Its actions:
 

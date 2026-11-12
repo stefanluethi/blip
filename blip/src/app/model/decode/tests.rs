@@ -128,7 +128,6 @@ fn logs_are_read_and_other_messages_decoded_with_serde() {
         timestamp: 3,
         path: "robot/arm".to_owned(),
         level: 4,
-        component: "motor".to_owned(),
         message: "hot".to_owned(),
     }));
     let mut flat = Flat::default();
@@ -138,7 +137,6 @@ fn logs_are_read_and_other_messages_decoded_with_serde() {
             timestamp: 3,
             path: "robot/arm",
             level: 4,
-            component: "motor",
             message: "hot"
         }
     );
@@ -147,17 +145,13 @@ fn logs_are_read_and_other_messages_decoded_with_serde() {
         timestamp: 3,
         path: String::new(),
         level: 4,
-        component: String::new(),
         message: "hot".to_owned(),
     }));
     assert!(matches!(
         decode(&pathless, &mut flat).unwrap(),
-        Message::Log {
-            path: "",
-            component: "",
-            ..
-        }
+        Message::Log { path: "", .. }
     ));
+
     let unit = proto::Message::ValueMetadata(proto::ValueMetadata {
         path: "rpm".to_owned(),
         unit: "1/min".to_owned(),
@@ -166,6 +160,35 @@ fn logs_are_read_and_other_messages_decoded_with_serde() {
     assert_eq!(
         decode(&frame(&unit), &mut flat).unwrap(),
         Message::Other(unit)
+    );
+}
+
+#[test]
+fn a_component_of_an_old_log_record_is_skipped() {
+    #[derive(serde::Serialize)]
+    enum OldMessage {
+        Log {
+            timestamp: u64,
+            level: u8,
+            component: &'static str,
+            message: &'static str,
+        },
+    }
+    let old = serde_cbor_2::to_vec(&OldMessage::Log {
+        timestamp: 3,
+        level: 4,
+        component: "motor",
+        message: "hot",
+    })
+    .unwrap();
+    assert_eq!(
+        decode(&old, &mut Flat::default()).unwrap(),
+        Message::Log {
+            timestamp: 3,
+            path: "",
+            level: 4,
+            message: "hot"
+        }
     );
 }
 

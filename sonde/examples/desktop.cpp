@@ -16,13 +16,14 @@ int main(int argc, char** argv) {
     }
     sonde::Storage<4096, 1> storage;
     sonde::Queue queue{storage, file};  // UTC from the system clock
-    sonde::Tracer oscillator{queue, "oscillator", "model"};
+    sonde::Tracer oscillator{queue, "oscillator"};
+    sonde::Tracer oscillator_log{queue, "log/oscillator"};  // its log records
 
     // simulated time, 1 ms per step from now on
     const std::uint64_t start = sonde::default_clock()();
     oscillator.unit("position", "m");
     oscillator.unit("velocity", "m/s");
-    oscillator.log(sonde::Timestamp{start}, sonde::Level::Info, "started");
+    oscillator_log.log(sonde::Timestamp{start}, sonde::Level::Info, "started");
 
     double position = 1.0;
     double velocity = 0.0;
@@ -42,7 +43,7 @@ int main(int argc, char** argv) {
         if (step % 1000 == 0) {
             char message[64];
             std::snprintf(message, sizeof message, "step %d: x = %.3f", step, position);
-            oscillator.log(now, sonde::Level::Debug, message);
+            oscillator_log.log(now, sonde::Level::Debug, message);
         }
     }
     queue.commit();  // before the file closes

@@ -18,7 +18,7 @@ Your script talks to the target and passes on what it decodes::
 
 A Python program that traces itself gets tracers by name, as loggers::
 
-    motor = outpost.get_tracer("motor", component="driver")
+    motor = outpost.get_tracer("motor")
     motor.value("speed", 1432)           # the trace motor/speed
     motor.info("homed")                  # a log record at motor, of driver
 
@@ -146,12 +146,11 @@ def log(
     message: str,
     *,
     path: str = "",
-    component: str = "",
     timestamp_ns: Optional[int] = None,
 ) -> None:
-    """Sends a log record of a `LogLevel` at `path` and of `component`, timestamped now
+    """Sends a log record of a `LogLevel` at `path`, timestamped now
     unless given (ns), see `Outpost.log`."""
-    _outpost.log(level, message, path=path, component=component, timestamp_ns=timestamp_ns)
+    _outpost.log(level, message, path=path, timestamp_ns=timestamp_ns)
 
 
 def send(message: Union[Message, bytes]) -> None:
@@ -165,11 +164,11 @@ def batch(timestamp_ns: Optional[int] = None) -> ContextManager[None]:
     return _outpost.batch(timestamp_ns)
 
 
-def get_tracer(name: str = "", component: str = "") -> Tracer:
+def get_tracer(name: str = "") -> Tracer:
     """The tracer `name` of the outpost of the module, a path such as ``motor``, whose
-    log records are of `component`; the same name gives the same tracer. See
+    log records are at its name; the same name gives the same tracer. See
     `Tracer`."""
-    return _outpost.get_tracer(name, component)
+    return _outpost.get_tracer(name)
 
 
 def drain() -> None:

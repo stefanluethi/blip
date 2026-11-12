@@ -31,7 +31,7 @@ The blip-outpost library and command line.
    :satisfies: STK_DEVICE_IF, STK_LIVE_OBSERVE
 
    Each call of the outpost to send shall carry all of a message, its full
-   path and, for a log record, its level, path and component, so a script
+   path and, for a log record, its level and path, so a script
    forwards what a target sends without declaring anything first. The
    outpost shall send many samples of one trace at once, at their timestamps
    or at a fixed period, and hand all that a thread sends in a block over at
@@ -45,10 +45,23 @@ The blip-outpost library and command line.
 
    A Python program that traces itself shall get tracers by name, as it gets
    loggers: the same name gives the same tracer anywhere in the program, its
-   traces are below its name, and its log records are at its name and of its
-   component, with the levels as methods. A dataclass shall be sent as a
-   record, with the units its fields declare, and the records of Python's
-   ``logging`` shall reach blip with the name of the logger as the component.
+   traces are below its name, and its log records are at its name, with
+   the levels as methods. A dataclass shall be sent as a record, with the units
+   its fields declare.
+
+.. req:: Log records from Python logging
+   :id: REQ_OUTPOST_LOGGING
+   :status: implemented
+   :component: outpost
+   :satisfies: STK_DEVICE_IF, STK_LIVE_OBSERVE
+
+   The records of Python's ``logging`` shall reach blip at the name of the
+   logger as a path below a prefix, ``log`` by default, with the dots of the name
+   as slashes: the logger ``app.motor`` is at ``log/app/motor``. The root
+   logger shall send an empty path, or the prefix when one is given. The outpost shall append the component
+   that its protobuf mapping reads from a message to the path of the record as
+   one more level. The outpost shall take no component for the records it
+   sends otherwise.
 
 .. req:: Socket outpost
    :id: REQ_OUTPOST_SOCKET

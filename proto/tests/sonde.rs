@@ -20,12 +20,11 @@ fn value(timestamp: u64, path: &str, value: Data) -> Message {
     })
 }
 
-fn log(timestamp: u64, path: &str, level: u8, component: &str, message: &str) -> Message {
+fn log(timestamp: u64, path: &str, level: u8, message: &str) -> Message {
     Message::Log(LogRecord {
         timestamp,
         path: path.to_owned(),
         level,
-        component: component.to_owned(),
         message: message.to_owned(),
     })
 }
@@ -98,9 +97,9 @@ fn decodes_a_recording_of_sonde() {
         ),
         value(3 * ms, "offset", Data::Int(-42)),
         value(3 * ms, "ratio", Data::Float(0.1)),
-        log(3 * ms, "robot/arm", 2, "motor", "started"),
-        log(3 * ms, "", 3, "", "no component"),
-        log(3 * ms, "", 4, "adc", "overrun 3"),
+        log(3 * ms, "robot/arm", 2, "started"),
+        log(3 * ms, "", 3, "no path"),
+        log(3 * ms, "", 4, "overrun 3"),
         value(
             3 * ms,
             "adc/samples",
@@ -119,10 +118,6 @@ fn decodes_a_recording_of_sonde() {
 #[test]
 fn sonde_encodes_as_serde_does() {
     for (message, bytes) in messages() {
-        // sonde leaves out an empty component, which has a default
-        if matches!(&message, Message::Log(log) if log.component.is_empty()) {
-            continue;
-        }
         assert_eq!(
             serde_cbor_2::to_vec(&message).unwrap(),
             bytes,

@@ -88,8 +88,8 @@ Tests of the requirements in :doc:`/requirements/system/outpost`.
 
    ``outpost/tests/test_tracer.py`` -- the same name gives the same tracer, its
    traces, actions and readbacks are below its name and its log records at
-   its name and of its component, formatted as ``logging`` does; forwarded
-   log records carry their own path and component; a dataclass is a record
+   its name, formatted as ``logging`` does; forwarded log records carry
+   their own path, and ``log`` and the tracer take no component; a dataclass is a record
    whose units are sent once per path, also of the fields whose annotations
    resolve when others do not; numpy-like values are sent as lists; a series
    is sent at its timestamps or its period; a batch is handed over at its end,
@@ -109,3 +109,20 @@ Tests of the requirements in :doc:`/requirements/system/outpost`.
    -- the motor follows its setpoint and rejects it while disabled, the log
    level filters log records and is sent as its readback, and the
    calibration is disabled while it runs.
+
+.. test:: Python logging is sent at paths
+   :id: TEST_OUTPOST_LOGGING
+   :status: implemented
+   :component: outpost
+   :verifies: REQ_OUTPOST_LOGGING
+
+   ``outpost/tests/test_tracer.py::test_the_log_handler_sends_loggers_below_log_by_default``
+   -- ``LogHandler`` sends the logger ``app.motor`` at ``log/app/motor`` with
+   the default prefix and at ``robot/app/motor`` below a prefix that is set;
+   ``test_the_root_logger_is_at_the_prefix_or_the_target_as_a_whole`` -- the
+   root logger is at an empty path, or at the prefix when one is set;
+   ``test_log_records_have_no_component`` -- an encoded record has no
+   ``component``; and
+   ``outpost/tests/test_protobuf.py::test_log_records_take_level_text_and_the_component_as_a_path_level``
+   -- the protobuf mapping appends the value of its component field to the
+   path as one more level, below ``log`` when the path is empty.

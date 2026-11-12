@@ -14,8 +14,8 @@ use std::sync::Arc;
 pub struct LogFilter {
     /// The levels whose entries are hidden.
     pub hidden_levels: BTreeSet<LogLevel>,
-    /// The components whose entries are hidden, so that new components show.
-    pub hidden_components: BTreeSet<String>,
+    /// The whole paths whose entries are hidden.
+    pub hidden_paths: BTreeSet<String>,
     pub message_regex: String,
     pub case_sensitive: bool,
     pub auto_scroll: bool,
@@ -25,7 +25,7 @@ impl Default for LogFilter {
     fn default() -> Self {
         Self {
             hidden_levels: BTreeSet::new(),
-            hidden_components: BTreeSet::new(),
+            hidden_paths: BTreeSet::new(),
             message_regex: String::new(),
             case_sensitive: false,
             auto_scroll: true,
@@ -34,11 +34,10 @@ impl Default for LogFilter {
 }
 
 impl LogFilter {
-    /// Whether any entries are hidden by the filters, of the components only if
-    /// `components` are shown.
-    fn is_active(&self, components: bool) -> bool {
+    /// Whether any entries are hidden by the filters.
+    fn is_active(&self) -> bool {
         !self.hidden_levels.is_empty()
-            || components && !self.hidden_components.is_empty()
+            || !self.hidden_paths.is_empty()
             || !self.message_regex.is_empty()
     }
 
@@ -53,22 +52,11 @@ impl LogFilter {
 
 /// Which columns besides the level and the message the table shows, set in the
 /// properties panel.
-#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Debug, PartialEq)]
+#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Debug, Default, PartialEq)]
 #[serde(default)]
 pub struct LogColumns {
     /// Whether the time shows the date too, of times in Unix time.
     pub date: bool,
-    /// Whether the component and its filter show. Its filter hides nothing while not.
-    pub component: bool,
-}
-
-impl Default for LogColumns {
-    fn default() -> Self {
-        Self {
-            date: false,
-            component: true,
-        }
-    }
 }
 
 #[derive(serde::Deserialize, serde::Serialize, Clone, Default)]
@@ -124,8 +112,6 @@ struct ShownPath {
     order: Version,
     /// How many of its entries were filtered.
     filtered: usize,
-    /// How many of them the filter shows.
-    shown: usize,
 }
 
 /// The entries of the paths of [`ShownFor::paths`], by the indices of
@@ -159,9 +145,7 @@ impl LogTable {
 
     /// Whether the filter shows `entry`, an entry of a shown path.
     pub fn matches(&self, entry: &LogEntry) -> bool {
-        if self.filter.hidden_levels.contains(&entry.level)
-            || self.columns.component && self.filter.hidden_components.contains(&entry.component)
-        {
+        if self.filter.hidden_levels.contains(&entry.level) {
             return false;
         }
         match self.compiled_regex.as_deref() {
@@ -188,8 +172,7 @@ impl LogTable {
         // without whether to scroll, which shows the same entries
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         let filter = &self.filter;
-        self.columns.component.hash(&mut hasher);
-        (&filter.hidden_levels, &filter.hidden_components).hash(&mut hasher);
+        (&filter.hidden_levels, &filter.hidden_paths).hash(&mut hasher);
         (&filter.message_regex, filter.case_sensitive).hash(&mut hasher);
         let filter = hasher.finish();
 
@@ -218,7 +201,6 @@ impl LogTable {
                     path: known.path.clone(),
                     order: entries.order(),
                     filtered: 0,
-                    shown: 0,
                 };
             }
         }
@@ -237,7 +219,6 @@ impl LogTable {
                         path: path.clone(),
                         order: entries.order(),
                         filtered: 0,
-                        shown: 0,
                     });
                     slots.push(entries);
                 }
@@ -246,13 +227,15 @@ impl LogTable {
 
         let mut new = Vec::new();
         for (slot, (known, entries)) in paths.iter_mut().zip(&slots).enumerate() {
-            for (index, entry) in entries.entries.iter().enumerate().skip(known.filtered) {
-                if self.matches(entry) {
-                    new.push(ShownEntry {
-                        path: slot as u32,
-                        index: index as u32,
-                    });
-                    known.shown += 1;
+            // all entries of a hidden path are hidden
+            if !self.filter.hidden_paths.contains(&*known.path) {
+                for (index, entry) in entries.entries.iter().enumerate().skip(known.filtered) {
+                    if self.matches(entry) {
+                        new.push(ShownEntry {
+                            path: slot as u32,
+                            index: index as u32,
+                        });
+                    }
                 }
             }
             known.filtered = entries.entries.len();
@@ -277,14 +260,6 @@ impl LogTable {
         self.shown_for.as_ref().map_or(&[], |shown| &shown.paths)
     }
 
-    /// Whether the shown entries are of several paths, so that the path tells them apart.
-    fn shows_several_paths(&self) -> bool {
-        (self.shown_paths().iter())
-            .filter(|path| path.shown > 0)
-            .count()
-            > 1
-    }
-
     /// Shows the entries, the ones outside the shown time range greyed out, with the
     /// filters in the header of the table.
     pub fn ui(&mut self, ui: &mut egui::Ui, logs: &Logs, time: &TimeRange) {
@@ -304,10 +279,10 @@ impl LogTable {
                 let row_height = theme::table_row_height(ui, &egui::TextStyle::Monospace, 1);
                 let lines = theme::TableLines::new(ui, true);
 
-                // the path tells the entries apart only if they are of several paths
-                let with_path = self.shows_several_paths();
+                // the paths are written relative to the folder they share
+                let folder = common_folder_len(self.shown_paths().iter().map(|shown| &*shown.path));
                 let columns = self.columns;
-                // the time, level, path and component take only what they need, the
+                // the time, level and path take only what they need, the
                 // message the rest
                 let mut builder = theme::table(ui)
                     .id_salt("log entries")
@@ -315,14 +290,9 @@ impl LogTable {
                     // the footer stays at the bottom, also with few entries
                     .auto_shrink([false, false])
                     .column(Column::auto().resizable(false)) // Timestamp
-                    .column(Column::auto().resizable(false)); // Log Level
-                if with_path {
-                    builder = builder.column(Column::auto().resizable(false)); // Path
-                }
-                if columns.component {
-                    builder = builder.column(Column::auto().resizable(false)); // Component
-                }
-                builder = builder.column(Column::remainder().at_least(150.0)); // Message
+                    .column(Column::auto().resizable(false)) // Log Level
+                    .column(Column::auto().resizable(false)) // Path
+                    .column(Column::remainder().at_least(150.0)); // Message
 
                 let range = time.range();
                 let timestamps = time.timestamps();
@@ -361,16 +331,9 @@ impl LogTable {
                         header.col(|ui| {
                             self.level_filter_ui(ui);
                         });
-                        if with_path {
-                            header.col(|ui| {
-                                header_title(ui, "Path");
-                            });
-                        }
-                        if columns.component {
-                            header.col(|ui| {
-                                self.component_filter_ui(ui, &slots);
-                            });
-                        }
+                        header.col(|ui| {
+                            self.path_filter_ui(ui, folder);
+                        });
                         header.col(|ui| {
                             self.message_filter_ui(ui);
                         });
@@ -384,14 +347,14 @@ impl LogTable {
                             let path = &paths[shown_entries[index].path as usize].path;
                             let entry = entry(&slots, shown_entries[index]);
                             let shown = in_range(entry);
-                            // the message stands out, the time and the component less,
+                            // the message stands out, the time and the path less,
                             // and all of an entry outside the time range stays faint
                             let text = |text: &str, ui: &egui::Ui, role: Role| {
                                 let tokens = ui.tokens();
                                 let color = match role {
                                     _ if !shown => tokens.text_faint,
                                     Role::Time => tokens.text_faint,
-                                    Role::Path | Role::Component => ui.visuals().weak_text_color(),
+                                    Role::Path => ui.visuals().weak_text_color(),
                                     Role::Message => ui.visuals().text_color(),
                                 };
                                 egui::RichText::new(text).monospace().color(color)
@@ -409,16 +372,12 @@ impl LogTable {
                             row.col(|ui| {
                                 level_badge(ui, entry.level, shown);
                             });
-                            if with_path {
-                                row.col(|ui| {
-                                    ui.label(text(path, ui, Role::Path));
-                                });
-                            }
-                            if columns.component {
-                                row.col(|ui| {
-                                    ui.label(text(&entry.component, ui, Role::Component));
-                                });
-                            }
+                            row.col(|ui| {
+                                let label = ui.label(text(&path[folder..], ui, Role::Path));
+                                if folder > 0 {
+                                    label.on_hover_text(&**path);
+                                }
+                            });
                             row.col(|ui| {
                                 ui.label(text(&entry.message, ui, Role::Message));
                             });
@@ -457,7 +416,7 @@ impl LogTable {
             };
             ui.label(egui::RichText::new(count).small().weak());
 
-            if self.filter.is_active(self.columns.component)
+            if self.filter.is_active()
                 && ui
                     .add(egui::Button::new(egui::RichText::new("Clear filters").small()).small())
                     .clicked()
@@ -490,26 +449,31 @@ impl LogTable {
         });
     }
 
-    /// The header of the component column, with checkboxes for the components of the
-    /// shown paths, `slots`.
-    fn component_filter_ui(&mut self, ui: &mut egui::Ui, slots: &[&PathLogs]) {
-        let hidden = &mut self.filter.hidden_components;
-        filter_header(ui, "Component", !hidden.is_empty(), |ui| {
-            let components: BTreeSet<&str> = (slots.iter())
-                .flat_map(|path| &path.entries)
-                .map(|entry| entry.component.as_str())
-                .collect();
-            if components.is_empty() {
-                theme::panel_hint(ui, "No components yet");
+    /// The header of the path column, with checkboxes for the paths with records. The
+    /// paths are written without the `folder` bytes they share.
+    fn path_filter_ui(&mut self, ui: &mut egui::Ui, folder: usize) {
+        let listed: BTreeSet<&str> = (self.shown_for.as_deref())
+            .map_or(&[][..], |shown| &shown.paths)
+            .iter()
+            .map(|shown| &*shown.path)
+            .collect();
+        let hidden = &mut self.filter.hidden_paths;
+        filter_header(ui, "Path", !hidden.is_empty(), |ui| {
+            if listed.is_empty() {
+                theme::panel_hint(ui, "No records yet");
                 return;
             }
             egui::ScrollArea::vertical()
                 .max_height(300.0)
                 .show(ui, |ui| {
-                    for &component in &components {
-                        let mut shown = !hidden.contains(component);
-                        if ui.checkbox(&mut shown, component).changed() {
-                            super::set_member(hidden, component, !shown);
+                    for &path in &listed {
+                        let mut shown = !hidden.contains(path);
+                        let checkbox = ui.checkbox(&mut shown, &path[folder..]);
+                        if folder > 0 {
+                            checkbox.clone().on_hover_text(path);
+                        }
+                        if checkbox.changed() {
+                            super::set_member(hidden, path, !shown);
                         }
                     }
                 });
@@ -517,7 +481,7 @@ impl LogTable {
                 if show {
                     hidden.clear();
                 } else {
-                    hidden.extend(components.iter().map(|&c| c.to_owned()));
+                    hidden.extend(listed.iter().map(|&path| path.to_owned()));
                 }
             });
         });
@@ -603,12 +567,6 @@ impl Viewable for LogTable {
                 &mut self.columns.date,
                 "Show the date with the time, of times in Unix time",
             );
-            super::checkbox_row(
-                ui,
-                "Component",
-                &mut self.columns.component,
-                "Show the component of the entries, to filter by it",
-            );
         });
     }
 }
@@ -629,6 +587,32 @@ fn merge<T: Copy>(known: Vec<T>, new: Vec<T>, time: impl Fn(&T) -> u64) -> Vec<T
     merged.extend(known);
     merged.extend(new);
     merged
+}
+
+/// The byte length, with the trailing `/`, of the longest folder that all of `paths`
+/// are in: the longest run of whole segments that is a prefix of the parents of all.
+/// 0 if there is none.
+fn common_folder_len<'a>(paths: impl IntoIterator<Item = &'a str>) -> usize {
+    let mut folder: Option<&str> = None;
+    for path in paths {
+        // the parent with its trailing `/`
+        let parent = path.rfind('/').map_or("", |at| &path[..=at]);
+        folder = Some(match folder {
+            None => parent,
+            Some(common) => {
+                let mut len = 0;
+                for (at, _) in common.match_indices('/') {
+                    if parent.starts_with(&common[..=at]) {
+                        len = at + 1;
+                    } else {
+                        break;
+                    }
+                }
+                &common[..len]
+            }
+        });
+    }
+    folder.map_or(0, str::len)
 }
 
 /// The title of a column without a filter, in the font of the other titles.
@@ -713,7 +697,6 @@ fn badge_size(ui: &egui::Ui) -> egui::Vec2 {
 enum Role {
     Time,
     Path,
-    Component,
     Message,
 }
 

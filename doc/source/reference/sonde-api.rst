@@ -20,7 +20,7 @@ Summary
        one per context that traces
    * - ``Tracer``
      - a named part of the code on a queue: paths below its name, log records
-       at its name and of its component
+       at its name
    * - ``Storage<BatchBytes, Batches = 2>``
      - the batches of one queue, static or on the stack, owned by you
    * - ``Sink``

@@ -166,8 +166,9 @@ What happens to a message on its way into the model:
   far (or the wall clock if there is none), so it lines up with the samples
   of its target. Should the first timestamp then be in another time base,
   e.g. an uptime, such records move to it. Levels above 4 count as errors, a record without a path is
-  at the path ``log``, and a record without a component shows the component
-  ``target``.
+  at the path ``log/default``. Log records have no component: the part that
+  wrote one is in its path, by convention ``log/<part>``. A ``component`` key
+  of an old recording is ignored when decoding.
 * **Recording versus receiving.** Samples are kept only while recording.
   What a target sends only once or seldom -- its units and its actions -- is
   kept regardless, as the latest **description** per source and path.

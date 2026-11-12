@@ -84,7 +84,7 @@ async def test_it_sends_what_is_due_once():
     assert all(len(v["value"]) == 4 and all(len(row) == 4 for row in v["value"])
                for v in by_path["fast/frame"])
     assert len(logs) == 50
-    assert all(set(log) == {"timestamp", "level", "component", "message"} for log in logs)
+    assert all(set(log) == {"timestamp", "path", "level", "message"} for log in logs)
     assert [log["timestamp"] for log in logs] == sorted(log["timestamp"] for log in logs)
     assert protocol.messages == len(sent) == 300 + 10 + 10 + 50
 

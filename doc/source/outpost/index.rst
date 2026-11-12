@@ -88,7 +88,7 @@ passes it on. Its actions are functions that write to the target:
            fields = dict(item.split("=") for item in line.split())
            outpost.value("motor/speed_rpm", int(fields["speed"]))
            if fields["fault"] != "0":
-               outpost.log(LogLevel.ERROR, f"fault {fields['fault']}", component="motor")
+               outpost.log(LogLevel.ERROR, f"fault {fields['fault']}", path="log/motor")
 
 
    main()
@@ -100,7 +100,7 @@ Sending to blip
 ~~~~~~~~~~~~~~~
 
 Each call carries all of a message: the full path, and for a log record the
-level, the path and the component, as the target sent them. Nothing needs to be
+level and the path, as the target sent them. Nothing needs to be
 declared first.
 
 .. list-table::
@@ -124,10 +124,10 @@ declared first.
    * - ``unit(path, unit)``
      - the unit of a trace; for a record field, the path joined with ``.``,
        e.g. ``imu.acc``
-   * - ``log(level, message, path="", component="", timestamp_ns=None)``
+   * - ``log(level, message, path="", timestamp_ns=None)``
      - a log record of a ``LogLevel`` or its number, at ``path`` like a trace,
-       e.g. ``motor``, or without one of the target as a whole, and of
-       ``component``, the part of the software that wrote it
+       by convention ``log/<part>``, e.g. ``log/motor``, or without one:
+       blip shows it at ``log/default``
    * - ``send(message)``
      - a ``Message``, or the bytes of complete messages, e.g. as received
        from a target that speaks the blip protocol
@@ -173,7 +173,7 @@ first needed:
            outpost.value("motor", {"speed": frame.speed, "current": frame.current})
            outpost.value("battery/voltage", frame.vbat)
            for record in frame.logs:
-               outpost.log(record.level, record.text, path=record.node, component=record.module)
+               outpost.log(record.level, record.text, path=f"log/{record.module}")
 
 Batches nest, the outermost one hands over. What was sent is handed over also
 when the block raises. A batch belongs to its thread: in asyncio code, don't
@@ -319,7 +319,7 @@ Tracing a Python program
 
 A program that traces itself, e.g. a service on a Linux machine, gets
 **tracers** by name, as it gets loggers. The name is a path; the traces of a
-tracer are below it, and its log records are at it and of its component. The
+tracer are below it, and its log records are at it. The
 same name gives the same tracer anywhere in the program, so each module gets
 its own when it is imported, also before the outpost serves:
 
@@ -327,12 +327,12 @@ its own when it is imported, also before the outpost serves:
 
    import blip_outpost as outpost
 
-   motor = outpost.get_tracer("motor", component="driver")
+   motor = outpost.get_tracer("motor")
    left = motor.child("left")                     # motor/left
 
    motor.unit("speed", "rpm")
    motor.value("speed", 1432)                     # the trace motor/speed
-   motor.info("homed")                            # a log record at motor, of driver
+   motor.info("homed")                            # a log record at motor
    motor.warn("hot: %d °C", temperature)          # formatted as logging does
    left.series("current", block, start_ns=t0, period_ns=50_000)
 
@@ -369,7 +369,9 @@ fields are declared with ``Unit`` and sent with its first sample at a path:
    # heater/state.power in W, heater/state.duty in %, heater/state.on
 
 The records of Python's ``logging`` reach blip with a ``LogHandler``, the name
-of the logger as the component, at ``path`` if given:
+of the logger below a prefix, ``log`` unless ``path`` is given: the logger
+``app.motor`` sends to ``log/app/motor``. The root logger sends with an empty
+path, shown at ``log/default``, or at ``path`` if given:
 
 .. code-block:: python
 

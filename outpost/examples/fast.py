@@ -53,7 +53,7 @@ NOISE = 0.05
 SPECTRUM_SWEEP_SEC = 10.0
 FRAME_CIRCLE_SEC = 8.0
 
-# Background log records: (weight, level, component, message template). Every
+# Background log records: (weight, level, log path part, message template). Every
 # LONG_LOG_EVERY-th record is a long one
 _LOGS = [
     (30, LogLevel.TRACE, "sensor", "sample {n} read in {us} us"),
@@ -330,7 +330,7 @@ class Fast:
     async def _send_logs(self, end_s: float) -> None:
         until = due(end_s, self.log_rate_hz)
         for k in range(self._next_log, until):
-            _, level, component, template = random.choices(_LOGS, cum_weights=_LOG_WEIGHTS)[0]
+            _, level, part, template = random.choices(_LOGS, cum_weights=_LOG_WEIGHTS)[0]
             message = template.format(
                 n=k,
                 us=random.randint(10, 5000),
@@ -345,8 +345,8 @@ class Fast:
                 )
             record = {
                 "timestamp": self._stamp(k / self.log_rate_hz),
+                "path": f"log/{part}",
                 "level": int(level),
-                "component": component,
                 "message": message,
             }
             await self._emit(cbor2.dumps({"Log": record}))

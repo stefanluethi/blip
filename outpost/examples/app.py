@@ -17,12 +17,12 @@ from typing import Annotated, List
 import blip_outpost as outpost
 from blip_outpost import Range, Unit
 
-# the program's own logging, sent to blip with the logger's name as the component
+# the program's own logging, sent to blip at log/ and the logger's name
 logger = logging.getLogger("heater.app")
 
 # tracers by name, as loggers, e.g. at the top of each module
 room = outpost.get_tracer("room")
-heater = outpost.get_tracer("heater", component="controller")
+heater = outpost.get_tracer("heater")
 sensor = room.child("sensor")  # room/sensor
 
 

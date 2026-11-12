@@ -60,3 +60,30 @@ Tests of the requirements in :doc:`/requirements/system/connectivity`.
    after a restart of a protobuf or socket target and those of the bridge,
    log it, keep a clock per host, and drop untimed values, also of the script,
    before the first timestamp.
+
+.. test:: Log records have no component
+   :id: TEST_PROTO_LOG
+   :status: implemented
+   :component: proto
+   :verifies: REQ_PROTO_LOG
+
+   ``proto/tests/log.rs`` and ``proto/tests/sonde.rs`` tests, and the
+   ``blip/src/app/model/decode`` and ``blip/src/app/model/recording`` unit tests
+   -- checks that a ``LogRecord`` without a component round-trips
+   with its timestamp, path, level and message, that an empty path is left
+   out, and that a record encoded with a ``component`` field still decodes and
+   the field is ignored.
+
+.. test:: Sonde logs without a component
+   :id: TEST_SONDE_LOG
+   :status: implemented
+   :component: sonde
+   :verifies: REQ_SONDE_LOG
+
+   ``sonde/tests/test_encoding.cpp`` (``logs have no component and leave out
+   an empty path``) -- checks the encoded ``Log`` map of ``Queue::log`` with and
+   without a path and a timestamp: it has no ``component`` key.
+   ``sonde/tests/test_tracer.cpp`` (``a log of a tracer is at its name and has
+   no component key``, ``a tracer logs at its name, without a component``) --
+   checks that a ``Tracer`` record, also of a child, is at its full name and has
+   no ``component`` key, and equals the record of ``Queue::log`` at that path.

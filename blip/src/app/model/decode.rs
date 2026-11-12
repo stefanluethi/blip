@@ -20,7 +20,6 @@ pub enum Message<'b> {
         /// Empty if the record has none.
         path: &'b str,
         level: u8,
-        component: &'b str,
         message: &'b str,
     },
     Other(proto::Message),
@@ -328,8 +327,7 @@ fn value<'b>(
 }
 
 fn log<'b>(reader: &mut Reader<'b>) -> cbor::Result<Message<'b>> {
-    let (mut timestamp, mut path, mut level, mut component, mut message) =
-        (None, "", None, "", None);
+    let (mut timestamp, mut path, mut level, mut message) = (None, "", None, None);
     fields(reader, |reader, name| {
         match name {
             "timestamp" => timestamp = Some(reader.u64()?),
@@ -338,7 +336,6 @@ fn log<'b>(reader: &mut Reader<'b>) -> cbor::Result<Message<'b>> {
                 let value = reader.u64()?;
                 level = Some(u8::try_from(value).map_err(|_| error(reader, "level above 255"))?);
             }
-            "component" => component = reader.str()?,
             "message" => message = Some(reader.str()?),
             _ => reader.skip()?,
         }
@@ -349,7 +346,6 @@ fn log<'b>(reader: &mut Reader<'b>) -> cbor::Result<Message<'b>> {
             timestamp,
             path,
             level,
-            component,
             message,
         }),
         _ => Err(error(reader, "a Log lacks a field")),

@@ -72,7 +72,7 @@ First trace
 
 A **queue** holds the batches of one context that traces. **Tracers** on it are
 the named parts of the code, as loggers: the traces of a tracer are below its
-name, its log records at its name and of its component.
+name, its log records at its name.
 
 .. code-block:: cpp
 
@@ -80,13 +80,13 @@ name, its log records at its name and of its component.
 
    static sonde::Storage<512, 2> storage;              // 2 batches of 512 bytes
    static sonde::Queue queue{storage, &uptime_ns};     // your clock, in ns
-   static sonde::Tracer motor{queue, "motor", "driver"};
-   static sonde::Tracer left{motor, "left"};           // motor/left, of driver
+   static sonde::Tracer motor{queue, "motor"};
+   static sonde::Tracer left{motor, "left"};           // motor/left
 
    motor.unit("speed", "rpm");
    motor.value("speed", 1500u);                        // the trace motor/speed
    motor.value("temperature", sonde::null);            // failed measurement, a gap in the plot
-   motor.info("started");                              // a log record at motor, of driver
+   motor.info("started");                              // a log record at motor
    motor.warnf("overcurrent: %d mA", current_ma);
    left.value("current", 1.2f);                        // motor/left/current
 
@@ -110,22 +110,22 @@ nothing written). ``queue.dropped()`` counts the dropped messages.
    * - ``log(level, message)``, ``log(timestamp, level, message)``,
        ``logf(level, format, …)``, ``debug`` … ``error(message)``,
        ``debugf`` … ``errorf(format, …)``
-     - ``Log`` at the name of the tracer, of its component; without a name,
+     - ``Log`` at the name of the tracer; without a name,
        of the target as a whole
 
 A tracer is a few pointers: any number of them may share a queue, and a child,
-``Tracer{parent, "left"}``, has the component of its parent unless given.
+``Tracer{parent, "left"}``, sends below its parent.
 ``Tracer{queue}`` without a name sends the paths as they are. A tracer keeps
-views of its name and component, so their strings have to outlive it, as
+a view of its name, so its string has to outlive it, as
 string literals do.
 
 The queue has the same calls with the full path, and log records with their
-path and component, e.g. for a gateway that passes on what other nodes send:
+path, e.g. for a gateway that passes on what other nodes send:
 
 .. code-block:: cpp
 
    queue.value(sonde::Timestamp{t}, "node3/motor/speed", speed);
-   queue.log(sonde::Timestamp{t}, "node3/motor", sonde::Level::Warn, "driver", "hot");
+   queue.log(sonde::Timestamp{t}, "log/node3", sonde::Level::Warn, "hot");
    queue.unit("node3/motor/speed", "rpm");
 
 It also has ``commit()``, which makes the open batch ready to send, and the

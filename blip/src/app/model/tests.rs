@@ -13,26 +13,33 @@ fn paths_are_kept_as_the_outposts_send_them() {
             value: proto::Data::Uint(1),
         }))
     };
-    let log = frame(&proto::Message::Log(proto::LogRecord {
-        timestamp: 1,
-        path: "robot/arm".to_owned(),
-        level: 2,
-        component: "motor".to_owned(),
-        message: "hi".to_owned(),
-    }));
+    let log = |path: &str| {
+        frame(&proto::Message::Log(proto::LogRecord {
+            timestamp: 1,
+            path: path.to_owned(),
+            level: 2,
+            message: "hi".to_owned(),
+        }))
+    };
     let mut model = Model::default();
     model.receive("", &value("cpu"));
     model.receive("a", &value("cpu"));
     model.receive("b", &value("cpu"));
-    model.receive("b", &log);
+    model.receive("b", &log("robot/arm"));
+    model.receive("b", &log(""));
+    model.receive("b", &log("motor"));
     // the same path from several outposts is one trace
     assert_eq!(model.traces.iter().count(), 1);
     assert_eq!(model.traces.get("cpu").unwrap().timestamps.len(), 3);
     assert_eq!(
-        model.logs.get("robot/arm").unwrap().entries[0].component,
-        "motor"
+        model.logs.get("robot/arm").unwrap().entries[0].message,
+        "hi"
     );
-    assert_eq!(model.recording.messages(), 4);
+    assert_eq!(
+        model.logs.paths().collect::<Vec<_>>(),
+        ["log/default", "motor", "robot/arm"]
+    );
+    assert_eq!(model.recording.messages(), 6);
 }
 
 #[test]
@@ -62,7 +69,6 @@ fn activity_is_counted_per_bin_with_records_once() {
             timestamp,
             path: path.to_owned(),
             level,
-            component: String::new(),
             message: "hi".to_owned(),
         }))
     };
@@ -179,7 +185,6 @@ fn the_origin_is_the_first_timestamp_a_target_sent() {
             timestamp,
             path: String::new(),
             level: 2,
-            component: String::new(),
             message: "hi".to_owned(),
         }))
     };
@@ -213,7 +218,6 @@ fn samples_of_another_time_base_than_the_origin_are_dropped() {
             timestamp: utc,
             path: String::new(),
             level: 2,
-            component: String::new(),
             message: "hi".to_owned(),
         })),
     );
@@ -231,7 +235,6 @@ fn samples_of_another_time_base_than_the_origin_are_dropped() {
             timestamp: 0,
             path: String::new(),
             level: 2,
-            component: String::new(),
             message: "booting".to_owned(),
         })),
     );
@@ -337,7 +340,6 @@ fn samples_are_dropped_while_not_recording() {
         timestamp: 1,
         path: String::new(),
         level: 2,
-        component: "motor".to_owned(),
         message: "hi".to_owned(),
     }));
     let metadata = frame(&proto::Message::ValueMetadata(proto::ValueMetadata {

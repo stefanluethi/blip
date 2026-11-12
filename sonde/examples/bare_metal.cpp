@@ -40,8 +40,8 @@ namespace {
 sonde::Storage<1400, 4> control_storage;
 sonde::Queue control_traces{control_storage, &uptime_ns};
 // the parts of the control task, each with a tracer of its own on its queue
-sonde::Tracer motor{control_traces, "motor", "driver"};
-sonde::Tracer pid{motor, "pid", "control"};  // motor/pid
+sonde::Tracer motor{control_traces, "motor"};
+sonde::Tracer pid{motor, "pid"};  // motor/pid
 Pid pid_state{};
 }  // namespace
 

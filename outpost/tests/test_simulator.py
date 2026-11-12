@@ -59,10 +59,10 @@ async def test_simulator_outpost_logs():
 
             assert len(logs) >= 3, "Simulator did not emit log records"
             for log in logs:
-                assert set(log) == {"timestamp", "level", "component", "message"}
+                assert set(log) == {"timestamp", "path", "level", "message"}
                 assert isinstance(log["timestamp"], int) and log["timestamp"] > 0
                 assert 0 <= log["level"] <= 4
-                assert log["component"]
+                assert log["path"].startswith("log/")
                 assert log["message"]
 
 
