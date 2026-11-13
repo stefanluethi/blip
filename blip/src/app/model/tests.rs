@@ -7,7 +7,7 @@ fn frame(message: &proto::Message) -> Vec<u8> {
 #[test]
 fn paths_are_kept_as_the_outposts_send_them() {
     let value = |path: &str| {
-        frame(&proto::Message::Value(proto::Value {
+        frame(&proto::Message::Sample(proto::Sample {
             timestamp: 1,
             path: path.to_owned(),
             value: proto::Data::Uint(1),
@@ -45,7 +45,7 @@ fn paths_are_kept_as_the_outposts_send_them() {
 #[test]
 fn activity_is_counted_per_bin_with_records_once() {
     let value = |timestamp: u64, path: &str, value: proto::Data| {
-        frame(&proto::Message::Value(proto::Value {
+        frame(&proto::Message::Sample(proto::Sample {
             timestamp,
             path: path.to_owned(),
             value,
@@ -129,14 +129,14 @@ fn actions_are_kept_with_their_source_and_answers_returned() {
 #[ignore = "a benchmark, run with `cargo test --release -p blip ingest -- --ignored --nocapture`"]
 fn ingest_rate() {
     let scalar = |timestamp: u64, path: &str| {
-        frame(&proto::Message::Value(proto::Value {
+        frame(&proto::Message::Sample(proto::Sample {
             timestamp,
             path: path.to_owned(),
             value: proto::Data::Float(timestamp as f64 * 0.5),
         }))
     };
     let imu = |timestamp: u64| {
-        frame(&proto::Message::Value(proto::Value {
+        frame(&proto::Message::Sample(proto::Sample {
             timestamp,
             path: "sensors/imu".to_owned(),
             value: proto::Data::Record(vec![
@@ -194,7 +194,7 @@ fn the_origin_is_the_first_timestamp_a_target_sent() {
     assert_eq!(model.origin(), None);
     model.receive(
         "a",
-        &frame(&proto::Message::Value(proto::Value {
+        &frame(&proto::Message::Sample(proto::Sample {
             timestamp: 5_000_000_000,
             path: "rpm".to_owned(),
             value: proto::Data::Uint(1),
@@ -249,7 +249,7 @@ fn samples_of_another_time_base_than_the_origin_are_dropped() {
 }
 
 fn value(timestamp: u64, path: &str, value: proto::Data) -> Vec<u8> {
-    frame(&proto::Message::Value(proto::Value {
+    frame(&proto::Message::Sample(proto::Sample {
         timestamp,
         path: path.to_owned(),
         value,
@@ -274,7 +274,7 @@ fn readback_value(model: &Model, path: &str) -> Option<String> {
     Some(
         trace
             .samples
-            .format(last, 4, None, numbers::DisplayFormat::Default),
+            .format(last, 4, None, numbers::DisplayFormat::Default, None),
     )
 }
 
@@ -331,7 +331,7 @@ fn values_hold_their_fields_and_elements() {
 
 #[test]
 fn samples_are_dropped_while_not_recording() {
-    let value = frame(&proto::Message::Value(proto::Value {
+    let value = frame(&proto::Message::Sample(proto::Sample {
         timestamp: 1,
         path: "rpm".to_owned(),
         value: proto::Data::Uint(1),
@@ -342,9 +342,10 @@ fn samples_are_dropped_while_not_recording() {
         level: 2,
         message: "hi".to_owned(),
     }));
-    let metadata = frame(&proto::Message::ValueMetadata(proto::ValueMetadata {
+    let metadata = frame(&proto::Message::TraceMetadata(proto::TraceMetadata {
         path: "rpm".to_owned(),
         unit: "rpm".to_owned(),
+        ..Default::default()
     }));
     let actions = frame(&proto::Message::Actions(vec![]));
     let result = proto::ActionResult {
@@ -374,12 +375,13 @@ fn samples_are_dropped_while_not_recording() {
 #[test]
 fn clearing_keeps_the_latest_units_and_actions_and_records_them_again() {
     let unit = |unit: &str| {
-        frame(&proto::Message::ValueMetadata(proto::ValueMetadata {
+        frame(&proto::Message::TraceMetadata(proto::TraceMetadata {
             path: "rpm".to_owned(),
             unit: unit.to_owned(),
+            ..Default::default()
         }))
     };
-    let value = frame(&proto::Message::Value(proto::Value {
+    let value = frame(&proto::Message::Sample(proto::Sample {
         timestamp: 1,
         path: "rpm".to_owned(),
         value: proto::Data::Uint(1),
@@ -412,4 +414,266 @@ fn clearing_keeps_the_latest_units_and_actions_and_records_them_again() {
         recorded,
         [("a".to_owned(), unit("1/min")), ("b".to_owned(), actions)]
     );
+}
+
+fn block(path: &str, values: Vec<proto::Data>, times: proto::SampleTimes) -> proto::Samples {
+    proto::Samples {
+        path: path.to_owned(),
+        values,
+        times,
+    }
+}
+
+/// The timestamps and values of the numbers at `path`, as text to compare NaNs.
+fn series_of(model: &Model, path: &str) -> (Vec<u64>, Vec<String>) {
+    let series = model.traces.series(path).unwrap();
+    let values = (0..series.len())
+        .map(|index| series.value(index).to_string())
+        .collect();
+    (series.timestamps.to_vec(), values)
+}
+
+/// Models that received the block, and its samples one by one.
+fn block_and_samples(block: &proto::Samples) -> (Model, Model) {
+    let (mut blocks, mut singles) = (Model::default(), Model::default());
+    blocks.receive("a", &frame(&proto::Message::Samples(block.clone())));
+    for sample in block.to_samples() {
+        singles.receive("a", &frame(&proto::Message::Sample(sample)));
+    }
+    (blocks, singles)
+}
+
+#[test]
+fn blocks_give_the_traces_of_single_samples() {
+    use proto::Data::{Null, Uint};
+    let adc = block(
+        "adc",
+        vec![Uint(1), Null, Uint(3)],
+        proto::SampleTimes::Period {
+            timestamp: 1000,
+            period: 10,
+        },
+    );
+    let (blocks, singles) = block_and_samples(&adc);
+    let (timestamps, values) = series_of(&blocks, "adc");
+    assert_eq!(timestamps, [1000, 1010, 1020]);
+    assert_eq!(values, ["1", "NaN", "3"]);
+    assert_eq!(series_of(&singles, "adc"), (timestamps, values));
+    let record = |x, y| {
+        proto::Data::Record(
+            [("x", x), ("y", y)]
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), Uint(value)))
+                .collect(),
+        )
+    };
+    let imu = block(
+        "imu",
+        vec![record(1, 2), record(3, 4)],
+        proto::SampleTimes::Each(vec![5, 7]),
+    );
+    let (blocks, singles) = block_and_samples(&imu);
+    for path in ["imu.x", "imu.y"] {
+        assert_eq!(series_of(&blocks, path), series_of(&singles, path));
+        assert_eq!(series_of(&blocks, path).0, [5, 7]);
+    }
+}
+
+#[test]
+fn a_malformed_block_is_dropped_alone() {
+    use super::super::toasts::Level;
+    // a block with both a period and timestamps, written by hand
+    let mut both = vec![0xa1, 0x67];
+    both.extend(b"Samples");
+    both.extend([0xa5, 0x64]);
+    both.extend(b"path");
+    both.push(0x63);
+    both.extend(b"bad");
+    both.push(0x66);
+    both.extend(b"values");
+    both.extend([0x81, 0x01, 0x69]);
+    both.extend(b"timestamp");
+    both.extend([0x01, 0x66]);
+    both.extend(b"period");
+    both.extend([0x01, 0x6a]);
+    both.extend(b"timestamps");
+    both.extend([0x81, 0x01]);
+    let mut sequence = frame(&proto::Message::Log(proto::LogRecord {
+        timestamp: 10,
+        path: String::new(),
+        level: 2,
+        message: "hi".to_owned(),
+    }));
+    sequence.extend(&both);
+    sequence.extend(value(20, "rpm", proto::Data::Uint(5)));
+    let mut model = Model::default();
+    for item in cbor::items(&sequence) {
+        model.receive("a", item.unwrap());
+    }
+    assert_eq!(model.logs.entries().count(), 1);
+    assert!(model.traces.get("rpm").is_some());
+    assert!(model.traces.get("bad").is_none());
+    assert_eq!(
+        model.take_notices(),
+        [(
+            Level::Error,
+            "Dropped a malformed block of samples from a".to_owned()
+        )]
+    );
+    assert_eq!(model.take_notices(), []);
+    model.receive("", &both);
+    assert_eq!(
+        model.take_notices(),
+        [(
+            Level::Error,
+            "Dropped a malformed block of samples".to_owned()
+        )]
+    );
+}
+
+#[test]
+fn an_empty_block_gives_nothing() {
+    let empty = block(
+        "adc",
+        vec![],
+        proto::SampleTimes::Period {
+            timestamp: 1,
+            period: 1,
+        },
+    );
+    let mut model = Model::default();
+    model.receive("a", &frame(&proto::Message::Samples(empty)));
+    assert!(model.traces.get("adc").is_none());
+    assert_eq!(model.take_notices(), []);
+    assert_eq!(model.time_span(), None);
+}
+
+#[test]
+fn the_latest_value_of_a_block_is_its_last() {
+    use proto::Data::Uint;
+    let mut model = Model::default();
+    model.receive_unrecorded("a", &announce("adc"));
+    let adc = block(
+        "adc",
+        vec![Uint(1), Uint(2), Uint(3)],
+        proto::SampleTimes::Each(vec![1, 2, 3]),
+    );
+    model.receive_unrecorded("a", &frame(&proto::Message::Samples(adc)));
+    assert_eq!(readback_value(&model, "adc").as_deref(), Some("3"));
+    assert_eq!(model.readback_samples(Some("adc")), 1);
+}
+
+fn hello(clock: Option<proto::Clock>) -> Vec<u8> {
+    frame(&proto::Message::Hello(proto::Hello {
+        version: 1,
+        name: None,
+        clock,
+        sender: None,
+    }))
+}
+
+fn log_at(timestamp: u64) -> Vec<u8> {
+    frame(&proto::Message::Log(proto::LogRecord {
+        timestamp,
+        path: String::new(),
+        level: 2,
+        message: "hi".to_owned(),
+    }))
+}
+
+#[test]
+fn a_declared_clock_decides_the_time_base() {
+    use proto::Clock;
+    let uint = proto::Data::Uint(1);
+    let mut model = Model::default();
+    model.receive("a", &hello(Some(Clock::Boot)));
+    model.receive("a", &value(1_700_000_000_000_000_000, "rpm", uint.clone()));
+    assert_eq!(model.time_base(), Some(TimeBase::SinceBoot));
+    assert!(model.traces.get("rpm").is_some());
+
+    let mut model = Model::default();
+    model.receive("a", &hello(Some(Clock::Epoch)));
+    assert_eq!(model.time_base(), Some(TimeBase::Unix));
+    model.receive("a", &value(5_000_000_000, "rpm", uint.clone()));
+    assert_eq!(model.time_base(), Some(TimeBase::Unix));
+    assert!(model.traces.get("rpm").is_some());
+
+    // without a Hello the value guesses
+    let mut model = Model::default();
+    model.receive("a", &value(999_999_999_999_999_999, "rpm", uint.clone()));
+    assert_eq!(model.time_base(), Some(TimeBase::SinceBoot));
+    let mut model = Model::default();
+    model.receive("a", &value(1_000_000_000_000_000_000, "rpm", uint.clone()));
+    assert_eq!(model.time_base(), Some(TimeBase::Unix));
+
+    // a Hello without a clock replaces the one with it, so the source is guessed again
+    let mut model = Model::default();
+    model.receive("a", &hello(Some(Clock::Boot)));
+    model.receive("a", &hello(None));
+    model.receive("a", &value(1_700_000_000_000_000_000, "rpm", uint));
+    assert_eq!(model.time_base(), Some(TimeBase::Unix));
+}
+
+#[test]
+fn different_clocks_share_the_utc_axis() {
+    use proto::Clock;
+    let uint = proto::Data::Uint(1);
+    let notice = (
+        toasts::Level::Warning,
+        "Connections send different clocks: blip shows the time of day and drops the data \
+         timed since boot"
+            .to_owned(),
+    );
+    let mut model = Model::default();
+    model.receive("a", &hello(Some(Clock::Boot)));
+    model.receive("a", &value(5_000_000_000, "rpm", uint.clone()));
+    model.receive("a", &value(6_000_000_000, "rpm", uint.clone()));
+    model.receive("a", &log_at(5_000_000_000));
+    assert!(model.take_notices().is_empty());
+    model.receive("b", &hello(Some(Clock::Epoch)));
+    assert_eq!(model.time_span(), None);
+    assert!(model.traces.get("rpm").is_none());
+    assert_eq!(model.logs.paths().next(), None);
+    assert_eq!(model.time_base(), Some(TimeBase::Unix));
+    assert_eq!(model.take_notices(), [notice]);
+
+    model.receive("a", &value(7_000_000_000, "rpm", uint.clone()));
+    assert!(model.traces.get("rpm").is_none());
+    model.receive("b", &value(1_700_000_000_000_000_000, "temp", uint.clone()));
+    assert!(model.traces.get("temp").is_some());
+    model.receive("b", &hello(Some(Clock::Epoch)));
+    assert!(model.take_notices().is_empty());
+
+    // a new recording starts with the Hellos, without a notice
+    model.clear();
+    assert!(model.take_notices().is_empty());
+    assert_eq!(model.time_base(), Some(TimeBase::Unix));
+
+    // the same clock twice is no conflict
+    let mut model = Model::default();
+    model.receive("a", &hello(Some(Clock::Boot)));
+    model.receive("b", &hello(Some(Clock::Boot)));
+    assert!(model.take_notices().is_empty());
+
+    // the first sample sets the axis as its Hello declares
+    let mut model = Model::default();
+    model.receive("a", &hello(Some(Clock::Boot)));
+    model.receive("a", &value(1_700_000_000_000_000_000, "rpm", uint));
+    assert_eq!(model.time_base(), Some(TimeBase::SinceBoot));
+}
+
+#[test]
+fn a_record_at_0_follows_the_newest_data() {
+    let mut model = Model::default();
+    model.receive("a", &value(7_000_000_000, "rpm", proto::Data::Uint(1)));
+    model.receive("a", &log_at(0));
+    assert_eq!(model.logs.entries().next().unwrap().time, 7_000_000_000);
+}
+
+#[test]
+fn a_record_at_0_without_data_shows_the_time_of_day() {
+    let mut model = Model::default();
+    model.receive("a", &log_at(0));
+    assert!(model.logs.entries().next().unwrap().time >= 1_000_000_000_000_000_000);
+    assert_eq!(model.time_base(), Some(TimeBase::Unix));
 }

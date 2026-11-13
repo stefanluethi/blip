@@ -1,7 +1,7 @@
 use super::*;
 
 fn frame(timestamp: u64) -> Vec<u8> {
-    serde_cbor_2::to_vec(&proto::Message::Value(proto::Value {
+    serde_cbor_2::to_vec(&proto::Message::Sample(proto::Sample {
         timestamp,
         path: "a".to_owned(),
         value: proto::Data::Uint(timestamp),
@@ -202,14 +202,14 @@ fn reads_recordings_of_the_python_outpost() {
         .collect();
     assert_eq!(
         messages[1],
-        proto::Message::Value(proto::Value {
+        proto::Message::Sample(proto::Sample {
             timestamp: 1,
             path: "speed".to_owned(),
             value: proto::Data::Uint((1 << 53) + 1),
         })
     );
     assert!(
-        matches!(&messages[0], proto::Message::ValueMetadata(metadata) if metadata.unit == "rpm")
+        matches!(&messages[0], proto::Message::TraceMetadata(metadata) if metadata.unit == "rpm")
     );
     // a record of the time logs had a component, which is ignored
     assert_eq!(
@@ -221,6 +221,90 @@ fn reads_recordings_of_the_python_outpost() {
             message: "hi".to_owned(),
         })
     );
+}
+
+#[test]
+fn recordings_are_written_as_version_3() {
+    let file = Recording::default().to_file();
+    let mut plain = vec![];
+    MultiGzDecoder::new(Cursor::new(file))
+        .read_to_end(&mut plain)
+        .unwrap();
+    assert_eq!(read_header(&plain).unwrap().0.version, 3);
+    let mut recording = Recording::default();
+    recording.push("a", &frame(1));
+    let (frames, loaded) = read_sourced(&recording.to_file());
+    assert_eq!(loaded.unwrap().problem, None);
+    assert_eq!(frames, [("a".to_owned(), frame(1))]);
+}
+
+#[test]
+fn recordings_of_versions_1_to_3_are_read() {
+    let encode = |message: proto::Message| serde_cbor_2::to_vec(&message).unwrap();
+    let metadata = encode(proto::Message::TraceMetadata(proto::TraceMetadata {
+        path: "a".to_owned(),
+        unit: "rpm".to_owned(),
+        ..Default::default()
+    }));
+    let hello = encode(proto::Message::Hello(proto::Hello {
+        version: 1,
+        ..Default::default()
+    }));
+    let block = encode(proto::Message::Samples(proto::Samples {
+        path: "b".to_owned(),
+        values: vec![proto::Data::Uint(1), proto::Data::Uint(2)],
+        times: proto::SampleTimes::Each(vec![1, 2]),
+    }));
+    // the version 1 names of a sample and of the metadata
+    #[derive(serde::Serialize)]
+    enum Old {
+        Value(proto::Sample),
+        ValueMetadata { path: String, unit: String },
+    }
+    let old = |message: Old| serde_cbor_2::to_vec(&message).unwrap();
+    let old_value = old(Old::Value(proto::Sample {
+        timestamp: 1,
+        path: "a".to_owned(),
+        value: proto::Data::Uint(1),
+    }));
+    let old_metadata = old(Old::ValueMetadata {
+        path: "a".to_owned(),
+        unit: "rpm".to_owned(),
+    });
+    let text = serde_cbor_2::to_vec(&"x").unwrap();
+    let file = |version: u32, parts: &[&[u8]]| {
+        let mut file = serde_cbor_2::to_vec(&Header {
+            format: FORMAT.to_owned(),
+            version,
+        })
+        .unwrap();
+        parts.iter().for_each(|part| file.extend(*part));
+        file
+    };
+    let files = [
+        (1, file(1, &[&old_value, &old_metadata]), 0),
+        (2, file(2, &[&text, &old_value, &old_metadata]), 0),
+        (
+            3,
+            file(3, &[&text, &hello, &frame(1), &block, &metadata]),
+            2,
+        ),
+    ];
+    for (version, file, in_b) in files {
+        let mut model = crate::app::model::Model::default();
+        let loaded = read_file(&file, |source, frame| {
+            model.receive(source, frame);
+        });
+        assert_eq!(loaded.unwrap().problem, None, "version {version}");
+        assert_eq!(model.traces.get("a").unwrap().timestamps.len(), 1);
+        assert_eq!(model.traces.unit("a"), Some("rpm"));
+        let in_b_now = model
+            .traces
+            .get("b")
+            .map_or(0, |trace| trace.timestamps.len());
+        assert_eq!(in_b_now, in_b, "version {version}");
+    }
+    assert_eq!(VERSION + 1, 4);
 }
 
 #[test]

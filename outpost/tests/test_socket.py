@@ -4,12 +4,14 @@ import asyncio
 import socket
 
 import cbor2
+import websockets
 
 import blip_outpost.passthrough as socket_protocol
 from blip_outpost import Outpost
 from blip_outpost.passthrough import SocketPassthrough
 from blip_outpost.proto import Message
-from blip_outpost.recording import read_frames
+from blip_outpost.recording import RecordingWriter, read_frames
+from blip_outpost.replay import Replay
 
 
 def messages() -> list[bytes]:
@@ -105,8 +107,10 @@ async def test_actions_and_action_results_within_a_batch_are_told_apart(tmp_path
     result = Message.create_action_result(7).encode_cbor()
     value, log = messages()[1], messages()[3]
 
-    async with Outpost(port=3969, record=path) as outpost:
-        await SocketPassthrough(outpost)._forward(Reads(value + actions + result + log))
+    outpost = Outpost(port=3969, record=path)
+    passthrough = SocketPassthrough(outpost)
+    async with outpost:
+        await passthrough._forward(Reads(value + actions + result + log))
         # kept for clients connecting later, while the result of the target is dropped
         assert outpost._server._actions_frame == actions
     assert list(read_frames(path)) == [value, actions, log]
@@ -164,9 +168,32 @@ async def test_a_target_that_restarts_continues_after_its_time_before():
     await protocol._forward(Reads(again))
     sent = [cbor2.loads(frame) for frame in frames]
     assert frames[0] == first
-    times = [m["Value"]["timestamp"] for m in sent if "Value" in m]
+    times = [m["Sample"]["timestamp"] for m in sent if "Sample" in m]
     assert times[1] > times[0]
     assert any("restarted" in m["Log"]["message"] for m in sent if "Log" in m)
+
+
+async def test_a_restart_shifts_the_timestamps_of_blocks():
+    protocol, frames = passthrough()
+    first = Message.create_samples("adc", [1, 2], timestamp_ns=5_000_000_000, period_ns=1_000_000).encode_cbor()
+    again = Message.create_samples("adc", [1, 2], timestamps_ns=[1_000_000, 1_001_000]).encode_cbor()
+    await protocol._forward(Reads(first))
+    await protocol._forward(Reads(again))
+    sent = [cbor2.loads(frame) for frame in frames]
+    assert frames[0] == first
+    times = next(m["Samples"]["timestamps"] for m in sent[1:] if "Samples" in m)
+    assert 5_000_000_000 < times[0] < 6_000_000_000
+    assert times[1] - times[0] == 1000
+    assert any("restarted" in m["Log"]["message"] for m in sent if "Log" in m)
+
+    protocol, frames = passthrough()
+    again = Message.create_samples("adc", [3, 4], timestamp_ns=1_000_000, period_ns=10).encode_cbor()
+    await protocol._forward(Reads(first))
+    await protocol._forward(Reads(again))
+    block = next(m["Samples"] for m in (cbor2.loads(f) for f in frames[1:]) if "Samples" in m)
+    assert 5_000_000_000 < block["timestamp"] < 6_000_000_000
+    assert block["period"] == 10
+    assert block["values"] == [3, 4]
 
 
 def test_the_messages_of_a_datagram_are_retimed():
@@ -174,7 +201,7 @@ def test_the_messages_of_a_datagram_are_retimed():
     late = Message.create_value("speed", 1, timestamp_ns=9_000_000_000).encode_cbor()
     early = Message.create_value("speed", 2, timestamp_ns=1_000).encode_cbor()
     protocol._datagram(late + early, "10.0.0.7")
-    times = [cbor2.loads(frame)["Value"]["timestamp"] for frame in frames if b"Value" in frame]
+    times = [cbor2.loads(frame)["Sample"]["timestamp"] for frame in frames if b"Sample" in frame]
     assert times[0] == 9_000_000_000
     assert times[1] > times[0]
 
@@ -183,7 +210,7 @@ def test_each_host_has_a_clock_of_its_own():
     protocol, frames = passthrough()
     protocol._datagram(Message.create_value("a", 1, timestamp_ns=9_000_000_000).encode_cbor(), "10.0.0.1")
     protocol._datagram(Message.create_value("b", 2, timestamp_ns=1_000_000).encode_cbor(), "10.0.0.2")
-    times = [cbor2.loads(frame)["Value"]["timestamp"] for frame in frames]
+    times = [cbor2.loads(frame)["Sample"]["timestamp"] for frame in frames]
     # no restart: another target with a clock of its own
     assert times == [9_000_000_000, 1_000_000]
 
@@ -196,5 +223,63 @@ def test_what_the_script_sends_untimed_has_the_time_of_the_target():
     assert frames == []
     protocol._datagram(Message.create_value("speed", 1, timestamp_ns=3_000_000_000).encode_cbor(), "10.0.0.1")
     outpost.value("pc/load", 0.5)
-    t = cbor2.loads(frames[-1])["Value"]["timestamp"]
+    t = cbor2.loads(frames[-1])["Sample"]["timestamp"]
     assert 3_000_000_000 <= t < 4_000_000_000
+
+
+async def test_old_names_of_a_target_are_forwarded_unchanged_and_the_metadata_is_kept():
+    outpost = Outpost(port=3957, path="/ws/test")
+    protocol = SocketPassthrough(outpost)
+    old_meta = cbor2.dumps({"ValueMetadata": {"path": "speed", "unit": "rpm"}})
+    old_value = cbor2.dumps({"Value": {"timestamp": 1_000_000, "path": "speed", "value": 1500}})
+    async with outpost:
+        async with websockets.connect("ws://127.0.0.1:3957/ws/test?batch=0") as first:
+            await asyncio.sleep(0.1)
+            await protocol._forward(Reads(old_meta + old_value))
+            assert await asyncio.wait_for(first.recv(), 2.0) == old_meta
+            assert await asyncio.wait_for(first.recv(), 2.0) == old_value
+            async with websockets.connect("ws://127.0.0.1:3957/ws/test?batch=0") as second:
+                assert await asyncio.wait_for(second.recv(), 2.0) == old_meta
+
+
+async def test_a_restart_shifts_the_timestamps_of_an_old_named_value():
+    protocol, frames = passthrough()
+    first = cbor2.dumps({"Value": {"timestamp": 5_000_000_000, "path": "speed", "value": 1}})
+    again = cbor2.dumps({"Value": {"timestamp": 1_000_000, "path": "speed", "value": 2}})
+    await protocol._forward(Reads(first))
+    await protocol._forward(Reads(again))
+    values = [cbor2.loads(frame) for frame in frames]
+    values = [m for m in values if "Log" not in m]
+    assert all("Value" in m for m in values)
+    assert values[1]["Value"]["timestamp"] > values[0]["Value"]["timestamp"]
+
+
+async def test_the_latest_hello_of_a_target_reaches_blips_connecting_later_and_a_new_one_is_forwarded():
+    hello1 = Message.create_hello(name="a", clock="boot", sender="sonde 1.2").encode_cbor()
+    hello2 = Message.create_hello(name="b", clock="epoch").encode_cbor()
+    outpost = Outpost(port=3953)
+    passthrough = SocketPassthrough(outpost)
+    url = "ws://127.0.0.1:3953/ws/outpost?batch=0"
+    async with outpost:
+        async with websockets.connect(url) as a:
+            await passthrough._forward(Reads(hello1))
+            assert await asyncio.wait_for(a.recv(), 2.0) == hello1
+            await passthrough._forward(Reads(hello2))
+            assert await asyncio.wait_for(a.recv(), 2.0) == hello2
+            async with websockets.connect(url) as b:
+                assert await asyncio.wait_for(b.recv(), 2.0) == hello2
+                await passthrough._forward(Reads(messages()[1]))
+                assert await asyncio.wait_for(b.recv(), 2.0) == messages()[1]
+
+
+def test_the_passthrough_the_replay_and_the_protobuf_link_send_no_hello_of_their_own(tmp_path):
+    path = tmp_path / "tiny.blip"
+    writer = RecordingWriter(path)
+    writer.write(messages()[1])
+    writer.close()
+    for make in (lambda outpost: SocketPassthrough(outpost), lambda outpost: Replay(outpost, path)):
+        outpost = Outpost()
+        assert outpost.send_hello is True
+        make(outpost)
+        assert outpost.send_hello is False
+        assert outpost._own_hello() is None

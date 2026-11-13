@@ -2,29 +2,18 @@
 thread, and what blips connecting later get."""
 
 import asyncio
+import socket
 from typing import List
 
 import cbor2
 import pytest
-import websockets
 
 import blip_outpost
 from blip_outpost import Outpost
+from blip_outpost.proto import Message
 from blip_outpost.recording import read_frames
 
-from blip_client import receive
-
-
-def connect(port: int):
-    return websockets.connect(f"ws://127.0.0.1:{port}/ws/outpost")
-
-
-async def messages_until(ws, variant: str, count: int = 1) -> List[dict]:
-    """The messages received until `count` of `variant` arrived."""
-    received: List[dict] = []
-    while sum(variant in message for message in received) < count:
-        received.append(cbor2.loads(await receive(ws, 2.0)))
-    return received
+from blip_client import connect, messages_until, receive
 
 
 def test_a_started_outpost_serves_from_its_own_thread():
@@ -39,9 +28,9 @@ def test_a_started_outpost_serves_from_its_own_thread():
                 # sent from this thread while blip is connected
                 assert await asyncio.to_thread(outpost.wait_for_client, 2.0)
                 await asyncio.to_thread(send_from_another_thread, outpost)
-                return await messages_until(ws, "Value", 100)
+                return await messages_until(ws, "Sample", 100)
 
-        values = [m["Value"]["value"] for m in asyncio.run(blip()) if "Value" in m]
+        values = [m["Sample"]["value"] for m in asyncio.run(blip()) if "Sample" in m]
         # in the order they were sent
         assert values == list(range(100))
     finally:
@@ -79,10 +68,11 @@ async def test_units_and_actions_reach_blips_connecting_later():
     async with outpost:
         outpost.value("motor/speed_rpm", 2)
         async with connect(3972) as ws:
-            first = [cbor2.loads(await receive(ws, 2.0)) for _ in range(3)]
-    assert first == [
-        {"ValueMetadata": {"path": "motor/speed_rpm", "unit": "rpm"}},
-        {"ValueMetadata": {"path": "imu.acc", "unit": "m/s²"}},
+            first = [cbor2.loads(await receive(ws, 2.0)) for _ in range(4)]
+    assert "Hello" in first[0]
+    assert first[1:] == [
+        {"TraceMetadata": {"path": "motor/speed_rpm", "unit": "rpm"}},
+        {"TraceMetadata": {"path": "imu.acc", "unit": "m/s²"}},
         {"Actions": outpost.actions.descriptors()},
     ]
 
@@ -95,7 +85,7 @@ async def test_the_recording_starts_with_the_units_and_actions_sent_before(tmp_p
     async with outpost:
         outpost.value("speed", 1500, timestamp_ns=1)
     recorded = [cbor2.loads(frame) for frame in read_frames(path)]
-    assert [next(iter(message)) for message in recorded] == ["ValueMetadata", "Actions", "Value"]
+    assert [next(iter(message)) for message in recorded] == ["Hello", "TraceMetadata", "Actions", "Sample"]
 
 
 async def test_actions_may_change_from_another_thread():
@@ -146,4 +136,70 @@ def test_stop_finishes_the_recording_of_a_started_outpost(tmp_path):
     # sent right before stopping, still recorded
     outpost.value("speed", 1500)
     outpost.stop()
-    assert [next(iter(cbor2.loads(frame))) for frame in read_frames(path)] == ["Value"]
+    assert [next(iter(cbor2.loads(frame))) for frame in read_frames(path)] == ["Hello", "Sample"]
+
+
+def hello_of(name: str, clock: str = "epoch") -> dict:
+    return {"Hello": {"version": 1, "name": name, "clock": clock, "sender": f"blip-outpost {blip_outpost.__version__}"}}
+
+
+async def test_a_client_gets_a_hello_first():
+    outpost = Outpost(port=3950)
+    outpost.unit("a", "V")
+    outpost.actions.add("stop", lambda: None)
+    async with outpost:
+        async with connect(3950) as ws:
+            first = [cbor2.loads(await receive(ws, 2.0)) for _ in range(3)]
+    assert first == [
+        hello_of(socket.gethostname()),
+        {"TraceMetadata": {"path": "a", "unit": "V"}},
+        {"Actions": outpost.actions.descriptors()},
+    ]
+
+
+async def first_message(port: int) -> dict:
+    async with connect(port) as ws:
+        return cbor2.loads(await receive(ws, 2.0))
+
+
+async def test_name_and_clock_are_settable():
+    async with Outpost(port=3951, name="robby", clock="boot") as outpost:
+        assert await first_message(3951) == hello_of("robby", "boot")
+        outpost.name = "arm"
+        assert await first_message(3951) == hello_of("arm", "boot")
+        outpost.name = None
+        assert await first_message(3951) == hello_of(socket.gethostname(), "boot")
+
+    with pytest.raises(ValueError, match="epoch or boot"):
+        Outpost(clock="utc")
+    outpost = Outpost()
+    with pytest.raises(ValueError, match="epoch or boot"):
+        outpost.clock = "utc"
+    assert outpost.clock == "epoch"
+
+
+async def test_the_module_options_set_name_and_clock():
+    outpost = blip_outpost.get_outpost()
+    try:
+        assert blip_outpost.serve(port=3951, name="x", clock="boot") is outpost
+        assert (outpost.name, outpost.clock) == ("x", "boot")
+        blip_outpost.serve(port=3951)
+        assert (outpost.name, outpost.clock) == ("x", "boot")
+    finally:
+        outpost.name = None
+        outpost.clock = "epoch"
+        outpost.port = 3000
+
+
+async def test_a_hello_the_script_sends_replaces_its_own():
+    async with Outpost(port=3952) as outpost:
+        async with connect(3952) as ws:
+            assert "Hello" in cbor2.loads(await receive(ws, 2.0))
+            await asyncio.to_thread(outpost.wait_for_client, 2.0)
+            outpost.send(Message.create_hello(name="target", clock="boot"))
+            assert cbor2.loads(await receive(ws, 2.0)) == {"Hello": {"version": 1, "name": "target", "clock": "boot"}}
+        async with connect(3952) as ws:
+            assert cbor2.loads(await receive(ws, 2.0)) == {"Hello": {"version": 1, "name": "target", "clock": "boot"}}
+            await asyncio.to_thread(outpost.wait_for_client, 2.0)
+            outpost.value("marker", 1)
+            assert "Sample" in cbor2.loads(await receive(ws, 2.0))

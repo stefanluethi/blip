@@ -291,3 +291,163 @@ fn an_invalid_address_fails_to_connect() {
     assert!(errors[0].starts_with("Cannot connect to no address: "));
     assert!(connections.take_errors().is_empty());
 }
+
+fn hello(version: u32, name: Option<&str>, clock: Option<proto::Clock>) -> proto::Hello {
+    proto::Hello {
+        version,
+        name: name.map(str::to_owned),
+        clock,
+        sender: Some("sonde 1.2".to_owned()),
+    }
+}
+
+/// The frame of the Hellos, a CBOR sequence.
+fn hellos_frame(hellos: &[proto::Hello]) -> Vec<u8> {
+    hellos
+        .iter()
+        .flat_map(|hello| serde_cbor_2::to_vec(&proto::Message::Hello(hello.clone())).unwrap())
+        .collect()
+}
+
+#[test]
+fn hello_lines_name_the_target_sender_and_clock() {
+    let lines = hello_lines(&hello(1, Some("rig-7"), Some(proto::Clock::Boot)), "bench");
+    assert_eq!(
+        lines,
+        HelloLines {
+            target: Some("rig-7".to_owned()),
+            detail: Some("sonde 1.2, time since boot".to_owned()),
+            newer: None,
+        }
+    );
+
+    let epoch = proto::Hello {
+        version: 1,
+        name: Some("bench".to_owned()),
+        clock: Some(proto::Clock::Epoch),
+        sender: None,
+    };
+    let lines = hello_lines(&epoch, "bench");
+    assert_eq!(lines.target, None);
+    assert_eq!(lines.detail.as_deref(), Some("time of day"));
+
+    let newer = proto::Hello {
+        version: 2,
+        sender: Some("blip-outpost 0.4".to_owned()),
+        ..Default::default()
+    };
+    let lines = hello_lines(&newer, "bench");
+    assert_eq!(lines.detail.as_deref(), Some("blip-outpost 0.4"));
+    assert_eq!(
+        lines.newer.as_deref(),
+        Some("protocol 2 is newer than blip")
+    );
+
+    let bare = proto::Hello {
+        version: 1,
+        ..Default::default()
+    };
+    assert_eq!(hello_lines(&bare, "bench"), HelloLines::default());
+    let empty = proto::Hello {
+        name: Some(String::new()),
+        ..bare
+    };
+    assert_eq!(hello_lines(&empty, "bench").target, None);
+}
+
+#[test]
+fn a_hello_is_kept_and_replaced() {
+    let frame = hellos_frame(&[
+        hello(1, Some("one"), Some(proto::Clock::Boot)),
+        hello(1, Some("two"), Some(proto::Clock::Boot)),
+    ]);
+    let address = serve("a", frame);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(300.0, 200.0))
+        .build_ui_state(
+            |ui, connections: &mut Connections| {
+                connections.receive(|_| {});
+                connections.ui(ui, false);
+            },
+            connections(&[&address]),
+        );
+    let ctx = harness.ctx.clone();
+    harness.state_mut().apply(Action::Connect(0), &ctx);
+    let start = std::time::Instant::now();
+    while !harness.state().greeted(&address) && start.elapsed().as_secs() < 5 {
+        harness.step();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    // both Hellos arrive in one frame
+    while harness.state().hellos[&address].name.as_deref() != Some("two")
+        && start.elapsed().as_secs() < 5
+    {
+        harness.step();
+    }
+    harness.run_steps(2);
+    assert_eq!(
+        harness.state().hellos[&address].name.as_deref(),
+        Some("two")
+    );
+    harness.get_by_label_contains("sonde 1.2, time since boot");
+
+    harness.state_mut().apply(Action::Disconnect(0), &ctx);
+    harness.run_steps(2);
+    assert!(harness.state().hellos.contains_key(&address));
+    assert!(!harness.state().greeted(&address));
+    harness.get_by_label_contains("sonde 1.2, time since boot");
+
+    harness.state_mut().apply(Action::Connect(0), &ctx);
+    let start = std::time::Instant::now();
+    while !harness.state().greeted(&address) && start.elapsed().as_secs() < 5 {
+        harness.step();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(harness.state().greeted(&address));
+}
+
+#[test]
+fn a_newer_protocol_is_warned_once_per_connect() {
+    let sample = serde_cbor_2::to_vec(&proto::Message::Samples(proto::Samples {
+        path: "x".to_owned(),
+        values: vec![proto::Data::Uint(1)],
+        times: proto::SampleTimes::Period {
+            timestamp: 0,
+            period: 1,
+        },
+    }))
+    .unwrap();
+    let v2 = hello(2, None, None);
+    let mut frame = hellos_frame(std::slice::from_ref(&v2));
+    frame.extend(&sample);
+    let mut twice = hellos_frame(&[v2.clone(), v2]);
+    twice.extend(&sample);
+    let mut old = hellos_frame(&[hello(1, None, None)]);
+    old.extend(&sample);
+    let ctx = egui::Context::default();
+
+    let mut connections = connections(&[&serve("a", frame), &serve("b", twice), &serve("c", old)]);
+    connections.apply(Action::Connect(0), &ctx);
+    assert_eq!(receive_some(&mut connections, 3).len(), 3);
+    let warning = "a sends protocol 2, blip reads up to 1. Update blip to see all of it.";
+    assert_eq!(connections.take_warnings(), [warning]);
+    let address = connections.connections[0].address.clone();
+    assert_eq!(connections.status(&address), Status::Newer(2));
+    assert_eq!(connections.newer(), ["a: protocol 2 is newer than blip"]);
+
+    connections.apply(Action::Connect(1), &ctx);
+    assert_eq!(receive_some(&mut connections, 3).len(), 3);
+    assert_eq!(connections.take_warnings().len(), 1);
+
+    connections.apply(Action::Disconnect(0), &ctx);
+    connections.apply(Action::Connect(0), &ctx);
+    assert_eq!(receive_some(&mut connections, 2).len(), 2);
+    assert_eq!(connections.take_warnings(), [warning]);
+
+    connections.apply(Action::Connect(2), &ctx);
+    assert_eq!(receive_some(&mut connections, 2).len(), 2);
+    assert!(connections.take_warnings().is_empty());
+    let address = connections.connections[2].address.clone();
+    assert_eq!(connections.status(&address), Status::Connected);
+    assert_eq!(connections.newer().len(), 2);
+}

@@ -16,12 +16,14 @@ add_executable(sonde_tests
     test_batches.cpp
     test_encoding.cpp
     test_file_sink.cpp
+    test_hello.cpp
     test_threads.cpp
     test_tracer.cpp
 )
 target_link_libraries(sonde_tests PRIVATE sonde::sonde Catch2::Catch2WithMain Threads::Threads)
 target_compile_definitions(sonde_tests PRIVATE
     SONDE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data"
+    SONDE_CMAKE_VERSION="${sonde_VERSION}"
 )
 if(MSVC)
     target_compile_options(sonde_tests PRIVATE /W4 /permissive- /utf-8)

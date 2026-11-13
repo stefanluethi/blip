@@ -17,7 +17,7 @@ fn array(elements: &[f64]) -> Data {
 fn traces(samples: &[(&str, Data)]) -> Traces {
     let mut traces = Traces::default();
     for (timestamp, (path, value)) in samples.iter().enumerate() {
-        traces.append(&proto::Value {
+        traces.append(&proto::Sample {
             timestamp: timestamp as u64,
             path: path.to_string(),
             value: value.clone(),
@@ -102,7 +102,7 @@ fn fields_start_marks_where_record_fields_begin() {
 fn late_samples_are_put_in_the_order_of_their_timestamps() {
     let mut traces = Traces::default();
     let mut push = |timestamp, path: &str, data: Data| {
-        traces.append(&proto::Value {
+        traces.append(&proto::Sample {
             timestamp,
             path: path.to_owned(),
             value: data,
@@ -124,7 +124,10 @@ fn late_samples_are_put_in_the_order_of_their_timestamps() {
     assert!(numbers.is_null(3) && !numbers.is_null(4));
     let s = traces.get("s").unwrap();
     let texts: Vec<String> = (0..5)
-        .map(|index| s.samples.format(index, 4, None, DisplayFormat::Default))
+        .map(|index| {
+            s.samples
+                .format(index, 4, None, DisplayFormat::Default, None)
+        })
         .collect();
     assert_eq!(texts, ["0.5", "1", "2", "3", "4"]);
     let a = traces.get("a").unwrap();
@@ -144,7 +147,7 @@ fn records_keep_the_fields_of_their_first() {
         ),
     ]);
     fn append(traces: &mut Traces, timestamp: u64, path: &str, value: Data) {
-        traces.append(&proto::Value {
+        traces.append(&proto::Sample {
             timestamp,
             path: path.to_owned(),
             value,
@@ -179,7 +182,7 @@ fn records_keep_the_fields_of_their_first() {
 fn values_far_older_than_the_newest_are_dropped() {
     let mut traces = Traces::default();
     let mut append = |timestamp: u64| {
-        traces.append(&proto::Value {
+        traces.append(&proto::Sample {
             timestamp,
             path: "a".to_owned(),
             value: Data::Float(timestamp as f64),
@@ -205,7 +208,7 @@ fn values_far_older_than_the_newest_are_dropped() {
 fn kinds_change_when_a_trace_turns_out_of_another_kind() {
     let mut traces = Traces::default();
     let mut append = |value: Data| {
-        traces.append(&proto::Value {
+        traces.append(&proto::Sample {
             timestamp: 0,
             path: "a".to_owned(),
             value,
@@ -329,7 +332,10 @@ fn arrays_without_elements_are_kept() {
     let e = traces.get("e").unwrap();
     assert_eq!(e.timestamps.len(), 3);
     assert_eq!(e.samples.type_label(), "null[0]");
-    assert_eq!(e.samples.format(1, 8, None, DisplayFormat::Default), "[]");
+    assert_eq!(
+        e.samples.format(1, 8, None, DisplayFormat::Default, None),
+        "[]"
+    );
     assert_eq!(e.value_range(), None);
     let m = traces.get("m").unwrap();
     assert_eq!(m.samples.type_label(), "null[2×0]");
@@ -337,7 +343,7 @@ fn arrays_without_elements_are_kept() {
 
     // also when a sample arrives late
     let mut traces = traces;
-    traces.append(&proto::Value {
+    traces.append(&proto::Sample {
         timestamp: 0,
         path: "m".to_owned(),
         value: Data::Array(vec![empty(), empty()]),
@@ -390,7 +396,7 @@ fn samples_are_formatted_as_text() {
     ]);
     let format = |path, index, max_len, digits| {
         let samples = traces.get(path).unwrap().samples;
-        samples.format(index, max_len, digits, DisplayFormat::Default)
+        samples.format(index, max_len, digits, DisplayFormat::Default, None)
     };
     assert_eq!(format("m", 0, 8, None), "[[0.5, 1, 2],\n [  3, 4, 5]]");
     assert_eq!(format("m", 0, 2, None), "[[0.5, 1, …],\n [  3, 4, …]]");
@@ -413,7 +419,7 @@ fn array_elements_are_written_in_their_display_format() {
     let traces = traces(&[("a", Data::Array(vec![Data::Uint(10), Data::Uint(255)]))]);
     let samples = traces.get("a").unwrap().samples;
     assert_eq!(
-        samples.format(0, 8, None, DisplayFormat::Hex),
+        samples.format(0, 8, None, DisplayFormat::Hex, None),
         "[0xa, 0xff]"
     );
 }
@@ -424,11 +430,11 @@ fn integers_are_exact() {
     let traces = traces(&[("a", big.clone()), ("m", Data::Array(vec![big]))]);
     let samples = |path| traces.get(path).unwrap().samples;
     assert_eq!(
-        samples("a").format(0, 8, None, DisplayFormat::Default),
+        samples("a").format(0, 8, None, DisplayFormat::Default, None),
         "9007199254740993"
     );
     assert_eq!(
-        samples("m").format(0, 8, None, DisplayFormat::Default),
+        samples("m").format(0, 8, None, DisplayFormat::Default, None),
         "[9007199254740993]"
     );
     let series = traces.series("m[0]").unwrap();
@@ -438,8 +444,16 @@ fn integers_are_exact() {
 #[test]
 fn elements_have_the_unit_of_their_array() {
     let mut traces = Traces::default();
-    traces.set_unit("imu.acc", "m/s²");
-    traces.set_unit("speed", "");
+    traces.set_metadata(&proto::TraceMetadata {
+        path: "imu.acc".into(),
+        unit: "m/s²".into(),
+        ..Default::default()
+    });
+    traces.set_metadata(&proto::TraceMetadata {
+        path: "speed".into(),
+        unit: "".into(),
+        ..Default::default()
+    });
     assert_eq!(traces.unit("imu.acc"), Some("m/s²"));
     assert_eq!(traces.unit("imu.acc[2]"), Some("m/s²"));
     assert_eq!(traces.unit("imu.gyro"), None);
@@ -458,4 +472,46 @@ fn arrays_are_formatted_with_a_line_per_row() {
         "[[[ 1],\n  [ 2]],\n\n [[ 3],\n  [40]]]"
     );
     assert_eq!(format_array(&[0], &[], 8, &format), "[]");
+}
+
+#[test]
+fn metadata_applies_to_fields_and_elements() {
+    use proto::{ExpectedRange, TraceMetadata};
+
+    let with_range = |path: &str, min, max| TraceMetadata {
+        path: path.into(),
+        unit: "m/s²".into(),
+        description: "Acceleration".into(),
+        range: Some(ExpectedRange { min, max }),
+        ..Default::default()
+    };
+    let mut traces = Traces::default();
+    traces.set_metadata(&with_range("imu.acc", -20.0, 20.0));
+    traces.set_metadata(&TraceMetadata {
+        path: "motor/mode".into(),
+        labels: [(0, "Idle".to_owned()), (1, "Run".to_owned())].into(),
+        ..Default::default()
+    });
+    assert_eq!(traces.description("imu.acc[0]"), Some("Acceleration"));
+    assert_eq!(traces.expected("imu.acc[2]"), Some((-20.0, 20.0)));
+    assert_eq!(traces.unit("imu.acc"), Some("m/s²"));
+    assert_eq!(
+        traces.labels("motor/mode").map(|labels| labels.len()),
+        Some(2)
+    );
+    assert!(traces.labels("imu").is_none());
+    // a range that is not usable is dropped, the rest kept
+    for (min, max) in [(5.0, 5.0), (f64::NAN, 1.0)] {
+        traces.set_metadata(&with_range("imu.acc", min, max));
+        assert_eq!(traces.expected("imu.acc"), None);
+        assert_eq!(traces.unit("imu.acc"), Some("m/s²"));
+    }
+    traces.clear_samples();
+    assert_eq!(traces.unit("imu.acc"), Some("m/s²"));
+    // metadata with only a path removes the entry
+    traces.set_metadata(&TraceMetadata {
+        path: "imu.acc".into(),
+        ..Default::default()
+    });
+    assert!(traces.metadata("imu.acc").is_none());
 }

@@ -15,24 +15,125 @@ Target to blip: ``Message``
 
    * - Variant
      - Fields
-   * - ``Value``
+   * - ``Hello``
+     - Who is sending, see `Hello`_.
+   * - ``Sample``
      - ``timestamp: u64`` (ns), ``path: String``, ``value: Data`` (see
-       below)
-   * - ``ValueMetadata``
-     - ``path: String``, ``unit: String``
+       below). Called ``Value`` before protocol version 1; blip reads both
+       names.
+   * - ``Samples``
+     - A block of samples of one trace, see `Blocks of samples`_.
+   * - ``TraceMetadata``
+     - What the target says of a trace, see `Trace metadata`_. Called
+       ``ValueMetadata`` before, with a ``path`` and a ``unit`` only; blip reads
+       both names.
    * - ``Log``
      - ``timestamp: u64`` (ns), ``path: String`` (optional, left out when
        empty), ``level: u8``, ``message: String``. A ``component`` key of an
-       older sender is ignored.
+       older sender is ignored. See `Log records`_.
    * - ``Actions``
      - ``Vec<ActionDescriptor>``, all actions the target can carry out (see
        `Actions`_)
    * - ``ActionResult``
      - ``id: u32``, ``result: Result<(), String>``
 
+The outpost forwards the old names ``Value`` and ``ValueMetadata`` of a target
+it passes through unchanged and writes the new ones itself.
+
 Example (shown as JSON for readability)::
 
-   {"Value": {"timestamp": 1712345678000000000, "path": "cpu_load", "value": 12.5}}
+   {"Sample": {"timestamp": 1712345678000000000, "path": "cpu_load", "value": 12.5}}
+
+Hello
+~~~~~
+
+A target sends a ``Hello`` first, once for each connection. A second one
+replaces the first. All of it but the version is optional, left out when
+empty.
+
+.. list-table:: ``Hello``
+   :header-rows: 1
+   :widths: 20 80
+
+   * - Field
+     - Meaning
+   * - ``version: u32``
+     - The version of the protocol the sender speaks: 1 (``proto::VERSION``).
+       blip reads up to 1. For a newer version it warns and reads on, showing
+       what it knows, see :doc:`/blip/connecting`.
+   * - ``name: String``
+     - Optional, the name of the target, e.g. the host name of the outpost.
+   * - ``clock: String``
+     - Optional, what the timestamps count from: ``"epoch"`` for the Unix
+       epoch (UTC) or ``"boot"`` for the time since the target booted. A clock
+       blip does not know, e.g. of a later protocol, counts as none.
+   * - ``sender: String``
+     - Optional, the software and version that sends, e.g. ``"sonde 1.2"``.
+
+Without a ``Hello``, or with one without a ``clock``, blip guesses the time
+base, see `Time base`_. Example::
+
+   {"Hello": {"version": 1, "name": "rig-7", "clock": "boot", "sender": "sonde 0.2.0"}}
+
+Trace metadata
+~~~~~~~~~~~~~~
+
+A ``TraceMetadata`` says what the values of a trace mean. Fields left out are
+not set; empty ones are not written.
+
+.. list-table:: ``TraceMetadata``
+   :header-rows: 1
+   :widths: 20 80
+
+   * - Field
+     - Meaning
+   * - ``path: String``
+     - The trace the metadata is of.
+   * - ``unit: String``
+     - Optional, e.g. ``"rpm"``. An empty unit is no unit.
+   * - ``description: String``
+     - Optional, what the trace is, in a sentence.
+   * - ``enum``
+     - Optional, labels for integer values: a CBOR map from integer to text,
+       e.g. ``{0: "idle", 1: "run", 2: "fault"}``. The key is an ``i64``.
+   * - ``range``
+     - Optional, the range the values are expected in: a map ``{"min": …,
+       "max": …}`` of numbers (``f64``, integers are accepted), ``min`` below
+       ``max``. A range that is not finite or does not have ``min`` below
+       ``max`` is dropped, with a warning, and the rest kept.
+
+A newer ``TraceMetadata`` of a path replaces all earlier metadata of that path,
+so send everything about a trace in each. It applies to the trace at its path,
+also a field trace of a record (``imu.acc``), and to the element traces of an
+array trace (``imu.acc[0]``). Example::
+
+   {"TraceMetadata": {"path": "motor/mode", "description": "Operating mode",
+                      "enum": {0: "Idle", 1: "Ramp", 2: "Run", 3: "Fault"}}}
+   {"TraceMetadata": {"path": "motor.speed_rpm", "unit": "rpm",
+                      "range": {"min": 0, "max": 3000}}}
+
+Blocks of samples
+~~~~~~~~~~~~~~~~~
+
+A ``Samples`` message carries many samples of one trace, without repeating the
+path and the timestamp of each. It has the ``path``, a list ``values`` of ``Data``
+and the times in one of two forms:
+
+* ``timestamp`` and ``period``, both ``u64`` in ns: sample ``i`` is at
+  ``timestamp + i * period``.
+* ``timestamps``, a list of ``u64`` in ns of the same length as ``values``.
+
+Exactly one of ``period`` and ``timestamps`` is present, and a ``period`` goes
+with a ``timestamp``. A block may have no values. blip gives the same traces
+as for one ``Sample`` per value. It checks a block whole: one that is not
+well formed, e.g. with neither form of times, with both, with lists of different
+lengths, or with times beyond 2\ :sup:`64` ns, is dropped alone with an error
+notice, and the other messages of its frame are kept. Example::
+
+   {"Samples": {"path": "adc", "values": [512, 514, 513],
+                "timestamp": 1712345678000000000, "period": 1000000}}
+   {"Samples": {"path": "vibration", "values": [0.1, 0.4],
+                "timestamps": [1712345678000000000, 1712345678000250000]}}
 
 Values: ``Data``
 ~~~~~~~~~~~~~~~~
@@ -81,8 +182,8 @@ arrives. A sample of any other kind is dropped with a warning.
 
 Example of a record with an array field::
 
-   {"Value": {"timestamp": 1712345678000000000, "path": "imu",
-              "value": {"acc": [0.1, -0.2, 9.8], "valid": true}}}
+   {"Sample": {"timestamp": 1712345678000000000, "path": "imu",
+                "value": {"acc": [0.1, -0.2, 9.8], "valid": true}}}
 
 blip to target: ``Request``
 ---------------------------
@@ -113,6 +214,32 @@ Text frames received by blip are logged but otherwise ignored.
    passthrough may send CBOR sequences: each UDP datagram holds complete
    messages, while over TCP the outpost reassembles messages split across
    reads.
+
+Log records
+-----------
+
+The ``level`` of a ``Log`` is 0 Trace, 1 Debug, 2 Info, 3 Warn or 4 Error
+(``proto::level``). blip shows a level above 4 as Error. A record without a
+``path`` is at ``log/default``. A ``timestamp`` of 0 means *now*: blip puts the
+record at the newest time of the data received so far, so it lines up with the
+samples of its target, or at the time of day of the computer if there is no
+data yet.
+
+Time base
+---------
+
+All timestamps are in nanoseconds. What they count from, the **time base**, is
+the ``clock`` of the ``Hello`` of the connection: the Unix epoch (UTC, shown as
+the time of day) or the time since boot. Without a clock blip guesses: a
+timestamp before 10\ :sup:`18` ns (2001-09-09) is the time since boot, any
+other the Unix epoch.
+
+blip shows all data on one time axis, so one time base. The first sample or
+log record with a timestamp, or an epoch ``Hello``, sets it, and samples of the
+other base are dropped, with one warning. If connections declare different
+clocks, blip warns once and the epoch wins: it removes the samples and log
+records of the time since boot it already has, and drops the later ones. The
+metadata, the actions and the recording are kept.
 
 Actions
 -------
@@ -213,15 +340,43 @@ without anything around them, compressed with gzip:
 
    Layout of a recording file.
 
-#. A header, the map ``{"format": "blip recording", "version": 2}``.
+#. A header, the map ``{"format": "blip recording", "version": 3}``.
 #. The ``Message`` of each binary frame, byte for byte as received, in the
    order of arrival.
 #. Since version 2, a text string before the messages of another connection
    with the name of that connection, see :doc:`/blip/connecting`. Messages are maps, so
    a name cannot be taken for a message. Messages before the first name, and
-   all messages of version 1, have no connection name. The outpost and sonde
-   write version 1 (sonde uncompressed); the outpost reads version 2 and
-   replays the messages of all its connections without their names.
+   all messages of version 1, have no connection name.
+
+.. list-table:: Versions of the format
+   :header-rows: 1
+   :widths: 10 90
+
+   * - Version
+     - Change
+   * - 1
+     - The first: the header and the messages, no connection names.
+   * - 2
+     - Adds the connection names between the messages.
+   * - 3
+     - Written since the messages ``Hello``, ``Sample``, ``Samples`` and
+       ``TraceMetadata`` exist; the layout of the file is that of version 2.
+       The messages of earlier versions keep their old names ``Value`` and
+       ``ValueMetadata``, and have no ``Hello``, so blip guesses their time
+       base.
+
+Each writer keeps to a layout:
+
+* **blip** writes version 3 in the layout of version 2, with connection
+  names, gzip-compressed.
+* The **outpost** writes version 3 in the layout of version 1, without names,
+  gzip-compressed.
+* **sonde** (``FileSink``) writes version 3 in the layout of version 1,
+  without names and uncompressed. Its file starts with the ``Hello`` of its
+  queue.
+
+blip and the outpost read versions 1 to 3 and refuse a newer one; the outpost
+replays the messages of all connections of a file without their names.
 
 As the frames are stored as received, a recording keeps everything that was
 sent, also messages blip could not read. Appending a frame is writing its

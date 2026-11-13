@@ -11,7 +11,7 @@ use super::time_axis;
 use super::tooltip::{Header, Label, Row, Tooltip, TraceName, Value};
 use super::{PropertiesContext, ViewContext, Viewable, short_names, text_color_on};
 use crate::app::model::Model;
-use crate::app::model::numbers::{DisplayFormat, Number, format_significant};
+use crate::app::model::numbers::{DisplayFormat, Labels, Number, format_significant};
 use crate::app::model::sorted::index_at;
 use crate::app::model::traces::{Samples, Trace};
 use crate::app::theme;
@@ -64,6 +64,9 @@ pub struct Heatmap {
     /// The range of the values shown in the last frame.
     #[serde(skip)]
     fitted_range: Option<(f64, f64)>,
+    /// The range the shown trace declares, set when the view or its properties are shown.
+    #[serde(skip)]
+    expected: Option<(f64, f64)>,
     #[serde(skip)]
     texture: Option<egui::TextureHandle>,
     /// A hash of what the texture shows: its values, its size and the colour scale,
@@ -113,6 +116,8 @@ const DIGITS: usize = 3;
 struct ValueText<'a> {
     format: DisplayFormat,
     unit: Option<&'a str>,
+    labels: Option<&'a Labels>,
+    description: Option<&'a str>,
 }
 
 impl ValueText<'_> {
@@ -121,9 +126,9 @@ impl ValueText<'_> {
         value.format(Some(DIGITS), self.format)
     }
 
-    /// `value` as a tooltip shows it, with its unit.
-    fn tooltip_value(self, value: Number) -> Value {
-        Value::number(value, DIGITS, self.format, self.unit)
+    /// `value` as a tooltip shows it, with its unit and label.
+    fn tooltip_value(self, value: Number) -> Vec<Value> {
+        Value::labelled(value, DIGITS, self.format, self.unit, self.labels)
     }
 }
 
@@ -139,9 +144,14 @@ fn band_tooltip(
     let value = index_at(trace.timestamps, t)
         .and_then(|index| trace.samples.array_sample(index))
         .and_then(|elements| elements.get(element))
-        .map_or_else(Value::missing, |number| text.tooltip_value(number));
-    let row = Row::new(Label::Weak(format!("[{element}]")), [value]);
-    Tooltip::new(Header::Text(base.format(t, 3))).group(vec![row])
+        .map_or_else(
+            || vec![Value::missing()],
+            |number| text.tooltip_value(number),
+        );
+    let row = Row::new(Label::Weak(format!("[{element}]")), value);
+    Tooltip::new(Header::Text(base.format(t, 3)))
+        .group(vec![row])
+        .describe(short_names([trace.path])[0], text.description)
 }
 
 /// The tooltip of the cell at `(row, column)` of the 2D array `name` with `value`.
@@ -153,9 +163,11 @@ fn cell_tooltip(
 ) -> Tooltip {
     let rows = vec![Row::new(
         Label::Weak(name.to_owned()),
-        [text.tooltip_value(value)],
+        text.tooltip_value(value),
     )];
-    Tooltip::new(Header::Text(format!("[{row}][{column}]"))).group(rows)
+    Tooltip::new(Header::Text(format!("[{row}][{column}]")))
+        .group(rows)
+        .describe(name, text.description)
 }
 
 /// The tooltip of element `index` of the 1D array trace `name` at `path` with `value`.
@@ -167,8 +179,10 @@ fn element_tooltip(
     value: Number,
 ) -> Tooltip {
     let trace = TraceName::new(name, path, 0);
-    let row = Row::new(Label::Trace(trace), [text.tooltip_value(value)]);
-    Tooltip::new(Header::Text(format!("[{index}]"))).group(vec![row])
+    let row = Row::new(Label::Trace(trace), text.tooltip_value(value));
+    Tooltip::new(Header::Text(format!("[{index}]")))
+        .group(vec![row])
+        .describe(name, text.description)
 }
 
 /// The values of an array trace of `len` elements within `(start, end)` seconds as a
@@ -205,7 +219,10 @@ fn over_time(
 impl Heatmap {
     /// The values at the ends of the colour scale.
     fn shown_range(&self) -> (f64, f64) {
-        self.value_range.or(self.fitted_range).unwrap_or((0.0, 1.0))
+        self.value_range
+            .or(self.expected)
+            .or(self.fitted_range)
+            .unwrap_or((0.0, 1.0))
     }
 
     /// Uploads the colours of `values` as an image of `size` pixels unless they are
@@ -382,7 +399,7 @@ impl Heatmap {
         let numbers = sample_at_cursor(trace, time);
         let values: Vec<f64> = numbers.iter().map(|number| number.as_f64()).collect();
         self.fitted_range = value_range(&values);
-        let fixed_range = self.value_range;
+        let fixed_range = self.value_range.or(self.expected);
         let color = theme::trace_color(ui.visuals(), 0);
 
         let plot = egui_plot::Plot::new(ui.id().with("line"))
@@ -478,6 +495,10 @@ impl Viewable for Heatmap {
 
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         let model: &Model = context.model;
+        self.expected = self
+            .traces
+            .first()
+            .and_then(|path| model.traces.expected(path));
         let Some(path) = self.traces.first() else {
             theme::hint(ui, "Select an array trace in the traces panel");
             return;
@@ -498,14 +519,22 @@ impl Viewable for Heatmap {
             return;
         }
         let text = ValueText {
-            format: context.formats.of(path),
+            format: context
+                .formats
+                .format_of(path, model.traces.labels(path).is_some()),
             unit: model.traces.unit(path),
+            labels: model.traces.labels(path),
+            description: model.traces.description(path),
         };
         self.contents_ui(ui, trace, text, shape, context.time);
     }
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, context: &PropertiesContext<'_>) {
         let model = context.model;
+        self.expected = self
+            .traces
+            .first()
+            .and_then(|path| model.traces.expected(path));
         let dimensions = self
             .traces
             .first()

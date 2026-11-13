@@ -20,6 +20,10 @@
 #define SONDE_HOSTED 0
 #endif
 
+/// The version of sonde, sent as the sender of its Hello ("sonde 0.2.0"). Equal to the
+/// VERSION of project() in sonde/CMakeLists.txt.
+#define SONDE_VERSION "0.2.0"
+
 #if defined(__GNUC__)
 #define SONDE_PRINTF(format_index, first_arg) \
     __attribute__((format(printf, format_index, first_arg)))
@@ -59,6 +63,25 @@ constexpr Clock default_clock() {
 /// The levels of log records as blip knows them (proto: LogRecord::level).
 enum class Level : std::uint8_t { Trace = 0, Debug = 1, Info = 2, Warn = 3, Error = 4 };
 
+/// The time base of the timestamps of a target, as its Hello tells blip (proto:
+/// Hello::clock).
+enum class TimeBase : std::uint8_t {
+    /// Not told: blip guesses it from the timestamps.
+    Unknown,
+    /// UTC since the Unix epoch, e.g. from the system clock.
+    Epoch,
+    /// The time since the target booted, an uptime.
+    Boot,
+};
+
+/// What a queue tells blip first about the target (proto: Hello). sonde adds the version
+/// of the protocol and itself as the sender. An empty name and TimeBase::Unknown are
+/// left out.
+struct Hello {
+    std::string_view name{};
+    TimeBase clock = TimeBase::Unknown;
+};
+
 enum class Status : std::uint8_t {
     Ok,
     /// No batch is free, the consumer has not released them yet. The message was dropped.
@@ -67,8 +90,8 @@ enum class Status : std::uint8_t {
     TooLarge,
     /// The sink failed to take a batch; the batch is dropped.
     SinkError,
-    /// The message could not be encoded, e.g. a record with fewer fields than announced.
-    /// The batch is unchanged.
+    /// The message could not be encoded, e.g. a record with fewer fields than announced,
+    /// or samples with not as many timestamps as values. The batch is unchanged.
     Invalid,
 };
 
@@ -77,6 +100,33 @@ template <typename T>
 struct Span {
     const T* data;
     std::size_t size;
+};
+
+/// The label of an integer value of a trace, e.g. {2, "fault"} (proto: an entry of
+/// TraceMetadata::enum).
+struct Label {
+    std::int64_t value;
+    std::string_view text;
+};
+
+/// The expected range of the values of a trace (proto: TraceMetadata::range).
+struct Range {
+    double min;
+    double max;
+};
+
+/// The metadata of a trace (proto: TraceMetadata); empty fields are left out on the wire.
+struct Metadata {
+    std::string_view unit{};
+    std::string_view description{};
+    /// proto: enum. Give them in ascending order of value, as proto writes them.
+    Span<Label> labels{nullptr, 0};
+    std::optional<Range> range{};
+};
+
+/// The time between two samples of a block, in nanoseconds (proto: Samples::period).
+struct Period {
+    std::uint64_t ns;
 };
 
 inline constexpr std::nullptr_t null = nullptr;
@@ -97,6 +147,9 @@ class Encoder;
 namespace detail {
 /// Encodes the object at the pointer, of a type the function knows.
 using EncodeFn = void (*)(Encoder&, const void*);
+
+/// Encodes labels as a map of their values to their texts, in their order.
+void encode_labels(Encoder& encoder, Span<Label> labels);
 }  // namespace detail
 
 /// Encodes one Data item. It refers to the item being encoded, so it is not copied; the
@@ -120,6 +173,7 @@ private:
     friend class Queue;
     friend class Record;
     friend class Array;
+    friend void detail::encode_labels(Encoder& encoder, Span<Label> labels);
 
     Encoder(CborEncoder* cbor, CborError* error) : cbor_{cbor}, error_{error} {}
 
@@ -226,6 +280,68 @@ template <typename T>
 struct is_span : std::false_type {};
 template <typename T>
 struct is_span<Span<T>> : std::true_type {};
+
+template <typename T>
+struct is_array_of : std::false_type {};
+template <typename F>
+struct is_array_of<ArrayOf<F>> : std::true_type {};
+
+/// A sequence whose length sonde knows: the values of samples().
+template <typename T>
+inline constexpr bool is_sequence =
+    (std::is_array_v<T> &&
+     !std::is_same_v<std::remove_cv_t<std::remove_extent_t<T>>, char>) ||
+    is_std_array<T>::value || is_span<T>::value || is_array_of<T>::value;
+
+template <typename T>
+constexpr std::size_t sequence_size(const T& values) {
+    if constexpr (std::is_array_v<T>) {
+        return std::extent_v<T>;
+    } else if constexpr (is_std_array<T>::value) {
+        return values.size();
+    } else if constexpr (is_span<T>::value) {
+        return values.size;
+    } else {
+        return values.elements;  // ArrayOf
+    }
+}
+
+/// The timestamps of samples(): a C array, a std::array or a Span of Timestamp.
+template <typename T>
+struct is_timestamps : std::false_type {};
+template <std::size_t N>
+struct is_timestamps<Timestamp[N]> : std::true_type {};
+template <std::size_t N>
+struct is_timestamps<const Timestamp[N]> : std::true_type {};
+template <std::size_t N>
+struct is_timestamps<std::array<Timestamp, N>> : std::true_type {};
+template <>
+struct is_timestamps<Span<Timestamp>> : std::true_type {};
+
+template <typename V>
+constexpr void check_values() {
+    static_assert(is_sequence<V>,
+                  "the values of samples() are a C array, a std::array, a sonde::Span or a "
+                  "sonde::array()");
+}
+
+template <typename S>
+constexpr void check_timestamps() {
+    static_assert(is_timestamps<S>::value,
+                  "the timestamps of samples() are a C array, a std::array or a "
+                  "sonde::Span of sonde::Timestamp");
+}
+
+template <typename T>
+constexpr Span<Timestamp> timestamp_span(const T& timestamps) {
+    if constexpr (std::is_array_v<T>) {
+        return {timestamps, std::extent_v<T>};
+    } else if constexpr (is_std_array<T>::value) {
+        return {timestamps.data(), timestamps.size()};
+    } else {
+        return timestamps;
+    }
+}
 
 template <typename T>
 inline constexpr bool is_char = std::is_same_v<T, char> || std::is_same_v<T, wchar_t> ||
@@ -390,20 +506,33 @@ public:
     template <std::size_t BatchBytes, std::size_t Batches>
     constexpr explicit Queue(Storage<BatchBytes, Batches>& storage,
                               Clock clock = default_clock())
-        : Queue{storage.bytes_, BatchBytes, Batches, storage.sizes_, nullptr, clock} {}
+        : Queue{storage.bytes_, BatchBytes, Batches, storage.sizes_, nullptr, clock, Hello{}} {}
+
+    /// Producer and consumer; the Hello the queue sends before its first message has the
+    /// name and clock of `hello`.
+    template <std::size_t BatchBytes, std::size_t Batches>
+    constexpr Queue(Storage<BatchBytes, Batches>& storage, Clock clock, const Hello& hello)
+        : Queue{storage.bytes_, BatchBytes, Batches, storage.sizes_, nullptr, clock, hello} {}
 
     /// One context: each ready batch goes to the sink right away.
     template <std::size_t BatchBytes, std::size_t Batches>
     constexpr Queue(Storage<BatchBytes, Batches>& storage, Sink& sink,
                      Clock clock = default_clock())
-        : Queue{storage.bytes_, BatchBytes, Batches, storage.sizes_, &sink, clock} {}
+        : Queue{storage.bytes_, BatchBytes, Batches, storage.sizes_, &sink, clock, Hello{}} {}
+
+    /// One context; the Hello the queue sends before its first message has the name and
+    /// clock of `hello`.
+    template <std::size_t BatchBytes, std::size_t Batches>
+    constexpr Queue(Storage<BatchBytes, Batches>& storage, Sink& sink, Clock clock,
+                     const Hello& hello)
+        : Queue{storage.bytes_, BatchBytes, Batches, storage.sizes_, &sink, clock, hello} {}
 
     Queue(const Queue&) = delete;
     Queue& operator=(const Queue&) = delete;
 
     // --- Producer: only from the context that traces --------------------------------
 
-    // proto: Message::Value, timestamped by the clock or explicitly
+    // proto: Message::Sample, timestamped by the clock or explicitly
     template <typename T>
     Status value(std::string_view path, const T& value) {
         return value_with(nullptr, path, &encode_value<T>, &value);
@@ -413,9 +542,31 @@ public:
         return value_with(&timestamp, path, &encode_value<T>, &value);
     }
 
-    // proto: Message::ValueMetadata, the unit of the trace `path`; for a field of a
-    // record, the path joined with ".", e.g. "imu.acc"
+    // proto: Message::Samples of the trace `path`: sample i of `values` at
+    // timestamp + i * period. `values` is a C array, a std::array, a Span or an array().
+    template <typename V>
+    Status samples(std::string_view path, const V& values, Timestamp timestamp,
+                   Period period) {
+        detail::check_values<V>();
+        return samples_with(path, detail::sequence_size(values), &encode_value<V>, &values,
+                            Times::every(timestamp, period));
+    }
+    // proto: Message::Samples of the trace `path`: sample i of `values` at timestamps[i].
+    // Status::Invalid if they are not as many as the values.
+    template <typename S, typename V>
+    Status samples(std::string_view path, const V& values, const S& timestamps) {
+        detail::check_values<V>();
+        detail::check_timestamps<S>();
+        return samples_with(path, detail::sequence_size(values), &encode_value<V>, &values,
+                            Times::each(detail::timestamp_span(timestamps)));
+    }
+
+    // proto: Message::TraceMetadata, the unit of the trace `path`; for a field of a
+    // record, the path joined with ".", e.g. "imu.acc". An empty unit is left out.
     Status unit(std::string_view path, std::string_view unit);
+    // proto: Message::TraceMetadata of the trace `path`: its unit, description, labels of
+    // integer values and expected range; empty ones are left out.
+    Status metadata(std::string_view path, const Metadata& metadata);
 
     // proto: Message::Log, at `path` like a value, e.g. "motor", or without one of the
     // target as a whole; an empty path is left out on the wire. By convention the path of
@@ -457,18 +608,37 @@ private:
         encoder.encode(*static_cast<const T*>(value));
     }
 
+    /// The times of a Samples message: timestamp and period if periodic, else timestamps.
+    struct Times {
+        bool periodic;
+        Timestamp timestamp;
+        Period period;
+        Span<Timestamp> timestamps;
+
+        static Times every(Timestamp timestamp, Period period) {
+            return {true, timestamp, period, {nullptr, 0}};
+        }
+        static Times each(Span<Timestamp> timestamps) {
+            return {false, {0}, {0}, timestamps};
+        }
+    };
+
     constexpr Queue(std::uint8_t* bytes, std::size_t batch_bytes, std::size_t batches,
-                     std::size_t* sizes, Sink* sink, Clock clock)
+                     std::size_t* sizes, Sink* sink, Clock clock, const Hello& hello)
         : bytes_{bytes},
           batch_bytes_{batch_bytes},
           batches_{static_cast<std::uint32_t>(batches)},
           sizes_{sizes},
           sink_{sink},
-          clock_{clock} {}
+          clock_{clock},
+          hello_{hello} {}
 
     // A timestamp of nullptr is read from the clock, once the message has a batch.
     Status value_with(const Timestamp* timestamp, std::string_view path,
                       detail::EncodeFn encode, const void* value);
+    /// Checks the lengths and encodes a Samples message; `count` values.
+    Status samples_with(std::string_view path, std::size_t count, detail::EncodeFn encode,
+                        const void* values, const Times& times);
     Status log_with(const Timestamp* timestamp, std::string_view path, Level level,
                     std::string_view message);
     Status logv(std::string_view path, Level level, const char* format, std::va_list args);
@@ -501,8 +671,10 @@ private:
     std::size_t* const sizes_;
     Sink* const sink_;
     const Clock clock_;
+    const Hello hello_;
 
     // Producer only.
+    bool hello_sent_ = false;
     std::size_t open_size_ = 0;
     std::uint32_t open_messages_ = 0;
     std::uint32_t requests_seen_ = 0;
@@ -555,7 +727,7 @@ public:
     constexpr Tracer(const Tracer& parent, std::string_view name)
         : parent_{&parent}, name_{name} {}
 
-    // proto: Message::Value of the trace `path` below the tracer, timestamped by the
+    // proto: Message::Sample of the trace `path` below the tracer, timestamped by the
     // clock of the queue or explicitly
     template <typename T>
     Status value(std::string_view path, const T& value) const {
@@ -566,8 +738,27 @@ public:
         return value_with(&timestamp, path, &Queue::encode_value<T>, &value);
     }
 
-    // proto: Message::ValueMetadata, the unit of the trace `path` below the tracer
+    // proto: Message::Samples of the trace `path` below the tracer
+    template <typename V>
+    Status samples(std::string_view path, const V& values, Timestamp timestamp,
+                   Period period) const {
+        detail::check_values<V>();
+        return samples_with(path, detail::sequence_size(values), &Queue::encode_value<V>,
+                            &values, Queue::Times::every(timestamp, period));
+    }
+    template <typename S, typename V>
+    Status samples(std::string_view path, const V& values, const S& timestamps) const {
+        detail::check_values<V>();
+        detail::check_timestamps<S>();
+        return samples_with(path, detail::sequence_size(values), &Queue::encode_value<V>,
+                            &values,
+                            Queue::Times::each(detail::timestamp_span(timestamps)));
+    }
+
+    // proto: Message::TraceMetadata, the unit of the trace `path` below the tracer
     Status unit(std::string_view path, std::string_view unit) const;
+    // proto: Message::TraceMetadata of the trace `path` below the tracer
+    Status metadata(std::string_view path, const Metadata& metadata) const;
 
     // proto: Message::Log at the name of the tracer
     Status log(Level level, std::string_view message) const;
@@ -595,6 +786,8 @@ public:
 private:
     Status value_with(const Timestamp* timestamp, std::string_view path,
                       detail::EncodeFn encode, const void* value) const;
+    Status samples_with(std::string_view path, std::size_t count, detail::EncodeFn encode,
+                        const void* values, const Queue::Times& times) const;
     Status logv(Level level, const char* format, std::va_list args) const;
     /// Calls `send` with the full path of `path` below the tracer, joined on the stack;
     /// drops the message as TooLarge if it does not fit.

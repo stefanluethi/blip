@@ -24,7 +24,7 @@ the same format.
 .. code-block:: json
 
    {
-     "version": 1,
+     "version": 2,
      "presets": [
        {
          "name": "Bench",
@@ -89,15 +89,18 @@ the same format.
        settings, e.g.
        ``{"Plot": {"traces": ["motor.speed_rpm"]}}``.
    * - View ``formats``
-     - The display format of traces by path: ``Hex``, ``Binary`` or
-       ``Scientific``, e.g. ``{"status.flags": "Hex"}``.
+     - The display format of traces by path: ``Hex``, ``Binary``,
+       ``Scientific`` or ``Labels``, e.g. ``{"status.flags": "Hex"}``. A
+       trace with labels from the target is shown with ``Labels`` unless it
+       has an entry, so ``"Default"`` is saved for it to show the numbers.
    * - View ``wildcards``
      - The branches of the traces tree whose traces are all shown, also those
        that arrive later, by path; ``""`` is the root.
 
 The settings of each type of view are those of its properties (see
 :doc:`/blip/views/index`), e.g. ``traces`` (the paths shown), ``interpolation``
-of a plot, ``xs``, ``against`` and ``equal_axes`` of an XY view, ``mode`` of
+of a plot, ``fit`` (``Expected`` or ``Values``) of a plot and an XY view,
+``xs``, ``against`` and ``equal_axes`` of an XY view, ``mode`` of
 a heatmap, ``layout`` of a table, ``shown`` of an actions view. A setting
 left out takes its default, so a generated preset only needs what differs.
 To find the key of a setting, change it in blip and export the preset.
@@ -127,9 +130,9 @@ along with them.
 Versions
 ~~~~~~~~
 
-blip opens presets files of its own and of older versions and migrates them;
-it refuses a file of a newer version (*… holds presets of a newer version of
-blip*). It always exports the newest version.
+blip opens presets files of its own and of older versions; it refuses a file
+of a newer version (*… holds presets of a newer version of blip*), so an older
+blip does not open a version 2 file. It always exports the newest version.
 
 .. list-table::
    :header-rows: 1
@@ -139,6 +142,11 @@ blip*). It always exports the newest version.
      - Change
    * - 1
      - The first.
+   * - 2
+     - Adds the number format ``Labels`` and ``fit`` of plots and XY views.
+       Version 1 files load as they are, without a notice: a plot fits to the
+       expected range of its traces if they declare one, as ``fit`` defaults
+       to ``Expected``.
 
 Layout files of the development versions before presets are no longer
 opened.

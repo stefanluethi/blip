@@ -52,9 +52,11 @@ in the documentation: [sonde](https://stefanluethi.github.io/blip/docs/sonde/ind
 
 | `proto::Message`      | sonde call |
 |-----------------------|------------|
-| `Value { timestamp, path, value }` | `queue.value(path, value)` / `queue.value(timestamp, path, value)`; `tracer.value(…)` with the path below the tracer |
-| `ValueMetadata { path, unit }`     | `queue.unit(path, unit)`, `tracer.unit(…)` |
+| `Sample { timestamp, path, value }` | `queue.value(path, value)` / `queue.value(timestamp, path, value)`; `tracer.value(…)` with the path below the tracer |
+| `TraceMetadata { path, unit, description, enum, range }`  | `queue.unit(path, unit)`, `queue.metadata(path, Metadata{unit, description, labels, range})`; `tracer.unit(…)`, `tracer.metadata(…)` with the path below the tracer. Empty fields are left out; `enum` is a map from integer to text, `range` is `{min, max}` as floats |
+| `Samples { path, values, timestamp, period }` / `Samples { path, values, timestamps }` | `queue.samples(path, values, timestamp, period)` / `queue.samples(path, values, timestamps)`; `tracer.samples(…)` with the path below the tracer. One block is one message; a block with a period takes an explicit first timestamp |
 | `Log { timestamp, path, level, message }` | `queue.log(level, message)` / `queue.log(path, level, message)` / `queue.log(timestamp, …)`; `tracer.log(level, message)`, `tracer.info(message)`, … at the tracer's name. By convention the path is `log/<part>`; blip shows a record without a path at `log/default` |
+| `Hello { version, name, clock, sender }` | sent by every queue once, before its first message of any kind: `version` 1, `name` and `clock` from the constructor (`Hello{name, TimeBase}`, left out when empty or `Unknown`), `sender` `"sonde 0.2.0"` (`SONDE_VERSION`) |
 | `Actions`, `ActionResult`, `Request::Invoke` | later, see [Actions](#later-actions) |
 
 | `proto::Data` | C++ |
@@ -175,8 +177,28 @@ std::uint64_t system_clock_ns();
 /// pass their own.
 constexpr Clock default_clock();
 
+/// The version of sonde, sent as the sender of its Hello ("sonde 0.2.0"). A macro, equal
+/// to the VERSION of project() in CMakeLists.txt.
+#define SONDE_VERSION "0.2.0"
+
 /// The levels of log records as blip knows them (proto: LogRecord::level).
 enum class Level : std::uint8_t { Trace = 0, Debug = 1, Info = 2, Warn = 3, Error = 4 };
+
+/// The time base of the timestamps of a target, as its Hello tells blip (proto:
+/// Hello::clock).
+enum class TimeBase : std::uint8_t {
+    Unknown,  // not told: blip guesses it from the timestamps
+    Epoch,    // UTC since the Unix epoch, e.g. from the system clock
+    Boot,     // the time since the target booted, an uptime
+};
+
+/// What a queue tells blip first about the target (proto: Hello). sonde adds the version
+/// of the protocol and itself as the sender. An empty name and TimeBase::Unknown are
+/// left out.
+struct Hello {
+    std::string_view name{};
+    TimeBase clock = TimeBase::Unknown;
+};
 
 enum class Status : std::uint8_t {
     Ok,
@@ -186,8 +208,8 @@ enum class Status : std::uint8_t {
     TooLarge,
     /// The sink failed to take a batch; the batch is dropped.
     SinkError,
-    /// The message could not be encoded, e.g. a record with fewer fields than announced.
-    /// The batch is unchanged.
+    /// The message could not be encoded, e.g. a record with fewer fields than announced,
+    /// or samples with not as many timestamps as values. The batch is unchanged.
     Invalid,
 };
 
@@ -196,6 +218,33 @@ template <typename T>
 struct Span {
     const T* data;
     std::size_t size;
+};
+
+/// The label of an integer value of a trace, e.g. {2, "fault"} (proto: an entry of
+/// TraceMetadata::enum).
+struct Label {
+    std::int64_t value;
+    std::string_view text;
+};
+
+/// The expected range of the values of a trace (proto: TraceMetadata::range).
+struct Range {
+    double min;
+    double max;
+};
+
+/// The metadata of a trace (proto: TraceMetadata); empty fields are left out on the wire.
+struct Metadata {
+    std::string_view unit{};
+    std::string_view description{};
+    /// proto: enum. Give them in ascending order of value, as proto writes them.
+    Span<Label> labels{nullptr, 0};
+    std::optional<Range> range{};
+};
+
+/// The time between two samples of a block, in nanoseconds (proto: Samples::period).
+struct Period {
+    std::uint64_t ns;
 };
 
 inline constexpr std::nullptr_t null = nullptr;
@@ -252,26 +301,47 @@ public:
     template <std::size_t BatchBytes, std::size_t Batches>
     constexpr explicit Queue(Storage<BatchBytes, Batches>& storage,
                               Clock clock = default_clock());
+    /// The same; the Hello of the queue has the name and clock of `hello`.
+    template <std::size_t BatchBytes, std::size_t Batches>
+    constexpr Queue(Storage<BatchBytes, Batches>& storage, Clock clock, const Hello& hello);
 
     /// One context: each ready batch goes to the sink right away.
     template <std::size_t BatchBytes, std::size_t Batches>
     constexpr Queue(Storage<BatchBytes, Batches>& storage, Sink& sink,
                      Clock clock = default_clock());
+    /// The same; the Hello of the queue has the name and clock of `hello`.
+    template <std::size_t BatchBytes, std::size_t Batches>
+    constexpr Queue(Storage<BatchBytes, Batches>& storage, Sink& sink, Clock clock,
+                     const Hello& hello);
 
     Queue(const Queue&) = delete;
     Queue& operator=(const Queue&) = delete;
 
     // --- Producer: only from the context that traces --------------------------------
 
-    // proto: Message::Value, timestamped by the clock or explicitly
+    // proto: Message::Sample, timestamped by the clock or explicitly
     template <typename T>
     Status value(std::string_view path, const T& value);
     template <typename T>
     Status value(Timestamp timestamp, std::string_view path, const T& value);
 
-    // proto: Message::ValueMetadata, the unit of the trace `path`; for a field of a
-    // record, the path joined with ".", e.g. "imu.acc"
+    // proto: Message::Samples of the trace `path`: sample i of `values` at
+    // timestamp + i * period. `values` is a C array, a std::array, a Span or an array().
+    template <typename V>
+    Status samples(std::string_view path, const V& values, Timestamp timestamp,
+                   Period period);
+    // proto: Message::Samples of the trace `path`: sample i of `values` at timestamps[i];
+    // `timestamps` is a C array, a std::array or a Span of Timestamp.
+    // Status::Invalid if they are not as many as the values.
+    template <typename S, typename V>
+    Status samples(std::string_view path, const V& values, const S& timestamps);
+
+    // proto: Message::TraceMetadata, the unit of the trace `path`; for a field of a
+    // record, the path joined with ".", e.g. "imu.acc". An empty unit is left out.
     Status unit(std::string_view path, std::string_view unit);
+    // proto: Message::TraceMetadata of the trace `path`: its unit, description, labels of
+    // integer values and expected range; empty ones are left out.
+    Status metadata(std::string_view path, const Metadata& metadata);
 
     // proto: Message::Log, at `path` like a value, e.g. "motor", or without one of the
     // target as a whole; an empty path is left out on the wire. By convention a log is at
@@ -308,6 +378,13 @@ public:
 }  // namespace sonde
 ```
 
+Every queue sends a `Hello` once, right before the first message it encodes (of any
+kind), into the same batch: it is the first message of the queue, and the first of a
+recording after the header. The constructors without a `Hello` send `Hello{}`, which has
+the version and the sender only (36 bytes); blip then guesses the clock. The Hello is
+tried once: if it is too large for a batch, it is dropped and counted in `dropped()`, and
+not tried again. The queues of one link each send their Hello, so give them the same one.
+
 ### Tracer
 
 ```cpp
@@ -326,14 +403,23 @@ public:
     /// A tracer below `parent`, e.g. "motor/left".
     constexpr Tracer(const Tracer& parent, std::string_view name);
 
-    // proto: Message::Value of the trace `path` below the tracer
+    // proto: Message::Sample of the trace `path` below the tracer
     template <typename T>
     Status value(std::string_view path, const T& value) const;
     template <typename T>
     Status value(Timestamp timestamp, std::string_view path, const T& value) const;
 
-    // proto: Message::ValueMetadata
+    // proto: Message::Samples of the trace `path` below the tracer
+    template <typename V>
+    Status samples(std::string_view path, const V& values, Timestamp timestamp,
+                   Period period) const;
+    template <typename S, typename V>
+    Status samples(std::string_view path, const V& values, const S& timestamps) const;
+
+    // proto: Message::TraceMetadata, the unit of the trace `path` below the tracer
     Status unit(std::string_view path, std::string_view unit) const;
+    // proto: Message::TraceMetadata of the trace `path` below the tracer
+    Status metadata(std::string_view path, const Metadata& metadata) const;
 
     // proto: Message::Log at the name of the tracer
     Status log(Level level, std::string_view message) const;
@@ -434,7 +520,7 @@ void encode(sonde::Encoder& encoder, const Motor& motor);
 ```cpp
 namespace sonde {
 
-/// Writes a blip recording: the header {"format": "blip recording", "version": 1} and
+/// Writes a blip recording: the header {"format": "blip recording", "version": 3} and
 /// then the batches, uncompressed. blip opens the file directly, the outpost replays it.
 /// Missing directories of the path are created.
 class FileSink final : public Sink {
@@ -462,10 +548,11 @@ A timestamp is nanoseconds in the time domain of the queue's clock: the **uptime
 target, or **UTC** since the Unix epoch, e.g. on a desktop or a target with a synchronized
 clock. sonde does not convert between them.
 
-`proto` documents `Value::timestamp` as UTC so far. It needs an update to say which
-domain a connection's timestamps are in (e.g. in a message at the start of a connection),
-so blip can show uptimes as such. Until then uptimes show as times shortly after 1970,
-with correct distances between them.
+The queue's `Hello` tells blip which one: `TimeBase::Boot` for an uptime, `TimeBase::Epoch`
+for UTC. With the default `Hello` or `TimeBase::Unknown`, blip guesses from the
+timestamps: before 2001-09-09 a timestamp is an uptime. The guess is wrong for a UTC clock
+that was not set yet (it counts from a date before 2001) and for an uptime of more than 31
+years; give the time base whenever the clock is known.
 
 ## Usage
 
@@ -475,12 +562,14 @@ with correct distances between them.
 #include <sonde/sonde.hpp>
 
 static sonde::Storage<512, 2> storage;
-static sonde::Queue queue{storage, &uptime_ns};
+static sonde::Queue queue{storage, &uptime_ns, sonde::Hello{"motor-controller", sonde::TimeBase::Boot}};
 static sonde::Tracer motor{queue, "motor"};
 static sonde::Tracer motor_log{queue, "log/motor"};  // log records at log/motor
 static sonde::Tracer arm{queue, "robot/arm"};
 
 motor.unit("speed", "rpm");
+static const sonde::Label states[] = {{-1, "fault"}, {0, "off"}, {1, "on"}};  // ascending
+motor.metadata("state", {{}, "Drive state", {states, 3}, sonde::Range{0, 1}});
 motor.value("speed", 1500u);                       // motor/speed
 motor.value("temperature", sonde::null);           // failed measurement, a gap in the plot
 motor.value(sonde::Timestamp{t_ns}, "current", current);
@@ -527,13 +616,39 @@ void encode(sonde::Encoder& encoder, const Motor& motor) {
 drive.value("motor", motor);  // {"speed_rpm": 1500, "enabled": true, "state": "running"}
 ```
 
+### Blocks of samples
+
+A block of samples is one `Samples` message, much smaller than one `Sample` per value.
+`values` is a C array (not of `char`), a `std::array`, a `sonde::Span` or a
+`sonde::array(n, fill)`; the elements may be any encodable value, also `null` and
+`std::optional`. A block at a fixed period takes the timestamp of its first sample and
+the period; sample `i` is at `timestamp + i * period`. The clock is never read for a
+block.
+
+```cpp
+// an ADC fills a buffer by DMA at 4 kHz; its timestamp is taken at the start of the block
+static std::uint16_t dma_buffer[64];
+
+void on_dma_half_complete(std::uint64_t block_start_ns) {
+    adc.samples("raw", dma_buffer, sonde::Timestamp{block_start_ns}, sonde::Period{250'000});
+}
+
+// a block of irregular samples, one timestamp per value
+const float peaks[2] = {1.5f, 2.5f};
+const sonde::Timestamp at[2] = {{4'000'000}, {4'500'000}};
+adc.samples("peak", peaks, at);  // Status::Invalid if the counts differ
+```
+
+A block larger than a batch is `TooLarge` like any message: split it.
+
 ### Microcontroller: trace in the control task, send in the network task
 
 One UDP datagram per batch, the batch size fits the Ethernet MTU:
 
 ```cpp
 static sonde::Storage<1400, 4> control_storage;
-static sonde::Queue control_traces{control_storage, &uptime_ns};
+static sonde::Queue control_traces{control_storage, &uptime_ns,
+                                   sonde::Hello{"motor-controller", sonde::TimeBase::Boot}};
 static sonde::Tracer motor{control_traces, "motor"};
 static sonde::Tracer pid{motor, "pid"};  // motor/pid
 
@@ -564,7 +679,8 @@ The ISR has its own queue. The DMA-complete interrupt releases the batch:
 
 ```cpp
 static sonde::Storage<256, 3> adc_storage;
-static sonde::Queue adc_traces{adc_storage, &uptime_ns};
+static sonde::Queue adc_traces{adc_storage, &uptime_ns,
+                               sonde::Hello{"motor-controller", sonde::TimeBase::Boot}};
 
 void ADC_IRQHandler() {  // producer
     adc_traces.value("adc/raw", ADC1->DR);
@@ -587,6 +703,9 @@ void DMA_TxComplete_IRQHandler() {
 }
 ```
 
+The two queues are two links, UDP and UART, so each sends its own `Hello` first; they get
+the same one. A queue without a `Hello` argument sends one without name and clock.
+
 ### Desktop app, to a file
 
 ```cpp
@@ -594,7 +713,8 @@ void DMA_TxComplete_IRQHandler() {
 
 sonde::FileSink file{"run.blip"};
 sonde::Storage<4096, 1> storage;
-sonde::Queue queue{storage, file};  // UTC from the system clock
+sonde::Queue queue{storage, file, sonde::default_clock(),
+                   sonde::Hello{"solver", sonde::TimeBase::Epoch}};  // UTC from the system clock
 sonde::Tracer solver{queue, "solver"};
 
 solver.value("residual", residual);  // solver/residual
@@ -619,7 +739,7 @@ std::uint64_t test_clock() { return steps * 1'000'000; }  // 1 ms per step, an "
 TEST_CASE("speed controller settles") {
     sonde::FileSink file{"traces/speed_controller_settles.blip"};
     sonde::Storage<4096, 1> storage;
-    sonde::Queue queue{storage, file, &test_clock};
+    sonde::Queue queue{storage, file, &test_clock, sonde::Hello{"test", sonde::TimeBase::Boot}};
     sonde::Tracer tracer{queue, "controller"};
 
     SpeedController controller{tracer};
@@ -638,7 +758,7 @@ TEST_CASE("speed controller settles") {
 TEST_CASE("controller traces its state each step") {
     sonde::MemorySink memory;
     sonde::Storage<512, 1> storage;
-    sonde::Queue queue{storage, memory, &test_clock};
+    sonde::Queue queue{storage, memory, &test_clock, sonde::Hello{"test", sonde::TimeBase::Boot}};
     sonde::Tracer tracer{queue, "controller"};
 
     SpeedController controller{tracer};
@@ -700,11 +820,19 @@ target_link_libraries(firmware PRIVATE sonde::sonde)
 
 ### Tests
 
-- Encoding of each message type and each kind of `Data`, compared byte for byte with the
+- Encoding of each message type (`Sample`, `TraceMetadata`, `Log`; no `Value` or `ValueMetadata` is written; the `Level` numbers are pinned by `static_assert`) and each kind of `Data`, compared byte for byte with the
   CBOR of the `proto` crate (e.g. the motor and IMU fixtures in `proto/src/data.rs`).
+- The `Hello`: sent once before the first message of any kind, with and without a sink,
+  with name and clock left out when empty or `Unknown`; a queue without one sends the
+  default; a `Hello` too large for a batch is dropped once and counted; a static queue
+  with a `Hello` is constant-initialized.
+- Trace metadata with each of unit, description, labels (negative and wide values, in
+  order) and range, and with none; a tracer joins the path.
 - Shortest float widths, integer major types, `null`, `optional`.
 - Batches: messages stay whole when a batch is full, the next batch opens, `Full` when none
   is free, `TooLarge`, `commit()`, `request_commit()`, `dropped()`.
+- Blocks of samples at a period and at timestamps, from each kind of sequence, also empty;
+  unequal counts are `Invalid` and send nothing; a block larger than a batch is `TooLarge`.
 - Wrong field and element counts give `Invalid` and leave the batch unchanged.
 - Tracers send what the queue sends with the full path, also as
   children of other tracers; a full path longer than `SONDE_PATH_MAX` is `TooLarge`.
@@ -713,7 +841,9 @@ target_link_libraries(firmware PRIVATE sonde::sonde)
   the messages traced.
 - `FileSink` writes a recording the outpost's `read_frames` reads; a Rust test in `proto`
   decodes a recording written by sonde. The recording is `tests/data/recording.blip`,
-  which the sonde tests compare with what sonde writes; `SONDE_UPDATE_FIXTURES=1` writes
+  which the sonde tests compare with what sonde writes (993 bytes: a `Hello` with name
+  `bench` and clock `boot`, the messages of every kind, two `TraceMetadata` with labels and
+  range, and two `Samples` blocks, one at a period and one at timestamps); `SONDE_UPDATE_FIXTURES=1` writes
   it anew. The Rust test also checks that serde encodes the messages to the same bytes.
 - CI builds the library also with `-fno-exceptions -fno-rtti` and for an Arm Cortex-M0
   and M4 target (`arm-none-eabi-gcc`), without the hosted parts.
@@ -724,9 +854,10 @@ target_link_libraries(firmware PRIVATE sonde::sonde)
   sequence, so a UDP datagram of sonde passes through the outpost as one frame.
 - **Socket passthrough keeps messages whole** (done): the outpost cuts the TCP stream at
   message boundaries and looks at each message of a batch.
-- **Timestamp domain.** `proto` gets a way to say whether timestamps are uptime or UTC,
-  see [Timestamps](#timestamps). Not needed for the first version.
-- **Recording header.** Nothing changes: a sonde recording is a version 1 recording.
+- **Timestamp domain** (done): the `Hello` of `proto` says whether timestamps are uptime
+  or UTC, see [Timestamps](#timestamps).
+- **Recording header.** sonde writes version 3 with the layout of version 1: the header
+  `{"format": "blip recording", "version": 3}`, uncompressed, without connection names.
 
 ## Later: actions
 
@@ -751,9 +882,9 @@ if (sonde::decode_request(rx, rx_size, invocation)) {
 
 1. **No global queue, no macros.** A global queue would be shared by several contexts;
    each context gets its own queue instance instead.
-2. **Timestamps are uptime or UTC**, as the clock gives them; `proto` is updated later to
-   tell them apart.
-3. **Field names on the wire stay** (about 25 bytes per `Value`); a compact encoding would
+2. **Timestamps are uptime or UTC**, as the clock gives them; the `Hello` tells blip which
+   (`TimeBase`), or blip guesses.
+3. **Field names on the wire stay** (about 26 bytes per `Sample`); a compact encoding would
    be a protocol change of all three components.
 4. **Contexts are managed by the user** with queue instances; a queue is a lock-free
    single-producer single-consumer queue of batches.
@@ -762,3 +893,22 @@ if (sonde::decode_request(rx, rx_size, invocation)) {
    queue, as a logger does, and has the calls of the tracers of the outpost; the queue
    keeps the calls with full paths for messages forwarded from elsewhere. Joining the
    path on the stack costs a copy of at most `SONDE_PATH_MAX` bytes per message.
+7. **Metadata is one call.** `metadata()` encodes unit, description, labels and range as
+   one `TraceMetadata`; `unit()` is a `metadata()` with only a unit. Labels are written as
+   a map from integer to text in the order given, sonde does not sort them: give them in
+   ascending order of value, which is how `proto` (a sorted map) writes them, so the bytes
+   equal serde's. The range is always written as floats, so it re-encodes the same from
+   `proto`'s `f64`.
+8. **Blocks need sequences of known length.** `samples()` takes a C array, a
+   `std::array`, a `Span` or an `array(n, fill)`, so the count is known before encoding and
+   the lengths can be checked: a block with timestamps whose count differs from the values
+   is `Invalid`, nothing is encoded. A block with a period takes an explicit first
+   timestamp; the clock is never read for `Samples`.
+9. **Every queue sends a Hello, always.** It goes once before the first message, so a
+   recording or a link always begins with the version of the protocol and the sender, and
+   nothing has to remember to send it. There is no way to turn it off and no resend call
+   in this revision. It is copied into the queue (the name stays a view) and the
+   constructors stay `constexpr`, so a static queue with a Hello is constant-initialized.
+   The queues of one link (one UDP stream, one UART, one file) each send a Hello, so give
+   them the same one; the receiver takes the first. The Hello is not repeated: a link that
+   a receiver joins later has to get it from whoever forwards the link, not from sonde.

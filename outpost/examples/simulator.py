@@ -11,6 +11,9 @@ frame.
 Its traces are sampled at different rates, like the sensors of a real target: the
 accelerometer and the IMU every sampling interval, the others at their own periods,
 which are no multiples of each other, so their samples rarely share a timestamp.
+
+It declares the units, descriptions, ranges and labels of its traces as metadata, and
+sends the vibration trace `adc/vibration` as blocks of samples at 1 kHz.
 """
 
 import argparse
@@ -57,21 +60,41 @@ SPECTRUM_PERIOD_SEC = 0.033
 THERMAL_PERIOD_SEC = 0.115
 TEMPERATURE_PERIOD_SEC = 1.0
 
-# Units of the traces, sent once at the start: the outpost passes them on to blips
-# connecting later. The fields of a record are joined to its path with "."
-UNITS = {
-    "accelerometer": "m/s²",
-    "imu.acc": "m/s²",
-    "imu.gyro": "rad/s",
-    "motor.speed_rpm": "rpm",
-    "robot/pose.x": "m",
-    "robot/pose.y": "m",
-    "robot/pose.heading": "rad",
-    "audio/spectrum": "dB",
-    "thermal/frame": "°C",
-    "sensor/temperature": "°C",
+# Metadata of the traces (the keyword arguments of `Outpost.metadata`), sent once at the
+# start: the outpost passes them on to blips connecting later. The fields of a record are
+# joined to its path with "."
+TRACES: dict[str, dict] = {
+    "accelerometer": dict(
+        unit="m/s²", description="Acceleration along one axis", value_range=(-10.0, 10.0)
+    ),
+    "imu.acc": dict(unit="m/s²", description="IMU acceleration", value_range=(-20.0, 20.0)),
+    "imu.gyro": dict(unit="rad/s", description="IMU angular rate", value_range=(-1.0, 1.0)),
+    "motor.speed_rpm": dict(unit="rpm", description="Motor speed", value_range=(0, 3000)),
+    "motor.mode": dict(
+        description="Operating mode of the motor",
+        labels={0: "idle", 1: "accelerating", 2: "running", 3: "braking"},
+        value_range=(0, 3),
+    ),
+    "robot/pose.x": dict(unit="m", description="Robot position x", value_range=(-2.0, 2.0)),
+    "robot/pose.y": dict(unit="m", description="Robot position y", value_range=(-1.0, 1.0)),
+    "robot/pose.heading": dict(unit="rad", description="Robot heading", value_range=(-3.2, 3.2)),
+    "audio/spectrum": dict(unit="dB", description="Audio spectrum", value_range=(-60.0, 0.0)),
+    "thermal/frame": dict(unit="°C", description="Thermal camera frame", value_range=(15.0, 50.0)),
+    "sensor/temperature": dict(
+        unit="°C", description="Temperature sensor, sometimes without a value", value_range=(20.0, 30.0)
+    ),
+    "adc/vibration": dict(
+        unit="g", description="Vibration, sampled at 1 kHz in blocks", value_range=(-0.5, 0.5)
+    ),
 }
-CPU_UNIT = "%"
+
+# The states of the motor and their numbers in the record
+MOTOR_MODES = {"idle": 0, "accelerating": 1, "running": 2, "braking": 3}
+
+# The vibration trace is sampled at this rate (Hz) and sent in blocks of this many samples
+VIBRATION_RATE_HZ = 1000
+VIBRATION_BLOCK = 25
+VIBRATION_BLOCK_SEC = VIBRATION_BLOCK / VIBRATION_RATE_HZ
 
 # The simulated robot drives a figure eight of this size (m) in this time (s)
 POSE_EXTENT_M = 2.0
@@ -119,6 +142,8 @@ class Simulator:
         self._cpu_count = psutil.cpu_count() or 1
         # Start of the simulated time, which the slowly changing traces follow
         self._start = time.perf_counter()
+        self._vibration_blocks = 0
+        self._vibration_start_ns = time.time_ns()
         # the methods decorated with @action become the actions of the outpost
         outpost.register(self)
 
@@ -130,9 +155,10 @@ class Simulator:
         )
         # Initialize psutil cpu percent calculation
         self._cpu_count = len(psutil.cpu_percent(percpu=True))
-        self._send_units()
+        self._send_metadata()
         self._send_log(INFO, "main", f"simulator booted ({self._cpu_count} CPU cores detected)")
         self._start = time.perf_counter()
+        self._vibration_start_ns = time.time_ns()
         send = self.outpost.send
         await asyncio.gather(
             self._every(self.interval_sec, self._send_accelerometer),
@@ -143,6 +169,7 @@ class Simulator:
             self._every(SPECTRUM_PERIOD_SEC, lambda: send(self._spectrum_message())),
             self._every(THERMAL_PERIOD_SEC, lambda: send(self._thermal_message())),
             self._every(TEMPERATURE_PERIOD_SEC, self._send_temperature),
+            self._every(VIBRATION_BLOCK_SEC, self._send_vibration),
             self._send_random_logs(),
         )
 
@@ -162,13 +189,33 @@ class Simulator:
         """The simulated time (s) since the simulator started."""
         return time.perf_counter() - self._start
 
-    def _send_units(self) -> None:
-        """The units of all traces, and the log level."""
-        units = dict(UNITS)
-        units.update({f"sysinfo/cpu/cpu{idx}": CPU_UNIT for idx in range(self._cpu_count)})
-        for path, unit in units.items():
-            self.outpost.unit(path, unit)
+    def _send_metadata(self) -> None:
+        """The metadata of all traces, and the log level."""
+        traces = dict(TRACES)
+        for idx in range(self._cpu_count):
+            traces[f"sysinfo/cpu/cpu{idx}"] = dict(
+                unit="%", description=f"Load of core {idx}", value_range=(0.0, 100.0)
+            )
+        for path, metadata in traces.items():
+            self.outpost.metadata(path, **metadata)
         self._send_log_level()
+
+    def _send_vibration(self) -> None:
+        """A block of vibration samples, ending now: the first sample is a block earlier."""
+        period_ns = 1_000_000_000 // VIBRATION_RATE_HZ
+        block = self._vibration_blocks
+        self._vibration_blocks += 1
+        values = [
+            0.2 * math.sin(2.0 * math.pi * 50.0 * (block * VIBRATION_BLOCK + i) / VIBRATION_RATE_HZ)
+            + random.gauss(0.0, 0.01)
+            for i in range(VIBRATION_BLOCK)
+        ]
+        self.outpost.series(
+            "adc/vibration",
+            values,
+            start_ns=self._vibration_start_ns + (block - 1) * VIBRATION_BLOCK * period_ns,
+            period_ns=period_ns,
+        )
 
     def _send_accelerometer(self) -> None:
         self._accel = random.uniform(-10.0, 10.0)
@@ -214,7 +261,13 @@ class Simulator:
             state = "running" if target > 0 else "idle"
         speed_rpm = max(0, round(self._motor_speed + random.gauss(0.0, 5.0))) if state != "idle" else 0
         return Message.create_value(
-            "motor", {"speed_rpm": speed_rpm, "enabled": self._motor_enabled, "state": state}
+            "motor",
+            {
+                "speed_rpm": speed_rpm,
+                "enabled": self._motor_enabled,
+                "state": state,
+                "mode": MOTOR_MODES[state],
+            }
         )
 
     def _pose_message(self) -> Message:

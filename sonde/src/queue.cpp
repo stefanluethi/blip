@@ -25,7 +25,7 @@ std::uint64_t system_clock_ns() {
 
 namespace {
 
-/// A value encoded by a function, the data of a Value message.
+/// A value encoded by a function, the data of a Sample message.
 struct Erased {
     detail::EncodeFn encode;
     const void* value;
@@ -38,16 +38,16 @@ void encode(Encoder& encoder, const Erased& erased) {
 // The messages as serde encodes proto::Message: a map of the variant name to a map of
 // the fields, in their order in proto.
 
-struct ValueMessage {
+struct SampleMessage {
     Timestamp timestamp;
     std::string_view path;
     Erased value;
 };
 
-void write_value(Encoder& encoder, const void* message) {
-    const auto& value = *static_cast<const ValueMessage*>(message);
+void write_sample(Encoder& encoder, const void* message) {
+    const auto& value = *static_cast<const SampleMessage*>(message);
     encoder.record(1, [&](Record& variant) {
-        variant.field("Value", record(3, [&](Record& fields) {
+        variant.field("Sample", record(3, [&](Record& fields) {
                           fields.field("timestamp", value.timestamp.ns);
                           fields.field("path", value.path);
                           fields.field("value", value.value);
@@ -55,17 +55,100 @@ void write_value(Encoder& encoder, const void* message) {
     });
 }
 
-struct MetadataMessage {
+struct SamplesMessage {
     std::string_view path;
-    std::string_view unit;
+    Erased values;
+    bool periodic;
+    Timestamp timestamp;
+    Period period;
+    Span<Timestamp> timestamps;
 };
 
-void write_metadata(Encoder& encoder, const void* message) {
-    const auto& metadata = *static_cast<const MetadataMessage*>(message);
+void write_samples(Encoder& encoder, const void* message) {
+    const auto& samples = *static_cast<const SamplesMessage*>(message);
     encoder.record(1, [&](Record& variant) {
-        variant.field("ValueMetadata", record(2, [&](Record& fields) {
-                          fields.field("path", metadata.path);
-                          fields.field("unit", metadata.unit);
+        variant.field("Samples", record(samples.periodic ? 4 : 3, [&](Record& fields) {
+                          fields.field("path", samples.path);
+                          fields.field("values", samples.values);
+                          if (samples.periodic) {
+                              fields.field("timestamp", samples.timestamp.ns);
+                              fields.field("period", samples.period.ns);
+                          } else {
+                              fields.field("timestamps",
+                                           array(samples.timestamps.size, [&](Array& times) {
+                                               for (std::size_t i = 0;
+                                                    i < samples.timestamps.size; ++i) {
+                                                   times.add(samples.timestamps.data[i].ns);
+                                               }
+                                           }));
+                          }
+                      }));
+    });
+}
+
+struct MetadataMessage {
+    std::string_view path;
+    const Metadata* metadata;
+};
+
+struct Labels {
+    Span<Label> labels;
+};
+
+void encode(Encoder& encoder, const Labels& labels) {
+    detail::encode_labels(encoder, labels.labels);
+}
+
+void write_metadata(Encoder& encoder, const void* message) {
+    const auto& declared = *static_cast<const MetadataMessage*>(message)->metadata;
+    const std::string_view path = static_cast<const MetadataMessage*>(message)->path;
+    encoder.record(1, [&](Record& variant) {
+        // everything but the path has a default in proto, empty ones are left out
+        const std::size_t count = 1 + (declared.unit.empty() ? 0 : 1) +
+                                  (declared.description.empty() ? 0 : 1) +
+                                  (declared.labels.size != 0 ? 1 : 0) +
+                                  (declared.range.has_value() ? 1 : 0);
+        variant.field("TraceMetadata", record(count, [&](Record& fields) {
+                          fields.field("path", path);
+                          if (!declared.unit.empty()) {
+                              fields.field("unit", declared.unit);
+                          }
+                          if (!declared.description.empty()) {
+                              fields.field("description", declared.description);
+                          }
+                          if (declared.labels.size != 0) {
+                              fields.field("enum", Labels{declared.labels});
+                          }
+                          if (declared.range) {
+                              const Range range = *declared.range;
+                              fields.field("range", record(2, [&](Record& bounds) {
+                                               bounds.field("min", range.min);
+                                               bounds.field("max", range.max);
+                                           }));
+                          }
+                      }));
+    });
+}
+
+constexpr unsigned protocol_version = 1;  // of the blip protocol, in the Hello
+
+void write_hello(Encoder& encoder, const void* message) {
+    const auto& hello = *static_cast<const Hello*>(message);
+    const std::string_view clock = hello.clock == TimeBase::Epoch  ? "epoch"
+                                   : hello.clock == TimeBase::Boot ? "boot"
+                                                                   : "";
+    encoder.record(1, [&](Record& variant) {
+        // name and clock have defaults in proto, empty ones are left out
+        const std::size_t count = 2 + (hello.name.empty() ? 0 : 1) + (clock.empty() ? 0 : 1);
+        variant.field("Hello", record(count, [&](Record& fields) {
+                          fields.field("version", protocol_version);
+                          if (!hello.name.empty()) {
+                              fields.field("name", hello.name);
+                          }
+                          if (!clock.empty()) {
+                              fields.field("clock", clock);
+                          }
+                          fields.field("sender", std::string_view{"sonde " SONDE_VERSION});
                       }));
     });
 }
@@ -121,8 +204,24 @@ struct Queue::Encoded {
 // --- Producer -----------------------------------------------------------------------
 
 Status Queue::unit(std::string_view path, std::string_view unit) {
-    const MetadataMessage message{path, unit};
+    Metadata declared;
+    declared.unit = unit;
+    return metadata(path, declared);
+}
+
+Status Queue::metadata(std::string_view path, const Metadata& metadata) {
+    const MetadataMessage message{path, &metadata};
     return emit(&write_metadata, &message, nullptr);
+}
+
+Status Queue::samples_with(std::string_view path, std::size_t count, detail::EncodeFn encode,
+                           const void* values, const Times& times) {
+    if (!times.periodic && times.timestamps.size != count) {
+        return Status::Invalid;
+    }
+    const SamplesMessage message{path,           Erased{encode, values}, times.periodic,
+                                 times.timestamp, times.period,           times.timestamps};
+    return emit(&write_samples, &message, nullptr);
 }
 
 Status Queue::log(Level level, std::string_view message) {
@@ -183,9 +282,9 @@ Status Queue::commit() {
 
 Status Queue::value_with(const Timestamp* timestamp, std::string_view path,
                           detail::EncodeFn encode, const void* value) {
-    ValueMessage message{timestamp != nullptr ? *timestamp : Timestamp{0}, path,
+    SampleMessage message{timestamp != nullptr ? *timestamp : Timestamp{0}, path,
                          Erased{encode, value}};
-    return emit(&write_value, &message, timestamp == nullptr ? &message.timestamp : nullptr);
+    return emit(&write_sample, &message, timestamp == nullptr ? &message.timestamp : nullptr);
 }
 
 Status Queue::log_with(const Timestamp* timestamp, std::string_view path, Level level,
@@ -196,6 +295,12 @@ Status Queue::log_with(const Timestamp* timestamp, std::string_view path, Level 
 }
 
 Status Queue::emit(detail::EncodeFn encode, const void* message, Timestamp* clock_time) {
+    if (!hello_sent_) {
+        // the Hello goes first, once, before the first message of the queue; TooLarge is
+        // dropped and counted
+        hello_sent_ = true;
+        append(&write_hello, &hello_, nullptr);
+    }
     Status status = append(encode, message, clock_time);
     const std::uint32_t requests = requests_.load(std::memory_order_acquire);
     if (requests != requests_seen_) {

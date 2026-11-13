@@ -1,14 +1,19 @@
-"""Dataclasses as records: the units of their fields, declared with `Unit`::
+"""Dataclasses as records: what their fields declare for blip, with `Annotated`::
 
     @dataclass
-    class Imu:
-        acc: Annotated[List[float], Unit("m/s²")]
+    class Drive:
+        speed: Annotated[int, Unit("rpm"), Range(0, 3000), Description("Shaft speed")]
+        mode: Annotated[int, Labels({0: "idle", 1: "running"})]
         valid: bool
 
-    outpost.value("imu", Imu([0.0, 0.0, 9.81], True))   # traces imu.acc and imu.valid
+    outpost.value("drive", Drive(1200, 1, True))   # traces drive.speed, drive.mode, drive.valid
+
+`Unit` gives the unit, `Description` a text, `Labels` the names of integer values and
+`Range` the expected range (when both `min` and `max` are set; `step` is ignored). The
+first annotation of each kind wins.
 
 The fields of a dataclass become the fields of the record, as the keys of a dict do; a
-field that is a dataclass itself becomes a nested record, e.g. ``imu.pose.x``.
+field that is a dataclass itself becomes a nested record, e.g. ``drive.pose.x``.
 """
 
 import dataclasses
@@ -17,25 +22,49 @@ import logging
 import sys
 import types
 import typing
-from typing import Any, List, Tuple
+from typing import Any, List, Mapping, Optional, Tuple
 
-from blip_outpost.actions import Unit
+from blip_outpost.actions import Range, Unit
 
 logger = logging.getLogger(__name__)
 
 
+@dataclasses.dataclass(frozen=True, eq=False)
+class Description:
+    """The description of a trace, e.g. a field of a record."""
+    text: str
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class Labels:
+    """The names of the integer values of a trace, e.g. ``Labels({0: "idle", 1: "running"})``."""
+    labels: Mapping[int, str]
+
+
+@dataclasses.dataclass(frozen=True)
+class FieldMetadata:
+    """What the annotations of a field declare."""
+    unit: str = ""
+    description: str = ""
+    labels: Optional[Mapping[int, str]] = None
+    value_range: Optional[Tuple[float, float]] = None
+
+    def __bool__(self) -> bool:
+        return bool(self.unit or self.description or self.labels or self.value_range is not None)
+
+
 @functools.lru_cache(maxsize=None)
-def field_units(cls: type) -> Tuple[Tuple[str, str], ...]:
-    """The fields of the dataclass `cls` that declare a `Unit`, also of the dataclasses
-    in its fields, as (path after the record, unit), e.g. ``("pose.x", "m")``."""
-    units: List[Tuple[str, str]] = []
+def field_metadata(cls: type) -> Tuple[Tuple[str, FieldMetadata], ...]:
+    """The fields of the dataclass `cls` that declare metadata, also of the dataclasses
+    in its fields, as (path after the record, metadata), e.g. ``("pose.x", FieldMetadata("m"))``."""
+    found: List[Tuple[str, FieldMetadata]] = []
     for f, hint in zip(dataclasses.fields(cls), _hints(cls)):
-        unit, inner = _unit_of(hint)
-        if unit:
-            units.append((f.name, unit))
+        meta, inner = _metadata_of(hint)
+        if meta:
+            found.append((f.name, meta))
         if isinstance(inner, type) and dataclasses.is_dataclass(inner):
-            units.extend((f"{f.name}.{path}", u) for path, u in field_units(inner))
-    return tuple(units)
+            found.extend((f"{f.name}.{path}", m) for path, m in field_metadata(inner))
+    return tuple(found)
 
 
 def _hints(cls: type) -> List[Any]:
@@ -69,18 +98,40 @@ def _hints(cls: type) -> List[Any]:
     return resolved
 
 
-def _unit_of(hint: Any) -> Tuple[str, Any]:
-    """The unit an annotation declares, and the type it annotates, without `Optional`."""
+def _metadata_of(hint: Any) -> Tuple[FieldMetadata, Any]:
+    """The metadata an annotation declares, and the type it annotates, without `Optional`."""
     unit = ""
+    description = ""
+    labels: Optional[Mapping[int, str]] = None
+    value_range: Optional[Tuple[float, float]] = None
     if typing.get_origin(hint) is typing.Annotated:
+        seen = set()
         for extra in hint.__metadata__:
+            kind = type(extra)
+            if kind in seen:
+                continue
             if isinstance(extra, Unit):
                 unit = extra.unit
+            elif isinstance(extra, Description):
+                description = extra.text
+            elif isinstance(extra, Labels):
+                labels = extra.labels
+            elif isinstance(extra, Range):
+                if extra.min is not None and extra.max is not None:
+                    value_range = (extra.min, extra.max)
+            else:
+                continue
+            seen.add(kind)
         hint = typing.get_args(hint)[0]
     # Optional[X] and X | None annotate X
     if typing.get_origin(hint) in (typing.Union, types.UnionType):
         args = [a for a in typing.get_args(hint) if a is not type(None)]
         if len(args) == 1:
-            inner_unit, inner = _unit_of(args[0])
-            return unit or inner_unit, inner
-    return unit, hint
+            inner_meta, inner = _metadata_of(args[0])
+            return FieldMetadata(
+                unit or inner_meta.unit,
+                description or inner_meta.description,
+                labels or inner_meta.labels,
+                value_range or inner_meta.value_range,
+            ), inner
+    return FieldMetadata(unit, description, labels, value_range), hint

@@ -96,8 +96,13 @@ the cursor to the end of the range.
 Time axes
 ---------
 
-The time axes show the timestamps as local time of day, or as time since boot
-if they are too small to be a date (before 2001).
+The time axes show the timestamps as local time of day, or as time since boot.
+Which one follows the ``clock`` in the ``Hello`` of the connection, ``epoch`` or
+``boot``; a target without it is guessed: timestamps too small to be a date
+(before 2001) are the time since boot. All data shares one axis: if
+connections declare both clocks, the time of day wins and the data of the time
+since boot is removed, with one warning. Log records with the timestamp 0 are
+placed at the newest time of the data.
 
 Next steps
 ----------

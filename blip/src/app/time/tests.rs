@@ -320,3 +320,30 @@ fn window_and_cursor_in_nanoseconds() {
     assert_eq!(empty.timestamps(), None);
     assert_eq!(empty.cursor_timestamp(), None);
 }
+
+#[test]
+fn times_count_nanoseconds_and_the_range_takes_the_base_of_the_model() {
+    assert_eq!(seconds_since(0, 1_500_000_000), 1.5);
+    let mut model = Model::default();
+    let frame = |message| serde_cbor_2::to_vec(&message).unwrap();
+    model.receive(
+        "a",
+        &frame(proto::Message::Hello(proto::Hello {
+            version: 1,
+            name: None,
+            clock: Some(proto::Clock::Boot),
+            sender: None,
+        })),
+    );
+    model.receive(
+        "a",
+        &frame(proto::Message::Sample(proto::Sample {
+            timestamp: 1_700_000_000_000_000_000,
+            path: "rpm".to_owned(),
+            value: proto::Data::Uint(1),
+        })),
+    );
+    let mut range = TimeRange::default();
+    range.update(&model, 0.0);
+    assert_eq!(range.base(), TimeBase::SinceBoot);
+}

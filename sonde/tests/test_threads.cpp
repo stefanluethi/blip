@@ -47,6 +47,9 @@ TEST_CASE("a producer and a consumer on two threads") {
                 decoded = decoded && items.has_value();
                 if (items) {
                     for (const auto& item : *items) {
+                        if (test::is_hello(item)) {
+                            continue;
+                        }
                         const auto value = test::uint_value(item);
                         decoded = decoded && value.has_value();
                         if (value) {

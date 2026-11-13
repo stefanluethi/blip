@@ -67,8 +67,13 @@ Values
    older than the newest 65 536 of its path is dropped too.
 
 Timestamps
-   Nanoseconds, either since 1970 (UTC) or since the target booted. Targets
-   with different time bases line up only as far as their clocks agree.
+   Nanoseconds, either since 1970 (UTC) or since the target booted, as the
+   ``Hello`` says, else guessed. Targets with different time bases line up
+   only as far as their clocks agree; with both declared, the time of day wins.
+
+Protocol version
+   blip reads protocol version 1. A target that sends a newer ``Hello`` is
+   read on, and blip warns.
 
 Actions
    An invocation the target does not answer within five seconds counts as
@@ -77,5 +82,5 @@ Actions
 
 Data that is not kept
    blip keeps values and log records only while recording; before, it
-   collects only the units and actions the targets announce. Invocations are
+   collects only the trace metadata and actions the targets announce. Invocations are
    not recorded; the log records of the target show what it did.

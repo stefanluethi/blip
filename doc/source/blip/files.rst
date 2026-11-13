@@ -17,7 +17,7 @@ File menu
    also those of an opened recording. In the browser, the file is downloaded.
 
 **Clear data**
-   Removes all received data but the latest units and actions of the targets,
+   Removes all received data but the latest trace metadata and actions of the targets,
    which they may send only when connecting or when they change. The recording
    starts again with them, so a saved recording has them too.
 

@@ -9,8 +9,8 @@ What the views show and how blip displays values.
    :component: blip
    :satisfies: STK_LIVE_OBSERVE
 
-   blip shall display received ``Value`` messages as time-series plots,
-   grouped by their ``path``.
+   blip shall display received ``Sample`` and ``Samples`` messages as
+   time-series plots, grouped by their ``path``.
 
 .. req:: Show log records
    :id: REQ_VIS_LOG

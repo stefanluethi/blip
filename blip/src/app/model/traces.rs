@@ -4,7 +4,7 @@
 
 use super::decode::{Flat, Leaf};
 use super::growing::Growing;
-use super::numbers::{DisplayFormat, Extent, Number, NumberKind, Numbers};
+use super::numbers::{DisplayFormat, Extent, Labels, Number, NumberKind, Numbers};
 use super::sorted::upper_bound;
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
@@ -210,17 +210,18 @@ impl Samples {
     /// The `index`th sample written as text, arrays with at most `max_len` elements per
     /// dimension and a line per row as in [`format_array`], and numbers in `format`,
     /// floats with at most `digits` significant digits or all of them if `digits` is
-    /// `None`.
+    /// `None`. With Labels, numbers with a label in `labels` are written as it.
     pub fn format(
         &self,
         index: usize,
         max_len: usize,
         digits: Option<usize>,
         format: DisplayFormat,
+        labels: Option<&Labels>,
     ) -> String {
         match self {
             Self::Empty(_) => "null".to_owned(),
-            Self::Numbers(numbers) => numbers.get(index).format(digits, format),
+            Self::Numbers(numbers) => numbers.get(index).format_labelled(digits, format, labels),
             Self::Strings(strings) => strings.get(index).unwrap_or("null").to_owned(),
             Self::Arrays { shape, .. } => {
                 let elements: Vec<Number> = self
@@ -228,7 +229,7 @@ impl Samples {
                     .map(|elements| elements.iter().collect())
                     .unwrap_or_default();
                 format_array(shape, &elements, max_len, &|number: Number| {
-                    number.format(digits, format)
+                    number.format_labelled(digits, format, labels)
                 })
             }
         }
@@ -424,9 +425,9 @@ pub struct Traces {
     /// The columns that were not removed, by their paths, so the fields of a record
     /// follow each other.
     sorted: Vec<usize>,
-    /// The units of the traces by their paths, as received in their metadata, also
-    /// for traces without samples yet.
-    units: BTreeMap<String, String>,
+    /// What the targets say about the traces by their paths, as received, also for
+    /// traces without samples yet.
+    metadata: BTreeMap<String, proto::TraceMetadata>,
     /// Timestamps of the first and the newest value.
     span: Option<(u64, u64)>,
     /// Changes when a trace is added or removed.
@@ -488,23 +489,72 @@ impl Traces {
         pushed
     }
 
-    /// Sets the unit of the trace at `path`, an empty `unit` for none.
-    pub fn set_unit(&mut self, path: &str, unit: &str) {
-        if unit.is_empty() {
-            self.units.remove(path);
-        } else if self.units.get(path).is_none_or(|known| known != unit) {
-            self.units.insert(path.to_owned(), unit.to_owned());
+    /// Removes the traces and their samples, keeping the metadata.
+    pub fn clear_samples(&mut self) {
+        let metadata = std::mem::take(&mut self.metadata);
+        *self = Self::default();
+        self.metadata = metadata;
+    }
+
+    /// Keeps the metadata of the trace at its path, replacing the older: an expected
+    /// range that is not finite or not ascending is dropped, metadata with only a path
+    /// removes the entry.
+    pub fn set_metadata(&mut self, metadata: &proto::TraceMetadata) {
+        let mut metadata = metadata.clone();
+        if let Some(range) = &metadata.range {
+            if !(range.min.is_finite() && range.max.is_finite() && range.min < range.max) {
+                log::warn!(
+                    "Ignoring the expected range of {}: it is not finite or not ascending",
+                    metadata.path
+                );
+                metadata.range = None;
+            }
+        }
+        if metadata.unit.is_empty()
+            && metadata.description.is_empty()
+            && metadata.labels.is_empty()
+            && metadata.range.is_none()
+        {
+            self.metadata.remove(&metadata.path);
+        } else {
+            self.metadata.insert(metadata.path.clone(), metadata);
         }
     }
 
-    /// The unit of the trace at `path`, or of the array trace of an element written by
-    /// [`element_path`].
+    /// The metadata of the trace at `path`, or of the array trace of an element written
+    /// by [`element_path`].
+    pub fn metadata(&self, path: &str) -> Option<&proto::TraceMetadata> {
+        match self.metadata.get(path) {
+            Some(metadata) => Some(metadata),
+            None => self.metadata.get(parse_element_path(path)?.0),
+        }
+    }
+
+    /// The unit of the trace at `path`, if it has one.
     pub fn unit(&self, path: &str) -> Option<&str> {
-        let unit = match self.units.get(path) {
-            Some(unit) => Some(unit),
-            None => self.units.get(parse_element_path(path)?.0),
-        };
-        unit.map(String::as_str)
+        self.metadata(path)
+            .map(|metadata| metadata.unit.as_str())
+            .filter(|unit| !unit.is_empty())
+    }
+
+    /// The description of the trace at `path`, if it has one.
+    pub fn description(&self, path: &str) -> Option<&str> {
+        self.metadata(path)
+            .map(|metadata| metadata.description.as_str())
+            .filter(|description| !description.is_empty())
+    }
+
+    /// The labels of the values of the trace at `path`, if it has some.
+    pub fn labels(&self, path: &str) -> Option<&Labels> {
+        self.metadata(path)
+            .map(|metadata| &metadata.labels)
+            .filter(|labels| !labels.is_empty())
+    }
+
+    /// The range the trace at `path` is expected to stay in.
+    pub fn expected(&self, path: &str) -> Option<(f64, f64)> {
+        let range = self.metadata(path)?.range.as_ref()?;
+        Some((range.min, range.max))
     }
 
     pub fn get(&self, path: &str) -> Option<Trace<'_>> {
@@ -564,11 +614,11 @@ impl Traces {
 
     /// Appends `value` as if received, for tests.
     #[cfg(test)]
-    pub fn append(&mut self, value: &proto::Value) {
-        let frame = serde_cbor_2::to_vec(&proto::Message::Value(value.clone())).unwrap();
+    pub fn append(&mut self, value: &proto::Sample) {
+        let frame = serde_cbor_2::to_vec(&proto::Message::Sample(value.clone())).unwrap();
         let mut flat = Flat::default();
         let message = super::decode::decode(&frame, &mut flat).unwrap();
-        let super::decode::Message::Value { timestamp, path } = message else {
+        let super::decode::Message::Sample { timestamp, path } = message else {
             unreachable!("a value was encoded");
         };
         self.insert(path, timestamp, &flat, &frame);

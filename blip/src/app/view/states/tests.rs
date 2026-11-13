@@ -6,7 +6,7 @@ use proto::Data;
 fn traces(samples: &[(&str, Data)]) -> Traces {
     let mut traces = Traces::default();
     for (second, (path, value)) in samples.iter().enumerate() {
-        traces.append(&proto::Value {
+        traces.append(&proto::Sample {
             timestamp: second as u64 * 1_000_000_000,
             path: path.to_string(),
             value: value.clone(),
@@ -118,7 +118,7 @@ fn false_bools_are_empty_and_log_levels_take_their_colors() {
 fn tooltip_view_model() -> (States, Model) {
     let mut model = Model::default();
     let mut append = |second: u64, path: &str, value: Data| {
-        model.traces.append(&proto::Value {
+        model.traces.append(&proto::Sample {
             timestamp: second * 1_000_000_000,
             path: path.to_owned(),
             value,
@@ -128,7 +128,11 @@ fn tooltip_view_model() -> (States, Model) {
     append(1, "motor.on", Data::Bool(true));
     append(2, "motor.state", Data::Null);
     append(3, "motor.speed", Data::Int(1200));
-    model.traces.set_unit("motor.speed", "rpm");
+    model.traces.set_metadata(&proto::TraceMetadata {
+        path: "motor.speed".into(),
+        unit: "rpm".into(),
+        ..Default::default()
+    });
     let mut states = States::default();
     states
         .traces
@@ -137,10 +141,68 @@ fn tooltip_view_model() -> (States, Model) {
 }
 
 #[test]
+fn the_row_under_the_pointer_is_found_by_its_height() {
+    assert_eq!(row_at(2.2, 3), Some(0));
+    assert_eq!(row_at(0.0, 3), Some(2));
+    assert_eq!(row_at(-0.6, 3), None);
+    assert_eq!(row_at(2.6, 3), None);
+}
+
+#[test]
+fn the_tooltip_describes_the_row_and_writes_labels_with_the_number() {
+    use super::super::tooltip::{Footer, Label, Row, Value};
+    let (states, mut model) = tooltip_view_model();
+    model.traces.set_metadata(&proto::TraceMetadata {
+        path: "motor.speed".into(),
+        unit: "rpm".into(),
+        description: "Shaft speed".into(),
+        labels: [(1200, "Fast".to_owned())].into(),
+        ..Default::default()
+    });
+    let tooltip = states.tooltip(
+        &model,
+        &super::super::NO_FORMATS,
+        3_500_000_000,
+        TimeBase::SinceBoot,
+        Some(1),
+    );
+    assert_eq!(
+        tooltip.footer,
+        Some(Footer {
+            name: "speed".into(),
+            description: "Shaft speed".into()
+        })
+    );
+    assert_eq!(
+        tooltip.groups[0][1],
+        Row::new(
+            Label::Weak("speed".into()),
+            [Value::text("Fast"), Value::faint("1200 rpm")]
+        )
+    );
+    let none = states.tooltip(
+        &model,
+        &super::super::NO_FORMATS,
+        3_500_000_000,
+        TimeBase::SinceBoot,
+        None,
+    );
+    assert_eq!(none.footer, None);
+}
+
+#[test]
 fn the_tooltip_has_the_time_and_the_state_of_each_trace() {
     use super::super::tooltip::{Header, Label, Row, Value};
     let (states, model) = tooltip_view_model();
-    let tooltip = |t| states.tooltip(&model, &super::super::NO_FORMATS, t, TimeBase::SinceBoot);
+    let tooltip = |t| {
+        states.tooltip(
+            &model,
+            &super::super::NO_FORMATS,
+            t,
+            TimeBase::SinceBoot,
+            None,
+        )
+    };
     let rows = |speed: Value| {
         let row = |name: &str, value| Row::new(Label::Weak(name.into()), [value]);
         vec![
@@ -204,4 +266,27 @@ fn hovering_the_states_shows_the_tooltip() {
         );
     }
     assert!(texts[0].0.starts_with("0:00:"), "{texts:?}");
+}
+
+#[test]
+fn bands_write_labels_and_keep_the_colour_of_the_number() {
+    let mut model = model(&[
+        ("m", Data::Uint(0)),
+        ("m", Data::Uint(1)),
+        ("m", Data::Uint(3)),
+    ]);
+    model.traces.set_metadata(&proto::TraceMetadata {
+        path: "m".into(),
+        labels: [(0, "Idle".to_owned()), (1, "warn".to_owned())].into(),
+        ..Default::default()
+    });
+    let samples = StateSamples::of(&model, "m", DisplayFormat::Labels).unwrap();
+    let texts: Vec<_> = (0..3).map(|index| samples.text(index)).collect();
+    assert_eq!(texts, ["Idle", "warn", "3"]);
+    // a label that is a log level name takes the level colour
+    let keys: Vec<_> = (0..3).map(|index| samples.label(index)).collect();
+    assert_eq!(keys, ["0", "warn", "3"]);
+    let samples = StateSamples::of(&model, "m", DisplayFormat::Default).unwrap();
+    let texts: Vec<_> = (0..3).map(|index| samples.text(index)).collect();
+    assert_eq!(texts, ["0", "1", "3"]);
 }

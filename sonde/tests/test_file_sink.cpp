@@ -9,12 +9,14 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <string>
 
 using test::Bytes;
@@ -25,6 +27,14 @@ namespace {
 Bytes read(const std::filesystem::path& path) {
     std::ifstream file{path, std::ios::binary};
     return Bytes{std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{}};
+}
+
+constexpr sonde::Hello fixture_hello{"bench", sonde::TimeBase::Boot};
+
+/// {"Hello": {"version": 1, "name": "bench", "clock": "boot", "sender": "sonde 0.2.0"}}
+Bytes bench_hello() {
+    return hex("a16548656c6c6fa46776657273696f6e01646e616d656562656e636865636c6f636b6462"
+               "6f6f746673656e6465726b736f6e646520302e322e30");
 }
 
 std::uint64_t steps = 0;
@@ -69,6 +79,14 @@ void trace(sonde::Queue& queue) {
     queue.logf(sonde::Level::Error, "overrun %d", 3);
     queue.value("adc/samples", std::array<std::uint16_t, 4>{0, 1023, 2048, 4095});
     queue.commit();
+    const sonde::Label states[] = {{-1, "fault"}, {0, "off"}, {1, "on"}};
+    queue.metadata("motor/state", sonde::Metadata{{}, "Drive state", {states, 3}, std::nullopt});
+    queue.metadata("motor/current", sonde::Metadata{"A", {}, {}, sonde::Range{-2.5, 10.0}});
+    const std::uint16_t raw[3] = {512, 513, 511};
+    queue.samples("adc/raw", raw, sonde::Timestamp{4'000'000}, sonde::Period{250'000});
+    const sonde::Timestamp times[2] = {{4'000'000}, {4'500'000}};
+    queue.samples("adc/peak", std::array<std::optional<float>, 2>{1.5f, std::nullopt}, times);
+    queue.commit();
 }
 
 }  // namespace
@@ -81,23 +99,24 @@ TEST_CASE("a file sink writes a recording") {
         sonde::FileSink file{path.string().c_str()};  // creates the directory
         REQUIRE(file.is_open());
         sonde::Storage<128, 1> file_storage;
-        sonde::Queue to_file{file_storage, file, &test_clock};
+        sonde::Queue to_file{file_storage, file, &test_clock, fixture_hello};
         trace(to_file);
 
         sonde::Storage<128, 1> memory_storage;
-        sonde::Queue to_memory{memory_storage, memory, &test_clock};
+        sonde::Queue to_memory{memory_storage, memory, &test_clock, fixture_hello};
         trace(to_memory);
     }
 
     const Bytes header = hex("a2" "66666f726d6174" "6e626c6970207265636f7264696e67"
-                             "6776657273696f6e" "01");
+                             "6776657273696f6e" "03");
     Bytes expected = header;
     expected.insert(expected.end(), memory.bytes().begin(), memory.bytes().end());
     CHECK(read(path) == expected);
 
     const auto items = test::items(memory.bytes());
     REQUIRE(items);
-    CHECK(items->size() == 12);
+    CHECK(items->size() == 17);
+    CHECK((*items)[0] == bench_hello());
 }
 
 TEST_CASE("the recording fixture is what sonde writes") {
@@ -111,10 +130,14 @@ TEST_CASE("the recording fixture is what sonde writes") {
         sonde::FileSink file{path.string().c_str()};
         REQUIRE(file.is_open());
         sonde::Storage<128, 1> storage;
-        sonde::Queue queue{storage, file, &test_clock};
+        sonde::Queue queue{storage, file, &test_clock, fixture_hello};
         trace(queue);
     }
     CHECK(read(path) == read(fixture));
+    const Bytes value_name = hex("6556616c7565");  // the text "Value"
+    const Bytes bytes = read(fixture);
+    CHECK(std::search(bytes.begin(), bytes.end(), value_name.begin(), value_name.end()) ==
+          bytes.end());
 }
 
 TEST_CASE("a file sink that cannot open its file fails") {
@@ -124,11 +147,11 @@ TEST_CASE("a file sink that cannot open its file fails") {
     const std::uint8_t byte = 0xf6;
     CHECK(!file.write(&byte, 1));
 
-    sonde::Storage<64, 1> storage;
+    sonde::Storage<128, 1> storage;
     sonde::Queue queue{storage, file, nullptr};
-    queue.value("a", 1u);
+    CHECK(queue.value("a", 1u) == sonde::Status::Ok);
     CHECK(queue.commit() == sonde::Status::SinkError);
-    CHECK(queue.dropped() == 1);
+    CHECK(queue.dropped() == 2);  // the Hello and the value
 }
 
 TEST_CASE("a memory sink clears") {

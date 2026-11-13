@@ -8,13 +8,15 @@ from urllib.parse import parse_qs, urlsplit
 import websockets
 from websockets.asyncio.server import Server, ServerConnection, serve
 
-import cbor2
 
 from blip_outpost.actions import ActionError
 from blip_outpost.proto import (
     ACTION_RESULT_PREFIX,
     ACTIONS_PREFIX,
+    HELLO_PREFIX,
     METADATA_PREFIX,
+    OLD_METADATA_PREFIX,
+    metadata_path,
     Message,
     decode_request,
 )
@@ -117,11 +119,14 @@ class OutpostServer:
         invoke: Callable[[str, Any], Awaitable[None]],
         max_queued: int = 10000,
         on_clients: Callable[[int], None] = lambda count: None,
+        hello: Callable[[], Optional[bytes]] = lambda: None,
     ) -> None:
         # carries out an invocation, raises ActionError to reject it
         self.invoke = invoke
         # called with the number of clients when a client connects or disconnects
         self.on_clients = on_clients
+        # gives the Hello of the outpost itself, None for none
+        self._own_hello = hello
         # records the binary messages, also while no client is connected
         self.recorder: Optional[RecordingWriter] = None
         self.path = ""
@@ -132,12 +137,19 @@ class OutpostServer:
         self._server: Optional[Server] = None
         self._invocations: Set[asyncio.Task] = set()
         self._actions_frame: Optional[bytes] = None
-        # the latest ValueMetadata message of each path
+        # the latest Hello broadcast, e.g. of a target
+        self._hello: Optional[bytes] = None
+        # the latest TraceMetadata (or old ValueMetadata) message of each path
         self._metadata: Dict[str, bytes] = {}
 
     def cached_frames(self) -> List[bytes]:
-        """The messages a client gets when it connects: the units and the actions."""
-        frames = list(self._metadata.values())
+        """The messages a client gets when it connects: the latest Hello broadcast, else
+        the outpost's own, then the metadata and the actions."""
+        frames: List[bytes] = []
+        hello = self._hello if self._hello is not None else self._own_hello()
+        if hello is not None:
+            frames.append(hello)
+        frames.extend(self._metadata.values())
         if self._actions_frame is not None:
             frames.append(self._actions_frame)
         return frames
@@ -160,7 +172,9 @@ class OutpostServer:
             return
         if message.startswith(ACTIONS_PREFIX):
             self._actions_frame = message
-        elif message.startswith(METADATA_PREFIX):
+        elif message.startswith(HELLO_PREFIX):
+            self._hello = message
+        elif message.startswith((METADATA_PREFIX, OLD_METADATA_PREFIX)):
             self._remember_metadata(message)
         if self.recorder:
             self.recorder.write(message)
@@ -168,11 +182,8 @@ class OutpostServer:
             client.enqueue(message)
 
     def _remember_metadata(self, message: bytes) -> None:
-        try:
-            path = cbor2.loads(message)["ValueMetadata"]["path"]
-        except Exception:
-            return
-        if isinstance(path, str):
+        path = metadata_path(message)
+        if path is not None:
             # moved to the end, so a client gets the units in the order they were last sent
             self._metadata.pop(path, None)
             self._metadata[path] = message

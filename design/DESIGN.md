@@ -97,6 +97,18 @@ oscilloscope, not like a web app.
   right aligned in a column as wide as its widest text, with its unit. Values that are
   missing or empty are `text_faint`. A rule may split groups of rows. The timeline's log
   list, table cells and the hints on controls keep their own look.
+- What a target says about a trace (description, labels, expected range) shows where the
+  trace is already named or its value written, and in the Traces section of Properties.
+  No badge or icon marks a trace that has it.
+- A label replaces its number; the colour follows the number. Labels is a number format,
+  so the number stays one click away. An integer without a label is a plain number, not
+  faint.
+- A default taken from the target shows as the faint hint of the empty field it fills,
+  never as a typed value; clearing the field goes back to it.
+- Tooltips add the description of the one trace under the pointer only, as a footer
+  below a rule, at most 3 lines.
+- Status dots: green when fine, amber (`warn`) when connected with a problem, red when
+  failed.
 
 ## Words
 

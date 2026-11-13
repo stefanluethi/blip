@@ -48,7 +48,7 @@ fn model(samples: u64) -> Model {
         .actions
         .set("", vec![descriptor("enable", Some("on"))]);
     for timestamp in 0..samples {
-        let value = proto::Message::Value(proto::Value {
+        let value = proto::Message::Sample(proto::Sample {
             timestamp,
             path: "on".to_owned(),
             value: Data::Bool(true),
@@ -288,4 +288,35 @@ fn resetting_keeps_the_inputs() {
     assert!(invoker.take_outbox().is_empty());
     assert_eq!(invoker.outcome(&speed, 0.0), None);
     assert_eq!(invoker.inputs.len(), 1);
+}
+
+#[test]
+fn readbacks_follow_after_another_clock_dropped_the_data() {
+    let sample = |timestamp| {
+        let value = proto::Message::Sample(proto::Sample {
+            timestamp,
+            path: "on".to_owned(),
+            value: Data::Bool(true),
+        });
+        serde_cbor_2::to_vec(&value).unwrap()
+    };
+    let mut model = model(3);
+    let mut invoker = Invoker::default();
+    let enable = unnamed("enable");
+    invoker.invoke(&enable, Some("on"), vec![], 0.0);
+    invoker.receive("", &answer(0, Ok(())), 0.1, &model);
+    assert!(!invoker.follows_readback(&enable, model.readback_samples(Some("on"))));
+    // an epoch clock of another source drops the data timed since boot
+    let hello = proto::Message::Hello(proto::Hello {
+        version: 1,
+        name: None,
+        clock: Some(proto::Clock::Epoch),
+        sender: None,
+    });
+    model.receive_unrecorded("b", &serde_cbor_2::to_vec(&hello).unwrap());
+    assert_eq!(model.readback_samples(Some("on")), 3);
+    model.receive_unrecorded("", &sample(1_700_000_000_000_000_000));
+    let samples = model.readback_samples(Some("on"));
+    assert_eq!(samples, 4);
+    assert!(invoker.follows_readback(&enable, samples));
 }

@@ -60,6 +60,7 @@ class SocketPassthrough:
         self._clocks: Dict[str, TargetClock] = {}
         self._latest: Optional[TargetClock] = None
         outpost.on_invoke = self.invoke
+        outpost.send_hello = False
         outpost.target_time = self._target_time
 
     async def run(self) -> None:

@@ -17,13 +17,17 @@ was received.
 
 Hovering the plot shows a tooltip with the time and a row per shown trace: its
 dot and name, and its value at the pointer with the unit. A trace without a
-value there shows a faint *—*.
+value there shows a faint *—*. A value with a label shows the label and the
+number faint beside it. Below a rule, the tooltip gives the name and
+description of the curve nearest the pointer, if it is within a few pixels of
+it and its target sent a description.
 
 * **Drag sideways** to move the time range (this pauses), and **scroll the
   mouse wheel** to zoom it, which changes the window length. See
   :doc:`/blip/time`.
 * The y axis fits all data of its traces, also outside the shown range,
-  unless its min or max is set. **Drag up or down** to pan it, scroll with
+  unless its min or max is set. When a trace says what range its values are
+  expected in, the axis fits that range instead, see **Fit to** below. **Drag up or down** to pan it, scroll with
   :kbd:`Alt` held to zoom it, and **double-click** to fit it again.
 * **Click** to put the time cursor there, or drag the cursor line.
 
@@ -33,8 +37,12 @@ Properties:
    :widths: 25 75
 
    * - **Y axis**
-     - **Min** and **Max**, empty to fit the data; **Label**, by default the
-       unit the traces share.
+     - **Fit to**, only while a shown trace declares its expected range:
+       *Expected* fits the declared ranges and the values of the traces that
+       declare none, and values beyond a declared range grow the axis;
+       *Values* fits the values of the traces, as for traces without a range.
+       **Min** and **Max**, empty to fit, show the ends in use as faint
+       hints; **Label**, by default the unit the traces share.
    * - **Lines**
      - **Interpolation**: *Linear* or *Step*. **Width** of the lines.
        **Points**: mark the samples *Auto* (when they are far enough apart),

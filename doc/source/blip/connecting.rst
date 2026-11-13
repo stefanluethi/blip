@@ -32,12 +32,12 @@ Connecting and disconnecting
   received so far; clear it with **File › Clear data**.
 * A connection that opens while no other is open **starts afresh**: the data,
   traces and actions received before, or of an opened recording, are dropped,
-  also the units and actions that **Clear data** keeps, and the traces panel
+  also the trace metadata and actions that **Clear data** keeps, and the traces panel
   starts anew. Save a recording you want to keep first: connecting does not
   ask.
 * The received values and log records are kept only while recording, started
   with **Record** in the bottom panel once connected, see :doc:`/blip/time`. Before,
-  blip only collects the units and actions the targets announce.
+  blip only collects the trace metadata and actions the targets announce.
 * While recording, the connections cannot be changed: they cannot be
   connected, disconnected, added, edited or deleted. Stop recording to change
   them. Only a connection that was connected when the recording started and
@@ -60,13 +60,43 @@ The dot before each connection shows its state:
      - connecting
    * - green
      - connected
+   * - amber
+     - connected, but the target speaks a newer protocol than blip, see below
    * - red
      - connecting failed or the connection broke; hover it for the reason
 
-The reason is also shown as a notice in the bottom right of the views, as is a
+A target that sends a ``Hello`` is shown in its row, see below. The reason is also shown as a notice in the bottom right of the views, as is a
 connection closed by its outpost or target. The chip in the menu bar shows the
 open connection (or their number) and the messages received per second, or
 *Not connected*.
+
+What the target says of itself
+------------------------------
+
+.. figure:: /screenshots/popup-connections.png
+   :target: ../_images/popup-connections.png
+   :class: screenshot
+   :width: 330px
+   :alt: The connections: bench with the target name rig-7 and the line sonde 1.2, time since boot; lab in amber with protocol 2 is newer than blip; and spare, not connected.
+
+   Two connected targets, one on a newer protocol, and one not connected.
+
+A target or outpost sends a ``Hello`` when it connects. The row of its
+connection shows what it says, in faint text:
+
+* the **name of the target** at the right of the first line, unless it is the
+  name of the connection;
+* on the last line the **sender**, the software and version that sends, e.g.
+  ``sonde 1.2``, and its **clock**, *time of day* or *time since boot*.
+
+The lines stay, fainter, after the connection closes, until the target sends
+another ``Hello`` or you remove the connection. Targets that send no ``Hello``
+show no lines.
+
+If the ``Hello`` is of a newer protocol than blip reads (*protocol 2 is newer
+than blip*), blip warns once with a notice for each time you connect, colours the
+dot in the row and in the chip amber, and says so on the last line and on
+hover. It keeps reading and shows what it knows; update blip to see all of it.
 
 Several outposts
 ----------------
@@ -83,7 +113,9 @@ recording keeps the name of the connection of each message.
 
 Each target sends its own timestamps. Targets sending the time since boot
 rather than the time of day are shown next to each other only as far as they
-were started at the same time.
+were started at the same time. If one connection says it sends the time of day
+and another the time since boot, blip warns, shows the time of day and removes
+the data of the time since boot, see :doc:`/blip/time`.
 
 .. tip::
 

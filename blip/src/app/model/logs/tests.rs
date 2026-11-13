@@ -105,3 +105,32 @@ fn a_record_without_a_path_is_at_log_default() {
     );
     assert!(logs.get("log").is_none());
 }
+
+#[test]
+fn records_at_0_are_placed_and_levels_above_4_are_errors() {
+    assert_eq!(
+        LogEntry::new(0, 2, "x", Some(7_000_000_000)).time,
+        7_000_000_000
+    );
+    let before = chrono::Utc::now().timestamp_nanos_opt().unwrap() as u64;
+    let time = LogEntry::new(0, 2, "x", None).time;
+    let after = chrono::Utc::now().timestamp_nanos_opt().unwrap() as u64;
+    assert!((before..=after).contains(&time));
+
+    let levels: Vec<_> = (proto::level::TRACE..=proto::level::ERROR)
+        .map(|level| LogEntry::new(1, level, "x", None).level)
+        .collect();
+    assert_eq!(
+        levels,
+        [
+            LogLevel::Trace,
+            LogLevel::Debug,
+            LogLevel::Info,
+            LogLevel::Warn,
+            LogLevel::Error
+        ]
+    );
+    for level in [5, 255] {
+        assert_eq!(LogEntry::new(1, level, "x", None).level, LogLevel::Error);
+    }
+}

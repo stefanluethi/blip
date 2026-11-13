@@ -17,8 +17,8 @@ The tree
 --------
 
 * The tree branches at each ``/`` of a path. Each trace shows the icon of its
-  type at the end of its row, and the type itself on hover, e.g. ``float``,
-  ``int[8×8]`` or ``string``; each announced action shows a lightning, and
+  type at the end of its row, and on hover its path, its type, e.g. ``float``,
+  ``int[8×8]`` or ``string``, and the description the target sent, if any; each announced action shows a lightning, and
   the logs of a path a list.
 * The fields of a record are separate traces joined to its path with ``.``,
   e.g. ``imu.acc``, listed below the record as ``.acc``.

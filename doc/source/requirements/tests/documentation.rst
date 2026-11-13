@@ -42,3 +42,16 @@ Tests of the requirements in :doc:`/requirements/documentation/index`.
 
    ``cd doc && make linkcheck`` -- requests each link to another site and fails
    on broken ones; run before each release.
+
+.. test:: The protocol reference covers every message
+   :id: TEST_DOC_PROTOCOL
+   :status: implemented
+   :component: doc
+   :verifies: REQ_DOC_FORMATS
+
+   ``outpost/tests/test_docs.py::test_the_protocol_page_covers_every_message_and_field``
+   -- goes through the variants of ``Message`` and the fields of ``Hello``,
+   ``Sample``, ``Samples``, ``TraceMetadata`` and ``Log`` in ``proto/src`` and
+   checks that each is on the page of the protocol reference;
+   ``::test_the_protocol_page_names_the_recording_versions`` checks that its
+   section on recording files names versions 1 to 3.

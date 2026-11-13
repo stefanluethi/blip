@@ -2,7 +2,7 @@ use crate::app::model::Version;
 use crate::app::model::logs::{LogEntry, LogLevel, Logs, PathLogs};
 use crate::app::model::sorted::upper_bound_by;
 use crate::app::theme::{self, TokensExt};
-use crate::app::time::{TimeBase, TimeRange};
+use crate::app::time::TimeRange;
 use crate::app::view::{ViewContext, Viewable};
 use egui_extras::Column;
 use egui_phosphor::regular;
@@ -361,7 +361,7 @@ impl LogTable {
                             };
                             row.col(|ui| {
                                 lines.above(ui, index);
-                                let base = TimeBase::guess(entry.time);
+                                let base = time.base();
                                 let time = if columns.date {
                                     base.format_dated(entry.time, 3)
                                 } else {

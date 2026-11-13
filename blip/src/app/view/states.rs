@@ -7,7 +7,7 @@ use super::tooltip::{Header, Label, Row, Tooltip, Value};
 use super::{Formats, PropertiesContext, ViewContext, Viewable, short_names, with_unit};
 use crate::app::model::Model;
 use crate::app::model::logs::LogLevel;
-use crate::app::model::numbers::{DisplayFormat, NumberKind, SHOWN_DIGITS};
+use crate::app::model::numbers::{DisplayFormat, Labels, NumberKind, SHOWN_DIGITS};
 use crate::app::model::sorted::index_at;
 use crate::app::model::traces::{Samples, Series, Strings, Trace};
 use crate::app::theme::{self, TokensExt};
@@ -50,8 +50,8 @@ impl Default for States {
 /// The samples of a trace shown as states.
 #[derive(Clone, Copy)]
 enum StateSamples<'a> {
-    /// Numbers, written in the display format.
-    Numbers(Series<'a>, DisplayFormat),
+    /// Numbers, written in the display format, with the labels the target declares.
+    Numbers(Series<'a>, DisplayFormat, Option<&'a Labels>),
     Strings {
         timestamps: &'a [u64],
         texts: &'a Strings,
@@ -61,7 +61,7 @@ enum StateSamples<'a> {
 impl<'a> StateSamples<'a> {
     fn of(model: &'a Model, path: &str, format: DisplayFormat) -> Option<Self> {
         if let Some(series) = model.traces.series(path) {
-            return Some(Self::Numbers(series, format));
+            return Some(Self::Numbers(series, format, model.traces.labels(path)));
         }
         let trace = model.traces.get(path)?;
         match &trace.samples {
@@ -75,14 +75,14 @@ impl<'a> StateSamples<'a> {
 
     fn timestamps(&self) -> &'a [u64] {
         match self {
-            Self::Numbers(series, _) => series.timestamps,
+            Self::Numbers(series, ..) => series.timestamps,
             Self::Strings { timestamps, .. } => timestamps,
         }
     }
 
     fn is_null(&self, index: usize) -> bool {
         match self {
-            Self::Numbers(series, _) => series.number(index).is_null(),
+            Self::Numbers(series, ..) => series.number(index).is_null(),
             Self::Strings { texts, .. } => texts.get(index).is_none(),
         }
     }
@@ -90,15 +90,23 @@ impl<'a> StateSamples<'a> {
     /// Whether the samples at `a` and `b` have the same value.
     fn same(&self, a: usize, b: usize) -> bool {
         match self {
-            Self::Numbers(series, _) => series.number(a) == series.number(b),
+            Self::Numbers(series, ..) => series.number(a) == series.number(b),
             Self::Strings { texts, .. } => texts.same(a, b),
         }
     }
 
-    /// The value of the sample at `index`, which its colour follows.
+    /// The value of the sample at `index`, which its colour follows: the number, but for
+    /// a label that is a log level name, which takes the level colour.
     fn label(&self, index: usize) -> String {
         match self {
-            Self::Numbers(series, _) => series.number(index).to_string(),
+            Self::Numbers(series, DisplayFormat::Labels, Some(labels)) => {
+                let number = series.number(index);
+                match number.label(labels) {
+                    Some(label) if is_level_name(label) => label.to_owned(),
+                    _ => number.to_string(),
+                }
+            }
+            Self::Numbers(series, ..) => series.number(index).to_string(),
             Self::Strings { .. } => self.text(index),
         }
     }
@@ -106,16 +114,38 @@ impl<'a> StateSamples<'a> {
     /// The value of the sample at `index` as shown, in the display format.
     fn text(&self, index: usize) -> String {
         match self {
-            Self::Numbers(series, format) => {
-                series.number(index).format(Some(SHOWN_DIGITS), *format)
+            Self::Numbers(series, format, labels) => {
+                series
+                    .number(index)
+                    .format_labelled(Some(SHOWN_DIGITS), *format, *labels)
             }
             Self::Strings { texts, .. } => texts.get(index).unwrap_or("null").to_owned(),
         }
     }
 
-    fn is_bool(&self) -> bool {
-        matches!(self, Self::Numbers(series, _) if series.kind == NumberKind::Bool)
+    /// The tooltip values of the sample at `index`: as [`Value::labelled`] for numbers.
+    fn values(&self, index: usize, unit: Option<&str>) -> Vec<Value> {
+        match self {
+            Self::Numbers(series, format, labels) => {
+                Value::labelled(series.number(index), SHOWN_DIGITS, *format, unit, *labels)
+            }
+            Self::Strings { .. } => {
+                let null = self.is_null(index);
+                let unit = unit.filter(|_| !null);
+                vec![Value::text(with_unit(self.text(index), unit)).faint_if(null)]
+            }
+        }
     }
+
+    fn is_bool(&self) -> bool {
+        matches!(self, Self::Numbers(series, ..) if series.kind == NumberKind::Bool)
+    }
+}
+
+/// The row at the y coordinate `y` of `rows` rows, the first on top, if it is on one.
+fn row_at(y: f64, rows: usize) -> Option<usize> {
+    let row = (rows as f64 - 1.0 - y).round();
+    (row >= 0.0 && row < rows as f64).then_some(row as usize)
 }
 
 /// A band from `start` to `end` seconds.
@@ -191,14 +221,22 @@ fn merge_narrow(runs: Vec<Run>, min_width: f64) -> Vec<Run> {
     merged
 }
 
+/// The log level that `name` names in any case.
+fn level_named(name: &str) -> Option<LogLevel> {
+    LogLevel::ALL
+        .into_iter()
+        .find(|level| level.as_str().eq_ignore_ascii_case(name))
+}
+
+fn is_level_name(name: &str) -> bool {
+    level_named(name).is_some()
+}
+
 /// The color of a band with the value `label`, a color of the trace palette, or `None`
 /// for a false bool, whose band stays empty so that true reads as on. Log levels take
 /// the colors they have in log views.
 fn state_color(label: &str, is_bool: bool, visuals: &egui::Visuals) -> Option<Color32> {
-    if let Some(level) = LogLevel::ALL
-        .into_iter()
-        .find(|level| level.as_str().eq_ignore_ascii_case(label))
-    {
+    if let Some(level) = level_named(label) {
         return Some(theme::level_color(visuals, level));
     }
     let color = match label.parse::<i64>() {
@@ -280,26 +318,40 @@ impl States {
     }
 
     /// The tooltip with the values of the shown traces current at `t` nanoseconds, a
-    /// faint dash for a trace without a sample then.
-    fn tooltip(&self, model: &Model, formats: &Formats, t: u64, base: TimeBase) -> Tooltip {
+    /// faint dash for a trace without a sample then, and the description of the trace
+    /// of the `row` under the pointer.
+    fn tooltip(
+        &self,
+        model: &Model,
+        formats: &Formats,
+        t: u64,
+        base: TimeBase,
+        row: Option<usize>,
+    ) -> Tooltip {
         let names = short_names(self.traces.iter().map(String::as_str));
         let rows = self
             .traces
             .iter()
-            .zip(names)
+            .zip(&names)
             .map(|(path, name)| {
-                let value = StateSamples::of(model, path, formats.of(path))
-                    .and_then(|samples| {
-                        let index = index_at(samples.timestamps(), t)?;
-                        let null = samples.is_null(index);
-                        let unit = model.traces.unit(path).filter(|_| !null);
-                        Some(Value::text(with_unit(samples.text(index), unit)).faint_if(null))
-                    })
-                    .unwrap_or_else(Value::missing);
-                Row::new(Label::Weak(name.to_owned()), [value])
+                let values = StateSamples::of(
+                    model,
+                    path,
+                    formats.format_of(path, model.traces.labels(path).is_some()),
+                )
+                .and_then(|samples| {
+                    let index = index_at(samples.timestamps(), t)?;
+                    Some(samples.values(index, model.traces.unit(path)))
+                })
+                .unwrap_or_else(|| vec![Value::missing()]);
+                Row::new(Label::Weak((*name).to_owned()), values)
             })
             .collect();
-        Tooltip::new(Header::Text(base.format(t, 3))).group(rows)
+        let tooltip = Tooltip::new(Header::Text(base.format(t, 3))).group(rows);
+        match row.and_then(|row| Some((names.get(row)?, self.traces.iter().nth(row)?))) {
+            Some((name, path)) => tooltip.describe(name, model.traces.description(path)),
+            None => tooltip,
+        }
     }
 
     /// Shows the values of the shown traces current at `t` seconds.
@@ -308,10 +360,10 @@ impl States {
         ui: &mut egui::Ui,
         model: &Model,
         formats: &Formats,
-        t: f64,
+        (t, row): (f64, Option<usize>),
         axis: time_axis::TimeAxis,
     ) {
-        self.tooltip(model, formats, axis.timestamp(t), axis.base)
+        self.tooltip(model, formats, axis.timestamp(t), axis.base, row)
             .ui(ui);
     }
 
@@ -353,7 +405,11 @@ impl States {
                 return;
             };
             for (row, path) in self.traces.iter().enumerate() {
-                if let Some(samples) = StateSamples::of(model, path, formats.of(path)) {
+                if let Some(samples) = StateSamples::of(
+                    model,
+                    path,
+                    formats.format_of(path, model.traces.labels(path).is_some()),
+                ) {
                     let y = row_y(row);
                     self.plot_row(samples, y, range, latest, axis.origin, plot_ui);
                 }
@@ -367,9 +423,10 @@ impl States {
             && !self.traces.is_empty()
         {
             let axis = response.axis;
+            let row = response.hovered_y.and_then(|y| row_at(y, rows));
             response
                 .response
-                .on_hover_ui_at_pointer(|ui| self.tooltip_ui(ui, model, formats, t, axis));
+                .on_hover_ui_at_pointer(|ui| self.tooltip_ui(ui, model, formats, (t, row), axis));
         }
     }
 }

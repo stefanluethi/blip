@@ -2,11 +2,13 @@
 
 import asyncio
 import contextlib
+import socket
 from typing import AsyncIterator
 
 import pytest
 import websockets
 
+import blip_outpost
 from blip_outpost import ActionError, LogLevel, Outpost
 from blip_outpost.proto import decode_cbor_message
 
@@ -40,9 +42,45 @@ async def test_simulator_outpost():
             for _ in range(100):
                 data = decode_cbor_message(await receive(ws, 2.0))
                 assert data is not None
-                if "Value" in data:
+                if "Sample" in data:
                     break
-            assert set(data["Value"]) == {"path", "timestamp", "value"}
+            assert set(data["Sample"]) == {"path", "timestamp", "value"}
+
+
+async def test_simulator_outpost_declares_and_blocks():
+    async with serving(3956, interval_ms=10):
+        await asyncio.sleep(0.1)
+        async with connect(3956) as ws:
+            messages = []
+            block = None
+            for _ in range(500):
+                data = decode_cbor_message(await receive(ws, 2.0))
+                assert data is not None
+                messages.append(data)
+                if "Samples" in data:
+                    block = data["Samples"]
+                    break
+
+    assert messages[0] == {
+        "Hello": {
+            "version": 1,
+            "name": socket.gethostname(),
+            "clock": "epoch",
+            "sender": f"blip-outpost {blip_outpost.__version__}",
+        }
+    }
+    metadata = {m["TraceMetadata"]["path"]: m["TraceMetadata"] for m in messages if "TraceMetadata" in m}
+    assert isinstance(metadata["accelerometer"]["description"], str)
+    assert metadata["accelerometer"]["description"]
+    assert metadata["motor.mode"]["enum"] == {0: "idle", 1: "accelerating", 2: "running", 3: "braking"}
+    assert metadata["sensor/temperature"]["range"] == {"min": 20.0, "max": 30.0}
+    assert metadata["sensor/temperature"]["unit"] == "°C"
+    assert block is not None, "no block of samples arrived"
+    assert set(block) == {"path", "values", "timestamp", "period"}
+    assert block["path"] == "adc/vibration"
+    assert len(block["values"]) == 25 and all(isinstance(v, float) for v in block["values"])
+    assert block["period"] == 1_000_000
+    assert isinstance(block["timestamp"], int) and block["timestamp"] > 10**18
 
 
 async def test_simulator_outpost_logs():
@@ -85,8 +123,8 @@ async def test_simulator_outpost_typed_values():
                 assert len(msg_bytes) <= 2048
                 data = decode_cbor_message(msg_bytes)
                 assert data is not None
-                if "Value" in data and data["Value"]["path"] in typed_paths:
-                    values.setdefault(data["Value"]["path"], data["Value"]["value"])
+                if "Sample" in data and data["Sample"]["path"] in typed_paths:
+                    values.setdefault(data["Sample"]["path"], data["Sample"]["value"])
                     if len(values) == len(typed_paths):
                         break
 
@@ -98,6 +136,8 @@ async def test_simulator_outpost_typed_values():
     assert isinstance(motor["speed_rpm"], int) and not isinstance(motor["speed_rpm"], bool)
     assert isinstance(motor["enabled"], bool)
     assert isinstance(motor["state"], str)
+    assert isinstance(motor["mode"], int) and not isinstance(motor["mode"], bool)
+    assert 0 <= motor["mode"] <= 3
     pose = values["robot/pose"]
     assert set(pose) == {"x", "y", "heading"}
     assert all(isinstance(v, float) for v in pose.values())
@@ -114,8 +154,10 @@ async def test_simulator_outpost_units():
         async with connect(3994) as ws:
             units = {}
             data = decode_cbor_message(await receive(ws, 2.0))
-            while "ValueMetadata" in data:
-                units[data["ValueMetadata"]["path"]] = data["ValueMetadata"]["unit"]
+            assert "Hello" in data
+            data = decode_cbor_message(await receive(ws, 2.0))
+            while "TraceMetadata" in data:
+                units[data["TraceMetadata"]["path"]] = data["TraceMetadata"].get("unit")
                 data = decode_cbor_message(await receive(ws, 2.0))
 
     assert units["sensor/temperature"] == "°C"
@@ -127,13 +169,17 @@ async def test_simulator_outpost_rates():
         async with connect(3993) as ws:
             # count the samples of each trace for a while
             counts = {}
+            block_counts = {}
             loop = asyncio.get_running_loop()
             end = loop.time() + 1.5
             while loop.time() < end:
                 data = decode_cbor_message(await receive(ws, 2.0))
-                if "Value" in data:
-                    path = data["Value"]["path"]
+                if "Sample" in data:
+                    path = data["Sample"]["path"]
                     counts[path] = counts.get(path, 0) + 1
+                elif "Samples" in data:
+                    path = data["Samples"]["path"]
+                    block_counts[path] = block_counts.get(path, 0) + len(data["Samples"]["values"])
 
     # every 10 ms, 50 ms, 100 ms, 250 ms and 1 s
     rates = ["accelerometer", "motor", "robot/pose", "sysinfo/cpu/cpu0", "sensor/temperature"]
@@ -141,6 +187,7 @@ async def test_simulator_outpost_rates():
         (counts[path] for path in rates), reverse=True
     ), counts
     assert counts["accelerometer"] > 3 * counts["motor"] > 0, counts
+    assert block_counts["adc/vibration"] > counts["accelerometer"], block_counts
     assert counts["robot/pose"] > 2 * counts["sensor/temperature"] > 0, counts
 
 
@@ -170,7 +217,7 @@ async def test_simulator_actions_change_what_it_sends(monkeypatch):
     sent.clear()
     await actions.invoke("log/level", {"level": "WARN"})
     assert proto._log_level == LogLevel.WARN
-    assert {"path": "simulator/log_level", "value": "WARN"}.items() <= sent[-1]["Value"].items()
+    assert {"path": "simulator/log_level", "value": "WARN"}.items() <= sent[-1]["Sample"].items()
     proto._send_log(LogLevel.INFO, "test", "dropped")
     proto._send_log(LogLevel.ERROR, "test", "kept")
     assert [m["Log"]["message"] for m in sent if "Log" in m] == ["kept"]

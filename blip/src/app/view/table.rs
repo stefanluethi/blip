@@ -5,7 +5,7 @@ use super::Selectable;
 use super::trace_selection::{TraceTree, record_path, type_icon};
 use super::{Formats, PropertiesContext, ViewContext, Viewable, short_names};
 use crate::app::model::Model;
-use crate::app::model::numbers::SHOWN_DIGITS;
+use crate::app::model::numbers::{Labels, SHOWN_DIGITS};
 use crate::app::model::sorted::index_at;
 use crate::app::model::traces::{Samples, Trace};
 use crate::app::theme;
@@ -169,7 +169,7 @@ fn value_label(ui: &mut egui::Ui, trace: Trace<'_>, value: &str) -> egui::Respon
 
 impl Table {
     /// Shows the name of `row`, with a button to collapse or expand it for a branch.
-    fn name_ui(&mut self, ui: &mut egui::Ui, row: &Row<'_>) {
+    fn name_ui(&mut self, ui: &mut egui::Ui, model: &Model, row: &Row<'_>) {
         ui.add_space(row.depth as f32 * INDENT);
         if row.is_branch {
             let collapsed = self.collapsed.contains(&row.key);
@@ -189,7 +189,7 @@ impl Table {
             ui.weak(icon);
         }
         if let Some(trace) = row.trace {
-            response.on_hover_text(trace.path);
+            response.on_hover_text(super::trace_hover(model, trace));
         }
     }
 
@@ -286,15 +286,30 @@ impl Table {
             .into_iter()
             .filter(|column| !self.hidden_columns.contains(*column))
             .collect();
+        // the labels of each column are those of its first trace
+        let labels: Vec<Option<&Labels>> = columns
+            .iter()
+            .map(|column| {
+                records
+                    .iter()
+                    .find_map(|record| record.fields.get(column))
+                    .and_then(|trace| model.traces.labels(trace.path))
+            })
+            .collect();
         let formats: Vec<_> = columns
             .iter()
-            .map(|column| formats.of(&column_format_key(column)))
+            .zip(&labels)
+            .map(|(column, labels)| formats.format_of(&column_format_key(column), labels.is_some()))
             .collect();
         // the `index`th sample of `trace` in the format of its column and with its unit
         let write = |trace: Trace<'_>, column: usize, index: usize, max_len: usize| {
-            let value = trace
-                .samples
-                .format(index, max_len, Some(SHOWN_DIGITS), formats[column]);
+            let value = trace.samples.format(
+                index,
+                max_len,
+                Some(SHOWN_DIGITS),
+                formats[column],
+                labels[column],
+            );
             match model.traces.unit(trace.path) {
                 Some(unit) if value != "null" => format!("{value} {unit}"),
                 _ => value,
@@ -358,7 +373,13 @@ impl Table {
                     });
                     for column in &columns {
                         header.col(|ui| {
-                            ui.strong(*column);
+                            let response = ui.strong(*column);
+                            let first = records
+                                .iter()
+                                .find_map(|record| record.fields.get(column).copied());
+                            if let Some(trace) = first {
+                                response.on_hover_text(super::trace_hover(model, trace));
+                            }
                         });
                     }
                 })
@@ -424,8 +445,16 @@ impl Table {
                 });
                 let key = column_format_key(column);
                 let kind = super::number_kind(model, trace.path);
-                super::number_format_ui(ui, formats, &key, kind, model.traces.unit(trace.path));
+                super::number_format_ui(
+                    ui,
+                    formats,
+                    &key,
+                    kind,
+                    model.traces.labels(trace.path).is_some(),
+                    model.traces.unit(trace.path),
+                );
                 ui.end_row();
+                super::trace_facts_rows(ui, model, trace.path);
                 // a line where the dragged column would go
                 let row = row.response;
                 if let Some(from) = row.dnd_hover_payload::<ColumnDrag>() {
@@ -451,9 +480,14 @@ impl Table {
         let table_rows = self.table_rows(model.traces.iter(), t);
         // the `index`th sample of `trace` in its format and with its unit
         let write = |trace: Trace<'_>, index: usize, max_len: usize, digits: Option<usize>| {
-            let value = trace
-                .samples
-                .format(index, max_len, digits, formats.of(trace.path));
+            let labels = model.traces.labels(trace.path);
+            let value = trace.samples.format(
+                index,
+                max_len,
+                digits,
+                formats.format_of(trace.path, labels.is_some()),
+                labels,
+            );
             match model.traces.unit(trace.path) {
                 Some(unit) if value != "null" => format!("{value} {unit}"),
                 _ => value,
@@ -503,7 +537,7 @@ impl Table {
                     let sample = &samples[index];
                     table_row.col(|ui| {
                         lines.above(ui, index);
-                        self.name_ui(ui, row);
+                        self.name_ui(ui, model, row);
                     });
                     table_row.col(|ui| {
                         if let Some((trace, index, value)) = sample {

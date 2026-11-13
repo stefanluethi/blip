@@ -22,14 +22,15 @@ import collections
 import contextlib
 import dataclasses
 import logging
+import socket
 import threading
 import time
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Deque, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Awaitable, Callable, Deque, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
 from blip_outpost.actions import Actions, declared_actions, is_method, mark_action
-from blip_outpost.proto import Data, Message, encode_value, frames_of
-from blip_outpost.records import field_units
+from blip_outpost.proto import CLOCKS, Data, Message, TraceMetadata, encode_value, frames_of
+from blip_outpost.records import field_metadata
 from blip_outpost.recording import RecordingWriter
 from blip_outpost.server import OutpostServer
 from blip_outpost.tracer import Tracer
@@ -71,6 +72,8 @@ class Outpost:
         path: str = "/ws/outpost",
         record: Optional[Union[str, Path]] = None,
         max_queued: int = 10000,
+        name: Optional[str] = None,
+        clock: str = "epoch",
     ) -> None:
         self.host = host
         self.port = port
@@ -86,8 +89,16 @@ class Outpost:
         # computer
         self.target_time: Optional[Callable[[], Optional[int]]] = None
         self._warned_untimed = False
+        # whether the outpost sends a Hello of its own; a link that translates the time of a
+        # target sets False, as it does not know the clock of the timestamps
+        self.send_hello = True
+        self._name: Optional[str] = name
+        self._clock = ""
+        self.clock = clock
 
-        self._server = OutpostServer(self._invoke, max_queued=max_queued, on_clients=self._clients_changed)
+        self._server = OutpostServer(
+            self._invoke, max_queued=max_queued, on_clients=self._clients_changed, hello=self._own_hello
+        )
         # the event loop serving, and its thread, while the outpost serves
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._loop_thread: Optional[int] = None
@@ -101,6 +112,9 @@ class Outpost:
         self._local = threading.local()
         # the paths and dataclasses whose units are sent
         self._record_units: Set[Tuple[str, type]] = set()
+        # the metadata declared so far of each path, merged; sent whole with each call
+        self._trace_metadata: Dict[str, TraceMetadata] = {}
+        self._metadata_lock = threading.Lock()
         self._tracers: Dict[str, Tracer] = {}
         self._tracers_lock = threading.Lock()
         self._flush_scheduled = False
@@ -115,6 +129,36 @@ class Outpost:
     def url(self) -> str:
         """The address blip connects to."""
         return f"ws://{self.host}:{self.port}{self.path}"
+
+    @property
+    def name(self) -> Optional[str]:
+        """The name blip shows for this target; None is the hostname, read when a blip
+        connects, so a change reaches later blips only."""
+        return self._name
+
+    @name.setter
+    def name(self, name: Optional[str]) -> None:
+        self._name = name
+
+    @property
+    def clock(self) -> str:
+        """The clock of the timestamps sent: "epoch" (the default) or "boot"."""
+        return self._clock
+
+    @clock.setter
+    def clock(self, clock: str) -> None:
+        if clock not in CLOCKS:
+            raise ValueError(f"clock is epoch or boot, not {clock!r}")
+        self._clock = clock
+
+    def _own_hello(self) -> Optional[bytes]:
+        if not self.send_hello:
+            return None
+        from blip_outpost import __version__
+
+        return Message.create_hello(
+            name=self._name or socket.gethostname(), clock=self._clock, sender=f"blip-outpost {__version__}"
+        ).encode_cbor()
 
     @property
     def serving(self) -> bool:
@@ -257,8 +301,8 @@ class Outpost:
         start_ns: Optional[int] = None,
         period_ns: Optional[float] = None,
     ) -> None:
-        """Sends the samples `values` of the trace `path` at once, e.g. a block read
-        from an ADC: at `timestamps_ns`, one for each, or the first at `start_ns` and
+        """Sends the samples `values` of the trace `path` as one Samples message, e.g.
+        a block read from an ADC: at `timestamps_ns`, one for each, or the first at `start_ns` and
         then one every `period_ns`. `values` and `timestamps_ns` are sequences, e.g.
         lists or numpy arrays; a sample is what `value` sends."""
         values = _as_list(values)
@@ -268,18 +312,57 @@ class Outpost:
             times = _as_list(timestamps_ns)
             if len(times) != len(values):
                 raise ValueError(f"{len(values)} values but {len(times)} timestamps")
+            message = Message.create_samples(path, values, timestamps_ns=[int(t) for t in times])
         elif start_ns is not None and period_ns is not None:
-            times = [start_ns + int(round(i * period_ns)) for i in range(len(values))]
+            start = int(start_ns)
+            if float(period_ns).is_integer():
+                message = Message.create_samples(path, values, timestamp_ns=start, period_ns=int(period_ns))
+            else:
+                message = Message.create_samples(
+                    path, values,
+                    timestamps_ns=[start + int(round(i * period_ns)) for i in range(len(values))],
+                )
         else:
             raise TypeError("give timestamps_ns, or start_ns and period_ns")
+        if not values:
+            return
         for cls in {type(value) for value in values} - _PLAIN_TYPES:
             self._announce_record_units(path, next(v for v in values if type(v) is cls))
-        self._send_frames([encode_value(int(t), path, value) for t, value in zip(times, values)])
+        self._send_frame(message.encode_cbor())
 
     def unit(self, path: str, unit: str) -> None:
         """Sends the unit of the trace `path`; for a field of a record, the path joined
-        with ".", e.g. ``imu.acc``. Sent once, it reaches every blip."""
-        self._send_frame(Message.create_metadata(path, unit).encode_cbor())
+        with ".", e.g. ``imu.acc``. Sent once, it reaches every blip. See `metadata`."""
+        self.metadata(path, unit)
+
+    def metadata(
+        self,
+        path: str,
+        unit: Optional[str] = None,
+        *,
+        description: Optional[str] = None,
+        labels: Optional[Mapping[int, str]] = None,
+        value_range: Optional[Tuple[float, float]] = None,
+    ) -> None:
+        """Declares what blip shows about the trace `path`: its `unit`, a `description`,
+        `labels` naming integer values (``{0: "idle", 1: "running"}``) and the expected
+        `value_range` as ``(min, max)``. The calls of a path merge: `None` keeps a
+        field, ``""`` or ``{}`` clears a unit, description or labels; a range stays. Each
+        call sends the merged metadata of the path, and a blip connecting later gets the
+        latest. Raises `ValueError` for labels that do not map integers to text and for a
+        range that is not two numbers, min first."""
+        with self._metadata_lock:
+            old = self._trace_metadata.get(path, TraceMetadata(path))
+            merged = TraceMetadata(
+                path,
+                old.unit if unit is None else unit,
+                old.description if description is None else description,
+                old.labels if labels is None else labels,
+                old.value_range if value_range is None else value_range,
+            )
+            frame = Message(variant="TraceMetadata", data=merged).encode_cbor()
+            self._trace_metadata[path] = merged
+            self._send_frame(frame)
 
     def log(
         self,
@@ -366,14 +449,20 @@ class Outpost:
         return t
 
     def _announce_record_units(self, path: str, value: Any) -> None:
-        """Sends the units of the fields of the dataclass `value` with its first sample
+        """Sends the metadata of the fields of the dataclass `value` with its first sample
         at `path`."""
         cls = type(value)
         if not dataclasses.is_dataclass(cls) or (path, cls) in self._record_units:
             return
         self._record_units.add((path, cls))
-        for field, unit in field_units(cls):
-            self.unit(f"{path}.{field}", unit)
+        for field, meta in field_metadata(cls):
+            self.metadata(
+                f"{path}.{field}",
+                meta.unit or None,
+                description=meta.description or None,
+                labels=meta.labels,
+                value_range=meta.value_range,
+            )
 
     def _send_frame(self, frame: bytes) -> None:
         """Sends the bytes of a single message, unchecked."""

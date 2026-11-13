@@ -24,7 +24,7 @@ fn value(timestamp: u64) -> Vec<u8> {
 }
 
 fn value_of(path: &str, timestamp: u64) -> Vec<u8> {
-    serde_cbor_2::to_vec(&proto::Message::Value(proto::Value {
+    serde_cbor_2::to_vec(&proto::Message::Sample(proto::Sample {
         timestamp,
         path: path.to_owned(),
         value: proto::Data::Uint(1),
@@ -37,9 +37,10 @@ fn unit() -> Vec<u8> {
 }
 
 fn unit_of(path: &str) -> Vec<u8> {
-    serde_cbor_2::to_vec(&proto::Message::ValueMetadata(proto::ValueMetadata {
+    serde_cbor_2::to_vec(&proto::Message::TraceMetadata(proto::TraceMetadata {
         path: path.to_owned(),
         unit: "rpm".to_owned(),
+        ..Default::default()
     }))
     .unwrap()
 }

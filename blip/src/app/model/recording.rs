@@ -9,6 +9,9 @@
 //! messages after it were received from, the source. Messages before the first name
 //! have no source, as all messages of version 1, which are those of one connection.
 //!
+//! Version 3 has the layout of version 2: it only adds messages (blocks of samples and
+//! the Hello), which are kept as they arrived.
+//!
 //! While recording, the messages are compressed as they arrive, a gzip member for
 //! each [`CHUNK`] bytes of them, so a recording takes a fraction of the memory of the
 //! messages. The chunks are small, so compressing one takes a fraction of a frame and
@@ -21,7 +24,7 @@ use std::io::{Cursor, Read, Write};
 /// The value of [`Header::format`].
 const FORMAT: &str = "blip recording";
 /// Version of the format written by [`Recording::to_file`].
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 /// Bytes of messages compressed together into a gzip member while recording, at most
 /// about 1 ms of compressing.
 const CHUNK: usize = 1 << 16;

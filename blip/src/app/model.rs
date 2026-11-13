@@ -14,6 +14,7 @@ use crate::app::model::recording::Recording;
 use crate::app::model::sorted::lower_bound;
 use crate::app::model::traces::Traces;
 use crate::app::time::TimeBase;
+use crate::app::toasts;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -48,29 +49,48 @@ pub struct Model {
     flat: decode::Flat,
     /// The timestamp of the first value or log record, from which times count.
     origin: Option<u64>,
-    /// Whether a sample was dropped as its time base is not the one of the origin.
+    /// Whether a sample was dropped as its time base is not the one of the model.
     warned_time_base: bool,
+    /// The clock of each source from its latest Hello.
+    clocks: HashMap<String, TimeBase>,
+    /// What the timestamps of the data count from, set by the first accepted sample or
+    /// log record or by a Hello with the epoch clock.
+    base: Option<TimeBase>,
+    /// Whether the different clocks of the sources were warned of. Kept when the data
+    /// is cleared.
+    warned_clocks: bool,
     /// The latest value of each path, also while not recording, so that actions show
     /// their readbacks without recording. Kept when the data is cleared, as the target
     /// is as it was.
     latest: HashMap<Box<str>, Latest>,
+    /// What went wrong or needs telling since the last `take_notices`, without repeats.
+    /// Kept when the data is cleared.
+    notices: Vec<(toasts::Level, String)>,
 }
 
 /// The latest value of a path.
 struct Latest {
     frame: Vec<u8>,
-    /// The values received at the path.
+    /// The values received at the path, a block counted once.
     count: usize,
     /// The traces of the value, with only its latest sample, if it holds the readback
     /// of an announced action.
     traces: Option<Traces>,
 }
 
-/// The latest frame of `source` with its actions or the unit of a path.
+/// What a [`Description`] describes.
+#[derive(PartialEq)]
+enum DescriptionKind {
+    Hello,
+    Actions,
+    /// The unit of the trace at the path.
+    Unit(String),
+}
+
+/// The latest frame of `source` with its Hello, its actions or the unit of a path.
 struct Description {
     source: String,
-    /// The path of the unit, `None` for the actions.
-    path: Option<String>,
+    kind: DescriptionKind,
     frame: Vec<u8>,
 }
 
@@ -80,28 +100,94 @@ impl Model {
     pub fn clear(&mut self) {
         let descriptions = std::mem::take(&mut self.descriptions);
         let latest = std::mem::take(&mut self.latest);
+        let notices = std::mem::take(&mut self.notices);
+        let warned_clocks = self.warned_clocks;
         *self = Model::default();
+        self.notices = notices;
+        self.warned_clocks = warned_clocks;
         for description in &descriptions {
             self.receive(&description.source, &description.frame);
         }
         self.latest = latest;
     }
 
-    /// Keeps `frame` from `source` as its latest description of the unit of `path`, or
-    /// of its actions if `None`.
-    fn describe(&mut self, source: &str, path: Option<&str>, frame: &[u8]) {
-        let known = self
-            .descriptions
-            .iter_mut()
-            .find(|known| known.source == source && known.path.as_deref() == path);
+    /// Returns what went wrong or needs telling since the last call, to show it.
+    pub fn take_notices(&mut self) -> Vec<(toasts::Level, String)> {
+        std::mem::take(&mut self.notices)
+    }
+
+    /// Adds a notice, unless it is pending already.
+    fn notify(&mut self, level: toasts::Level, text: String) {
+        if !self.notices.iter().any(|(l, t)| *l == level && *t == text) {
+            self.notices.push((level, text));
+        }
+    }
+
+    /// Keeps `frame` from `source` as its latest description of `kind`.
+    fn describe(&mut self, source: &str, kind: DescriptionKind, frame: &[u8]) {
+        let known = (self.descriptions.iter_mut())
+            .find(|known| known.source == source && known.kind == kind);
         match known {
             Some(known) => frame.clone_into(&mut known.frame),
             None => self.descriptions.push(Description {
                 source: source.to_owned(),
-                path: path.map(str::to_owned),
+                kind,
                 frame: frame.to_vec(),
             }),
         }
+    }
+
+    /// Takes the clock of the Hello of `source`: a Hello without a known one removes
+    /// it. The epoch clock wins over the boot one, as the time axis shows one base.
+    fn greet(&mut self, source: &str, hello: &proto::Hello) {
+        match hello.clock {
+            Some(clock) => {
+                self.clocks.insert(source.to_owned(), clock.into());
+            }
+            None => {
+                self.clocks.remove(source);
+            }
+        }
+        if hello.clock == Some(proto::Clock::Epoch) {
+            if self.base == Some(TimeBase::SinceBoot) {
+                self.drop_samples();
+                self.warn_clocks();
+            }
+            self.base = Some(TimeBase::Unix);
+        }
+        let has = |base| self.clocks.values().any(|clock| *clock == base);
+        if has(TimeBase::Unix) && has(TimeBase::SinceBoot) {
+            self.warn_clocks();
+        }
+    }
+
+    /// Warns once that the sources send different clocks.
+    fn warn_clocks(&mut self) {
+        if self.warned_clocks {
+            return;
+        }
+        self.warned_clocks = true;
+        let text = "Connections send different clocks: blip shows the time of day and \
+                    drops the data timed since boot";
+        log::warn!("{text}");
+        self.notify(toasts::Level::Warning, text.to_owned());
+    }
+
+    /// Removes the samples and log records received, but keeps the metadata, actions,
+    /// descriptions and the recording. The latest values stay, as the count of readback
+    /// samples only grows.
+    fn drop_samples(&mut self) {
+        self.traces.clear_samples();
+        self.logs = Logs::default();
+        self.origin = None;
+        self.paths_version = Version::default();
+        self.samples_version = Version::default();
+    }
+
+    /// What the timestamps of the data count from, `None` before there is any data.
+    pub fn time_base(&self) -> Option<TimeBase> {
+        self.base
+            .or_else(|| self.time_span().map(|(_, newest)| TimeBase::guess(newest)))
     }
 
     /// Records a frame received from `source`, the name of its connection, and applies
@@ -133,7 +219,7 @@ impl Model {
     ) -> Option<proto::ActionResult> {
         // samples are dropped while not recording, without decoding them, except that
         // the latest value of each path is kept, decoded if it holds a readback
-        if let Some(path) = decode::value_path(frame) {
+        if let Some(path) = decode::sample_path(frame) {
             self.keep_latest(path, frame);
         }
         if !recording && decode::is_sample(frame) {
@@ -144,17 +230,13 @@ impl Model {
             self.recording.push(source, frame);
         }
         match message {
-            Ok(decode::Message::Value { timestamp, path }) => {
-                if !self.fits_time_base(timestamp, path) {
-                    return None;
+            Ok(decode::Message::Sample { timestamp, path }) => {
+                self.sample(source, timestamp, path, frame);
+            }
+            Ok(decode::Message::Samples(mut block)) => {
+                while let Some(timestamp) = block.next(frame, &mut self.flat) {
+                    self.sample(source, timestamp, block.path, frame);
                 }
-                self.set_origin(timestamp);
-                let generation = self.traces.generation();
-                self.traces.insert(path, timestamp, &self.flat, frame);
-                if self.traces.generation() != generation {
-                    self.paths_version = Version::default();
-                }
-                self.samples_version = Version::default();
             }
             Ok(decode::Message::Log {
                 timestamp,
@@ -162,7 +244,7 @@ impl Model {
                 level,
                 message,
             }) => {
-                if timestamp > 0 && !self.fits_time_base(timestamp, path) {
+                if timestamp > 0 && !self.fits_time_base(source, timestamp, path) {
                     return None;
                 }
                 // a log without a timestamp happened about when the newest data did, in
@@ -179,12 +261,12 @@ impl Model {
                 }
                 self.samples_version = Version::default();
             }
-            Ok(decode::Message::Other(proto::Message::ValueMetadata(metadata))) => {
-                self.describe(source, Some(&metadata.path), frame);
-                self.traces.set_unit(&metadata.path, &metadata.unit);
+            Ok(decode::Message::Other(proto::Message::TraceMetadata(metadata))) => {
+                self.describe(source, DescriptionKind::Unit(metadata.path.clone()), frame);
+                self.traces.set_metadata(&metadata);
             }
             Ok(decode::Message::Other(proto::Message::Actions(actions))) => {
-                self.describe(source, None, frame);
+                self.describe(source, DescriptionKind::Actions, frame);
                 self.actions.set(source, actions);
                 self.paths_version = Version::default();
                 // values that arrived before they became readbacks
@@ -205,12 +287,40 @@ impl Model {
             Ok(decode::Message::Other(proto::Message::ActionResult(result))) => {
                 return Some(result);
             }
-            Ok(decode::Message::Other(proto::Message::Value(_) | proto::Message::Log(_))) => {
-                unreachable!("values and logs are decoded apart")
+            Ok(decode::Message::Other(proto::Message::Hello(hello))) => {
+                self.describe(source, DescriptionKind::Hello, frame);
+                self.greet(source, &hello);
             }
-            Err(error) => log::warn!("error parsing message: {error}"),
+            Ok(decode::Message::Other(
+                proto::Message::Sample(_) | proto::Message::Samples(_) | proto::Message::Log(_),
+            )) => unreachable!("samples and logs are decoded apart"),
+            Err(error) => {
+                log::warn!("error parsing message: {error}");
+                if decode::message_name(frame) == Some("Samples") {
+                    let text = if source.is_empty() {
+                        "Dropped a malformed block of samples".to_owned()
+                    } else {
+                        format!("Dropped a malformed block of samples from {source}")
+                    };
+                    self.notify(toasts::Level::Error, text);
+                }
+            }
         }
         None
+    }
+
+    /// Applies a sample at `path`, flattened into `self.flat` from `frame`.
+    fn sample(&mut self, source: &str, timestamp: u64, path: &str, frame: &[u8]) {
+        if !self.fits_time_base(source, timestamp, path) {
+            return;
+        }
+        self.set_origin(timestamp);
+        let generation = self.traces.generation();
+        self.traces.insert(path, timestamp, &self.flat, frame);
+        if self.traces.generation() != generation {
+            self.paths_version = Version::default();
+        }
+        self.samples_version = Version::default();
     }
 
     /// Makes `timestamp` the origin if there is none yet. The log records before it
@@ -222,21 +332,21 @@ impl Model {
             return;
         }
         self.origin = Some(timestamp);
-        let base = TimeBase::guess(timestamp);
+        let base = self.base.unwrap_or_else(|| TimeBase::guess(timestamp));
         if (self.logs.entries()).any(|entry| TimeBase::guess(entry.time) != base) {
             self.logs.move_all_to(timestamp);
         }
     }
 
-    /// Whether `timestamp` has the time base of the origin, the Unix epoch or the boot
-    /// of the device, as the time axis shows only one. Warns of the first sample at
-    /// `path` that does not, which is dropped, e.g. from a source with the time of its
-    /// computer while the target sends its uptime.
-    fn fits_time_base(&mut self, timestamp: u64, path: &str) -> bool {
-        let Some(origin) = self.origin else {
-            return true;
-        };
-        let (base, expected) = (TimeBase::guess(timestamp), TimeBase::guess(origin));
+    /// Whether `timestamp` from `source` has the time base of the model, the Unix epoch
+    /// or the boot of the device, as the time axis shows only one. The time base of a
+    /// timestamp is the clock of its source, else guessed from its value. The first one
+    /// sets the model's. Warns of the first sample at `path` that does not fit, which is
+    /// dropped, e.g. from a source with the time of its computer while the target sends
+    /// its uptime.
+    fn fits_time_base(&mut self, source: &str, timestamp: u64, path: &str) -> bool {
+        let base = (self.clocks.get(source).copied()).unwrap_or_else(|| TimeBase::guess(timestamp));
+        let expected = *self.base.get_or_insert(base);
         if base == expected {
             return true;
         }
@@ -377,10 +487,17 @@ impl Activity {
     }
 }
 
-/// The traces of the value in `frame`, with only that sample.
+/// The traces of the value in `frame`, with only that sample, the last of a block.
 fn latest_traces(frame: &[u8], flat: &mut decode::Flat) -> Option<Traces> {
-    let decode::Message::Value { timestamp, path } = decode::decode(frame, flat).ok()? else {
-        return None;
+    let (timestamp, path) = match decode::decode(frame, flat).ok()? {
+        decode::Message::Sample { timestamp, path } => (timestamp, path),
+        decode::Message::Samples(mut block) => {
+            for _ in 1..block.len {
+                block.next(frame, flat)?;
+            }
+            (block.next(frame, flat)?, block.path)
+        }
+        _ => return None,
     };
     let mut traces = Traces::default();
     traces.insert(path, timestamp, flat, frame);

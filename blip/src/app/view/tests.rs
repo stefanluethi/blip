@@ -15,7 +15,7 @@ fn the_number_formats_of_a_linked_histogram_are_greyed() {
     let format_disabled = |view: View, plots: Plots| {
         use egui_kittest::kittest::{NodeT, Queryable};
         let mut model = Model::default();
-        model.traces.append(&proto::Value {
+        model.traces.append(&proto::Sample {
             timestamp: 0,
             path: "motor/errors".to_owned(),
             value: proto::Data::Uint(3),
@@ -53,7 +53,7 @@ fn the_number_formats_of_a_linked_histogram_are_greyed() {
 #[test]
 fn wildcards_pick_new_paths_once_the_model_has_them() {
     let frame = |path: &str| {
-        serde_cbor_2::to_vec(&proto::Message::Value(proto::Value {
+        serde_cbor_2::to_vec(&proto::Message::Sample(proto::Sample {
             timestamp: 0,
             path: path.to_owned(),
             value: proto::Data::Uint(1),
@@ -274,4 +274,157 @@ fn the_nearest_point_is_within_the_radius() {
         plotting::nearest_point(&gap, pointer, &transform, 5.0),
         None
     );
+}
+
+#[test]
+fn labels_are_the_default_of_labelled_traces() {
+    let mut formats = Formats::default();
+    assert_eq!(formats.format_of("a", true), DisplayFormat::Labels);
+    assert_eq!(formats.format_of("a", false), DisplayFormat::Default);
+    formats.choose("a", DisplayFormat::Default, true);
+    assert_eq!(
+        serde_json::to_string(&formats).unwrap(),
+        r#"{"a":"Default"}"#
+    );
+    assert_eq!(formats.format_of("a", true), DisplayFormat::Default);
+    formats.choose("a", DisplayFormat::Labels, true);
+    assert_eq!(serde_json::to_string(&formats).unwrap(), "{}");
+    formats.choose("b", DisplayFormat::Hex, false);
+    assert_eq!(serde_json::to_string(&formats).unwrap(), r#"{"b":"Hex"}"#);
+}
+
+#[test]
+fn the_facts_of_a_trace_are_written_in_one_line_each() {
+    assert_eq!(expected_text((0.0, 100.0)), "Expected 0 to 100");
+    assert_eq!(expected_text((-2.5, 10.0)), "Expected -2.5 to 10");
+    let labels: Labels = [(-1, "fault"), (0, "off"), (1, "on")]
+        .into_iter()
+        .map(|(number, label)| (number, label.to_owned()))
+        .collect();
+    assert_eq!(
+        labels_text(&labels),
+        (
+            "-1 fault, 0 off, 1 on".to_owned(),
+            "-1 fault\n0 off\n1 on".to_owned()
+        )
+    );
+}
+
+/// A model with the traces "a" (a float with a unit, a description and a range) and "m"
+/// (integers with labels), and "p" without any facts.
+fn facts_model(described: bool) -> Model {
+    let mut model = Model::default();
+    for (path, value) in [
+        ("a", proto::Data::Float(1.0)),
+        ("m", proto::Data::Uint(1)),
+        ("p", proto::Data::Float(2.0)),
+    ] {
+        model.traces.append(&proto::Sample {
+            timestamp: 0,
+            path: path.to_owned(),
+            value,
+        });
+    }
+    model.traces.set_metadata(&proto::TraceMetadata {
+        path: "a".to_owned(),
+        unit: "rpm".to_owned(),
+        description: "Speed".to_owned(),
+        range: Some(proto::ExpectedRange {
+            min: 0.0,
+            max: 3000.0,
+        }),
+        ..Default::default()
+    });
+    model.traces.set_metadata(&proto::TraceMetadata {
+        path: "m".to_owned(),
+        description: if described { "Mode" } else { "" }.to_owned(),
+        labels: [(-1, "fault"), (0, "off"), (1, "on")]
+            .into_iter()
+            .map(|(number, label)| (number, label.to_owned()))
+            .collect(),
+        ..Default::default()
+    });
+    model
+}
+
+#[test]
+fn the_traces_section_lists_the_facts() {
+    use egui_kittest::kittest::Queryable;
+
+    let model = facts_model(true);
+    let mut view = View::new(ViewType::Plot, "Motor".to_owned());
+    if let ViewKind::Plot(plot) = &mut view.kind {
+        plot.traces.extend(["a", "m", "p"].map(str::to_owned));
+    }
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(300.0, 600.0))
+        .build_ui_state(
+            move |ui, view: &mut View| {
+                let connected = HashSet::new();
+                let plots = Plots::default();
+                let context = PropertiesContext {
+                    model: &model,
+                    connected: &connected,
+                    plots: &plots,
+                };
+                view.properties_ui(ui, &context);
+            },
+            view,
+        );
+    harness.run();
+    for label in [
+        "TRACES",
+        "Speed",
+        "Expected 0 to 3000",
+        "-1 fault, 0 off, 1 on",
+    ] {
+        assert!(harness.query_by_label(label).is_some(), "{label}");
+    }
+    assert!(harness.query_by_label("NUMBER FORMAT").is_none());
+    // "p" has no facts and adds no row
+    assert_eq!(harness.query_all_by_label_contains("Expected ").count(), 1);
+}
+
+#[test]
+fn the_hover_of_a_trace_has_its_path_type_and_description() {
+    let model = facts_model(true);
+    let trace = model.traces.get("m").expect("the trace");
+    assert_eq!(trace_hover(&model, trace), "m\nint\nMode");
+    let model = facts_model(false);
+    let trace = model.traces.get("m").expect("the trace");
+    assert_eq!(trace_hover(&model, trace), "m\nint");
+}
+
+#[test]
+fn fit_to_and_formats_survive_json() {
+    use super::plot::Plot;
+    use super::xy::Xy;
+    let plot = Plot {
+        fit: Fit::Values,
+        ..Plot::default()
+    };
+    let mut view = View::new(ViewType::Plot, "P".to_owned());
+    view.kind = ViewKind::Plot(plot);
+    view.formats.choose("m", DisplayFormat::Labels, false);
+    view.formats.choose("a", DisplayFormat::Default, true);
+    let read: View = serde_json::from_str(&serde_json::to_string(&view).unwrap()).unwrap();
+    assert!(matches!(&read.kind, ViewKind::Plot(plot) if plot.fit == Fit::Values));
+    assert_eq!(
+        serde_json::to_string(&read.formats).unwrap(),
+        serde_json::to_string(&view.formats).unwrap()
+    );
+    assert_eq!(read.formats.format_of("m", false), DisplayFormat::Labels);
+    assert_eq!(read.formats.format_of("a", true), DisplayFormat::Default);
+
+    let xy = Xy {
+        fit: Fit::Values,
+        ..Xy::default()
+    };
+    let json = serde_json::to_string(&xy).unwrap();
+    assert_eq!(serde_json::from_str::<Xy>(&json).unwrap().fit, Fit::Values);
+
+    let old = r#"{"name": "P", "kind": {"Plot": {"traces": ["a"]}}, "formats": {"a": "Hex"}}"#;
+    let old: View = serde_json::from_str(old).unwrap();
+    assert!(matches!(&old.kind, ViewKind::Plot(plot) if plot.fit == Fit::Expected));
+    assert_eq!(old.formats.format_of("a", false), DisplayFormat::Hex);
 }

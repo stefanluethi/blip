@@ -23,7 +23,9 @@ bar of the scale.
 Hover a cell or band for a tooltip: over time it shows the time and the value
 of element ``[i]``; a grid shows ``[r][c]`` and the value of the cell; the
 line at the cursor shows ``[i]`` and the value, with the trace's dot and name.
+Below a rule it gives the trace's description, if the target sent one.
 
 Properties: **Array** -- **Show** *Over time* or *At cursor* (1D arrays), and
-**Colour scale** -- fitted to the shown values, or fixed between a min and a
-max.
+**Colour scale** -- *Auto*, the range the target says the values are expected in,
+else fitted to the shown values, or *Fixed* between a min and a max, which start
+from the expected range.

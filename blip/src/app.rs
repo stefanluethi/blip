@@ -401,7 +401,8 @@ impl App {
                 panel_button(ui, PanelSide::Left, &mut self.left_collapsed);
                 ui.add_space(4.0);
                 let open = self.connections.open_names();
-                let chip = status_chip(ui, &open, self.rate.per_second);
+                let newer = self.connections.newer();
+                let chip = status_chip(ui, &open, &newer, self.rate.per_second);
                 if chip.clicked() {
                     self.connections_shown = !self.connections_shown;
                 }
@@ -642,12 +643,21 @@ impl eframe::App for App {
     fn logic(&mut self, ctx: &Context, _frame: &mut Frame) {
         let now = ctx.input(|input| input.time);
         self.receive(now);
+        for (level, text) in self.state.model.take_notices() {
+            match level {
+                toasts::Level::Error => self.toasts.error(text),
+                toasts::Level::Warning => self.toasts.warning(text),
+            }
+        }
         let state = &mut self.state;
         state.invoker.connected = self.connections.open_names();
         state.invoker.recording = state.recording;
         state.invoker.update(now);
         for error in self.connections.take_errors() {
             self.toasts.error(error);
+        }
+        for warning in self.connections.take_warnings() {
+            self.toasts.warning(warning);
         }
         self.files.receive_dropped(ctx);
         while let Some(file) = self.files.try_recv() {
@@ -787,10 +797,16 @@ fn logo_texture(ctx: &egui::Context) -> egui::TextureHandle {
 /// Width of the list of connections that opens from the [`status_chip`].
 const CONNECTIONS_WIDTH: f32 = 300.0;
 
-/// A chip with the status of the connections: a green dot and the name of the open
+/// A chip with the status of the connections: a green dot (amber while a connection
+/// speaks a newer protocol, `newer` has its lines) and the name of the open
 /// connection or their number, and the messages received per second, `rate`. It is a
 /// button that opens the list of connections.
-fn status_chip(ui: &mut egui::Ui, open: &HashSet<String>, rate: Option<f64>) -> egui::Response {
+fn status_chip(
+    ui: &mut egui::Ui,
+    open: &HashSet<String>,
+    newer: &[String],
+    rate: Option<f64>,
+) -> egui::Response {
     let tokens = ui.tokens();
     let id = ui.id().with("status chip");
     // the frame shows the state of the previous frame, as it is drawn before the click
@@ -830,7 +846,12 @@ fn status_chip(ui: &mut egui::Ui, open: &HashSet<String>, rate: Option<f64>) -> 
                     let stroke = egui::Stroke::new(1.0, ui.visuals().weak_text_color());
                     ui.painter().circle_stroke(dot.center(), 3.5, stroke);
                 } else {
-                    ui.painter().circle_filled(dot.center(), 3.5, tokens.ok);
+                    let color = if newer.is_empty() {
+                        tokens.ok
+                    } else {
+                        tokens.warn
+                    };
+                    ui.painter().circle_filled(dot.center(), 3.5, color);
                 }
             });
         })
@@ -848,6 +869,9 @@ fn status_chip(ui: &mut egui::Ui, open: &HashSet<String>, rate: Option<f64>) -> 
         hint = names.join("\n") + "\n\n";
     }
     hint.push_str("Click to show the connections");
+    if !newer.is_empty() {
+        hint = newer.join("\n") + "\n\n" + &hint;
+    }
     response.on_hover_text(hint)
 }
 

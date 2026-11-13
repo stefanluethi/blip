@@ -76,7 +76,20 @@ decides its CBOR major type -- both as in the ``proto`` crate. Record and array
 sizes are given up front and checked by tinycbor when closing; a mismatch ends
 the message as ``Invalid`` and leaves the batch unchanged.
 
-The constructors are ``constexpr``, so static queues and tracers are
+Blocks (``Samples``) are encoded in one go: the values by the same overloads
+as a value, as the elements of one array, so a block is a single message that
+fits a batch or is ``TooLarge``. The lengths of the values and the timestamps
+are known before encoding and checked first: a block whose counts differ is
+``Invalid`` and writes nothing. A block with a period takes an explicit first
+timestamp and never reads the clock. Metadata is one message too: ``unit()`` is
+a ``metadata()`` with only a unit, empty fields are left out, labels are
+written in the order given, which is how proto writes them from a sorted map,
+and the range as floats, so the bytes equal those of serde.
+
+The ``Hello`` is copied into the queue (the name stays a view) and encoded
+before the first message of any kind, into the same batch; it is tried once, so
+one too large for a batch is dropped, counted in ``dropped()``, and not tried
+again. The constructors are ``constexpr``, so static queues and tracers are
 constant-initialized and ready before any code runs.
 
 Tracers
@@ -95,8 +108,9 @@ message as ``TooLarge``, counted in ``dropped()`` of the queue.
 File output
 -----------
 
-``FileSink`` writes a recording file: the version 1 header and then the
-batches, uncompressed; blip and the outpost read uncompressed files too.
+``FileSink`` writes a recording file: the version 3 header, with the layout of
+version 1 (no connection names), and then the batches, the first of them with
+the ``Hello`` of the queue, uncompressed; blip and the outpost read uncompressed files too.
 ``MemorySink`` keeps the bytes for tests.
 
 Tests and CI
@@ -116,5 +130,3 @@ Not yet
 
 * **Actions**: announcing actions, decoding ``Invoke`` requests and answering
   them are planned as a second step.
-* **Timestamp domain**: whether a target's timestamps are uptime or UTC is not
-  yet part of the protocol; blip guesses it from the values.

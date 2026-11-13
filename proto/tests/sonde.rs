@@ -1,6 +1,9 @@
 //! The messages sonde, the C++ tracing library, encodes, as in a recording it wrote.
 
-use proto::{Data, LogRecord, Message, Value, ValueMetadata};
+use proto::{
+    Clock, Data, ExpectedRange, Hello, LogRecord, Message, Sample, SampleTimes, Samples,
+    TraceMetadata,
+};
 use serde_cbor_2::Deserializer;
 
 /// Written by the test "the recording fixture is what sonde writes" of sonde.
@@ -13,7 +16,7 @@ struct Header {
 }
 
 fn value(timestamp: u64, path: &str, value: Data) -> Message {
-    Message::Value(Value {
+    Message::Sample(Sample {
         timestamp,
         path: path.to_owned(),
         value,
@@ -45,7 +48,7 @@ fn messages() -> Vec<(Message, &'static [u8])> {
         header.next().unwrap().unwrap(),
         Header {
             format: "blip recording".to_owned(),
-            version: 1,
+            version: 3,
         }
     );
     let mut rest = &RECORDING[header.byte_offset()..];
@@ -64,9 +67,16 @@ fn messages() -> Vec<(Message, &'static [u8])> {
 fn decodes_a_recording_of_sonde() {
     let ms = 1_000_000;
     let expected = vec![
-        Message::ValueMetadata(ValueMetadata {
+        Message::Hello(Hello {
+            version: 1,
+            name: Some("bench".to_owned()),
+            clock: Some(Clock::Boot),
+            sender: Some("sonde 0.2.0".to_owned()),
+        }),
+        Message::TraceMetadata(TraceMetadata {
             path: "motor/speed".to_owned(),
             unit: "rpm".to_owned(),
+            ..Default::default()
         }),
         value(ms, "motor/speed", Data::Uint(1500)),
         value(2 * ms, "cpu_load", Data::Float(12.5)),
@@ -110,6 +120,37 @@ fn decodes_a_recording_of_sonde() {
                 Data::Uint(4095),
             ]),
         ),
+        Message::TraceMetadata(TraceMetadata {
+            path: "motor/state".to_owned(),
+            description: "Drive state".to_owned(),
+            labels: [(-1, "fault"), (0, "off"), (1, "on")]
+                .into_iter()
+                .map(|(number, label)| (number, label.to_owned()))
+                .collect(),
+            ..Default::default()
+        }),
+        Message::TraceMetadata(TraceMetadata {
+            path: "motor/current".to_owned(),
+            unit: "A".to_owned(),
+            range: Some(ExpectedRange {
+                min: -2.5,
+                max: 10.0,
+            }),
+            ..Default::default()
+        }),
+        Message::Samples(Samples {
+            path: "adc/raw".to_owned(),
+            values: vec![Data::Uint(512), Data::Uint(513), Data::Uint(511)],
+            times: SampleTimes::Period {
+                timestamp: 4 * ms,
+                period: 250_000,
+            },
+        }),
+        Message::Samples(Samples {
+            path: "adc/peak".to_owned(),
+            values: vec![Data::Float(1.5), Data::Null],
+            times: SampleTimes::Each(vec![4 * ms, 4 * ms + 500_000]),
+        }),
     ];
     let decoded: Vec<Message> = messages().into_iter().map(|(message, _)| message).collect();
     assert_eq!(decoded, expected);

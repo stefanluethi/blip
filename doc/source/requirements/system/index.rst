@@ -12,7 +12,10 @@ What the software shall do, one page per area. Each page of
    distribution
    time
    connectivity
+   protocol
+   metadata
    control
    platforms
    files
    outpost
+   sonde

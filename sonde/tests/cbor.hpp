@@ -4,6 +4,8 @@
 
 #include <sonde/sonde.hpp>
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -45,7 +47,7 @@ inline std::optional<std::vector<Bytes>> items(const Bytes& bytes) {
     return items(bytes.data(), bytes.size());
 }
 
-/// The unsigned integer of a Value message, e.g. {"Value": {..., "value": 5}}.
+/// The unsigned integer of a Sample message, e.g. {"Sample": {..., "value": 5}}.
 inline std::optional<std::uint64_t> uint_value(const Bytes& message) {
     CborParser parser;
     CborValue root;
@@ -53,7 +55,7 @@ inline std::optional<std::uint64_t> uint_value(const Bytes& message) {
     CborValue value;
     std::uint64_t result;
     if (cbor_parser_init(message.data(), message.size(), 0, &parser, &root) != CborNoError ||
-        cbor_value_map_find_value(&root, "Value", &variant) != CborNoError ||
+        cbor_value_map_find_value(&root, "Sample", &variant) != CborNoError ||
         !cbor_value_is_map(&variant) ||
         cbor_value_map_find_value(&variant, "value", &value) != CborNoError ||
         !cbor_value_is_unsigned_integer(&value) ||
@@ -63,15 +65,41 @@ inline std::optional<std::uint64_t> uint_value(const Bytes& message) {
     return result;
 }
 
-/// The bytes of the message of the value 'a': {"Value": {"timestamp": 0, "path": "a",
+/// The bytes of the message of the value 'a': {"Sample": {"timestamp": 0, "path": "a",
 /// "value": ...}} without the value.
 inline Bytes value_prefix() {
     return hex("a1"
-               "6556616c7565"              // "Value"
+               "6653616d706c65"            // "Sample"
                "a3"
                "6974696d657374616d70" "00"  // "timestamp": 0
                "6470617468" "6161"         // "path": "a"
                "6576616c7565");            // "value"
+}
+
+/// The Hello of a queue without a name and clock: {"Hello": {"version": 1,
+/// "sender": "sonde 0.2.0"}}.
+inline Bytes default_hello() {
+    return hex("a1"
+               "6548656c6c6f"                  // "Hello"
+               "a2"
+               "6776657273696f6e" "01"         // "version": 1
+               "6673656e646572"                // "sender"
+               "6b736f6e646520302e322e30");    // "sonde 0.2.0"
+}
+
+/// Whether an item is a Hello message: it begins with a1 65 "Hello".
+inline bool is_hello(const Bytes& item) {
+    const Bytes prefix = hex("a16548656c6c6f");
+    return item.size() >= prefix.size() && std::equal(prefix.begin(), prefix.end(), item.begin());
+}
+
+/// The bytes after the default Hello they begin with, or nullopt if they do not.
+inline std::optional<Bytes> without_hello(const Bytes& bytes) {
+    const Bytes hello = default_hello();
+    if (bytes.size() < hello.size() || !std::equal(hello.begin(), hello.end(), bytes.begin())) {
+        return std::nullopt;
+    }
+    return Bytes(bytes.begin() + static_cast<std::ptrdiff_t>(hello.size()), bytes.end());
 }
 
 }  // namespace test

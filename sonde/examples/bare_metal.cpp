@@ -5,7 +5,9 @@
 
 #include <sonde/sonde.hpp>
 
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 
 // --- The firmware's platform --------------------------------------------------------
 
@@ -14,6 +16,7 @@ void wait_for_cycle();
 void sleep_ms(std::uint32_t ms);
 double read_speed();
 double read_current();
+void read_currents(float* currents, std::size_t count);
 std::uint16_t read_adc();
 void udp_send(const std::uint8_t* data, std::size_t size);
 bool uart_dma_busy();
@@ -38,7 +41,8 @@ void encode(sonde::Encoder& encoder, const Pid& pid) {
 namespace {
 // one UDP datagram per batch, the batch size fits the Ethernet MTU
 sonde::Storage<1400, 4> control_storage;
-sonde::Queue control_traces{control_storage, &uptime_ns};
+sonde::Queue control_traces{control_storage, &uptime_ns,
+                            sonde::Hello{"motor-controller", sonde::TimeBase::Boot}};
 // the parts of the control task, each with a tracer of its own on its queue
 sonde::Tracer motor{control_traces, "motor"};
 sonde::Tracer pid{motor, "pid"};  // motor/pid
@@ -48,9 +52,17 @@ Pid pid_state{};
 void control_task() {  // producer
     motor.unit("speed", "rpm");  // motor/speed
     motor.unit("current", "A");
+    const sonde::Label states[] = {{0, "idle"}, {1, "running"}, {2, "fault"}};
+    motor.metadata("state", sonde::Metadata{{}, "Drive state", {states, 3}, std::nullopt});
     motor.info("started");
     for (;;) {
         wait_for_cycle();
+        const std::uint64_t cycle_start = uptime_ns();
+        float currents[10];
+        read_currents(currents, 10);
+        // ten samples of the cycle, one message
+        motor.samples("current", currents, sonde::Timestamp{cycle_start},
+                      sonde::Period{100'000});
         const double current = read_current();
         motor.value("speed", read_speed());
         motor.value("current", current);
@@ -76,7 +88,8 @@ void network_task() {  // consumer
 
 namespace {
 sonde::Storage<256, 3> adc_storage;
-sonde::Queue adc_traces{adc_storage, &uptime_ns};
+sonde::Queue adc_traces{adc_storage, &uptime_ns,
+                        sonde::Hello{"motor-controller", sonde::TimeBase::Boot}};
 }  // namespace
 
 extern "C" void ADC_IRQHandler() {  // producer

@@ -25,7 +25,7 @@ fn value_range_skips_nulls() {
 fn over_time_holds_each_sample_until_the_next() {
     let mut traces = Traces::default();
     for (second, elements) in [(1, [1.0, 2.0]), (3, [3.0, 4.0])] {
-        traces.append(&proto::Value {
+        traces.append(&proto::Sample {
             timestamp: second * 1_000_000_000,
             path: "a".to_owned(),
             value: Data::Array(elements.iter().copied().map(Data::Float).collect()),
@@ -49,13 +49,49 @@ fn over_time_holds_each_sample_until_the_next() {
 fn frame_traces() -> Traces {
     let mut traces = Traces::default();
     for (second, elements) in [(1, [1.0, 2.0]), (3, [3.0, 4.0])] {
-        traces.append(&proto::Value {
+        traces.append(&proto::Sample {
             timestamp: second * 1_000_000_000,
             path: "a".to_owned(),
             value: Data::Array(elements.iter().copied().map(Data::Float).collect()),
         });
     }
     traces
+}
+
+#[test]
+fn the_tooltips_of_a_heatmap_describe_its_trace() {
+    use super::super::tooltip::Footer;
+    use crate::app::time::TimeBase;
+    let traces = frame_traces();
+    let a = traces.get("a").unwrap();
+    let mut text = ValueText {
+        format: DisplayFormat::Default,
+        unit: None,
+        labels: None,
+        description: Some("Thermal frame"),
+    };
+    let footer = Some(Footer {
+        name: "frame".into(),
+        description: "Thermal frame".into(),
+    });
+    assert_eq!(
+        cell_tooltip("frame", text, (0, 0), Number::Float(1.0)).footer,
+        footer
+    );
+    assert_eq!(
+        element_tooltip("frame", "thermal/frame", text, 0, Number::Float(1.0)).footer,
+        footer
+    );
+    let band = band_tooltip(a, text, TimeBase::SinceBoot, 2_000_000_000, 1);
+    assert_eq!(
+        band.footer.map(|footer| footer.description),
+        Some("Thermal frame".into())
+    );
+    text.description = None;
+    assert_eq!(
+        cell_tooltip("frame", text, (0, 0), Number::Null).footer,
+        None
+    );
 }
 
 #[test]
@@ -66,6 +102,8 @@ fn the_tooltips_of_bands_cells_and_elements() {
     let text = ValueText {
         format: DisplayFormat::Default,
         unit: Some("°C"),
+        labels: None,
+        description: Some("Thermal frame"),
     };
     let tooltip = band_tooltip(a, text, TimeBase::SinceBoot, 2_000_000_000, 1);
     assert_eq!(tooltip.header, Some(Header::Text("0:00:02.000".into())));
@@ -116,15 +154,19 @@ struct State {
 fn heatmap_harness(path: &str, mode: ArrayMode) -> egui_kittest::Harness<'static, State> {
     let mut model = crate::app::model::Model::default();
     for second in 0..=40 {
-        model.traces.append(&proto::Value {
+        model.traces.append(&proto::Sample {
             timestamp: second * 1_000_000_000,
             path: "frame".to_owned(),
             value: Data::Array((0..4).map(|i| Data::Float(f64::from(i))).collect()),
         });
     }
-    model.traces.set_unit("frame", "V");
+    model.traces.set_metadata(&proto::TraceMetadata {
+        path: "frame".into(),
+        unit: "V".into(),
+        ..Default::default()
+    });
     for second in 0..2 {
-        model.traces.append(&proto::Value {
+        model.traces.append(&proto::Sample {
             timestamp: second * 1_000_000_000,
             path: "grid".to_owned(),
             value: Data::Array(
@@ -136,7 +178,11 @@ fn heatmap_harness(path: &str, mode: ArrayMode) -> egui_kittest::Harness<'static
             ),
         });
     }
-    model.traces.set_unit("grid", "°C");
+    model.traces.set_metadata(&proto::TraceMetadata {
+        path: "grid".into(),
+        unit: "°C".into(),
+        ..Default::default()
+    });
     let heatmap = Heatmap {
         traces: [path.to_owned()].into(),
         mode,
@@ -227,4 +273,40 @@ fn hovering_a_heatmap_shows_the_framed_tooltip() {
     assert!(cell.0 < 3 && cell.1 < 3);
     let value = format!("{} °C", 10 * cell.0 + cell.1);
     assert!(texts.contains(&value), "{texts:?}");
+}
+
+#[test]
+fn the_colour_scale_starts_from_the_expected_range() {
+    let mut heatmap = Heatmap {
+        expected: Some((0.0, 100.0)),
+        fitted_range: Some((3.0, 7.0)),
+        ..Heatmap::default()
+    };
+    assert_eq!(heatmap.shown_range(), (0.0, 100.0));
+    heatmap.expected = None;
+    assert_eq!(heatmap.shown_range(), (3.0, 7.0));
+}
+
+#[test]
+fn a_fixed_range_starts_with_the_one_shown() {
+    let mut heatmap = Heatmap {
+        expected: Some((0.0, 100.0)),
+        fitted_range: Some((3.0, 7.0)),
+        ..Heatmap::default()
+    };
+    let shown = heatmap.shown_range();
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(300.0, 200.0))
+        .build_ui_state(
+            move |ui, heatmap: &mut Heatmap| {
+                egui::Grid::new("g").show(ui, |ui| {
+                    super::super::range_rows(ui, &mut heatmap.value_range, shown);
+                });
+            },
+            std::mem::take(&mut heatmap),
+        );
+    harness.run();
+    harness.get_by_label("Fixed").click();
+    harness.run();
+    assert_eq!(harness.state().value_range, Some((0.0, 100.0)));
 }

@@ -41,7 +41,7 @@ Start the outpost, then send from your own loop:
    import blip_outpost as outpost
 
    outpost.start()
-   outpost.unit("room/temperature", "°C")
+   outpost.metadata("room/temperature", "°C", description="Temperature of the room")
    while True:
        outpost.value("room/temperature", 21.0 + random.random())
        time.sleep(0.1)
@@ -96,6 +96,26 @@ passes it on. Its actions are functions that write to the target:
 Run it as any Python script, ``python my_target.py``. It stops with
 :kbd:`Ctrl+C`; the recording is finished when the script exits.
 
+Telling blip who you are
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The outpost sends a ``Hello`` to each blip that connects, before anything
+else: its ``name``, the hostname of the computer unless you give one, the
+``clock`` of its timestamps, and itself as the sender. blip shows it in the
+connections, see :doc:`/blip/connecting`, and takes the time base from the
+clock instead of guessing it. Timestamps of the outpost are the time of day, so
+the clock is ``"epoch"``; set ``"boot"`` if your script sends the time since the
+target booted:
+
+.. code-block:: python
+
+   outpost.start(name="rig-7", clock="boot")
+
+``name`` and ``clock`` are also properties of an ``Outpost``. While the
+outpost passes a target through, replays a recording or translates a protobuf
+target, it does not know the clock of the timestamps and sends no ``Hello`` of
+its own: the target's arrives, or blip guesses.
+
 Sending to blip
 ~~~~~~~~~~~~~~~
 
@@ -118,12 +138,19 @@ declared first.
        sent its first timestamp.
    * - ``series(path, values, timestamps_ns=…)``,
        ``series(path, values, start_ns=…, period_ns=…)``
-     - many samples of one trace at once, e.g. a block read from an ADC: at
-       their timestamps, or the first at ``start_ns`` and then one every
-       ``period_ns``
+     - many samples of one trace at once, e.g. a block read from an ADC, as
+       one ``Samples`` message: at their timestamps, or the first at
+       ``start_ns`` and then one every ``period_ns`` (a whole number of ns)
    * - ``unit(path, unit)``
      - the unit of a trace; for a record field, the path joined with ``.``,
        e.g. ``imu.acc``
+   * - ``metadata(path, unit=None, *, description=…, labels=…, value_range=…)``
+     - what blip shows of a trace: its unit, a description, labels for integer
+       values, e.g. ``{0: "idle", 1: "running"}``, and the range its values are
+       expected in, ``(min, max)``. Calls for a path merge: what you leave out
+       stays, ``""`` or ``{}`` clears a unit, description or labels. Each call
+       sends everything known of the path, and a blip that connects later gets
+       the latest
    * - ``log(level, message, path="", timestamp_ns=None)``
      - a log record of a ``LogLevel`` or its number, at ``path`` like a trace,
        by convention ``log/<part>``, e.g. ``log/motor``, or without one:
@@ -330,7 +357,7 @@ its own when it is imported, also before the outpost serves:
    motor = outpost.get_tracer("motor")
    left = motor.child("left")                     # motor/left
 
-   motor.unit("speed", "rpm")
+   motor.metadata("speed", "rpm", value_range=(0, 3000))
    motor.value("speed", 1432)                     # the trace motor/speed
    motor.info("homed")                            # a log record at motor
    motor.warn("hot: %d °C", temperature)          # formatted as logging does
@@ -340,33 +367,36 @@ its own when it is imported, also before the outpost serves:
        motor.value("speed", speed)
        motor.value("current", current)
 
-A tracer has ``value``, ``series``, ``unit`` and ``batch`` as above, with paths
+A tracer has ``value``, ``series``, ``unit``, ``metadata`` and ``batch`` as above, with paths
 below its name, and ``log(level, message, *args)`` with ``debug``, ``info``,
 ``warn`` (or ``warning``) and ``error``. ``@motor.action("speed",
 readback="speed_rpm")`` makes the action ``motor/speed`` with the readback
 ``motor/speed_rpm``. ``outpost.get_tracer()`` without a name is of the target
 as a whole.
 
-A dataclass is a record, its fields the fields of the record. The units of its
-fields are declared with ``Unit`` and sent with its first sample at a path:
+A dataclass is a record, its fields the fields of the record. The metadata of its
+fields is declared with ``Unit``, ``Description``, ``Labels`` and ``Range`` and
+sent with its first sample at a path:
 
 .. code-block:: python
 
    from dataclasses import dataclass
    from typing import Annotated
 
-   from blip_outpost import Unit
+   from blip_outpost import Description, Labels, Range, Unit
 
 
    @dataclass
    class HeaterState:
-       power: Annotated[float, Unit("W")]
+       power: Annotated[float, Unit("W"), Range(0, 1500)]
        duty: Annotated[float, Unit("%")]
-       on: bool
+       mode: Annotated[int, Labels({0: "off", 1: "heating", 2: "holding"})]
+       on: Annotated[bool, Description("The heater relay")]
 
 
-   heater.value("state", HeaterState(power=750.0, duty=50.0, on=True))
-   # heater/state.power in W, heater/state.duty in %, heater/state.on
+   heater.value("state", HeaterState(power=750.0, duty=50.0, mode=1, on=True))
+   # heater/state.power in W, expected 0 to 1500; heater/state.duty in %;
+   # heater/state.mode with labels; heater/state.on with a description
 
 The records of Python's ``logging`` reach blip with a ``LogHandler``, the name
 of the logger below a prefix, ``log`` unless ``path`` is given: the logger
@@ -390,7 +420,7 @@ Pass ``record`` to ``start`` (or ``--record`` on the command line)::
    outpost.start(record="run.blip")
 
 The file holds all messages sent to blip, also while no blip is connected,
-starting with the units and actions sent before. It is flushed every second, so
+starting with the ``Hello``, the metadata and the actions sent before. It is flushed every second, so
 it can be read up to about a second before the script stopped, also if it was
 killed. Open it in blip with **File › Open recording** or replay it. The
 format is described in :doc:`/reference/protocol`.

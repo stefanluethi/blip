@@ -38,20 +38,28 @@ named_enum! {
         Binary => "Binary",
         /// Numbers with an exponent, e.g. `1.5e3`.
         Scientific => "Scientific",
+        /// The label the target declares for the number.
+        Labels => "Labels",
     }
 }
 
 impl DisplayFormat {
-    /// The formats that apply to numbers of `kind`: hex and binary only to integers,
-    /// none to bools.
-    pub fn of_kind(kind: NumberKind) -> &'static [DisplayFormat] {
-        match kind {
-            NumberKind::Integer => &Self::ALL,
-            NumberKind::Float => &[DisplayFormat::Default, DisplayFormat::Scientific],
-            NumberKind::Bool => &[],
+    /// The formats offered for numbers of `kind`, hex and binary only for integers,
+    /// none for bools, Labels first if `labelled`.
+    pub fn of_kind(kind: NumberKind, labelled: bool) -> &'static [DisplayFormat] {
+        use DisplayFormat::{Binary, Default, Hex, Labels, Scientific};
+        match (kind, labelled) {
+            (NumberKind::Integer, true) => &[Labels, Default, Hex, Binary, Scientific],
+            (NumberKind::Integer, false) => &[Default, Hex, Binary, Scientific],
+            (NumberKind::Float, true) => &[Labels, Default, Scientific],
+            (NumberKind::Float, false) => &[Default, Scientific],
+            (NumberKind::Bool, _) => &[],
         }
     }
 }
+
+/// The labels of the values of a trace by number, as the target declares them.
+pub type Labels = std::collections::BTreeMap<i64, String>;
 
 /// One sample value of a numeric trace or one element of an array trace.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -103,6 +111,35 @@ impl Number {
             }
             _ => self.format(None, DisplayFormat::Default),
         }
+    }
+
+    /// The label of an integer or a whole float among `labels`; none for bools, nulls,
+    /// fractions and integers outside `i64`.
+    pub fn label(self, labels: &Labels) -> Option<&str> {
+        let key = match self {
+            Self::Int(value) => value,
+            Self::Uint(value) => i64::try_from(value).ok()?,
+            Self::Float(value) if value.fract() == 0.0 && value.abs() < 2f64.powi(63) => {
+                value as i64
+            }
+            _ => return None,
+        };
+        labels.get(&key).map(String::as_str)
+    }
+
+    /// As [`Number::format`], but with Labels the label of the number if it has one.
+    pub fn format_labelled(
+        self,
+        digits: Option<usize>,
+        format: DisplayFormat,
+        labels: Option<&Labels>,
+    ) -> String {
+        if format == DisplayFormat::Labels {
+            if let Some(label) = labels.and_then(|labels| self.label(labels)) {
+                return label.to_owned();
+            }
+        }
+        self.format(digits, format)
     }
 
     /// The number written in `format`, a float with at most `digits` significant

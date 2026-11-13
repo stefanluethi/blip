@@ -5,8 +5,10 @@ import logging
 import struct
 from typing import List
 
+import cbor2
 import websockets
 
+from blip_outpost.proto import Message
 from blip_outpost.server import OutpostServer
 
 # large enough to fill the socket buffers of a client that does not read, uncompressed
@@ -33,8 +35,8 @@ async def serve(port: int, max_queued: int) -> OutpostServer:
     return server
 
 
-def connect(port: int, **kwargs):
-    return websockets.connect(f"ws://127.0.0.1:{port}/ws/test", compression=None, max_size=None, **kwargs)
+def connect(port: int, query: str = "", **kwargs):
+    return websockets.connect(f"ws://127.0.0.1:{port}/ws/test{query}", compression=None, max_size=None, **kwargs)
 
 
 async def receive_until(ws, last: int) -> List[int]:
@@ -115,5 +117,45 @@ async def test_messages_for_a_client_that_does_not_keep_up_are_dropped(caplog):
             assert received == sorted(received)
             assert len(received) < MESSAGES
             assert any("Dropped" in r.getMessage() for r in caplog.records)
+    finally:
+        await server.stop()
+
+
+async def test_the_metadata_of_each_path_is_kept_under_either_name():
+    server = await serve(3980, max_queued=10)
+    frames = [
+        cbor2.dumps({"ValueMetadata": {"path": "a", "unit": "V"}}),
+        cbor2.dumps({"TraceMetadata": {"path": "b", "unit": "A"}}),
+        cbor2.dumps({"TraceMetadata": {"path": "a", "unit": "mV"}}),
+    ]
+    try:
+        for frame in frames:
+            server.broadcast(frame)
+        async with connect(3980, "?batch=0") as ws:
+            received = [await asyncio.wait_for(ws.recv(), timeout=2.0) for _ in range(2)]
+            assert received == [frames[1], frames[2]]
+            try:
+                extra = await asyncio.wait_for(ws.recv(), timeout=0.2)
+            except asyncio.TimeoutError:
+                extra = None
+            assert extra is None
+    finally:
+        await server.stop()
+
+
+async def test_a_client_gets_the_hello_before_the_cached_messages():
+    own = Message.create_hello(name="x").encode_cbor()
+    target_hello = Message.create_hello(name="target", clock="boot").encode_cbor()
+    metadata = Message.create_metadata("a", "V").encode_cbor()
+    server = OutpostServer(no_actions, hello=lambda: own)
+    await server.start("127.0.0.1", 3981, "/ws/test")
+    try:
+        server.broadcast(metadata)
+        async with connect(3981, "?batch=0") as ws:
+            assert [await asyncio.wait_for(ws.recv(), 2.0) for _ in range(2)] == [own, metadata]
+            server.broadcast(target_hello)
+            assert await asyncio.wait_for(ws.recv(), 2.0) == target_hello
+        async with connect(3981, "?batch=0") as ws:
+            assert [await asyncio.wait_for(ws.recv(), 2.0) for _ in range(2)] == [target_hello, metadata]
     finally:
         await server.stop()

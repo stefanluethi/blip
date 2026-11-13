@@ -324,7 +324,7 @@ async def test_answers_sent_by_the_script_are_dropped():
             outpost.send(Message.create_action_result(0, "not yours"))
             outpost.value("after", 1)
             message = cbor2.loads(await receive_message(ws, 2.0))
-            assert "Value" in message
+            assert "Sample" in message
 
 
 async def test_a_change_while_a_client_connects_reaches_it(monkeypatch):

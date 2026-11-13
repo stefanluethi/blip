@@ -11,7 +11,7 @@ fn traces(count: u64, with_nulls: bool) -> Traces {
         } else {
             proto::Data::Float((i % 7) as f64)
         };
-        traces.append(&proto::Value {
+        traces.append(&proto::Sample {
             timestamp: i * 1_000_000,
             path: "a".to_owned(),
             value,
@@ -69,7 +69,7 @@ struct State {
 fn plot_harness() -> egui_kittest::Harness<'static, State> {
     let mut model = Model::default();
     for second in 0..=40 {
-        model.traces.append(&proto::Value {
+        model.traces.append(&proto::Sample {
             timestamp: second * 1_000_000_000,
             path: "a".to_owned(),
             value: proto::Data::Float(second as f64),
@@ -118,7 +118,7 @@ fn legend_slots_fit_the_kind_of_the_values() {
     for (second, (int, bool)) in [(-3, true), (120, false)].into_iter().enumerate() {
         let timestamp = second as u64 * 1_000_000_000;
         for (path, value) in [("i", proto::Data::Int(int)), ("b", proto::Data::Bool(bool))] {
-            model.traces.append(&proto::Value {
+            model.traces.append(&proto::Sample {
                 timestamp,
                 path: path.to_owned(),
                 value,
@@ -142,7 +142,7 @@ fn values_in_the_title_legend_keep_their_place() {
     let texts = ["-0.140", "0.080", "9.836", "1.500", "-3.200"];
     let mut model = Model::default();
     for (second, value) in values.into_iter().enumerate() {
-        model.traces.append(&proto::Value {
+        model.traces.append(&proto::Sample {
             timestamp: second as u64 * 1_000_000_000,
             path: "v".to_owned(),
             value: proto::Data::Float(value),
@@ -385,7 +385,7 @@ fn tooltip_model() -> (Plot, Model) {
     for second in 0..=40u64 {
         let timestamp = second * 1_000_000_000;
         let path = |path: &str| path.to_owned();
-        model.traces.append(&proto::Value {
+        model.traces.append(&proto::Sample {
             timestamp,
             path: path("a"),
             value: proto::Data::Float(1.5),
@@ -395,13 +395,17 @@ fn tooltip_model() -> (Plot, Model) {
         } else {
             proto::Data::Null
         };
-        model.traces.append(&proto::Value {
+        model.traces.append(&proto::Sample {
             timestamp,
             path: path("b"),
             value,
         });
     }
-    model.traces.set_unit("a", "V");
+    model.traces.set_metadata(&proto::TraceMetadata {
+        path: "a".into(),
+        unit: "V".into(),
+        ..Default::default()
+    });
     let mut plot = Plot::default();
     plot.traces.extend(["a", "b", "c"].map(str::to_owned));
     (plot, model)
@@ -416,6 +420,7 @@ fn the_tooltip_has_the_time_and_a_row_per_trace() {
         &super::super::NO_FORMATS,
         30_000_000_000,
         TimeBase::SinceBoot,
+        None,
     );
     let label = |name: &str, index| {
         Label::Trace(TraceName {
@@ -433,6 +438,44 @@ fn the_tooltip_has_the_time_and_a_row_per_trace() {
             Row::new(label("c", 2), [Value::missing()]),
         ]]
     );
+}
+
+#[test]
+fn the_curve_nearest_the_pointer_within_12_points_is_the_one_under_it() {
+    let values = [0.0, 10.0, 5.0];
+    assert_eq!(nearest_curve(&values, 9.0, 2.0), Some(1));
+    assert_eq!(nearest_curve(&values, 9.0, 10.0), Some(1));
+    assert_eq!(nearest_curve(&values, 9.0, 20.0), None);
+    assert_eq!(nearest_curve(&[f64::NAN, 3.0], 3.1, 10.0), Some(1));
+}
+
+#[test]
+fn the_tooltip_describes_the_trace_near_the_pointer() {
+    use super::super::tooltip::Footer;
+    let (plot, mut model) = tooltip_model();
+    model.traces.set_metadata(&proto::TraceMetadata {
+        path: "a".into(),
+        description: "Supply voltage".into(),
+        ..Default::default()
+    });
+    let tooltip = |near| {
+        plot.tooltip(
+            &model,
+            &super::super::NO_FORMATS,
+            30_000_000_000,
+            TimeBase::SinceBoot,
+            near,
+        )
+    };
+    assert_eq!(
+        tooltip(Some("a")).footer,
+        Some(Footer {
+            name: "a".into(),
+            description: "Supply voltage".into()
+        })
+    );
+    assert_eq!(tooltip(None).footer, None);
+    assert_eq!(tooltip(Some("b")).footer, None);
 }
 
 #[test]
@@ -457,4 +500,188 @@ fn hovering_the_plot_shows_the_tooltip() {
     let right = find("1.5 V").right();
     assert_eq!(find("null").right(), right);
     assert_eq!(find("—").right(), right);
+}
+
+#[test]
+fn a_plot_shows_blocks_as_single_samples() {
+    let adc = proto::Samples {
+        path: "adc".to_owned(),
+        values: [1.0, 2.0, 3.0].map(proto::Data::Float).to_vec(),
+        times: proto::SampleTimes::Period {
+            timestamp: 1000,
+            period: 10,
+        },
+    };
+    let (mut blocks, mut singles) = (Model::default(), Model::default());
+    let encode = |message| serde_cbor_2::to_vec(&message).unwrap();
+    blocks.receive("a", &encode(proto::Message::Samples(adc.clone())));
+    for sample in adc.to_samples() {
+        singles.receive("a", &encode(proto::Message::Sample(sample)));
+    }
+    let mut plot = Plot::default();
+    plot.traces.insert("adc".to_owned());
+    for t in [1010, 1020] {
+        let tooltip = |model| {
+            plot.tooltip(
+                model,
+                &super::super::NO_FORMATS,
+                t,
+                TimeBase::SinceBoot,
+                None,
+            )
+        };
+        assert_eq!(tooltip(&blocks), tooltip(&singles));
+    }
+}
+
+#[test]
+fn labels_show_in_the_title_legend() {
+    use egui_kittest::kittest::Queryable;
+
+    let mut model = Model::default();
+    for (second, value) in [0, 1, 3].into_iter().enumerate() {
+        model.traces.append(&proto::Sample {
+            timestamp: second as u64 * 1_000_000_000,
+            path: "m".to_owned(),
+            value: proto::Data::Uint(value),
+        });
+    }
+    model.traces.set_metadata(&proto::TraceMetadata {
+        path: "m".into(),
+        unit: "x".into(),
+        labels: [(0, "Idle".to_owned()), (1, "warn".to_owned())].into(),
+        ..Default::default()
+    });
+    let series = model.traces.series("m").unwrap();
+    assert_eq!(legend_slot(&series, DisplayFormat::Labels), (None, None));
+    let mut plot = Plot::default();
+    plot.traces.insert("m".to_owned());
+    let state = State {
+        plot,
+        model,
+        time: Default::default(),
+        invoker: Default::default(),
+    };
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(400.0, 40.0))
+        .build_ui_state(
+            |ui, state: &mut State| {
+                state.time.update(&state.model, 0.0);
+                let mut context = ViewContext {
+                    model: &state.model,
+                    time: &mut state.time,
+                    invoker: &mut state.invoker,
+                    formats: &super::super::NO_FORMATS,
+                    titled: true,
+                    plots: &super::super::NO_PLOTS,
+                };
+                ui.horizontal(|ui| state.plot.title_ui(ui, &mut context));
+            },
+            state,
+        );
+    let state = harness.state_mut();
+    state.time.update(&state.model, 0.0);
+    let latest = state.time.latest().unwrap();
+    state.time.set_cursor(latest - 1.0);
+    harness.run();
+    harness.get_by_label("warn");
+}
+
+/// A model of traces `a` (declares 0 to 100, samples 10 and 120) and `b` (no range,
+/// samples -5 and 5), and a plot showing `paths`.
+fn fit_model(paths: &[&str]) -> (Plot, Model) {
+    let mut model = Model::default();
+    for (path, values) in [("a", [10.0, 120.0]), ("b", [-5.0, 5.0])] {
+        for (timestamp, value) in values.into_iter().enumerate() {
+            model.traces.append(&proto::Sample {
+                timestamp: timestamp as u64 * 1_000_000,
+                path: path.to_owned(),
+                value: proto::Data::Float(value),
+            });
+        }
+    }
+    model.traces.set_metadata(&proto::TraceMetadata {
+        path: "a".into(),
+        range: Some(proto::ExpectedRange {
+            min: 0.0,
+            max: 100.0,
+        }),
+        ..Default::default()
+    });
+    let plot = Plot {
+        traces: paths.iter().map(|&path| path.to_owned()).collect(),
+        ..Plot::default()
+    };
+    (plot, model)
+}
+
+#[test]
+fn expected_fits_the_declared_ranges_grown_by_the_values() {
+    let (mut plot, model) = fit_model(&["a", "b"]);
+    assert_eq!(plot.range_y(&model), Some((-5.5, 120.0)));
+    plot.fit = Fit::Values;
+    assert_eq!(plot.range_y(&model), Some((-11.25, 126.25)));
+
+    let (mut plot, model) = fit_model(&["a"]);
+    assert_eq!(plot.range_y(&model), Some((0.0, 120.0)));
+    plot.fit = Fit::Values;
+    assert_eq!(plot.range_y(&model), Some((4.5, 125.5)));
+
+    let (mut plot, model) = fit_model(&["b"]);
+    assert_eq!(plot.range_y(&model), Some((-5.5, 5.5)));
+    plot.fit = Fit::Values;
+    assert_eq!(plot.range_y(&model), Some((-5.5, 5.5)));
+}
+
+#[test]
+fn a_typed_end_overrides_the_fit_and_clearing_it_returns() {
+    let (mut plot, model) = fit_model(&["a", "b"]);
+    plot.y_min = Some(-1.0);
+    assert_eq!(plot.shown_y(&model), Some((-1.0, 120.0)));
+    plot.y_min = None;
+    assert_eq!(plot.shown_y(&model), Some((-5.5, 120.0)));
+}
+
+#[test]
+fn the_hint_of_an_end_is_the_end_in_use() {
+    assert_eq!(super::super::end_hint(Some(-5.5)), "-5.5");
+    assert_eq!(super::super::end_hint(Some(120.0)), "120");
+    assert_eq!(super::super::end_hint(None), "auto");
+}
+
+/// Whether the Y axis properties of a plot showing `paths` offer "Fit to".
+fn offers_fit(paths: &[&str]) -> bool {
+    use egui_kittest::kittest::Queryable;
+    let (plot, model) = fit_model(paths);
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(300.0, 300.0))
+        .build_ui_state(
+            |ui, (plot, model): &mut (Plot, Model)| {
+                let connected = Default::default();
+                let context = PropertiesContext {
+                    model,
+                    connected: &connected,
+                    plots: &super::super::NO_PLOTS,
+                };
+                plot.properties_ui(ui, &context);
+            },
+            (plot, model),
+        );
+    harness.run();
+    harness.query_by_label("Fit to").is_some()
+}
+
+#[test]
+fn fit_to_is_offered_only_while_a_shown_trace_declares_a_range() {
+    assert!(offers_fit(&["a", "b"]));
+    assert!(!offers_fit(&["b"]));
+}
+
+#[test]
+fn the_hints_of_min_and_max_are_the_ends_of_the_axis() {
+    // a declared range and a trace without one: the properties show `range_y` as hints
+    let (plot, model) = fit_model(&["a", "b"]);
+    let hints = plot.range_y(&model);
+    assert_eq!(hints, Some((-5.5, 120.0)));
+    assert_eq!(plot.shown_y(&model), hints);
 }

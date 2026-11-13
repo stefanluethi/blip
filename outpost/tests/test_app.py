@@ -20,10 +20,15 @@ def test_the_app_traces_its_parts_below_their_names():
         app.sensor.series("vibration", app.read_block(0.0), start_ns=0, period_ns=1_000_000)
     finally:
         outpost._server.broadcast = original  # type: ignore[method-assign]
-    units = {m["ValueMetadata"]["path"]: m["ValueMetadata"]["unit"] for m in messages if "ValueMetadata" in m}
+    units = {m["TraceMetadata"]["path"]: m["TraceMetadata"]["unit"] for m in messages if "TraceMetadata" in m}
     assert units == {"heater/state.power": "W", "heater/state.duty": "%"}
-    paths = [m["Value"]["path"] for m in messages if "Value" in m]
-    assert paths[:2] == ["heater/state", "room/setpoint"]
-    assert paths[2:] == ["room/sensor/vibration"] * 50
+    paths = [m["Sample"]["path"] for m in messages if "Sample" in m]
+    assert paths == ["heater/state", "room/setpoint"]
+    blocks = [m["Samples"] for m in messages if "Samples" in m]
+    assert len(blocks) == 1
+    assert blocks[0]["path"] == "room/sensor/vibration"
+    assert len(blocks[0]["values"]) == 50
+    assert blocks[0]["timestamp"] == 0
+    assert blocks[0]["period"] == 1_000_000
     logs = [m["Log"]["path"] for m in messages if "Log" in m]
     assert "heater" in logs

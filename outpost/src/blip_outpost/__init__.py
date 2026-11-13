@@ -27,11 +27,12 @@ an `Outpost` for another one, e.g. on another port or in asyncio code.
 """
 
 from pathlib import Path
-from typing import Any, Callable, ContextManager, Optional, Sequence, Union
+from typing import Any, Callable, ContextManager, Mapping, Optional, Sequence, Tuple, Union
 
 from blip_outpost.actions import ActionError, Actions, Range, Unit
 from blip_outpost.outpost import Outpost
 from blip_outpost.proto import Data, LogLevel, Message
+from blip_outpost.records import Description, Labels
 from blip_outpost.timing import sleep_until
 from blip_outpost.tracer import LogHandler, Tracer
 
@@ -41,6 +42,8 @@ __all__ = [
     "ActionError",
     "Actions",
     "Data",
+    "Description",
+    "Labels",
     "LogHandler",
     "LogLevel",
     "Message",
@@ -54,6 +57,7 @@ __all__ = [
     "get_outpost",
     "get_tracer",
     "log",
+    "metadata",
     "register",
     "send",
     "serve",
@@ -75,8 +79,19 @@ def get_outpost() -> Outpost:
     return _outpost
 
 
-def _configure(host: str, port: int, path: str, record: Optional[Union[str, Path]]) -> Outpost:
+def _configure(
+    host: str,
+    port: int,
+    path: str,
+    record: Optional[Union[str, Path]],
+    name: Optional[str] = None,
+    clock: Optional[str] = None,
+) -> Outpost:
     _outpost.host, _outpost.port, _outpost.path, _outpost.record = host, port, path, record
+    if name is not None:
+        _outpost.name = name
+    if clock is not None:
+        _outpost.clock = clock
     return _outpost
 
 
@@ -85,11 +100,15 @@ def start(
     port: int = 3000,
     path: str = "/ws/outpost",
     record: Optional[Union[str, Path]] = None,
+    name: Optional[str] = None,
+    clock: Optional[str] = None,
 ) -> Outpost:
     """Serves blip on ws://host:port/path from a thread of its own, recording what is
     sent to the file `record` if given, and returns the outpost. ``host="0.0.0.0"``
-    serves blips on other machines too."""
-    return _configure(host, port, path, record).start()
+    serves blips on other machines too. `name` (default: the hostname) and `clock`
+    ("epoch" or "boot") go into the Hello sent to each blip; they are left as they are
+    if not given."""
+    return _configure(host, port, path, record, name, clock).start()
 
 
 def serve(
@@ -97,6 +116,8 @@ def serve(
     port: int = 3000,
     path: str = "/ws/outpost",
     record: Optional[Union[str, Path]] = None,
+    name: Optional[str] = None,
+    clock: Optional[str] = None,
 ) -> Outpost:
     """`start` for asyncio code, serving from the running event loop.
 
@@ -105,7 +126,7 @@ def serve(
         async with blip_outpost.serve(port=3000):
             ...
     """
-    return _configure(host, port, path, record)
+    return _configure(host, port, path, record, name, clock)
 
 
 def stop() -> None:
@@ -132,13 +153,26 @@ def series(
     start_ns: Optional[int] = None,
     period_ns: Optional[float] = None,
 ) -> None:
-    """Sends many samples of the trace `path` at once, see `Outpost.series`."""
+    """Sends many samples of the trace `path` as one Samples message, see `Outpost.series`."""
     _outpost.series(path, values, timestamps_ns=timestamps_ns, start_ns=start_ns, period_ns=period_ns)
 
 
 def unit(path: str, unit: str) -> None:
     """Sends the unit of the trace `path`; sent once, it reaches every blip."""
     _outpost.unit(path, unit)
+
+
+def metadata(
+    path: str,
+    unit: Optional[str] = None,
+    *,
+    description: Optional[str] = None,
+    labels: Optional[Mapping[int, str]] = None,
+    value_range: Optional[Tuple[float, float]] = None,
+) -> None:
+    """Declares unit, description, labels and range of the trace `path`, see
+    `Outpost.metadata`."""
+    _outpost.metadata(path, unit, description=description, labels=labels, value_range=value_range)
 
 
 def log(

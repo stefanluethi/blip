@@ -73,10 +73,23 @@ Status Tracer::value_with(const Timestamp* timestamp, std::string_view path,
     });
 }
 
-Status Tracer::unit(std::string_view path, std::string_view unit) const {
+Status Tracer::samples_with(std::string_view path, std::size_t count, detail::EncodeFn encode,
+                            const void* values, const Queue::Times& times) const {
     return with_path(path, [&](Queue& queue, std::string_view full) {
-        return queue.unit(full, unit);
+        return queue.samples_with(full, count, encode, values, times);
     });
+}
+
+Status Tracer::metadata(std::string_view path, const Metadata& metadata) const {
+    return with_path(path, [&](Queue& queue, std::string_view full) {
+        return queue.metadata(full, metadata);
+    });
+}
+
+Status Tracer::unit(std::string_view path, std::string_view unit) const {
+    Metadata declared;
+    declared.unit = unit;
+    return metadata(path, declared);
 }
 
 Status Tracer::log(Level level, std::string_view message) const {

@@ -734,7 +734,7 @@ fn receive(
     timestamp: u64,
     value: Data,
 ) {
-    let message = proto::Message::Value(proto::Value {
+    let message = proto::Message::Sample(proto::Sample {
         timestamp,
         path: path.to_owned(),
         value,

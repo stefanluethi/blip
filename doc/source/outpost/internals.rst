@@ -40,7 +40,8 @@ Structure
    * - ``outpost.py``
      - ``Outpost``: serves from a thread of its own (``start``) or from the
        running event loop (``async with``); ``value``, ``series``, ``unit``,
-       ``log`` and ``send`` from any thread, and ``batch``, which collects what
+       ``metadata`` (unit, description, labels and range of a trace, merged per
+       path), ``log`` and ``send`` from any thread, and ``batch``, which collects what
        a thread sends and hands it over at once; the tracers of
        ``get_tracer``; the ``actions`` and the ``action`` decorator and
        ``register``; ``drain`` and ``wait_for_client``; ``on_invoke`` to carry
@@ -50,8 +51,8 @@ Structure
        records, and sends with its outpost. ``LogHandler``: a handler of
        Python's ``logging`` that sends the records.
    * - ``records.py``
-     - The units of the fields of dataclass records, from ``Unit`` in their
-       annotations.
+     - The metadata of the fields of dataclass records, from ``Unit``,
+       ``Description``, ``Labels`` and ``Range`` in their annotations.
    * - ``actions.py``
      - ``Range``, ``Unit``, ``ActionError`` and ``Actions``: derives the
        parameters of an action from the signature, converts and checks
@@ -75,7 +76,7 @@ Structure
      - ``sleep_until``, for asyncio code that samples at a steady rate.
    * - ``../examples/``
      - Not in the library: ``minimal`` (blocking code, the module functions),
-       ``simulator`` (asyncio, actions as methods, also the reference) and
+       ``simulator`` (asyncio, actions as methods, trace metadata, blocks of samples, also the reference) and
        ``fast`` (the stress test, encoding its messages from templates).
 
 Threads
@@ -85,6 +86,10 @@ Threads
 ``stop``; ``stop`` is also registered with ``atexit``, so the recording is
 finished when the script just ends. ``async with`` serves from the running
 event loop instead, without a thread.
+
+The ``Hello`` is built by the server's ``hello`` callback in the event loop
+when a client connects, so ``name`` and ``clock`` may be changed from any
+thread; a change reaches later clients only.
 
 ``send_*`` may be called from any thread. Called in the thread of the event
 loop, or while the outpost does not serve, the message goes straight to the
@@ -102,12 +107,16 @@ any thread, also from an action.
 Message flow
 ------------
 
-* ``send`` encodes a ``Message`` (or splits bytes of complete messages, a CBOR
+* ``series`` sends a block of samples of one trace as one ``Samples`` message,
+  with a first timestamp and a period (an integral ``period_ns``) or a list of
+  timestamps; nothing for no values. ``send`` encodes a ``Message`` (or splits bytes of complete messages, a CBOR
   sequence, dropping what is no CBOR) and hands one message at a time to the
   server's ``broadcast``.
 * ``broadcast`` drops ``ActionResult`` messages sent by the script (their ids
   are not those of any blip), keeps the latest ``Actions`` message and the
-  latest ``ValueMetadata`` of each path for blips connecting later, writes the
+  latest ``TraceMetadata`` of each path (or ``ValueMetadata``, the name before
+  protocol version 3, which is read and forwarded unchanged) and the latest
+  ``Hello`` for blips connecting later, writes the
   message to the recording, and queues it for each client. While the outpost
   does not serve, only the cache is updated.
 * Each client has its own bounded queue (10 000 messages) and a sender task, so
@@ -119,9 +128,16 @@ Message flow
 * ``drain`` waits until the queue of every client is at most half full; a
   script sending faster than real time calls it now and then and loses no
   messages, as long as it sends fewer than half a queue in between.
-* A connecting client is checked against the path, gets the cached units and
-  actions first, then everything broadcast from then on. A recording starts
-  with them too.
+* A connecting client is checked against the path, gets the ``Hello``, the
+  cached metadata and the actions first, then everything broadcast from then
+  on. The ``Hello`` is the latest one broadcast, e.g. of a passthrough target
+  or one a script sent with ``send``, else the outpost's own: the hostname
+  (or ``name``), the clock (``epoch`` or ``boot``) and the sender
+  ``blip-outpost`` with its version, read when the client connects. A
+  recording starts with the same messages. The passthrough, the replay and
+  the protobuf link set ``send_hello`` to ``False``: the outpost does not know
+  the clock of their timestamps, so it sends no ``Hello`` of its own until the
+  target's arrives. A ``Hello`` is never retimed.
 
 Invocations
 -----------
@@ -167,7 +183,11 @@ behind at all. From then on the outpost
 adds an offset, so the new run continues at the newest time sent plus the time
 since it arrived, and sends a warning to the log. The protobuf link maps each
 timestamp field through it; the passthrough changes the timestamp of a
-``Value`` or ``Log`` in place (``retime``), wherever it is in the map, and
+``Sample`` (or the old ``Value``, forwarded unchanged
+otherwise) or ``Log`` in place (``retime``), wherever it is in the map; of a
+``Samples`` block the one ``timestamp`` (the clock sees the first sample, the rest
+follow at the period) or each entry of ``timestamps`` in order. A timestamp 0
+stays 0, and a block with an entry that is no unsigned integer stays as it is. It
 forwards a frame unchanged until the first restart. It keeps a clock per host,
 so that targets sending at once are not taken for restarts of each other.
 
@@ -180,10 +200,10 @@ are dropped before it is known.
 Recording and replay
 --------------------
 
-``RecordingWriter`` writes the version 1 header, the cached units and actions,
+``RecordingWriter`` writes the version 3 header, the cached units and actions,
 and then each broadcast message to a gzip file, flushing every second so the
 file is readable up to then also if the process is killed. ``read_frames``
-reads version 1 and 2, compressed or not, several gzip members, and stops at a
+reads versions 1 to 3, compressed or not, several gzip members, and stops at a
 cut-off message. The replay sends the frames at the pace of their timestamps
 (scaled by ``speed``) and rewrites ``Actions`` messages to disabled ones.
 

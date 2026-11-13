@@ -27,7 +27,7 @@ fn collapsed_branches_hide_their_rows() {
 fn records_have_a_column_per_field_in_the_chosen_order() {
     let mut model = Model::default();
     for (path, fields) in [("dev/a", ["temp", "volt"]), ("dev/b", ["temp", "fw"])] {
-        model.traces.append(&proto::Value {
+        model.traces.append(&proto::Sample {
             timestamp: 0,
             path: path.to_owned(),
             value: proto::Data::Record(
@@ -90,13 +90,21 @@ fn columns_are_hidden_and_formatted_in_the_properties() {
     use egui_kittest::kittest::Queryable;
 
     let mut model = Model::default();
-    model.traces.append(&proto::Value {
+    model.traces.append(&proto::Sample {
         timestamp: 0,
         path: "dev/a".to_owned(),
         value: proto::Data::Record(vec![
             ("temp".to_owned(), proto::Data::Uint(1)),
             ("name".to_owned(), proto::Data::String("x".to_owned())),
         ]),
+    });
+    model.traces.set_metadata(&proto::TraceMetadata {
+        path: "dev/a.temp".to_owned(),
+        range: Some(proto::ExpectedRange {
+            min: -10.0,
+            max: 85.0,
+        }),
+        ..Default::default()
     });
     let table = Table {
         layout: TableLayout::Records,
@@ -112,6 +120,8 @@ fn columns_are_hidden_and_formatted_in_the_properties() {
             (table, Formats::default()),
         );
     harness.run();
+    // the range the target declares shows under the column
+    harness.get_by_label("Expected -10 to 85");
     harness.get_by_label("temp").click();
     harness.run();
     assert_eq!(harness.state().0.hidden_columns, ["temp".to_owned()].into());
@@ -132,7 +142,7 @@ fn columns_are_hidden_and_formatted_in_the_properties() {
 fn traces_are_listed_by_path_or_name_without_empty_ones() {
     let mut traces = crate::app::model::traces::Traces::default();
     for (seconds, path) in [(1, "cpu"), (1, "left/speed"), (3, "right/speed")] {
-        traces.append(&proto::Value {
+        traces.append(&proto::Sample {
             timestamp: seconds * 1_000_000_000,
             path: path.to_owned(),
             value: proto::Data::Float(1.0),
@@ -161,4 +171,43 @@ fn traces_are_listed_by_path_or_name_without_empty_ones() {
     );
     table.show_empty = false;
     assert_eq!(labels(&table, Some(2_000_000_000)), ["speed"]);
+}
+
+#[test]
+fn labelled_cells_write_the_label_until_the_default_is_chosen() {
+    use crate::app::model::numbers::DisplayFormat;
+    use egui_kittest::kittest::Queryable;
+
+    let mut model = Model::default();
+    model.traces.append(&proto::Sample {
+        timestamp: 0,
+        path: "m".to_owned(),
+        value: proto::Data::Uint(0),
+    });
+    model.traces.set_metadata(&proto::TraceMetadata {
+        path: "m".into(),
+        labels: [(0, "Idle".to_owned())].into(),
+        ..Default::default()
+    });
+    let table = Table {
+        traces: BTreeSet::from(["m".to_owned()]),
+        ..Table::default()
+    };
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(300.0, 200.0))
+        .build_ui_state(
+            move |ui, (table, formats): &mut (Table, Formats)| {
+                table.show_table(ui, &model, formats, Some(0));
+            },
+            (table, Formats::default()),
+        );
+    harness.run();
+    harness.get_by_label("Idle");
+    harness
+        .state_mut()
+        .1
+        .choose("m", DisplayFormat::Default, true);
+    harness.run();
+    harness.get_by_label("0");
+    assert!(harness.query_by_label("Idle").is_none());
 }

@@ -15,13 +15,15 @@ int main(int argc, char** argv) {
         return 1;
     }
     sonde::Storage<4096, 1> storage;
-    sonde::Queue queue{storage, file};  // UTC from the system clock
+    sonde::Queue queue{storage, file, sonde::default_clock(),
+                       sonde::Hello{"oscillator", sonde::TimeBase::Epoch}};  // UTC
     sonde::Tracer oscillator{queue, "oscillator"};
     sonde::Tracer oscillator_log{queue, "log/oscillator"};  // its log records
 
     // simulated time, 1 ms per step from now on
     const std::uint64_t start = sonde::default_clock()();
-    oscillator.unit("position", "m");
+    oscillator.metadata("position", sonde::Metadata{"m", "Displacement from rest", {},
+                                                    sonde::Range{-1.0, 1.0}});
     oscillator.unit("velocity", "m/s");
     oscillator_log.log(sonde::Timestamp{start}, sonde::Level::Info, "started");
 

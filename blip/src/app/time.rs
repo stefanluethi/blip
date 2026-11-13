@@ -36,13 +36,23 @@ pub fn timestamp_at(origin: u64, seconds: f64) -> u64 {
 /// as time since the device booted.
 const UNIX_TIME_THRESHOLD: u64 = 1_000_000_000 * 1_000_000_000;
 
-/// What the timestamps count from, guessed from their value.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// What the timestamps count from, as the Hello declares or guessed from their value.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum TimeBase {
     /// Seconds since the Unix epoch, shown as local time.
     Unix,
     /// Seconds since the device booted.
+    #[default]
     SinceBoot,
+}
+
+impl From<proto::Clock> for TimeBase {
+    fn from(clock: proto::Clock) -> Self {
+        match clock {
+            proto::Clock::Epoch => TimeBase::Unix,
+            proto::Clock::Boot => TimeBase::SinceBoot,
+        }
+    }
 }
 
 impl TimeBase {
@@ -123,6 +133,9 @@ pub struct TimeRange {
     /// The first timestamp received in nanoseconds, from which the times count.
     #[serde(skip)]
     origin: u64,
+    /// What the timestamps count from, as the model has it.
+    #[serde(skip)]
+    base: TimeBase,
     /// End of the window in seconds, or `None` to follow the newest data.
     #[serde(skip)]
     end: Option<f64>,
@@ -148,6 +161,7 @@ impl Default for TimeRange {
         Self {
             window: 20.0,
             origin: 0,
+            base: TimeBase::default(),
             end: None,
             playing: true,
             played_at: None,
@@ -167,6 +181,7 @@ impl TimeRange {
     }
 
     fn update_span(&mut self, model: &Model) {
+        self.base = model.time_base().unwrap_or_default();
         let origin = model.origin().unwrap_or(0);
         if origin != self.origin {
             // other data, e.g. of an opened recording
@@ -307,7 +322,7 @@ impl TimeRange {
 
     /// What the timestamps of the collected data count from.
     pub fn base(&self) -> TimeBase {
-        TimeBase::guess(self.timestamp(self.latest().unwrap_or(0.0)))
+        self.base
     }
 
     pub fn is_live(&self) -> bool {

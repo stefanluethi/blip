@@ -40,10 +40,26 @@ on the right and are saved with the layout.
      - actions, see :doc:`/blip/actions`
 
 Every view's properties start with its **Name**. Views that write values as
-text (plot, states, table, distribution, heatmap) also have a **Number format** section:
-for each trace how its numbers are written -- decimal, hex, binary or
-scientific -- next to its unit as sent by the target. Hex and binary apply to
-whole numbers only; strings and bools have no format.
+text (plot, states, table, distribution, heatmap) also have a **Traces** section.
+For each trace it shows how its numbers are written -- decimal, hex, binary or
+scientific, or as labels -- next to its unit, and what the target says of the
+trace: its description, the range its values are *Expected* in (*Expected 0 to
+3000*) and its labels (*0 Idle, 1 Ramp, 2 Run*, cut at the end; hover for all
+of them). Hex and binary apply to whole numbers only; strings and bools have no
+format. A line the target did not send is left out.
+
+.. figure:: /screenshots/panel-properties-traces.png
+   :target: ../../_images/panel-properties-traces.png
+   :class: screenshot
+   :width: 300px
+   :alt: The properties of a plot with the section Traces: for each trace its number format and unit, its description, its expected range and its labels.
+
+   The properties of a plot of two traces that tell what they are.
+
+The format **Labels** is offered first for a trace that has labels, and is its
+default: the label replaces the number in the bands of States, the cells of a
+table, the tooltips and the value of the legend. A number without a label stays
+a number. Choose another format to see the numbers.
 
 Number fields in the properties that are left empty show *auto*: the value is
 fitted to the data.

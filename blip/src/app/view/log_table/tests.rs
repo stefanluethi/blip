@@ -1,5 +1,6 @@
 use super::*;
 use crate::app::model::logs::DEFAULT_PATH;
+use crate::app::time::TimeBase;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 
@@ -366,7 +367,17 @@ fn the_columns_follow_the_properties() {
         };
         logs.push("", entry);
         let mut table = LogTable { columns, ..table() };
-        let time = TimeRange::default();
+        // the time base comes from the model
+        let mut model = crate::app::model::Model::default();
+        let hello = proto::Message::Hello(proto::Hello {
+            version: 1,
+            name: None,
+            clock: Some(proto::Clock::Epoch),
+            sender: None,
+        });
+        model.receive("", &serde_cbor_2::to_vec(&hello).unwrap());
+        let mut time = TimeRange::default();
+        time.update(&model, 0.0);
         Harness::builder()
             .with_size(egui::vec2(600.0, 300.0))
             .build_ui(move |ui| table.ui(ui, &logs, &time))

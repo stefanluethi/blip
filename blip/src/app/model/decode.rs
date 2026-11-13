@@ -1,20 +1,22 @@
-//! Decodes the messages blip receives. Values and log records, which arrive all the
-//! time, are read in one pass without allocating: a value is flattened into its leaves,
-//! the fields of records and their arrays of numbers. The other messages are decoded
-//! with serde.
+//! Decodes the messages blip receives. Samples, blocks of samples and log records,
+//! which arrive all the time, are read without allocating: a value is flattened into
+//! its leaves, the fields of records and their arrays of numbers. A block is read in two
+//! passes, the first checks it whole, see [`Block`]. The other messages are decoded with
+//! serde.
 
 use super::cbor::{self, Head, Reader};
 use super::numbers::Number;
 use std::ops::Range;
 
 /// A message, with the strings borrowed from its bytes. The value of a
-/// [`Message::Value`] is in the [`Flat`] passed to [`decode`].
+/// [`Message::Sample`] is in the [`Flat`] passed to [`decode`].
 #[derive(Debug, PartialEq)]
 pub enum Message<'b> {
-    Value {
+    Sample {
         timestamp: u64,
         path: &'b str,
     },
+    Samples(Block<'b>),
     Log {
         timestamp: u64,
         /// Empty if the record has none.
@@ -23,6 +25,32 @@ pub enum Message<'b> {
         message: &'b str,
     },
     Other(proto::Message),
+}
+
+/// A block of samples of one trace, checked whole; its values are read one by one.
+#[derive(Debug, PartialEq)]
+pub struct Block<'b> {
+    pub path: &'b str,
+    pub len: usize,
+    pub times: proto::SampleTimes,
+    /// At the next value.
+    values: Reader<'b>,
+    next: usize,
+}
+
+impl<'b> Block<'b> {
+    /// Reads the next sample of the block in `frame` into `flat`, returns its
+    /// timestamp; `None` after the last.
+    pub fn next(&mut self, frame: &'b [u8], flat: &mut Flat) -> Option<u64> {
+        if self.next >= self.len {
+            return None;
+        }
+        flat.clear();
+        flat.value(&mut self.values, frame).ok()?;
+        let timestamp = self.times.timestamp(self.next)?;
+        self.next += 1;
+        Some(timestamp)
+    }
 }
 
 /// The value of a leaf of a value.
@@ -239,41 +267,71 @@ fn kind_name(head: Head) -> &'static str {
     }
 }
 
-/// Whether `frame` is a value or a log record, read from its start only.
+/// The name of the message in `frame`, e.g. "Sample", read from its start only.
+pub fn message_name(frame: &[u8]) -> Option<&str> {
+    let mut reader = Reader::new(frame);
+    if reader.head().ok()? != Head::Map(Some(1)) {
+        return None;
+    }
+    reader.str().ok()
+}
+
+/// Whether `frame` is a sample, a block of samples or a log record (also "Value").
 pub fn is_sample(frame: &[u8]) -> bool {
-    let mut reader = Reader::new(frame);
-    reader.head() == Ok(Head::Map(Some(1))) && matches!(reader.str(), Ok("Value" | "Log"))
+    matches!(
+        message_name(frame),
+        Some("Value" | "Sample" | "Samples" | "Log")
+    )
 }
 
-/// The path of the value in `frame` if it is a [`Message::Value`], read without
-/// decoding the value.
-pub fn value_path(frame: &[u8]) -> Option<&str> {
-    let mut reader = Reader::new(frame);
-    if reader.head().ok()? != Head::Map(Some(1)) || reader.str().ok()? != "Value" {
-        return None;
-    }
-    let Head::Map(Some(len)) = reader.head().ok()? else {
-        return None;
+/// The path of the samples in `frame`: of a Sample (or Value), or of a Samples block
+/// with values; read without decoding the values.
+pub fn sample_path(frame: &[u8]) -> Option<&str> {
+    let block = match message_name(frame)? {
+        "Value" | "Sample" => false,
+        "Samples" => true,
+        _ => return None,
     };
-    for _ in 0..len {
-        match reader.str().ok()? {
-            "path" => return reader.str().ok(),
-            _ => reader.skip().ok()?,
+    // the name was read, so the message starts at its value
+    let mut reader = Reader::new(frame);
+    reader.head().ok()?;
+    reader.str().ok()?;
+    let (mut path, mut has_values) = (None, false);
+    let read = fields(&mut reader, |reader, name| {
+        match name {
+            "path" => path = Some(reader.str()?),
+            "values" if block => {
+                let head = reader.head()?;
+                has_values = matches!(head, Head::Array(Some(len)) if len > 0);
+                reader.skip_rest(head)?;
+            }
+            _ => reader.skip()?,
         }
+        Ok(())
+    });
+    if read.is_err() || (block && !has_values) {
+        return None;
     }
-    None
+    path
 }
 
-/// Decodes the message `frame`, the value of a [`Message::Value`] into `flat`.
+/// Decodes the message `frame`, the value of a [`Message::Sample`] into `flat`.
 pub fn decode<'b>(frame: &'b [u8], flat: &mut Flat) -> Result<Message<'b>, String> {
     let mut reader = Reader::new(frame);
-    let fast = (|| -> cbor::Result<Option<Message<'b>>> {
-        if reader.head()? != Head::Map(Some(1)) {
-            return Ok(None);
-        }
-        Ok(match reader.str()? {
-            "Value" => Some(value(&mut reader, frame, flat)?),
-            "Log" => Some(log(&mut reader)?),
+    let fast = (|| -> Result<Option<Message<'b>>, String> {
+        let name = (|| -> cbor::Result<Option<&'b str>> {
+            if reader.head()? != Head::Map(Some(1)) {
+                return Ok(None);
+            }
+            reader.str().map(Some)
+        })()
+        .map_err(|error| error.to_string())?;
+        Ok(match name {
+            Some("Value" | "Sample") => {
+                Some(sample(&mut reader, frame, flat).map_err(|error| error.to_string())?)
+            }
+            Some("Samples") => Some(Message::Samples(samples(&mut reader, frame, flat)?)),
+            Some("Log") => Some(log(&mut reader).map_err(|error| error.to_string())?),
             _ => None,
         })
     })();
@@ -282,7 +340,7 @@ pub fn decode<'b>(frame: &'b [u8], flat: &mut Flat) -> Result<Message<'b>, Strin
         Ok(None) => serde_cbor_2::from_slice(frame)
             .map(Message::Other)
             .map_err(|error| error.to_string()),
-        Err(error) => Err(error.to_string()),
+        Err(error) => Err(error),
     }
 }
 
@@ -301,7 +359,7 @@ fn fields<'b>(
     Ok(())
 }
 
-fn value<'b>(
+fn sample<'b>(
     reader: &mut Reader<'b>,
     frame: &'b [u8],
     flat: &mut Flat,
@@ -321,9 +379,60 @@ fn value<'b>(
         Ok(())
     })?;
     match (timestamp, path, has_value) {
-        (Some(timestamp), Some(path), true) => Ok(Message::Value { timestamp, path }),
-        _ => Err(error(reader, "a Value lacks a field")),
+        (Some(timestamp), Some(path), true) => Ok(Message::Sample { timestamp, path }),
+        _ => Err(error(reader, "a Sample lacks a field")),
     }
+}
+
+/// Reads a block of samples, checking all its values and its times.
+fn samples<'b>(
+    reader: &mut Reader<'b>,
+    frame: &'b [u8],
+    flat: &mut Flat,
+) -> Result<Block<'b>, String> {
+    let (mut path, mut values, mut timestamp, mut period, mut timestamps) =
+        (None, None, None, None, None);
+    fields(reader, |reader, name| {
+        match name {
+            "path" => path = Some(reader.str()?),
+            "values" => {
+                let Head::Array(Some(len)) = reader.head()? else {
+                    return Err(error(reader, "expected an array of values"));
+                };
+                let len = usize::try_from(len).map_err(|_| error(reader, "unexpected end"))?;
+                values = Some((reader.clone(), len));
+                for _ in 0..len {
+                    flat.clear();
+                    flat.value(reader, frame)?;
+                }
+            }
+            "timestamp" => timestamp = Some(reader.u64()?),
+            "period" => period = Some(reader.u64()?),
+            "timestamps" => {
+                let Head::Array(Some(len)) = reader.head()? else {
+                    return Err(error(reader, "expected an array of timestamps"));
+                };
+                let mut list = vec![];
+                for _ in 0..len {
+                    list.push(reader.u64()?);
+                }
+                timestamps = Some(list);
+            }
+            _ => reader.skip()?,
+        }
+        Ok(())
+    })
+    .map_err(|error| error.to_string())?;
+    let path = path.ok_or("a Samples lacks its path")?;
+    let (values, len) = values.ok_or("a Samples lacks its values")?;
+    let times = proto::SampleTimes::new(timestamp, period, timestamps, len)?;
+    Ok(Block {
+        path,
+        len,
+        times,
+        values,
+        next: 0,
+    })
 }
 
 fn log<'b>(reader: &mut Reader<'b>) -> cbor::Result<Message<'b>> {

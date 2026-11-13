@@ -28,6 +28,10 @@ pub struct Connections {
     /// The addresses connected when the recording started, which can be connected
     /// again while recording if they break, `None` while not recording.
     recorded: Option<HashSet<String>>,
+    /// The latest Hello of each address, kept after disconnecting until the next one.
+    hellos: HashMap<String, proto::Hello>,
+    /// What to warn the user of since [`Self::take_warnings`].
+    warnings: Vec<String>,
 }
 
 impl Default for Connections {
@@ -39,6 +43,8 @@ impl Default for Connections {
             errors: vec![],
             editing: None,
             recorded: None,
+            hellos: HashMap::new(),
+            warnings: vec![],
         }
     }
 }
@@ -93,6 +99,10 @@ struct Socket {
     receiver: ewebsock::WsReceiver,
     /// Whether the connection is open, it is being opened until then.
     open: bool,
+    /// Whether this connection sent its Hello, so the kept one is its own.
+    greeted: bool,
+    /// Whether a newer protocol was warned of on this connection.
+    warned_newer: bool,
 }
 
 /// What [`Connections::receive`] passes on, in the order it arrived.
@@ -133,6 +143,8 @@ enum Status {
     Disconnected,
     Connecting,
     Connected,
+    /// Connected, the target speaks a newer protocol.
+    Newer(u32),
     /// Connecting failed or the open connection broke, with the reason.
     Failed(String),
 }
@@ -140,7 +152,10 @@ enum Status {
 impl Status {
     /// Whether the connection is open or being opened.
     fn is_active(&self) -> bool {
-        matches!(self, Status::Connected | Status::Connecting)
+        matches!(
+            self,
+            Status::Connected | Status::Newer(_) | Status::Connecting
+        )
     }
 }
 
@@ -179,6 +194,8 @@ impl Connections {
                 sender,
                 receiver,
                 open: false,
+                greeted: false,
+                warned_newer: false,
             }),
             Err(error) => {
                 log::warn!("ws cannot connect to {address}: {error}");
@@ -214,6 +231,7 @@ impl Connections {
     pub fn set_saved(&mut self, saved: Vec<Connection>) {
         self.disconnect_all();
         self.failed.clear();
+        self.hellos.clear();
         self.editing = None;
         self.connections = Connection::sanitized(saved);
     }
@@ -232,6 +250,8 @@ impl Connections {
     pub fn receive(&mut self, mut receive: impl FnMut(Received<'_>)) {
         let failed = &mut self.failed;
         let errors = &mut self.errors;
+        let hellos = &mut self.hellos;
+        let warnings = &mut self.warnings;
         let mut open = self.sockets.iter().filter(|socket| socket.open).count();
         self.sockets.retain_mut(|socket| {
             while let Some(event) = socket.receiver.try_recv() {
@@ -247,10 +267,17 @@ impl Connections {
                     ewebsock::WsEvent::Message(ewebsock::WsMessage::Binary(frame)) => {
                         for message in crate::app::model::cbor::items(&frame) {
                             match message {
-                                Ok(message) => receive(Received::Message {
-                                    source: &socket.name,
-                                    message,
-                                }),
+                                Ok(message) => {
+                                    if crate::app::model::decode::message_name(message)
+                                        == Some("Hello")
+                                    {
+                                        keep_hello(socket, message, hellos, warnings);
+                                    }
+                                    receive(Received::Message {
+                                        source: &socket.name,
+                                        message,
+                                    });
+                                }
                                 Err(error) => log::warn!(
                                     "error reading a message of {}: {error}",
                                     socket.address
@@ -333,9 +360,39 @@ impl Connections {
         self.connect(0, ctx.clone());
     }
 
+    /// `<name>: protocol N is newer than blip` of each open connection that speaks one.
+    pub fn newer(&self) -> Vec<String> {
+        self.connections
+            .iter()
+            .filter_map(|connection| match self.status(&connection.address) {
+                Status::Newer(version) => {
+                    let name = display_name(&connection.name, &connection.address);
+                    Some(format!("{name}: {}", newer_text(version)))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Takes what to warn the user of since the last call, e.g. a newer protocol.
+    pub fn take_warnings(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.warnings)
+    }
+
+    /// Whether the kept Hello of `address` is of its open connection, else it is faint.
+    fn greeted(&self, address: &str) -> bool {
+        self.socket(address)
+            .is_some_and(|socket| socket.open && socket.greeted)
+    }
+
     fn status(&self, address: &str) -> Status {
         match (self.socket(address), self.failed.get(address)) {
-            (Some(socket), _) if socket.open => Status::Connected,
+            (Some(socket), _) if socket.open => match self.hellos.get(address) {
+                Some(hello) if socket.greeted && hello.version > proto::VERSION => {
+                    Status::Newer(hello.version)
+                }
+                _ => Status::Connected,
+            },
             (Some(_), _) => Status::Connecting,
             (None, Some(error)) => Status::Failed(error.clone()),
             (None, None) => Status::Disconnected,
@@ -442,6 +499,32 @@ impl Connections {
         } else {
             &connection.address
         };
+        // the Hello of the connection, faint unless its own connection is open
+        let faint = !self.greeted(&connection.address);
+        let lines = self
+            .hellos
+            .get(&connection.address)
+            .map(|hello| hello_lines(hello, &connection.name))
+            .unwrap_or_default();
+        let weak = if faint {
+            ui.tokens().text_faint
+        } else {
+            style.visuals.weak_text_color()
+        };
+        let padding = ui.spacing().button_padding;
+        let title_font = egui::TextStyle::Button.resolve(style);
+        // the target name is painted at the right of the first line
+        let target = lines.target.as_ref().map(|target| {
+            ui.ctx()
+                .fonts_mut(|fonts| fonts.layout_no_wrap(target.clone(), title_font.clone(), weak))
+        });
+        let title = match &target {
+            Some(target) => {
+                let room = width - 2.0 * padding.x - target.size().x - 8.0;
+                &elide(ui, title, &title_font, room)
+            }
+            None => title,
+        };
         egui::RichText::new(title).strong().append_to(
             &mut text,
             style,
@@ -462,12 +545,35 @@ impl Connections {
                     egui::Align::Min,
                 );
         }
+        if lines.detail.is_some() || lines.newer.is_some() {
+            let font = egui::TextStyle::Small.resolve(style);
+            let mut part = |piece: String, color: egui::Color32| {
+                egui::RichText::new(piece)
+                    .font(font.clone())
+                    .color(color)
+                    .append_to(
+                        &mut text,
+                        style,
+                        egui::FontSelection::Default,
+                        egui::Align::Min,
+                    );
+            };
+            part("\n".to_owned(), weak);
+            if let Some(detail) = &lines.detail {
+                part(detail.clone(), weak);
+            }
+            if let Some(newer) = &lines.newer {
+                let separator = if lines.detail.is_some() { ", " } else { "" };
+                let color = if faint { weak } else { ui.tokens().warn };
+                part(format!("{separator}{newer}"), color);
+            }
+        }
         // not highlighted while connected, the status dot shows it, the
         // growing atom after the text fills the rest of the width so the
         // text stays left
         let button = theme::hover_frame(
             egui::Button::new((text, egui::Atom::grow()))
-                .wrap_mode(egui::TextWrapMode::Extend)
+                .wrap_mode(egui::TextWrapMode::Wrap)
                 .min_size(egui::vec2(width, 0.0)),
         );
         let response = ui
@@ -480,6 +586,14 @@ impl Connections {
                 "Click to connect, right-click to edit"
             })
             .on_disabled_hover_text(RECORDING_HINT);
+        if let Some(target) = target {
+            let pos = egui::pos2(
+                response.rect.max.x - padding.x,
+                response.rect.min.y + padding.y,
+            );
+            ui.painter()
+                .galley(pos - egui::vec2(target.size().x, 0.0), target, weak);
+        }
         let toggle = || {
             if active {
                 Action::Disconnect(index)
@@ -605,6 +719,83 @@ impl Connections {
         let address = self.connections[index].address.clone();
         self.disconnect(&address);
         self.failed.remove(&address);
+        self.hellos.remove(&address);
+    }
+}
+
+/// `<newer>` as the row and the hints say it.
+fn newer_text(version: u32) -> String {
+    format!("protocol {version} is newer than blip")
+}
+
+/// The name of a connection, its address if it has none.
+fn display_name<'a>(name: &'a str, address: &'a str) -> &'a str {
+    if name.is_empty() { address } else { name }
+}
+
+/// Keeps the Hello in `message` as that of the address of `socket`, and warns once per
+/// connection when its protocol is newer than blip's.
+fn keep_hello(
+    socket: &mut Socket,
+    message: &[u8],
+    hellos: &mut HashMap<String, proto::Hello>,
+    warnings: &mut Vec<String>,
+) {
+    let hello = match serde_cbor_2::from_slice::<proto::Message>(message) {
+        Ok(proto::Message::Hello(hello)) => hello,
+        Ok(_) => return,
+        Err(error) => {
+            log::warn!("error reading the Hello of {}: {error}", socket.address);
+            return;
+        }
+    };
+    socket.greeted = true;
+    if hello.version > proto::VERSION && !socket.warned_newer {
+        socket.warned_newer = true;
+        let name = display_name(&socket.name, &socket.address);
+        let warning = format!(
+            "{name} sends protocol {}, blip reads up to {}. Update blip to see all of it.",
+            hello.version,
+            proto::VERSION
+        );
+        log::warn!("{warning}");
+        warnings.push(warning);
+    }
+    hellos.insert(socket.address.clone(), hello);
+}
+
+/// The lines a Hello adds to the row of the connection named `name`.
+#[derive(Debug, PartialEq, Default)]
+struct HelloLines {
+    /// The target's name, unless empty or `name`.
+    target: Option<String>,
+    /// The sender and the clock, e.g. "sonde 1.2, time since boot".
+    detail: Option<String>,
+    /// "protocol N is newer than blip".
+    newer: Option<String>,
+}
+
+fn hello_lines(hello: &proto::Hello, name: &str) -> HelloLines {
+    let target = hello
+        .name
+        .as_deref()
+        .filter(|target| !target.is_empty() && *target != name)
+        .map(str::to_owned);
+    let clock = hello.clock.map(|clock| match clock {
+        proto::Clock::Epoch => "time of day",
+        proto::Clock::Boot => "time since boot",
+    });
+    let parts: Vec<&str> = hello
+        .sender
+        .as_deref()
+        .filter(|sender| !sender.is_empty())
+        .into_iter()
+        .chain(clock)
+        .collect();
+    HelloLines {
+        target,
+        detail: (!parts.is_empty()).then(|| parts.join(", ")),
+        newer: (hello.version > proto::VERSION).then(|| newer_text(hello.version)),
     }
 }
 
@@ -633,13 +824,14 @@ fn edit_ui(ui: &mut egui::Ui, editing: &mut Editing, actions: &mut Vec<Action>) 
 }
 
 /// A dot showing the status of a connection: hollow when disconnected, a spinner while
-/// connecting, green when connected and red when it failed.
+/// connecting, green when connected, amber when it speaks a newer protocol and red when it failed.
 fn status_ui(ui: &mut egui::Ui, status: &Status) {
     let size = egui::Vec2::splat(ui.spacing().icon_width);
     let hint = match status {
         Status::Disconnected => "Disconnected".to_owned(),
         Status::Connecting => "Connecting…".to_owned(),
         Status::Connected => "Connected".to_owned(),
+        Status::Newer(version) => format!("Connected, {}", newer_text(*version)),
         Status::Failed(error) => format!("Failed: {error}"),
     };
     let response = if *status == Status::Connecting {
@@ -652,6 +844,9 @@ fn status_ui(ui: &mut egui::Ui, status: &Status) {
         match status {
             Status::Connected => {
                 painter.circle_filled(center, radius, ui.tokens().ok);
+            }
+            Status::Newer(_) => {
+                painter.circle_filled(center, radius, ui.tokens().warn);
             }
             Status::Failed(_) => {
                 painter.circle_filled(center, radius, ui.tokens().error);

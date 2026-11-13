@@ -59,7 +59,66 @@ Tests of the requirements in :doc:`/requirements/system/connectivity`.
    the map; ``test_protobuf.py`` and ``test_socket.py`` -- shift the times
    after a restart of a protobuf or socket target and those of the bridge,
    log it, keep a clock per host, and drop untimed values, also of the script,
-   before the first timestamp.
+   before the first timestamp; ``a_declared_clock_decides_the_time_base`` and
+   ``different_clocks_share_the_utc_axis`` in the model tests -- take the base from the
+   ``Hello`` clock and show the log times of the timeline and table in the base of the model.
+
+.. test:: Connections with different clocks share the epoch axis
+   :id: TEST_BLIP_CLOCKS
+   :status: implemented
+   :component: blip
+   :verifies: REQ_CONN_TIMELINE
+
+   ``blip/src/app/model`` unit tests (``different_clocks_share_the_utc_axis``)
+   -- check that two connections with ``Hello`` clocks ``epoch`` and
+   ``boot`` warn once and that the axis is the UTC one, that the boot data already
+   received is removed when the UTC connection appears and later boot samples
+   are dropped, that two with the same clock do not warn, and that the first
+   sample sets the axis as declared by its ``Hello``. The ``blip/src/app/model/actions``
+   unit test (``readbacks_follow_after_another_clock_dropped_the_data``) checks that the
+   readback sample count does not go down when that data is dropped, so an accepted
+   action's inputs follow the next readback sample.
+
+.. test:: The outpost shifts the timestamps of blocks
+   :id: TEST_OUTPOST_TIMELINE_SAMPLES
+   :status: implemented
+   :component: outpost
+   :verifies: REQ_CONN_TIMELINE
+
+   ``outpost/tests/test_timing.py::test_the_timestamp_of_a_block_with_a_period_is_changed_in_place``,
+   ``outpost/tests/test_timing.py::test_every_timestamp_of_a_block_is_changed_in_place``,
+   ``outpost/tests/test_timing.py::test_zero_and_malformed_timestamps_of_a_block_are_left_alone``,
+   ``outpost/tests/test_socket.py::test_a_restart_shifts_the_timestamps_of_blocks`` --
+   checks that after a restart of a target the outpost shifts the
+   ``timestamp`` of a ``Samples`` block with a period and every entry of the
+   ``timestamps`` of one without, like those of single ``Sample`` messages.
+
+.. test:: A Hello is kept, shown and replaced
+   :id: TEST_BLIP_HELLO
+   :status: implemented
+   :component: blip
+   :verifies: REQ_CONN_HELLO, REQ_CONN_HELLO_SHOW
+
+   ``blip/src/app/connections`` unit tests
+   (``hello_lines_name_the_target_sender_and_clock``,
+   ``a_hello_is_kept_and_replaced``) check that a ``Hello`` is kept for its connection and that a
+   second replaces the first; that the popup row shows the target name right
+   aligned unless it equals the connection name, and the sender with the time
+   of day or the time since boot on the third line; and that these lines stay,
+   faint, after disconnecting until the next ``Hello``.
+
+.. test:: A newer protocol is warned of
+   :id: TEST_BLIP_HELLO_NEWER
+   :status: implemented
+   :component: blip
+   :verifies: REQ_CONN_NEWER
+
+   ``blip/src/app/connections`` unit test
+   ``a_newer_protocol_is_warned_once_per_connect`` checks that a ``Hello`` of a newer version warns once in the log
+   and as a notice for each connect and does not stop reading messages, that
+   the dot of the row and the chip are amber while connected and the hover and
+   the third line say ``protocol N is newer than blip``, and that a ``Hello`` of
+   the known version does none of it.
 
 .. test:: Log records have no component
    :id: TEST_PROTO_LOG

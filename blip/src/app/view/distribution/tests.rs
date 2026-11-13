@@ -12,7 +12,7 @@ use proto::Data;
 fn append(model: &mut Model, path: &str, (start, step): (f64, f64), values: &[Data]) {
     for (index, value) in values.iter().enumerate() {
         let seconds = start + index as f64 * step;
-        model.traces.append(&proto::Value {
+        model.traces.append(&proto::Sample {
             timestamp: (seconds * 1.0e9).round() as u64,
             path: path.to_owned(),
             value: value.clone(),
@@ -221,8 +221,16 @@ fn pose(x_unit: &str, y_unit: &str) -> Model {
         (0.0, 0.1),
         &floats((0..200).map(|i| (f64::from(i) * 0.53) % 6.0)),
     );
-    model.traces.set_unit("pose.x", x_unit);
-    model.traces.set_unit("pose.y", y_unit);
+    model.traces.set_metadata(&proto::TraceMetadata {
+        path: "pose.x".into(),
+        unit: x_unit.into(),
+        ..Default::default()
+    });
+    model.traces.set_metadata(&proto::TraceMetadata {
+        path: "pose.y".into(),
+        unit: y_unit.into(),
+        ..Default::default()
+    });
     model
 }
 
@@ -638,7 +646,7 @@ fn the_tooltip_of_a_bin_has_its_range_and_a_row_per_trace() {
         index,
     };
     let (a, b) = (name("a", 0), name("b", 1));
-    let tooltip = bin.tooltip(&[a.clone(), b.clone()]);
+    let tooltip = bin.tooltip(&[a.clone(), b.clone()], Some("Described"));
     assert_eq!(tooltip.header, Some(Header::Text("0 to 1".into())));
     assert_eq!(
         tooltip.groups,
@@ -657,6 +665,36 @@ fn the_tooltip_of_a_bin_has_its_range_and_a_row_per_trace() {
             .faint(),
         ]]
     );
+}
+
+#[test]
+fn the_bin_tooltip_describes_the_trace_only_with_one() {
+    let counted = Counted {
+        bins: Bins {
+            start: 0.0,
+            width: 1.0,
+            count: 1,
+        },
+        traces: vec![
+            Counts {
+                bins: vec![0],
+                ..Counts::default()
+            };
+            2
+        ],
+        single: false,
+    };
+    let bin = Bin {
+        index: 0,
+        counted: &counted,
+        unit: None,
+        format: DisplayFormat::Default,
+    };
+    let name = |name: &str, index| TraceName::new(name, name, index);
+    let (a, b) = (name("a", 0), name("b", 1));
+    let one = bin.tooltip(std::slice::from_ref(&a), Some("About a"));
+    assert_eq!(one.footer.map(|footer| footer.name), Some("a".into()));
+    assert_eq!(bin.tooltip(&[a, b], Some("About a")).footer, None);
 }
 
 #[test]
@@ -1290,7 +1328,11 @@ fn the_title_legend_cuts_the_names_and_keeps_the_unit() {
         "robot/elbow.position_error",
     ] {
         append(&mut model, path, (0.0, 1.0), &floats([1.0]));
-        model.traces.set_unit(path, "rad");
+        model.traces.set_metadata(&proto::TraceMetadata {
+            path: path.into(),
+            unit: "rad".into(),
+            ..Default::default()
+        });
     }
     let distribution = distribution_of(&[
         "robot/shoulder.position_error",

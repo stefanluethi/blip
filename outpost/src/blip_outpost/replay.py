@@ -26,7 +26,12 @@ def timestamp(frame: bytes) -> Optional[int]:
         return None
     content = next(iter(message.values()))
     value = content.get("timestamp") if isinstance(content, dict) else None
-    return value if isinstance(value, int) else None
+    if value is None and isinstance(content, dict):
+        # a block of samples is due with its first sample
+        times = content.get("timestamps")
+        if isinstance(times, list) and times:
+            value = times[0]
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def disable_actions(frame: bytes) -> bytes:
@@ -57,6 +62,7 @@ class Replay:
         # read now, so a missing or wrong file stops the outpost at startup
         self._frames = list(read_frames(self.path))
         outpost.on_invoke = self.invoke
+        outpost.send_hello = False
         logger.info(f"Replaying {len(self._frames)} messages of {self.path} at {self.speed}x")
 
     async def run(self) -> None:

@@ -179,7 +179,7 @@ fn latest_text(model: &Model, path: &str) -> Option<String> {
     let last = trace.timestamps.len().checked_sub(1)?;
     let value = trace
         .samples
-        .format(last, 4, Some(SHOWN_DIGITS), DisplayFormat::Default);
+        .format(last, 4, Some(SHOWN_DIGITS), DisplayFormat::Default, None);
     Some(super::with_unit(value, model.traces.unit(path)))
 }
 

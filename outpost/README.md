@@ -30,7 +30,7 @@ import time
 import blip_outpost as outpost
 
 outpost.start()                                  # ws://127.0.0.1:3000/ws/outpost
-outpost.unit("room/temperature", "°C")           # units reach every blip, also later ones
+outpost.unit("room/temperature", "°C")           # units and metadata reach every blip, also later ones
 while True:
     outpost.value("room/temperature", 21.0 + random.random())
     time.sleep(0.1)
@@ -197,8 +197,10 @@ uv run pytest
 Messages sent in binary WebSocket frames match the Rust `proto` crate, see the
 [wire protocol](https://stefanluethi.github.io/blip/docs/reference/protocol.html):
 
-- **Value**: `{ timestamp: int (ns), path: str, value: any }`, where `value` is a plain CBOR item: `None`, `int`, `float`, `bool`, `str`, a `list` of fixed length or a `dict` with `str` keys, nested freely
-- **ValueMetadata**: `{ path: str, unit: str }`
+- **Hello**: `{ version: 1, name: str, clock: "epoch" | "boot", sender: str }`, sent first; all but the version optional
+- **Sample**: `{ timestamp: int (ns), path: str, value: any }`, where `value` is a plain CBOR item: `None`, `int`, `float`, `bool`, `str`, a `list` of fixed length or a `dict` with `str` keys, nested freely
+- **Samples**: `{ path: str, values: [any], timestamp: int, period: int }` or `{ path: str, values: [any], timestamps: [int] }`, a block of samples of one trace
+- **TraceMetadata**: `{ path: str, unit: str, description: str, enum: {int: str}, range: {min, max} }`, all but the path optional
 - **LogRecord**: `{ timestamp: int (ns), level: int, path: str (optional), message: str }`
 - **Actions**: the list of all actions and their parameters
 - **ActionResult**: `{ id: int, result: {"Ok": null} | {"Err": str} }`, the answer to an invocation

@@ -7,6 +7,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
@@ -29,10 +30,12 @@ Bytes traced(F&& trace) {
     sonde::Queue queue{storage, sink, nullptr};
     trace(queue);
     REQUIRE(queue.commit() == Status::Ok);
-    return sink.bytes();
+    const auto bytes = test::without_hello(sink.bytes());
+    REQUIRE(bytes.has_value());
+    return *bytes;
 }
 
-/// The bytes of `value` as the Data of a Value message.
+/// The bytes of `value` as the Data of a Sample message.
 template <typename T>
 Bytes encoded(const T& value) {
     const Bytes message = traced([&](sonde::Queue& queue) {
@@ -53,6 +56,13 @@ static_assert(!std::is_copy_assignable_v<sonde::Encoder>);
 static_assert(!std::is_copy_constructible_v<sonde::Record>);
 static_assert(!std::is_copy_constructible_v<sonde::Array>);
 static_assert(!std::is_move_constructible_v<sonde::Record>);
+
+// REQ_PROTO_LEVELS: the levels are the numbers proto documents.
+static_assert(static_cast<int>(sonde::Level::Trace) == 0);
+static_assert(static_cast<int>(sonde::Level::Debug) == 1);
+static_assert(static_cast<int>(sonde::Level::Info) == 2);
+static_assert(static_cast<int>(sonde::Level::Warn) == 3);
+static_assert(static_cast<int>(sonde::Level::Error) == 4);
 
 // --- Data ---------------------------------------------------------------------------
 
@@ -176,19 +186,19 @@ TEST_CASE("user types encode with an encode function next to them") {
 
 // --- Messages -----------------------------------------------------------------------
 
-TEST_CASE("values are the messages of proto") {
+TEST_CASE("samples are the messages of proto") {
     // the fixtures of proto/src/data.rs, of the outpost
     const auto motor = traced([](sonde::Queue& queue) {
         queue.value(sonde::Timestamp{1}, "motor", motors::Motor{1500, true, "running"});
     });
-    CHECK(motor == hex("a16556616c7565a36974696d657374616d70016470617468656d6f746f726576616c7565a3"
+    CHECK(motor == hex("a16653616d706c65a36974696d657374616d70016470617468656d6f746f726576616c7565a3"
                        "6973706565645f72706d1905dc67656e61626c6564f56573746174656772756e6e696e67"));
 
     const auto temperature = traced([](sonde::Queue& queue) {
         queue.value(sonde::Timestamp{3}, "sensor/temperature", sonde::null);
     });
     CHECK(temperature ==
-          hex("a16556616c7565a36974696d657374616d700364706174687273656e736f722f74656d"
+          hex("a16653616d706c65a36974696d657374616d700364706174687273656e736f722f74656d"
               "70657261747572656576616c7565f6"));
 
     // the IMU fixture with floats in their shortest width, as serde_cbor writes them
@@ -198,7 +208,7 @@ TEST_CASE("values are the messages of proto") {
                          record.field("acc", acc);
                      }));
     });
-    CHECK(imu == hex("a16556616c7565a36974696d657374616d7002647061746863696d756576616c7565a16361"
+    CHECK(imu == hex("a16653616d706c65a36974696d657374616d7002647061746863696d756576616c7565a16361"
                      "636383f93800f9bc00fb40239eb851eb851f"));
 }
 
@@ -208,16 +218,75 @@ TEST_CASE("timestamps come from the clock") {
     sonde::Queue queue{storage, sink, [] { return std::uint64_t{1}; }};
     queue.value("motor", motors::Motor{1500, true, "running"});
     queue.commit();
-    CHECK(sink.bytes() ==
-          hex("a16556616c7565a36974696d657374616d70016470617468656d6f746f726576616c7565a3"
+    CHECK(test::without_hello(sink.bytes()) ==
+          hex("a16653616d706c65a36974696d657374616d70016470617468656d6f746f726576616c7565a3"
               "6973706565645f72706d1905dc67656e61626c6564f56573746174656772756e6e696e67"));
 }
 
-TEST_CASE("metadata") {
+TEST_CASE("a unit is trace metadata") {
     CHECK(traced([](sonde::Queue& queue) { queue.unit("speed", "rpm"); }) ==
-          hex("a16d56616c75654d65746164617461"  // {"ValueMetadata":
+          hex("a16d54726163654d65746164617461"  // {"TraceMetadata":
               "a2" "6470617468" "657370656564"  // {"path": "speed",
-              "64756e6974" "6372706d"));            // "unit": "rpm"}}
+              "64756e6974" "6372706d"));        // "unit": "rpm"}}
+    // an empty unit is left out
+    CHECK(traced([](sonde::Queue& queue) { queue.unit("speed", ""); }) ==
+          hex("a16d54726163654d65746164617461a16470617468657370656564"));
+}
+
+TEST_CASE("trace metadata leaves out what is not declared") {
+    using sonde::Label;
+    using sonde::Metadata;
+    using sonde::Range;
+    const Label stop[] = {{0, "stop"}};
+    CHECK(traced([&](sonde::Queue& queue) {
+              queue.metadata("speed", Metadata{"rpm", "Motor speed", {stop, 1}, Range{0.0, 3000.0}});
+          }) ==
+          hex("a16d54726163654d65746164617461a5647061746865737065656464756e69746372706d6b"
+              "6465736372697074696f6e6b4d6f746f7220737065656464656e756da1006473746f706572"
+              "616e6765a2636d696ef90000636d6178f969dc"));
+    const Label states[] = {{-1, "fault"}, {0, "off"}, {1, "on"}};
+    CHECK(traced([&](sonde::Queue& queue) {
+              queue.metadata("motor/state", Metadata{{}, "Drive state", {states, 3}, std::nullopt});
+          }) ==
+          hex("a16d54726163654d65746164617461a364706174686b6d6f746f722f73746174656b64657363"
+              "72697074696f6e6b447269766520737461746564656e756da320656661756c7400636f666601"
+              "626f6e"));
+    CHECK(traced([](sonde::Queue& queue) {
+              queue.metadata("motor/current", Metadata{"A", {}, {}, Range{-2.5, 10.0}});
+          }) ==
+          hex("a16d54726163654d65746164617461a364706174686d6d6f746f722f63757272656e746475"
+              "6e697461416572616e6765a2636d696ef9c100636d6178f94900"));
+    const Label wide[] = {{-1000, "m"}, {1000, "k"}};
+    CHECK(traced([&](sonde::Queue& queue) {
+              queue.metadata("a", Metadata{{}, {}, {wide, 2}, Range{0.1, 1e300}});
+          }) ==
+          hex("a16d54726163654d65746164617461a36470617468616164656e756da23903e7616d1903e8"
+              "616b6572616e6765a2636d696efb3fb999999999999a636d6178fb7e37e43c8800759c"));
+    // an empty Metadata is an empty unit, a unit is a Metadata with only a unit
+    CHECK(traced([](sonde::Queue& queue) { queue.metadata("speed", Metadata{}); }) ==
+          traced([](sonde::Queue& queue) { queue.unit("speed", ""); }));
+    CHECK(traced([](sonde::Queue& queue) { queue.unit("speed", "rpm"); }) ==
+          traced([](sonde::Queue& queue) { queue.metadata("speed", Metadata{"rpm"}); }));
+}
+
+TEST_CASE("sonde writes the new names and no old one") {
+    const Bytes bytes = traced([](sonde::Queue& queue) {
+        queue.value("a", 1u);
+        queue.unit("a", "m");
+        queue.log(sonde::Level::Info, "x");
+    });
+    const Bytes value = hex("6556616c7565");
+    const Bytes value_metadata = hex("6d56616c75654d65746164617461");
+    CHECK(std::search(bytes.begin(), bytes.end(), value.begin(), value.end()) == bytes.end());
+    CHECK(std::search(bytes.begin(), bytes.end(), value_metadata.begin(),
+                      value_metadata.end()) == bytes.end());
+    const auto parts = test::items(bytes);
+    REQUIRE(parts.has_value());
+    REQUIRE(parts->size() == 3);
+    const Bytes sample = hex("a16653616d706c65");
+    const Bytes trace_metadata = hex("a16d54726163654d65746164617461");
+    CHECK(std::equal(sample.begin(), sample.end(), (*parts)[0].begin()));
+    CHECK(std::equal(trace_metadata.begin(), trace_metadata.end(), (*parts)[1].begin()));
 }
 
 TEST_CASE("logs have no component and leave out an empty path") {
@@ -305,6 +374,95 @@ TEST_CASE("wrong counts are invalid and leave the batch unchanged") {
     CHECK(queue.commit() == Status::Ok);
     Bytes expected = test::value_prefix();
     expected.push_back(0x01);
-    CHECK(sink.bytes() == expected);
+    CHECK(test::without_hello(sink.bytes()) == expected);
+    CHECK(queue.dropped() == 0);
+}
+
+// --- Blocks of samples --------------------------------------------------------------
+
+static_assert(sonde::detail::is_sequence<int[2]>);
+static_assert(!sonde::detail::is_sequence<char[4]>);
+static_assert(!sonde::detail::is_sequence<int>);
+static_assert(sonde::detail::is_sequence<sonde::Span<float>>);
+static_assert(sonde::detail::is_timestamps<const sonde::Timestamp[2]>::value);
+static_assert(!sonde::detail::is_timestamps<std::uint64_t[2]>::value);
+
+TEST_CASE("samples at a period") {
+    const std::uint16_t raw[3] = {512, 513, 511};
+    const Bytes expected = hex(
+        "a16753616d706c6573a46470617468636164636676616c756573831902001902011901ff"
+        "6974696d657374616d701a003d090066706572696f641a0003d090");
+    CHECK(expected.size() == 63);
+    const sonde::Timestamp start{4'000'000};
+    const sonde::Period period{250'000};
+    CHECK(traced([&](sonde::Queue& queue) {
+              CHECK(queue.samples("adc", raw, start, period) == Status::Ok);
+          }) == expected);
+    CHECK(traced([&](sonde::Queue& queue) {
+              const std::array<std::uint16_t, 3> values{512, 513, 511};
+              CHECK(queue.samples("adc", values, start, period) == Status::Ok);
+          }) == expected);
+    CHECK(traced([&](sonde::Queue& queue) {
+              const sonde::Span<std::uint16_t> values{raw, 3};
+              CHECK(queue.samples("adc", values, start, period) == Status::Ok);
+          }) == expected);
+
+    CHECK(traced([](sonde::Queue& queue) {
+              CHECK(queue.samples("a",
+                                  sonde::array(2,
+                                               [](sonde::Array& array) {
+                                                   array.add(0.5);
+                                                   array.add(-1.0);
+                                               }),
+                                  sonde::Timestamp{0}, sonde::Period{1000}) == Status::Ok);
+          }) == hex("a16753616d706c6573a4647061746861616676616c75657382f93800f9bc00"
+                    "6974696d657374616d700066706572696f641903e8"));
+
+    const Bytes empty = traced([](sonde::Queue& queue) {
+        CHECK(queue.samples("a", std::array<int, 0>{}, sonde::Timestamp{1},
+                            sonde::Period{2}) == Status::Ok);
+    });
+    CHECK(empty == hex("a16753616d706c6573a4647061746861616676616c756573806974696d657374616d70"
+                       "0166706572696f6402"));
+    CHECK(empty.size() == 44);
+}
+
+TEST_CASE("samples at timestamps") {
+    const sonde::Timestamp times[2] = {{4'000'000}, {4'500'000}};
+    const Bytes expected = hex(
+        "a16753616d706c6573a36470617468647065616b6676616c75657382f93e00f6"
+        "6a74696d657374616d7073821a003d09001a0044aa20");
+    CHECK(expected.size() == 54);
+    const std::array<std::optional<float>, 2> values{1.5f, std::nullopt};
+    CHECK(traced([&](sonde::Queue& queue) {
+              CHECK(queue.samples("peak", values, times) == Status::Ok);
+          }) == expected);
+    CHECK(traced([&](sonde::Queue& queue) {
+              const std::array<sonde::Timestamp, 2> stamps{{{4'000'000}, {4'500'000}}};
+              CHECK(queue.samples("peak", values, stamps) == Status::Ok);
+          }) == expected);
+    CHECK(traced([&](sonde::Queue& queue) {
+              const sonde::Span<sonde::Timestamp> stamps{times, 2};
+              CHECK(queue.samples("peak", values, stamps) == Status::Ok);
+          }) == expected);
+
+    const Bytes empty = traced([](sonde::Queue& queue) {
+        CHECK(queue.samples("a", std::array<int, 0>{},
+                            sonde::Span<sonde::Timestamp>{nullptr, 0}) == Status::Ok);
+    });
+    CHECK(empty == hex("a16753616d706c6573a3647061746861616676616c756573806a74696d657374616d707380"));
+    CHECK(empty.size() == 37);
+}
+
+TEST_CASE("samples need as many timestamps as values") {
+    sonde::MemorySink sink;
+    sonde::Storage<256, 1> storage;
+    sonde::Queue queue{storage, sink, nullptr};
+    const sonde::Timestamp times[2] = {{1}, {2}};
+    CHECK(queue.samples("a", std::array<int, 3>{1, 2, 3}, times) == Status::Invalid);
+    CHECK(queue.samples("a", sonde::array(1, [](sonde::Array& array) { array.add(1); }),
+                        times) == Status::Invalid);
+    CHECK(queue.commit() == Status::Ok);
+    CHECK(sink.bytes().empty());
     CHECK(queue.dropped() == 0);
 }

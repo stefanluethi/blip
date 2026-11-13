@@ -152,7 +152,7 @@ fn searching_shows_and_selects_only_the_matching_traces() {
 
     let mut model = Model::default();
     for path in ["motor/speed", "motor/current", "sensor/temp"] {
-        model.traces.append(&proto::Value {
+        model.traces.append(&proto::Sample {
             timestamp: 0,
             path: path.to_owned(),
             value: proto::Data::Uint(1),
@@ -243,7 +243,7 @@ fn tree_frame_time() {
     let mut model = Model::default();
     for branch in 0..20 {
         for leaf in 0..100 {
-            model.traces.append(&proto::Value {
+            model.traces.append(&proto::Sample {
                 timestamp: 0,
                 path: format!("node{branch}/sensor{leaf}"),
                 value: proto::Data::Float(1.0),
@@ -287,7 +287,7 @@ fn tree_frame_time() {
 
 fn tree_harness(view_type: ViewType) -> egui_kittest::Harness<'static, (String, BTreeSet<String>)> {
     let mut model = Model::default();
-    model.traces.append(&proto::Value {
+    model.traces.append(&proto::Sample {
         timestamp: 0,
         path: "motor/rpm".to_owned(),
         value: proto::Data::Uint(1),
@@ -406,12 +406,12 @@ fn the_filter_shows_only_what_the_view_can_show() {
     use egui_kittest::kittest::{NodeT, Queryable};
 
     let mut model = Model::default();
-    model.traces.append(&proto::Value {
+    model.traces.append(&proto::Sample {
         timestamp: 0,
         path: "motor/rpm".to_owned(),
         value: proto::Data::Uint(1),
     });
-    model.traces.append(&proto::Value {
+    model.traces.append(&proto::Sample {
         timestamp: 0,
         path: "motor/mode".to_owned(),
         value: proto::Data::String("idle".to_owned()),
@@ -529,7 +529,7 @@ fn the_buttons_are_as_high_as_the_search_field_and_fit_beside_it() {
 
 /// Adds a record with the fields "temp" and "volt" at `path` to `model`.
 fn add_record(model: &mut Model, path: &str) {
-    model.traces.append(&proto::Value {
+    model.traces.append(&proto::Sample {
         timestamp: 0,
         path: path.to_owned(),
         value: proto::Data::Record(vec![
@@ -540,7 +540,7 @@ fn add_record(model: &mut Model, path: &str) {
 }
 
 fn add_trace(model: &mut Model, path: &str) {
-    model.traces.append(&proto::Value {
+    model.traces.append(&proto::Sample {
         timestamp: 0,
         path: path.to_owned(),
         value: proto::Data::Uint(1),
@@ -704,7 +704,7 @@ fn shown_logs_of_paths_without_records_can_be_unchecked() {
 
 /// Adds an array of `len` floats at `path` to `model`.
 fn add_array(model: &mut Model, path: &str, len: usize) {
-    model.traces.append(&proto::Value {
+    model.traces.append(&proto::Sample {
         timestamp: 0,
         path: path.to_owned(),
         value: proto::Data::Array(vec![proto::Data::Float(1.0); len]),
@@ -833,4 +833,44 @@ fn element_indices_are_row_major() {
     assert_eq!(element_indices(&[2, 3], 0), [0, 0]);
     assert_eq!(element_indices(&[2, 3], 4), [1, 1]);
     assert_eq!(element_indices(&[4], 3), [3]);
+}
+
+#[test]
+fn the_tree_row_of_a_described_trace_has_its_description_on_hover() {
+    use egui_kittest::kittest::Queryable;
+
+    let mut model = Model::default();
+    model.traces.append(&proto::Sample {
+        timestamp: 0,
+        path: "motor/rpm".to_owned(),
+        value: proto::Data::Uint(1),
+    });
+    model.traces.set_metadata(&proto::TraceMetadata {
+        path: "motor/rpm".to_owned(),
+        description: "Speed of the shaft".to_owned(),
+        ..Default::default()
+    });
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(300.0, 400.0))
+        .build_ui_state(
+            move |ui, paths: &mut BTreeSet<String>| {
+                show(
+                    ui,
+                    &model,
+                    "",
+                    false,
+                    Some(selection(paths, ViewType::Plot)),
+                    &[],
+                );
+            },
+            BTreeSet::new(),
+        );
+    harness.run();
+    harness.get_by_label(HASH).hover();
+    harness.run();
+    assert!(
+        harness
+            .query_by_label_contains("Speed of the shaft")
+            .is_some()
+    );
 }

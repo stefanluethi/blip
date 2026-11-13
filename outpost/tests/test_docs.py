@@ -95,11 +95,47 @@ async def test_the_minimal_example_sends_values():
             paths = set()
             for _ in range(100):
                 data = decode_cbor_message(await receive(ws, 2.0))
-                if data and "Value" in data:
-                    paths.add(data["Value"]["path"])
+                if data and "Sample" in data:
+                    paths.add(data["Sample"]["path"])
                 if "sensor/voltage" in paths:
                     break
             assert "sensor/voltage" in paths
     finally:
         process.terminate()
         process.wait(timeout=5)
+
+
+PROTO = OUTPOST.parent / "proto" / "src"
+PROTOCOL_PAGE = DOCS / "reference" / "protocol.rst"
+
+
+def rust_block(path: Path, header: str) -> str:
+    """The body of the ``pub enum``/``pub struct`` whose line starts with `header`."""
+    text = path.read_text(encoding="utf-8")
+    start = text.index(header)
+    return text[text.index("{", start) : text.index("\n}", start)]
+
+
+def test_the_protocol_page_covers_every_message_and_field():
+    page = PROTOCOL_PAGE.read_text(encoding="utf-8")
+    variants = re.findall(r"^    (\w+)\(", rust_block(PROTO / "lib.rs", "pub enum Message"), re.M)
+    assert {"Sample", "Samples", "TraceMetadata", "Hello", "Log"} <= set(variants)
+    fields = []
+    for file, header in [
+        ("hello.rs", "pub struct Hello"),
+        ("lib.rs", "pub struct Sample "),
+        ("lib.rs", "pub struct TraceMetadata"),
+        ("lib.rs", "pub struct LogRecord"),
+    ]:
+        fields += re.findall(r"^    pub (\w+):", rust_block(PROTO / file, header), re.M)
+    fields = ["enum" if name == "labels" else name for name in fields]  # renamed on the wire
+    fields += ["path", "values", "timestamp", "period", "timestamps"]  # Samples, written by hand
+    missing = [f"``{name}``" for name in variants + fields if f"``{name}" not in page]
+    assert not missing, f"missing in {PROTOCOL_PAGE}: {missing}"
+
+
+def test_the_protocol_page_names_the_recording_versions():
+    page = PROTOCOL_PAGE.read_text(encoding="utf-8")
+    assert '"version": 3' in page
+    for version in (1, 2, 3):
+        assert f"   * - {version}\n" in page

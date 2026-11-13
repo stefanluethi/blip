@@ -8,7 +8,8 @@ Table
 
 The values of the checked traces at the time cursor, i.e. the latest sample
 at or before it. Arrays show a few elements per dimension; hover them for
-more.
+more. Values with labels show them, and hovering the name of a trace shows its
+path, type and description.
 
 Properties, **Rows**:
 
@@ -21,5 +22,6 @@ Properties, **Rows**:
   cursor time.
 
 With the *Records* layout, the **Columns** section shows and hides the fields,
-reorders them by dragging, and sets the number format of each. Fields that
-arrive later are shown.
+reorders them by dragging, and sets the number format of each, with the description, expected range and
+labels the target sent under it. Hovering the header of a column shows the path,
+type and description of its trace. Fields that arrive later are shown.

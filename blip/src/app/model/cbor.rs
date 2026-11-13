@@ -49,6 +49,7 @@ pub enum Head {
 }
 
 /// Reads the items of `bytes` one after another.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Reader<'b> {
     bytes: &'b [u8],
     pos: usize,
@@ -282,7 +283,7 @@ mod tests {
 
     #[test]
     fn a_sequence_is_split_into_its_items() {
-        let a = cbor(&proto::Message::Value(proto::Value {
+        let a = cbor(&proto::Message::Sample(proto::Sample {
             timestamp: 1,
             path: "cpu".to_owned(),
             value: proto::Data::Array(vec![proto::Data::Float(1.5), proto::Data::Null]),

@@ -87,14 +87,14 @@ fn value_message_is_a_plain_cbor_map() {
                 .collect(),
         )
     };
-    let message = crate::Message::Value(crate::Value {
+    let message = crate::Message::Sample(crate::Sample {
         timestamp: 1,
         path: "imu".to_owned(),
         value: Data::Record(vec![("x".to_owned(), Data::Float(0.5))]),
     });
     let bytes = serde_cbor_2::to_vec(&message).unwrap();
     let expected = map(vec![(
-        "Value",
+        "Sample",
         map(vec![
             ("timestamp", Cbor::Integer(1)),
             ("path", Cbor::Text("imu".to_owned())),
@@ -116,7 +116,7 @@ fn decodes_values_of_the_python_outpost() {
             .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
             .collect();
         match serde_cbor_2::from_slice(&bytes).unwrap() {
-            crate::Message::Value(value) => value.value,
+            crate::Message::Sample(value) => value.value,
             message => panic!("not a value: {message:?}"),
         }
     };

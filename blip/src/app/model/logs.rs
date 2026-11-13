@@ -61,11 +61,12 @@ impl LogEntry {
     /// timestamp gets `now`, the newest time of the received data, or the wall-clock
     /// time if there is none.
     pub fn new(timestamp: u64, level: u8, message: &str, now: Option<u64>) -> Self {
+        use proto::level;
         let level = match level {
-            0 => LogLevel::Trace,
-            1 => LogLevel::Debug,
-            2 => LogLevel::Info,
-            3 => LogLevel::Warn,
+            level::TRACE => LogLevel::Trace,
+            level::DEBUG => LogLevel::Debug,
+            level::INFO => LogLevel::Info,
+            level::WARN => LogLevel::Warn,
             // more severe levels, e.g. fatal
             _ => LogLevel::Error,
         };

@@ -14,7 +14,7 @@ created and used before the outpost serves, e.g. when a module is imported.
 """
 
 import logging
-from typing import TYPE_CHECKING, Any, Callable, ContextManager, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Callable, ContextManager, Mapping, Optional, Sequence, Tuple
 
 from blip_outpost.proto import Data, LogLevel
 
@@ -76,7 +76,7 @@ class Tracer:
         start_ns: Optional[int] = None,
         period_ns: Optional[float] = None,
     ) -> None:
-        """Sends many samples of the trace `path` below this tracer at once, see
+        """Sends many samples of the trace `path` below this tracer as one Samples message, see
         `Outpost.series`."""
         self._outpost.series(
             join_path(self._name, path), values, timestamps_ns=timestamps_ns, start_ns=start_ns, period_ns=period_ns
@@ -85,6 +85,21 @@ class Tracer:
     def unit(self, path: str, unit: str) -> None:
         """Sends the unit of the trace `path` below this tracer, see `Outpost.unit`."""
         self._outpost.unit(join_path(self._name, path), unit)
+
+    def metadata(
+        self,
+        path: str,
+        unit: Optional[str] = None,
+        *,
+        description: Optional[str] = None,
+        labels: Optional[Mapping[int, str]] = None,
+        value_range: Optional[Tuple[float, float]] = None,
+    ) -> None:
+        """Declares unit, description, labels and range of the trace `path` below this
+        tracer, see `Outpost.metadata`."""
+        self._outpost.metadata(
+            join_path(self._name, path), unit, description=description, labels=labels, value_range=value_range
+        )
 
     def batch(self, timestamp_ns: Optional[int] = None) -> ContextManager[None]:
         """Hands what this thread sends in the block over at once, see `Outpost.batch`."""

@@ -111,3 +111,52 @@ fn missing_and_null_values_are_faint() {
     );
     assert!(Tooltip::default().group(vec![]).groups.is_empty());
 }
+
+#[test]
+fn labelled_values_have_their_number_faint() {
+    use crate::app::model::numbers::Number::{Null, Uint};
+    let labels: Labels = [(0, "off".to_owned()), (1, "on".to_owned())].into();
+    let labelled =
+        |number| Value::labelled(number, 4, DisplayFormat::Labels, Some("A"), Some(&labels));
+    assert_eq!(labelled(Uint(1)), [Value::text("on"), Value::faint("1 A")]);
+    assert_eq!(labelled(Uint(7)), [Value::text("7 A")]);
+    assert_eq!(labelled(Null), [Value::faint("null")]);
+    let default = Value::labelled(Uint(1), 4, DisplayFormat::Default, None, Some(&labels));
+    assert_eq!(default, [Value::text("1")]);
+}
+
+#[test]
+fn the_footer_has_the_name_and_description_in_at_most_3_lines() {
+    let tooltip = Tooltip::default().describe("mode", Some("Operating mode"));
+    assert_eq!(
+        tooltip.footer,
+        Some(Footer {
+            name: "mode".into(),
+            description: "Operating mode".into()
+        })
+    );
+    assert_eq!(Tooltip::default().describe("mode", None).footer, None);
+    assert_eq!(Tooltip::default().describe("mode", Some("")).footer, None);
+
+    let long = Tooltip::default().describe("mode", Some(&"word ".repeat(120)));
+    let mut harness = Harness::new_ui(|ui| {
+        theme::install(ui.ctx());
+        let job = long.footer_job(ui, 200.0).expect("a footer");
+        let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+        assert_eq!(galley.rows.len(), 3);
+        let last = galley.rows[2].row.glyphs.last().expect("glyphs");
+        assert_eq!(last.chr, '…');
+    });
+    harness.run();
+
+    let tooltip = Tooltip::new(Header::Text("0:00:01.000".into()))
+        .group(vec![Row::new(Label::Weak("a".into()), [Value::text("1")])])
+        .describe("mode", Some("Operating mode"));
+    let mut harness = Harness::new_ui(|ui| {
+        theme::install(ui.ctx());
+        tooltip.ui(ui);
+    });
+    harness.run();
+    let footer = harness.get_by_label("mode Operating mode");
+    assert!(footer.rect().top() > harness.get_by_label("a").rect().bottom());
+}

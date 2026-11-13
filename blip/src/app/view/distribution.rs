@@ -1354,7 +1354,7 @@ impl Distribution {
                 };
                 response
                     .response
-                    .on_hover_ui_at_pointer(|ui| bin.tooltip_ui(ui, &shown));
+                    .on_hover_ui_at_pointer(|ui| bin.tooltip_ui(ui, &shown, model));
             }
             Some(Hovered::Row(row)) => {
                 let (Some(trace), Some(boxes)) = (shown.get(row), &boxes) else {
@@ -1367,6 +1367,7 @@ impl Distribution {
                     orientation: self.orientation,
                     format: formats.of(&trace.path),
                     unit: model.traces.unit(&trace.path),
+                    description: model.traces.description(&trace.path),
                 };
                 response.response.on_hover_ui_at_pointer(|ui| tip.ui(ui));
             }
@@ -1889,8 +1890,9 @@ impl Bin<'_> {
     }
 
     /// The range of the bin as header and a row per trace of `traces` with its share
-    /// and count, faint where it has none in the bin.
-    fn tooltip(&self, traces: &[TraceName]) -> Tooltip {
+    /// and count, faint where it has none in the bin, and the `description` of the trace
+    /// if there is only one.
+    fn tooltip(&self, traces: &[TraceName], description: Option<&str>) -> Tooltip {
         let rows = (traces.iter().zip(&self.counted.traces))
             .map(|(trace, counts)| {
                 let [share, count] = self.share_texts(counts);
@@ -1906,13 +1908,21 @@ impl Bin<'_> {
                 if empty { row.faint() } else { row }
             })
             .collect();
-        Tooltip::new(Header::Text(self.range_text())).group(rows)
+        let tooltip = Tooltip::new(Header::Text(self.range_text())).group(rows);
+        match traces {
+            [trace] => tooltip.describe(&trace.name, description),
+            _ => tooltip,
+        }
     }
 
     /// Shows the values of the bin and the share and count of each shown trace in it.
-    fn tooltip_ui(&self, ui: &mut egui::Ui, shown: &[Shown<'_>]) {
+    fn tooltip_ui(&self, ui: &mut egui::Ui, shown: &[Shown<'_>], model: &Model) {
         let names: Vec<TraceName> = shown.iter().map(Shown::trace_name).collect();
-        self.tooltip(&names).ui(ui);
+        let description = match shown {
+            [trace] => model.traces.description(&trace.path),
+            _ => None,
+        };
+        self.tooltip(&names, description).ui(ui);
     }
 }
 

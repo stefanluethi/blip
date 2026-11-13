@@ -3,7 +3,7 @@
 //! split by a rule. A view builds a [`Tooltip`] and shows it at the pointer.
 
 use super::{LEGEND_DOT_SIZE, legend_dot, text_size, with_unit};
-use crate::app::model::numbers::{DisplayFormat, Number};
+use crate::app::model::numbers::{DisplayFormat, Labels, Number};
 use crate::app::theme::{self, TokensExt};
 
 /// A value that is not there, e.g. of a trace not received yet.
@@ -13,6 +13,10 @@ const COLUMN_SPACING: f32 = 12.0;
 const ROW_SPACING: f32 = 2.0;
 /// The height of the rule between two groups of rows.
 const RULE_HEIGHT: f32 = 7.0;
+/// The smallest width the footer wraps at.
+const FOOTER_WIDTH: f32 = 200.0;
+/// The most rows of the footer, the rest is cut with an ellipsis.
+const FOOTER_ROWS: usize = 3;
 
 /// A trace as a tooltip names it: its dot and short name, its path on hover.
 #[derive(Clone, PartialEq, Debug)]
@@ -115,6 +119,27 @@ impl Value {
         let unit = unit.filter(|_| !number.is_null());
         Self::text(with_unit(number.format(Some(digits), format), unit)).faint_if(number.is_null())
     }
+
+    /// `number` as [`Value::number`] writes it, or with Labels and a label: the label
+    /// and, in a faint second value, the number in Default with its unit.
+    pub fn labelled(
+        number: Number,
+        digits: usize,
+        format: DisplayFormat,
+        unit: Option<&str>,
+        labels: Option<&Labels>,
+    ) -> Vec<Self> {
+        let label = labels
+            .filter(|_| format == DisplayFormat::Labels)
+            .and_then(|labels| number.label(labels));
+        match label {
+            Some(label) => vec![
+                Self::text(label),
+                Self::number(number, digits, DisplayFormat::Default, unit).faint_if(true),
+            ],
+            None => vec![Self::number(number, digits, format, unit)],
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -143,6 +168,13 @@ impl Row {
     }
 }
 
+/// What the target says of the trace under the pointer, below the groups.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Footer {
+    pub name: String,
+    pub description: String,
+}
+
 #[derive(Clone, PartialEq, Debug, Default)]
 pub struct Tooltip {
     pub header: Option<Header>,
@@ -150,6 +182,8 @@ pub struct Tooltip {
     pub note: Option<String>,
     /// The groups of rows, a rule between two of them.
     pub groups: Vec<Vec<Row>>,
+    /// The name and description of the trace under the pointer.
+    pub footer: Option<Footer>,
 }
 
 impl Tooltip {
@@ -171,6 +205,36 @@ impl Tooltip {
     pub fn note(mut self, text: impl Into<String>) -> Self {
         self.note = Some(text.into());
         self
+    }
+
+    /// Adds the footer of the trace `name`, unless `description` is missing or empty.
+    pub fn describe(mut self, name: &str, description: Option<&str>) -> Self {
+        self.footer = description
+            .filter(|description| !description.is_empty())
+            .map(|description| Footer {
+                name: name.to_owned(),
+                description: description.to_owned(),
+            });
+        self
+    }
+
+    /// The text of the footer wrapped at `width`, at most [`FOOTER_ROWS`] rows.
+    pub fn footer_job(&self, ui: &egui::Ui, width: f32) -> Option<egui::text::LayoutJob> {
+        let footer = self.footer.as_ref()?;
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        let format = |color| egui::TextFormat::simple(font.clone(), color);
+        let mut job = egui::text::LayoutJob::default();
+        job.append(&footer.name, 0.0, format(ui.visuals().text_color()));
+        job.append(
+            &format!(" {}", footer.description),
+            0.0,
+            format(ui.visuals().weak_text_color()),
+        );
+        job.wrap.max_width = width;
+        job.wrap.max_rows = FOOTER_ROWS;
+        job.wrap.break_anywhere = false;
+        job.wrap.overflow_character = Some('…');
+        Some(job)
     }
 
     /// The widths of the columns: the widest label, then the widest value of each
@@ -195,7 +259,8 @@ impl Tooltip {
         widths
     }
 
-    /// Shows the header, the note and the groups with a rule between them.
+    /// Shows the header, the note and the groups with a rule between them, then the
+    /// footer under a rule.
     pub fn ui(&self, ui: &mut egui::Ui) {
         let faint = ui.tokens().text_faint;
         let (weak, text) = (ui.visuals().weak_text_color(), ui.visuals().text_color());
@@ -216,13 +281,16 @@ impl Tooltip {
         }
         let widths = self.widths(ui);
         let height = ui.spacing().interact_size.y;
+        let grid_width = widths.iter().sum::<f32>() + COLUMN_SPACING * (widths.len() - 1) as f32;
+        let rule = |ui: &mut egui::Ui, width: f32| {
+            let (rule, _) =
+                ui.allocate_exact_size(egui::vec2(width, RULE_HEIGHT), egui::Sense::hover());
+            let line = ui.visuals().widgets.noninteractive.bg_stroke;
+            ui.painter().hline(rule.x_range(), rule.center().y, line);
+        };
         for (index, group) in self.groups.iter().enumerate() {
             if index > 0 {
-                let width = widths.iter().sum::<f32>() + COLUMN_SPACING * (widths.len() - 1) as f32;
-                let (rule, _) =
-                    ui.allocate_exact_size(egui::vec2(width, RULE_HEIGHT), egui::Sense::hover());
-                let line = ui.visuals().widgets.noninteractive.bg_stroke;
-                ui.painter().hline(rule.x_range(), rule.center().y, line);
+                rule(ui, grid_width);
             }
             egui::Grid::new(("tooltip", index))
                 .num_columns(widths.len())
@@ -261,6 +329,11 @@ impl Tooltip {
                         ui.end_row();
                     }
                 });
+        }
+        let width = grid_width.max(FOOTER_WIDTH);
+        if let Some(job) = self.footer_job(ui, width) {
+            rule(ui, width);
+            ui.label(job);
         }
     }
 }

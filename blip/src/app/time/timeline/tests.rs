@@ -17,7 +17,7 @@ fn harness_until(last: u64) -> Harness<'static, State> {
         model.receive("", &serde_cbor_2::to_vec(&message).unwrap());
     };
     for second in 0..=last {
-        receive(proto::Message::Value(proto::Value {
+        receive(proto::Message::Sample(proto::Sample {
             timestamp: second * 1_000_000_000,
             path: "a".to_owned(),
             value: proto::Data::Float(1.0),
@@ -267,7 +267,7 @@ fn showing_all_data_rescales_in_steps() {
 #[test]
 fn the_filling_newest_bin_does_not_rescale_the_bars() {
     let value = |seconds: f64| {
-        serde_cbor_2::to_vec(&proto::Message::Value(proto::Value {
+        serde_cbor_2::to_vec(&proto::Message::Sample(proto::Sample {
             timestamp: (seconds * 1.0e9).round() as u64,
             path: "a".to_owned(),
             value: proto::Data::Float(1.0),

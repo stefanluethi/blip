@@ -7,6 +7,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <string>
 
 using sonde::Status;
@@ -15,7 +16,7 @@ using test::Bytes;
 namespace {
 
 // value("a", n) for n < 24 takes 33 bytes without a clock
-constexpr std::size_t message_bytes = 33;
+constexpr std::size_t message_bytes = 34;
 
 /// The values of the messages of a batch.
 std::vector<std::uint64_t> values(sonde::Batch batch) {
@@ -37,12 +38,30 @@ struct FailingSink final : sonde::Sink {
     bool write(const std::uint8_t*, std::size_t) override { return false; }
 };
 
+/// Sends the Hello of a new queue and takes it out of the way, so that a test counts only
+/// its own messages: a log goes with it, the batches are taken and released.
+void skip_hello(sonde::Queue& queue) {
+    queue.log(sonde::Level::Info, "");
+    queue.commit();
+    while (queue.take()) {
+        queue.release();
+    }
+}
+
+/// The same for a queue with a memory sink: the batches are written, then cleared.
+void skip_hello(sonde::Queue& queue, sonde::MemorySink& sink) {
+    queue.log(sonde::Level::Info, "");
+    queue.commit();
+    sink.clear();
+}
+
 }  // namespace
 
 TEST_CASE("a message takes the expected bytes") {
     sonde::MemorySink sink;
     sonde::Storage<64, 1> storage;
     sonde::Queue queue{storage, sink, nullptr};
+    skip_hello(queue, sink);
     queue.value("a", 1u);
     queue.commit();
     CHECK(sink.bytes().size() == message_bytes);
@@ -51,6 +70,7 @@ TEST_CASE("a message takes the expected bytes") {
 TEST_CASE("batches are ready on commit") {
     sonde::Storage<256, 2> storage;
     sonde::Queue queue{storage, nullptr};
+    skip_hello(queue);
 
     CHECK(!queue.take());
     CHECK(queue.commit() == Status::Ok);  // nothing to commit
@@ -74,6 +94,7 @@ TEST_CASE("batches are ready on commit") {
 TEST_CASE("a message that does not fit goes to the next batch") {
     sonde::Storage<2 * message_bytes + 10, 2> storage;
     sonde::Queue queue{storage, nullptr};
+    skip_hello(queue);
 
     CHECK(queue.value("a", 1u) == Status::Ok);
     CHECK(queue.value("a", 2u) == Status::Ok);
@@ -99,6 +120,7 @@ TEST_CASE("a message that does not fit goes to the next batch") {
 TEST_CASE("a message larger than a batch is dropped") {
     sonde::Storage<message_bytes + 4, 2> storage;
     sonde::Queue queue{storage, nullptr};
+    skip_hello(queue);
 
     CHECK(queue.value("a", 1u) == Status::Ok);
     CHECK(queue.value("a", std::string(64, 'x')) == Status::TooLarge);
@@ -108,9 +130,22 @@ TEST_CASE("a message larger than a batch is dropped") {
     CHECK(values(queue.take()) == Values{1});
 }
 
+TEST_CASE("a block larger than a batch is dropped") {
+    sonde::MemorySink sink;
+    sonde::Storage<64, 1> storage;
+    sonde::Queue queue{storage, sink, nullptr};
+    skip_hello(queue, sink);
+    CHECK(queue.samples("a", std::array<std::uint8_t, 64>{}, sonde::Timestamp{0},
+                        sonde::Period{1}) == Status::TooLarge);
+    CHECK(queue.dropped() == 1);
+    CHECK(queue.commit() == Status::Ok);
+    CHECK(sink.bytes().empty());
+}
+
 TEST_CASE("a message as large as a batch fits") {
     sonde::Storage<message_bytes, 2> storage;
     sonde::Queue queue{storage, nullptr};
+    skip_hello(queue);
     CHECK(queue.value("a", 1u) == Status::Ok);
     CHECK(queue.value("a", 2u) == Status::Ok);
     CHECK(queue.value("a", 3u) == Status::Full);
@@ -120,6 +155,7 @@ TEST_CASE("a message as large as a batch fits") {
 TEST_CASE("the consumer requests a commit") {
     sonde::Storage<256, 2> storage;
     sonde::Queue queue{storage, nullptr};
+    skip_hello(queue);
 
     queue.value("a", 1u);
     queue.request_commit();
@@ -142,6 +178,7 @@ TEST_CASE("the consumer requests a commit") {
 TEST_CASE("the indices wrap around") {
     sonde::Storage<256, 3> storage;
     sonde::Queue queue{storage, nullptr};
+    skip_hello(queue);
     std::uint64_t next = 0;
     for (int round = 0; round < 100; ++round) {
         // a varying number of batches in flight
@@ -176,6 +213,7 @@ TEST_CASE("a sink takes the batches") {
     sonde::MemorySink sink;
     sonde::Storage<2 * message_bytes + 10, 1> storage;
     sonde::Queue queue{storage, sink, nullptr};
+    skip_hello(queue, sink);
 
     queue.value("a", 1u);
     queue.value("a", 2u);
@@ -201,12 +239,13 @@ TEST_CASE("the messages of a batch the sink fails to take are dropped") {
     sonde::Storage<2 * message_bytes + 10, 1> storage;
     sonde::Queue queue{storage, sink, nullptr};
 
-    queue.value("a", 1u);
-    queue.value("a", 2u);
-    CHECK(queue.value("a", 3u) == Status::SinkError);
+    // the Hello (36 bytes) and the first value fit, the second does not
+    CHECK(queue.value("a", 1u) == Status::Ok);
+    CHECK(queue.value("a", 2u) == Status::SinkError);
     CHECK(queue.dropped() == 2);
+    CHECK(queue.value("a", 3u) == Status::Ok);
     CHECK(queue.commit() == Status::SinkError);
-    CHECK(queue.dropped() == 3);
+    CHECK(queue.dropped() == 4);
     CHECK(queue.commit() == Status::Ok);
 }
 
@@ -243,11 +282,12 @@ void encode(sonde::Encoder& encoder, const Samples& samples) {
 TEST_CASE("a message that encodes differently in the next batch is checked again") {
     sonde::Storage<2 * message_bytes + 10, 2> storage;
     sonde::Queue queue{storage, nullptr};
+    skip_hello(queue);
 
     SECTION("too large the second time") {
         changing::encodings = 0;
         queue.value("a", 1u);
-        // 53 bytes, which do not fit after the first message, then 234 bytes
+        // 54 bytes, which do not fit after the first message, then 235 bytes
         CHECK(queue.value("a", changing::Samples{20, 200}) == Status::TooLarge);
         CHECK(queue.dropped() == 1);
     }

@@ -16,7 +16,8 @@ Summary
    * - Name
      - Purpose
    * - ``Queue``
-     - encodes values and log records into batches, each with its full path;
+     - encodes samples, blocks of samples, trace metadata and log records
+       into batches, each with its full path, and sends its ``Hello`` first;
        one per context that traces
    * - ``Tracer``
      - a named part of the code on a queue: paths below its name, log records
@@ -37,6 +38,14 @@ Summary
    * - ``Level``
      - the levels of log records: ``Trace``, ``Debug``, ``Info``, ``Warn``,
        ``Error``
+   * - ``Hello``, ``TimeBase``
+     - what a queue tells blip first: the name of the target and the time base
+       of its timestamps, ``Unknown``, ``Epoch`` or ``Boot``
+   * - ``Metadata``, ``Label``, ``Range``
+     - the unit, description, labels of integer values and expected range of
+       a trace, for ``metadata()``
+   * - ``Period``
+     - the time between the samples of a block, for ``samples()``
    * - ``Timestamp``, ``Clock``
      - nanoseconds, and the function that returns the current time
    * - ``system_clock_ns``, ``default_clock``

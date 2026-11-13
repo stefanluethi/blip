@@ -262,3 +262,41 @@ fn exports_hold_the_chosen_presets() {
     let exported: Vec<&str> = exported.iter().map(|p| p.name.as_str()).collect();
     assert_eq!(exported, [DEFAULT_NAME, "Preset 2"]);
 }
+
+#[test]
+fn presets_are_written_as_version_2_and_version_1_is_read() {
+    let bytes = write(&[preset("A")]);
+    let mut json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["version"], 2);
+    let current = read("a.json", &bytes).unwrap();
+    json["version"] = 1.into();
+    let older = read("a.json", json.to_string().as_bytes()).unwrap();
+    assert_eq!(write(&older), write(&current));
+    // a file of a newer blip is refused, naming the file
+    assert_eq!(
+        refused(br#"{"version": 3, "presets": []}"#),
+        "a.json holds presets of a newer version of blip"
+    );
+    // the Fit to of a plot and a Labels format are written and read back
+    let file = br#"{"version": 2, "presets": [{"name": "A", "layout": {"name": "",
+        "kind": "Tabs", "children": [{"View": {"name": "P", "formats": {"m": "Labels"},
+        "kind": {"Plot": {"traces": ["m"], "fit": "Values"}}}}]}}]}"#;
+    let presets = read("a.json", file).unwrap();
+    assert_eq!(read("a.json", &write(&presets)).unwrap().len(), 1);
+    let json = String::from_utf8(write(&presets)).unwrap();
+    assert!(json.contains(r#""fit": "Values""#), "{json}");
+    assert!(json.contains(r#""m": "Labels""#), "{json}");
+    assert_eq!(
+        write(&read("a.json", json.as_bytes()).unwrap()),
+        json.as_bytes()
+    );
+}
+
+#[test]
+fn the_demo_plots_fit_to_the_expected_range() {
+    let bytes = include_bytes!("../../../tests/data/demo-presets.json");
+    let json: serde_json::Value =
+        serde_json::from_slice(&write(&read("demo-presets.json", bytes).unwrap())).unwrap();
+    // the plots of the demo have no fit saved, so they get the default
+    assert!(!json.to_string().contains(r#""fit":"Values""#));
+}

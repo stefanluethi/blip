@@ -73,9 +73,19 @@ the reference for scripts with asyncio and for actions as methods
    * - ``sensor/temperature``
      - float, °C, ``null`` now and then
      - 1 s
+   * - ``adc/vibration``
+     - float, g, sent as a block of 25 samples (``series``) at 1 kHz
+     - 25 ms
    * - ``simulator/log_level``
      - string
      - on change
+
+The simulator declares what each trace means with ``metadata``: its unit, a
+description and the range its values are expected in, and for ``motor.mode`` labels
+(*idle*, *accelerating*, *running*, *braking*). ``motor`` is a record of ``speed_rpm``,
+``enabled``, ``state`` and the number ``mode``. It sends the ``Hello`` of the outpost,
+the hostname with the clock ``epoch``. Try the States view with ``motor.mode``, and a
+plot of ``motor.speed_rpm``, whose axis fits its declared range.
 
 It also sends log records at a few paths below ``log`` at all levels, every
 ``--log-interval-ms`` (500 ms) on average, and a warning when the load of a

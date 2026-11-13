@@ -100,10 +100,12 @@ Times look wrong
 ----------------
 
 Times show as ``0:01:23.456`` instead of a time of day
-   blip shows timestamps before 2001 as time since boot. That is right for a
-   target that counts its uptime. A target that means the time of day sends
-   nanoseconds since 1970: a timestamp in milliseconds or microseconds is too
-   small, and shows as time since boot.
+   Without a ``Hello`` that names the clock, blip shows timestamps before 2001
+   as time since boot. That is right for a target that counts its uptime. A
+   target that means the time of day sends nanoseconds since 1970: a timestamp
+   in milliseconds or microseconds is too small, and shows as time since boot.
+   Send the clock in the ``Hello`` (``clock="epoch"``) so blip need not guess; the
+   connection shows it, see :doc:`/blip/connecting`.
 
 All values of a sonde queue are at 0
    The queue has no clock. Pass one to the queue, see :doc:`/sonde/index`.
@@ -120,7 +122,18 @@ Samples are dropped for their time base
    blip shows one time base, that of the first sample. A sample of the other
    one, e.g. at the time of day while the target sends its uptime, is dropped
    with a warning. Send all samples in one time base, or clear the data to
-   start with another.
+   start with another. If connections declare different clocks in their
+   ``Hello``, blip warns once and keeps the time of day: it removes the data of
+   the uptime it already has and drops the later.
+
+*Dropped a malformed block of samples from …*
+   A ``Samples`` message is not well formed: neither or both of a period and
+   timestamps, lists of different lengths, or times beyond 2\ :sup:`64` ns. Only
+   that block is dropped. Fix the sender, see :doc:`/reference/protocol`.
+
+*… sends protocol N, blip reads up to 1*
+   The target speaks a newer protocol than this blip. blip reads on and shows
+   what it knows; update blip to see all of it.
 
 The data after a restart of the target is shifted
    When a target restarts and its uptime starts over, the outpost shifts the

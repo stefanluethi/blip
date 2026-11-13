@@ -9,9 +9,9 @@ use super::plotting::{
 };
 use super::tooltip::{Header, Label, Row, Tooltip, TraceName, Value};
 use super::trace_selection::MAX_LISTED_ELEMENTS;
-use super::{PropertiesContext, ViewContext, ViewType, Viewable, short_names, with_unit};
+use super::{Fit, PropertiesContext, ViewContext, ViewType, Viewable, short_names};
 use crate::app::model::Model;
-use crate::app::model::numbers::{DisplayFormat, Number, SHOWN_DIGITS, format_significant};
+use crate::app::model::numbers::{DisplayFormat, Number, SHOWN_DIGITS};
 use crate::app::model::sorted::{index_at, upper_bound, within};
 use crate::app::model::traces::{Samples, Series, Trace};
 use crate::app::theme;
@@ -51,6 +51,8 @@ pub struct Xy {
     /// How far the oldest part of the trail fades out, from 0 for not at all to 1 for
     /// nearly invisible.
     pub fade: f32,
+    /// What the axes fit.
+    pub fit: Fit,
     #[serde(skip_serializing_if = "LineStyles::is_empty")]
     pub line_styles: LineStyles,
 }
@@ -64,6 +66,7 @@ impl Default for Xy {
             equal_axes: false,
             points: ShowPoints::default(),
             fade: DEFAULT_FADE,
+            fit: Fit::default(),
             line_styles: LineStyles::default(),
         }
     }
@@ -268,14 +271,19 @@ fn point_tooltip(
     let header = TraceName::new(name, y, index);
     let names = short_names([x, y]);
     let row = |path: &str, name: &str, value: f64| {
-        let text = with_unit(
-            format_significant(value, SHOWN_DIGITS),
+        let values = Value::labelled(
+            Number::Float(value),
+            SHOWN_DIGITS,
+            DisplayFormat::Labels,
             model.traces.unit(path),
+            model.traces.labels(path),
         );
-        Row::new(Label::Weak(name.to_owned()), [Value::text(text)])
+        Row::new(Label::Weak(name.to_owned()), values)
     };
     let rows = vec![row(x, names[0], point[0]), row(y, names[1], point[1])];
-    Tooltip::new(Header::Trace(header)).group(rows)
+    Tooltip::new(Header::Trace(header))
+        .group(rows)
+        .describe(names[1], model.traces.description(y))
 }
 
 /// Element `index` of the `arrays`, each its path, name and elements at the cursor:
@@ -285,16 +293,21 @@ fn element_tooltip(model: &Model, index: usize, arrays: &[(&str, &str, Vec<Numbe
         .filter_map(|(line, (path, name, numbers))| {
             let number = *numbers.get(index)?;
             let trace = TraceName::new(name, path, line);
-            let value = Value::number(
+            let values = Value::labelled(
                 number,
                 SHOWN_DIGITS,
-                DisplayFormat::Default,
+                DisplayFormat::Labels,
                 model.traces.unit(path),
+                model.traces.labels(path),
             );
-            Some(Row::new(Label::Trace(trace), [value]))
+            Some(Row::new(Label::Trace(trace), values))
         })
         .collect();
-    Tooltip::new(Header::Text(format!("[{index}]"))).group(rows)
+    let tooltip = Tooltip::new(Header::Text(format!("[{index}]"))).group(rows);
+    match arrays {
+        [(path, name, _)] => tooltip.describe(name, model.traces.description(path)),
+        _ => tooltip,
+    }
 }
 
 impl Xy {
@@ -472,6 +485,50 @@ impl Xy {
         }
     }
 
+    /// The ranges the x and the y axis fit: the values of the shown traces, also outside
+    /// the shown window, or of the elements of the shown `arrays` over their indices,
+    /// with the declared ranges of the traces if the fit is to the expected ones.
+    fn axis_ranges(&self, model: &Model, arrays: &[&str]) -> [Option<(f64, f64)>; 2] {
+        let expected = |path: &str| match self.fit {
+            Fit::Expected => model.traces.expected(path),
+            Fit::Values => None,
+        };
+        let range = |paths: &mut dyn Iterator<Item = &str>| {
+            paths
+                .map(|path| {
+                    let values = model.traces.series(path).and_then(|series| series.range);
+                    super::union(values, expected(path))
+                })
+                .fold(None, super::union)
+        };
+        if arrays.is_empty() {
+            let lines = self.lines();
+            let x_paths: BTreeSet<&str> = lines.iter().map(|&(x, _)| x).collect();
+            [
+                range(&mut x_paths.iter().copied()),
+                range(&mut lines.iter().map(|&(_, y)| y)),
+            ]
+        } else {
+            let x = (arrays.iter())
+                .filter_map(|path| model.traces.get(path))
+                .filter_map(|trace| match &trace.samples {
+                    Samples::Arrays { shape, .. } => {
+                        let len = shape.iter().product::<usize>();
+                        Some((0.0, len.saturating_sub(1) as f64))
+                    }
+                    _ => None,
+                })
+                .fold(None, |all, range| super::union(all, Some(range)));
+            let y = (arrays.iter())
+                .map(|path| {
+                    let values = model.traces.get(path).and_then(|t| t.value_range());
+                    super::union(values, expected(path))
+                })
+                .fold(None, super::union);
+            [x, y]
+        }
+    }
+
     /// Shows the y traces against their x traces within the shown window.
     fn show_plot(&self, ui: &mut egui::Ui, model: &Model, time: &TimeRange) {
         let lines = self.lines();
@@ -487,12 +544,7 @@ impl Xy {
 
         // the plot fits all values, also outside the shown window, until panned or
         // zoomed, and again after a double click
-        for (low, high) in (x_paths.iter()).filter_map(|path| model.traces.series(path)?.range) {
-            plot = plot.include_x(low).include_x(high);
-        }
-        for (low, high) in (y_paths.iter()).filter_map(|path| model.traces.series(path)?.range) {
-            plot = plot.include_y(low).include_y(high);
-        }
+        plot = include_ranges(plot, self.axis_ranges(model, &[]));
         let range = time.timestamps();
         let cursor = time.cursor_timestamp();
         let ring_color = ui.visuals().strong_text_color();
@@ -553,15 +605,7 @@ impl Xy {
             .plot(ui, index_x_axis("index"), y_label)
             .x_grid_spacer(index_spacer);
         // the plot fits all elements and all their values until panned or zoomed
-        for trace in paths.iter().filter_map(|path| model.traces.get(path)) {
-            if let Samples::Arrays { shape, .. } = &trace.samples {
-                let len = shape.iter().product::<usize>();
-                plot = plot.include_x(0.0).include_x(len.saturating_sub(1) as f64);
-            }
-            if let Some((low, high)) = trace.value_range() {
-                plot = plot.include_y(low).include_y(high);
-            }
-        }
+        plot = include_ranges(plot, self.axis_ranges(model, paths));
         let visuals = ui.visuals().clone();
         let arrays: Vec<(&str, &str, Vec<Number>)> = (paths.iter().zip(&names))
             .filter_map(|(&path, &name)| {
@@ -589,6 +633,21 @@ impl Xy {
             (response.response).on_hover_ui_at_pointer(|ui| tooltip.ui(ui));
         }
     }
+}
+
+/// Makes `plot` include `ranges`, those of its x and y axis.
+fn include_ranges(
+    plot: egui_plot::Plot<'_>,
+    [x, y]: [Option<(f64, f64)>; 2],
+) -> egui_plot::Plot<'_> {
+    let mut plot = plot;
+    if let Some((low, high)) = x {
+        plot = plot.include_x(low).include_x(high);
+    }
+    if let Some((low, high)) = y {
+        plot = plot.include_y(low).include_y(high);
+    }
+    plot
 }
 
 impl super::ViewInfo for Xy {
@@ -657,7 +716,10 @@ impl Viewable for Xy {
             .zip(names.iter().copied())
             .collect();
         let name_of = |path: &str| name_by_path.get(path).copied().unwrap_or("").to_owned();
+        let declared =
+            (self.traces.iter()).any(|path| context.model.traces.expected(path).is_some());
         super::properties_section(ui, "Axes", |ui| {
+            super::fit_row(ui, &mut self.fit, declared);
             if arrays.is_empty() {
                 super::path_rows(ui, &paths, |ui, path| {
                     ui.horizontal(|ui| {

@@ -6,6 +6,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <string>
 
 using sonde::Level;
@@ -23,11 +24,13 @@ Bytes traced(F&& trace) {
     sonde::Queue queue{storage, sink, nullptr};
     trace(queue);
     REQUIRE(queue.commit() == Status::Ok);
-    return sink.bytes();
+    const auto bytes = test::without_hello(sink.bytes());
+    REQUIRE(bytes.has_value());
+    return *bytes;
 }
 
 // static tracers are constant-initialized, as their queue
-sonde::Storage<64, 1> constant_storage;
+sonde::Storage<128, 1> constant_storage;
 [[maybe_unused]] sonde::Queue constant_queue{constant_storage, nullptr};
 [[maybe_unused]] constexpr sonde::Tracer constant_root{constant_queue};
 [[maybe_unused]] constexpr sonde::Tracer constant_motor{constant_queue, "motor"};
@@ -127,6 +130,25 @@ TEST_CASE("a static child sends with the queue of its parent") {
     CHECK(constant_queue.dropped() == 0);
 }
 
+TEST_CASE("a tracer sends metadata below its name") {
+    const sonde::Label states[] = {{-1, "fault"}, {0, "off"}, {1, "on"}};
+    const sonde::Metadata m{{}, "Drive state", {states, 3}, std::nullopt};
+    CHECK(traced([&](sonde::Queue& queue) {
+              sonde::Tracer motor{queue, "motor"};
+              CHECK(motor.metadata("state", m) == Status::Ok);
+          }) == traced([&](sonde::Queue& queue) { queue.metadata("motor/state", m); }));
+
+    sonde::MemorySink sink;
+    sonde::Storage<1024, 1> storage;
+    sonde::Queue queue{storage, sink, nullptr};
+    const std::string long_name(60, 'a');
+    sonde::Tracer parent{queue, long_name};
+    sonde::Tracer child{parent, "b"};
+    const std::string path(34, 'c');
+    CHECK(child.metadata(path, m) == Status::TooLarge);
+    CHECK(queue.dropped() == 1);
+}
+
 TEST_CASE("a path longer than SONDE_PATH_MAX is dropped as too large") {
     sonde::MemorySink sink;
     sonde::Storage<1024, 1> storage;
@@ -144,7 +166,8 @@ TEST_CASE("a path longer than SONDE_PATH_MAX is dropped as too large") {
     CHECK(queue.commit() == Status::Ok);
     const auto messages = test::items(sink.bytes());
     REQUIRE(messages);
-    CHECK(messages->size() == 1);
+    REQUIRE(messages->size() == 2);
+    CHECK(test::is_hello((*messages)[0]));
 }
 
 TEST_CASE("a log of a tracer is at its name and has no component key") {
@@ -164,4 +187,18 @@ TEST_CASE("a log of a tracer is at its name and has no component key") {
               sonde::Tracer imu{log, "imu"};
               imu.log(Timestamp{3}, Level::Warn, "hot");
           }) == expected);
+}
+
+TEST_CASE("a tracer sends samples below its name") {
+    const std::uint16_t raw[3] = {512, 513, 511};
+    const std::array<float, 2> values{1.5f, 2.5f};
+    const Timestamp times[2] = {{4'000'000}, {4'500'000}};
+    CHECK(traced([&](sonde::Queue& queue) {
+              sonde::Tracer adc{queue, "adc"};
+              CHECK(adc.samples("raw", raw, Timestamp{1}, sonde::Period{2}) == Status::Ok);
+              CHECK(adc.samples("peak", values, times) == Status::Ok);
+          }) == traced([&](sonde::Queue& queue) {
+              queue.samples("adc/raw", raw, Timestamp{1}, sonde::Period{2});
+              queue.samples("adc/peak", values, times);
+          }));
 }

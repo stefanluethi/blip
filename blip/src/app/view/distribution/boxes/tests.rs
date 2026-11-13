@@ -163,6 +163,27 @@ fn the_tooltip_lists_the_values_in_the_order_drawn() {
 }
 
 #[test]
+fn the_tooltip_of_a_box_describes_the_trace() {
+    use crate::app::view::tooltip::TraceName;
+    let name = TraceName::new("x", "pose.x", 0);
+    let tip = |description| Tip {
+        trace: name.clone(),
+        stats: None,
+        whiskers: Whiskers::Iqr,
+        orientation: Orientation::Upright,
+        format: DisplayFormat::Default,
+        unit: None,
+        description,
+    };
+    let footer = tip(Some("Pose x")).tooltip().footer.expect("a footer");
+    assert_eq!(
+        (footer.name.as_str(), footer.description.as_str()),
+        ("x", "Pose x")
+    );
+    assert_eq!(tip(None).tooltip().footer, None);
+}
+
+#[test]
 fn the_tooltip_of_a_box_names_the_trace_and_splits_off_the_counts() {
     use crate::app::view::tooltip::{Header, Label, Tone, TraceName, Value};
     let x = TraceName {
@@ -179,6 +200,7 @@ fn the_tooltip_of_a_box_names_the_trace_and_splits_off_the_counts() {
             orientation: Orientation::Upright,
             format: DisplayFormat::Default,
             unit: Some("ms"),
+            description: Some("Pose x"),
         }
         .tooltip()
     };

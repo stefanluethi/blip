@@ -13,7 +13,9 @@ pub mod trace_selection;
 pub mod xy;
 
 use crate::app::model::actions::Invoker;
-use crate::app::model::numbers::{DisplayFormat, NumberKind};
+use crate::app::model::numbers::{
+    DisplayFormat, Labels, NumberKind, SHOWN_DIGITS, format_significant,
+};
 use crate::app::model::traces::{Samples, Trace};
 use crate::app::model::{Model, Version};
 use crate::app::theme;
@@ -94,6 +96,33 @@ impl<T: Copy + Default + PartialEq> PerPath<T> {
     /// keep them and traces shown again start with the default.
     pub fn retain_shown(&mut self, shown: &BTreeSet<String>) {
         self.0.retain(|path, _| shown.contains(path));
+    }
+}
+
+impl PerPath<DisplayFormat> {
+    /// The format of the trace at `key`: the one chosen, else Labels if `labelled`, else
+    /// Default.
+    pub fn format_of(&self, key: &str, labelled: bool) -> DisplayFormat {
+        self.0.get(key).copied().unwrap_or(if labelled {
+            DisplayFormat::Labels
+        } else {
+            DisplayFormat::Default
+        })
+    }
+
+    /// Chooses `format` for `key`, kept only when it is not the default of
+    /// [`Self::format_of`].
+    pub fn choose(&mut self, key: &str, format: DisplayFormat, labelled: bool) {
+        let default = if labelled {
+            DisplayFormat::Labels
+        } else {
+            DisplayFormat::Default
+        };
+        if format == default {
+            self.0.remove(key);
+        } else {
+            self.0.insert(key.to_owned(), format);
+        }
     }
 }
 
@@ -559,15 +588,29 @@ pub fn choice_row<T: PartialEq + Copy>(
     ui.end_row();
 }
 
+/// The hint of a Min or Max field: the end in use, or "auto".
+fn end_hint(end: Option<f64>) -> String {
+    end.map_or_else(
+        || "auto".to_owned(),
+        |end| format_significant(end, SHOWN_DIGITS),
+    )
+}
+
 /// Adds a row labelled `label` to the grid of a properties section with a field for
-/// `value`, which is `None` while the field is empty. While the field is edited, text
-/// that is no number is kept in it and leaves `value` as it was.
-pub fn optional_number_row(ui: &mut egui::Ui, label: &str, value: &mut Option<f64>) {
+/// `value`, which is `None` while the field is empty. The empty field shows `hint`, the
+/// end in use. While the field is edited, text that is no number is kept in it and
+/// leaves `value` as it was.
+pub fn optional_number_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut Option<f64>,
+    hint: Option<f64>,
+) {
     property_label(ui, label);
     let id = ui.id().with(("optional number", label));
     let edited: Option<String> = ui.data(|data| data.get_temp(id));
     let mut text = edited.unwrap_or_else(|| value.map_or_else(String::new, |v| v.to_string()));
-    let response = ui.add(theme::wide_field(&mut text).hint_text("auto"));
+    let response = ui.add(theme::wide_field(&mut text).hint_text(end_hint(hint)));
     if response.changed() {
         let text = text.trim();
         if text.is_empty() {
@@ -582,6 +625,36 @@ pub fn optional_number_row(ui: &mut egui::Ui, label: &str, value: &mut Option<f6
         ui.data_mut(|data| data.remove::<String>(id));
     }
     ui.end_row();
+}
+
+named_enum! {
+    /// What an axis fits while its ends are not set.
+    #[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
+    pub enum Fit {
+        /// The ranges the target declares, grown by values beyond them.
+        #[default]
+        Expected => "Expected",
+        /// The values of the shown traces.
+        Values => "Values",
+    }
+}
+
+/// The union of two optional ranges.
+pub fn union(a: Option<(f64, f64)>, b: Option<(f64, f64)>) -> Option<(f64, f64)> {
+    match (a, b) {
+        (Some((low_a, high_a)), Some((low_b, high_b))) => {
+            Some((low_a.min(low_b), high_a.max(high_b)))
+        }
+        (a, b) => a.or(b),
+    }
+}
+
+/// Adds the row "Fit to" to the grid of a properties section, only while `declared`,
+/// that is while a shown trace declares a range.
+pub fn fit_row(ui: &mut egui::Ui, fit: &mut Fit, declared: bool) {
+    if declared {
+        choice_row(ui, "Fit to", fit, &Fit::CHOICES);
+    }
 }
 
 /// Adds rows to the grid of a properties section to choose whether `range` fits the
@@ -702,15 +775,16 @@ impl Viewable for View {
             ViewKind::Table(table) if table.layout == table::TableLayout::Records => {
                 table.columns_ui(ui, context.model, &mut self.formats);
             }
-            _ => self.number_format_ui(ui, context),
+            _ => self.traces_ui(ui, context),
         }
     }
 }
 
 impl View {
-    /// Shows the number format of each shown trace with its unit, if the view writes
-    /// the values of its traces, greyed if it takes them from a linked plot.
-    fn number_format_ui(&mut self, ui: &mut egui::Ui, context: &PropertiesContext<'_>) {
+    /// Shows each shown trace with its number format, its unit and what the target says
+    /// of it, if the view writes the values of its traces; the formats are greyed if it
+    /// takes them from a linked plot.
+    fn traces_ui(&mut self, ui: &mut egui::Ui, context: &PropertiesContext<'_>) {
         if !self.view_type().writes_values() {
             return;
         }
@@ -722,31 +796,93 @@ impl View {
             }
             _ => return,
         };
-        properties_section(ui, "Number format", |ui| {
-            path_rows(ui, &paths, |ui, path| {
+        properties_section(ui, "Traces", |ui| {
+            let names = short_names(paths.iter().map(String::as_str));
+            for (path, name) in paths.iter().zip(names) {
+                property_label(ui, name).on_hover_text(path);
                 let kind = number_kind(model, path);
                 ui.add_enabled_ui(!linked, |ui| {
-                    number_format_ui(ui, &mut self.formats, path, kind, model.traces.unit(path));
+                    number_format_ui(
+                        ui,
+                        &mut self.formats,
+                        path,
+                        kind,
+                        model.traces.labels(path).is_some(),
+                        model.traces.unit(path),
+                    );
                 })
                 .response
                 .on_disabled_hover_text("Set by the linked plot");
-            });
+                ui.end_row();
+                trace_facts_rows(ui, model, path);
+            }
         });
     }
 }
 
+/// Adds the rows of what the target says of the trace at `path` to a properties grid,
+/// each only if it says it: the description, the expected range and the labels.
+pub fn trace_facts_rows(ui: &mut egui::Ui, model: &Model, path: &str) {
+    let weak = ui.visuals().weak_text_color();
+    let text = |text: String| egui::RichText::new(text).color(weak);
+    if let Some(description) = model.traces.description(path) {
+        ui.label("");
+        ui.add(egui::Label::new(text(description.to_owned())).wrap());
+        ui.end_row();
+    }
+    if let Some(range) = model.traces.expected(path) {
+        ui.label("");
+        ui.label(text(expected_text(range)));
+        ui.end_row();
+    }
+    if let Some(labels) = model.traces.labels(path) {
+        let (line, hover) = labels_text(labels);
+        ui.label("");
+        ui.add(egui::Label::new(text(line)).truncate())
+            .on_hover_text(hover);
+        ui.end_row();
+    }
+}
+
+/// `Expected <min> to <max>`.
+fn expected_text((min, max): (f64, f64)) -> String {
+    format!(
+        "Expected {} to {}",
+        format_significant(min, SHOWN_DIGITS),
+        format_significant(max, SHOWN_DIGITS)
+    )
+}
+
+/// The labels on one line and, for the hover, one per line.
+fn labels_text(labels: &Labels) -> (String, String) {
+    let each = |(number, label): (&i64, &String)| format!("{number} {label}");
+    let line: Vec<String> = labels.iter().map(each).collect();
+    (line.join(", "), line.join("\n"))
+}
+
+/// The hover text of a trace: its path, its type and its description if any.
+pub fn trace_hover(model: &Model, trace: Trace<'_>) -> String {
+    let mut hover = format!("{}\n{}", trace.path, trace.samples.type_label());
+    if let Some(description) = model.traces.description(trace.path) {
+        hover.push('\n');
+        hover.push_str(description);
+    }
+    hover
+}
+
 /// Shows a choice of the format in `formats` under `key` for numbers of `kind`,
-/// disabled if there are none, followed by `unit`.
+/// disabled if there are none, followed by `unit`. Labels are offered if `labelled`.
 fn number_format_ui(
     ui: &mut egui::Ui,
     formats: &mut Formats,
     key: &str,
     kind: Option<NumberKind>,
+    labelled: bool,
     unit: Option<&str>,
 ) {
     ui.horizontal(|ui| {
-        let current = formats.of(key);
-        let choices = kind.map_or(&[][..], DisplayFormat::of_kind);
+        let current = formats.format_of(key, labelled);
+        let choices = kind.map_or(&[][..], |kind| DisplayFormat::of_kind(kind, labelled));
         ui.add_enabled_ui(!choices.is_empty(), |ui| {
             egui::ComboBox::from_id_salt(("number format", key))
                 .selected_text(current.name())
@@ -757,7 +893,7 @@ fn number_format_ui(
                             .selectable_label(current == format, format.name())
                             .clicked()
                         {
-                            formats.set(key, format);
+                            formats.choose(key, format, labelled);
                         }
                     }
                 })

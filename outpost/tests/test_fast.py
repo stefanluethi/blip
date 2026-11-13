@@ -66,7 +66,7 @@ async def test_it_sends_what_is_due_once():
     protocol._origin_ns = 1_000_000_000_000
 
     await protocol.send_until(1.0)
-    values = [m["Value"] for m in sent if "Value" in m]
+    values = [m["Sample"] for m in sent if "Sample" in m]
     logs = [m["Log"] for m in sent if "Log" in m]
     by_path = defaultdict(list)
     for value in values:
@@ -186,7 +186,7 @@ async def test_the_history_reaches_a_client_without_losing_messages():
                 stamps = defaultdict(list)
                 while min((len(s) for s in stamps.values()), default=0) < expected or len(stamps) < traces:
                     message = cbor2.loads(await receive(ws, 5.0))
-                    value = message.get("Value")
+                    value = message.get("Sample")
                     if value and value["path"].startswith("fast/signal/"):
                         stamps[value["path"]].append(value["timestamp"])
                 assert len(stamps) == traces

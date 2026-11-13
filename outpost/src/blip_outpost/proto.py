@@ -6,10 +6,14 @@ import io
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, ClassVar, Dict, List, Optional, Protocol, Tuple, Union
+from typing import Any, Callable, ClassVar, Dict, List, Mapping, Optional, Protocol, Sequence, Tuple, Union
 import cbor2
 
 logger = logging.getLogger(__name__)
+
+
+CLOCKS = ("epoch", "boot")
+PROTOCOL_VERSION = 1
 
 
 class LogLevel(enum.IntEnum):
@@ -22,12 +26,44 @@ class LogLevel(enum.IntEnum):
 
 
 @dataclass
-class ValueMetadata:
+class TraceMetadata:
     path: str
-    unit: str
+    unit: str = ""
+    description: str = ""
+    # names of integer values, the wire key is "enum"
+    labels: Optional[Mapping[int, str]] = None
+    # the expected (min, max) of the values, the wire key is "range"
+    value_range: Optional[Tuple[float, float]] = None
+
+    def __post_init__(self) -> None:
+        if self.labels is not None:
+            for key, label in self.labels.items():
+                if isinstance(key, bool) or not isinstance(key, int) or not isinstance(label, str):
+                    raise ValueError(f"labels map integers to text, not {key!r}: {label!r}")
+            self.labels = dict(self.labels) or None
+        if self.value_range is not None:
+            try:
+                low, high = self.value_range
+            except (TypeError, ValueError):
+                raise ValueError(f"value_range is (min, max), not {self.value_range!r}") from None
+            for bound in (low, high):
+                if isinstance(bound, bool) or not isinstance(bound, (int, float)) or bound != bound:
+                    raise ValueError(f"value_range is (min, max) of numbers, not {self.value_range!r}")
+            if low > high:
+                raise ValueError(f"value_range has min above max: {self.value_range!r}")
+            self.value_range = (low, high)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"path": self.path, "unit": self.unit}
+        data: Dict[str, Any] = {"path": self.path}
+        if self.unit:
+            data["unit"] = self.unit
+        if self.description:
+            data["description"] = self.description
+        if self.labels:
+            data["enum"] = dict(self.labels)
+        if self.value_range is not None:
+            data["range"] = {"min": self.value_range[0], "max": self.value_range[1]}
+        return data
 
 
 class DataclassInstance(Protocol):
@@ -49,8 +85,8 @@ Data = Union[None, int, float, bool, str, list, dict, DataclassInstance, Support
 
 
 def encode_value(timestamp_ns: int, path: str, value: Data) -> bytes:
-    """The bytes of a Value message, as `Message.create_value(...).encode_cbor()`."""
-    return cbor2.dumps({"Value": {"timestamp": timestamp_ns, "path": path, "value": value}}, default=encode_default)
+    """The bytes of a Sample message, as `Message.create_value(...).encode_cbor()`."""
+    return cbor2.dumps({"Sample": {"timestamp": timestamp_ns, "path": path, "value": value}}, default=encode_default)
 
 
 def encode_default(encoder: Any, value: Any) -> None:
@@ -68,7 +104,32 @@ def encode_default(encoder: Any, value: Any) -> None:
 
 
 @dataclass
-class Value:
+class Hello:
+    """The first message of a target or an outpost: who sends and which clock the
+    timestamps are in."""
+    name: str = ""
+    # "epoch" (since the Unix epoch) or "boot" (since the start of the target), "" if unknown
+    clock: str = ""
+    sender: str = ""
+    version: int = PROTOCOL_VERSION
+
+    def __post_init__(self) -> None:
+        if self.clock and self.clock not in CLOCKS:
+            raise ValueError(f"clock is epoch or boot, not {self.clock!r}")
+
+    def to_dict(self) -> Dict[str, Any]:
+        data: Dict[str, Any] = {"version": self.version}
+        if self.name:
+            data["name"] = self.name
+        if self.clock:
+            data["clock"] = self.clock
+        if self.sender:
+            data["sender"] = self.sender
+        return data
+
+
+@dataclass
+class Sample:
     timestamp: int  # Nanoseconds since Unix epoch
     path: str
     value: Data
@@ -76,6 +137,48 @@ class Value:
     def to_dict(self) -> Dict[str, Any]:
         # not `asdict`, which copies the value, field by field: it takes twice as long
         return {"timestamp": self.timestamp, "path": self.path, "value": self.value}
+
+
+def _is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+@dataclass
+class Samples:
+    """A block of samples of one trace: sample `i` at `timestamp + i * period`, or at
+    `timestamps[i]`, in nanoseconds."""
+    path: str
+    values: List[Data]
+    timestamp: Optional[int] = None
+    period: Optional[int] = None
+    timestamps: Optional[List[int]] = None
+
+    def __post_init__(self) -> None:
+        if self.timestamps is not None:
+            if self.timestamp is not None or self.period is not None:
+                raise ValueError("either timestamps, or timestamp and period")
+            self.timestamps = list(self.timestamps)
+            times = self.timestamps
+            if len(times) != len(self.values):
+                raise ValueError(f"{len(self.values)} values but {len(times)} timestamps")
+        else:
+            if self.timestamp is None or self.period is None:
+                raise ValueError("either timestamps, or timestamp and period")
+            times = [self.timestamp, self.period]
+        for t in times:
+            if not _is_int(t):
+                raise ValueError(f"timestamps and periods are integers, not {t!r}")
+            if t < 0:
+                raise ValueError(f"a negative timestamp or period: {t}")
+
+    def to_dict(self) -> Dict[str, Any]:
+        data: Dict[str, Any] = {"path": self.path, "values": self.values}
+        if self.timestamps is not None:
+            data["timestamps"] = self.timestamps
+        else:
+            data["timestamp"] = self.timestamp
+            data["period"] = self.period
+        return data
 
 
 @dataclass
@@ -98,7 +201,7 @@ class LogRecord:
 
 @dataclass
 class Message:
-    """A message to blip: a Value, ValueMetadata, Log, Actions or ActionResult."""
+    """A message to blip: a Sample, TraceMetadata, Log, Actions or ActionResult."""
     variant: str
     # a dataclass with to_dict or plain data
     data: Any
@@ -118,15 +221,54 @@ class Message:
         if timestamp_ns is None:
             timestamp_ns = int(time.time() * 1e9)
         return cls(
-            variant="Value",
-            data=Value(timestamp=timestamp_ns, path=path, value=value)
+            variant="Sample",
+            data=Sample(timestamp=timestamp_ns, path=path, value=value)
         )
 
     @classmethod
-    def create_metadata(cls, path: str, unit: str) -> "Message":
+    def create_metadata(
+        cls,
+        path: str,
+        unit: str = "",
+        *,
+        description: str = "",
+        labels: Optional[Mapping[int, str]] = None,
+        value_range: Optional[Tuple[float, float]] = None,
+    ) -> "Message":
         return cls(
-            variant="ValueMetadata",
-            data=ValueMetadata(path=path, unit=unit)
+            variant="TraceMetadata",
+            data=TraceMetadata(path=path, unit=unit, description=description, labels=labels, value_range=value_range)
+        )
+
+    @classmethod
+    def create_hello(cls, name: str = "", clock: str = "", sender: str = "") -> "Message":
+        """The Hello of a sender: its `name`, the `clock` of its timestamps ("epoch" or
+        "boot") and who `sender` is, e.g. ``blip-outpost 0.1.0``."""
+        return cls(variant="Hello", data=Hello(name=name, clock=clock, sender=sender))
+
+    @classmethod
+    def create_samples(
+        cls,
+        path: str,
+        values: Sequence[Data],
+        *,
+        timestamp_ns: Optional[int] = None,
+        period_ns: Optional[int] = None,
+        timestamps_ns: Optional[Sequence[int]] = None,
+    ) -> "Message":
+        """Create a block of samples of one trace: the first at `timestamp_ns` and then
+        one every `period_ns`, or one at each of `timestamps_ns`. Raises `ValueError`
+        for anything else, for values and timestamps of different numbers and for
+        negative times."""
+        return cls(
+            variant="Samples",
+            data=Samples(
+                path=path,
+                values=list(values),
+                timestamp=timestamp_ns,
+                period=period_ns,
+                timestamps=None if timestamps_ns is None else list(timestamps_ns),
+            ),
         )
 
     @classmethod
@@ -177,8 +319,13 @@ def variant_prefix(variant: str) -> bytes:
 
 ACTIONS_PREFIX = variant_prefix("Actions")
 ACTION_RESULT_PREFIX = variant_prefix("ActionResult")
-METADATA_PREFIX = variant_prefix("ValueMetadata")
-VALUE_PREFIX = variant_prefix("Value")
+SAMPLE_PREFIX = variant_prefix("Sample")
+# The names of protocol versions before 3: read and forwarded, never written.
+OLD_SAMPLE_PREFIX = variant_prefix("Value")
+SAMPLES_PREFIX = variant_prefix("Samples")
+METADATA_PREFIX = variant_prefix("TraceMetadata")
+OLD_METADATA_PREFIX = variant_prefix("ValueMetadata")
+HELLO_PREFIX = variant_prefix("Hello")
 LOG_PREFIX = variant_prefix("Log")
 TIMESTAMP_KEY = cbor2.dumps("timestamp")
 
@@ -236,21 +383,17 @@ def _skip(data: bytes, i: int) -> Optional[int]:
     return i
 
 
-def _timestamp_at(frame: bytes, i: int) -> Optional[Tuple[int, int, int]]:
-    """The unsigned `timestamp` of the CBOR map at `i`, where it starts and ends;
-    `None` if the map has none."""
+def _key_value_at(frame: bytes, i: int, key: bytes) -> Optional[int]:
+    """Where the value of the first top-level `key`, a CBOR-encoded text, of the CBOR map
+    at `i` starts; `None` if the map has none."""
     head = _head(frame, i)
     if head is None or head[0] != 5:
         return None
     _, entries, i = head
     count = 0
     while (entries < 0 and i < len(frame) and frame[i] != 0xFF) or count < entries:
-        if frame.startswith(TIMESTAMP_KEY, i):
-            at = i + len(TIMESTAMP_KEY)
-            value = _head(frame, at)
-            if value is None or value[0] != 0:
-                return None
-            return value[1], at, value[2]
+        if frame.startswith(key, i):
+            return i + len(key)
         key_end = _skip(frame, i)
         i = _skip(frame, key_end) if key_end is not None else None
         if i is None:
@@ -259,21 +402,77 @@ def _timestamp_at(frame: bytes, i: int) -> Optional[Tuple[int, int, int]]:
     return None
 
 
-def retime(frame: bytes, map_time: Callable[[int], int]) -> bytes:
-    """The message in `frame` with the timestamp `t` of a Value or Log changed to
-    `map_time(t)`, in place; other messages, and a timestamp 0 (none), as they are."""
-    if frame.startswith(VALUE_PREFIX):
-        start = len(VALUE_PREFIX)
-    elif frame.startswith(LOG_PREFIX):
-        start = len(LOG_PREFIX)
-    else:
-        return frame
+def _timestamp_at(frame: bytes, i: int) -> Optional[Tuple[int, int, int]]:
+    """The unsigned `timestamp` of the CBOR map at `i`, where it starts and ends;
+    `None` if the map has none."""
+    at = _key_value_at(frame, i, TIMESTAMP_KEY)
+    if at is None:
+        return None
+    value = _head(frame, at)
+    if value is None or value[0] != 0:
+        return None
+    return value[1], at, value[2]
+
+
+def metadata_path(frame: bytes) -> Optional[str]:
+    """The path of a TraceMetadata (or old ValueMetadata) message, None for anything
+    else or if it does not decode or has no text path."""
+    if not frame.startswith((METADATA_PREFIX, OLD_METADATA_PREFIX)):
+        return None
+    try:
+        path = next(iter(cbor2.loads(frame).values()))["path"]
+    except Exception:
+        return None
+    return path if isinstance(path, str) else None
+
+
+def _retime_timestamp(frame: bytes, start: int, map_time: Callable[[int], int]) -> bytes:
     found = _timestamp_at(frame, start)
     if found is None or found[0] == 0:
         return frame
     t, at, end = found
     mapped = map_time(t)
     return frame if mapped == t else frame[:at] + cbor2.dumps(mapped) + frame[end:]
+
+
+def _retime_timestamps(frame: bytes, start: int, map_time: Callable[[int], int]) -> bytes:
+    """`frame` with each entry of the `timestamps` list of the block at `start` mapped;
+    `frame` itself if nothing changes or an entry is no unsigned integer."""
+    at = _key_value_at(frame, start, cbor2.dumps("timestamps"))
+    head = _head(frame, at) if at is not None else None
+    if head is None or head[0] != 4:
+        return frame
+    _, count, i = head
+    first = i
+    entries = []
+    changed = False
+    while (count < 0 and i < len(frame) and frame[i] != 0xFF) or len(entries) < count:
+        item = _head(frame, i)
+        if item is None or item[0] != 0:
+            return frame
+        t, end = item[1], item[2]
+        mapped = map_time(t) if t != 0 else t
+        changed = changed or mapped != t
+        entries.append(cbor2.dumps(mapped) if mapped != t else frame[i:end])
+        i = end
+    if not changed or (count < 0 and i >= len(frame)):
+        return frame
+    return frame[:first] + b"".join(entries) + frame[i:]
+
+
+def retime(frame: bytes, map_time: Callable[[int], int]) -> bytes:
+    """The message in `frame` with the timestamp `t` of a Sample (or Value) or Log changed to
+    `map_time(t)`, in place; a Samples block has its one `timestamp` or each entry of
+    `timestamps` changed. Other messages, and a timestamp 0 (none), as they are."""
+    for prefix in (SAMPLE_PREFIX, OLD_SAMPLE_PREFIX, LOG_PREFIX):
+        if frame.startswith(prefix):
+            return _retime_timestamp(frame, len(prefix), map_time)
+    if frame.startswith(SAMPLES_PREFIX):
+        start = len(SAMPLES_PREFIX)
+        if _key_value_at(frame, start, TIMESTAMP_KEY) is not None:
+            return _retime_timestamp(frame, start, map_time)
+        return _retime_timestamps(frame, start, map_time)
+    return frame
 
 
 def split_items(data: bytes) -> Tuple[List[bytes], bytes]:

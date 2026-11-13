@@ -67,6 +67,76 @@ fn demo_model() -> model::Model {
     model
 }
 
+/// The demo model with what targets say about two traces: the unit, description and
+/// expected range of the motor speed, and the description and labels of a mode trace,
+/// which has a sample every 2 s.
+fn metadata_model() -> model::Model {
+    let mut model = demo_model();
+    let mut send = |message: proto::Message| {
+        model.receive("", &serde_cbor_2::to_vec(&message).expect("a message"));
+    };
+    send(proto::Message::TraceMetadata(proto::TraceMetadata {
+        path: "motor.speed_rpm".to_owned(),
+        unit: "rpm".to_owned(),
+        description: "Speed of the motor shaft, measured by the encoder".to_owned(),
+        range: Some(proto::ExpectedRange {
+            min: 0.0,
+            max: 3000.0,
+        }),
+        ..Default::default()
+    }));
+    send(proto::Message::TraceMetadata(proto::TraceMetadata {
+        path: "motor/mode".to_owned(),
+        description: "Operating mode of the motor controller".to_owned(),
+        labels: [(0, "Idle"), (1, "Ramp"), (2, "Run"), (3, "Fault")]
+            .into_iter()
+            .map(|(number, label)| (number, label.to_owned()))
+            .collect(),
+        ..Default::default()
+    }));
+    let (oldest, newest) = model.time_span().expect("the recording has data");
+    let period = 2_000_000_000;
+    let values = (0..=(newest - oldest) / period)
+        .map(|i| proto::Data::Uint([0, 1, 2, 2, 2, 2, 1, 0, 3, 0][i as usize % 10]))
+        .collect();
+    model.receive(
+        "",
+        &serde_cbor_2::to_vec(&proto::Message::Samples(proto::Samples {
+            path: "motor/mode".to_owned(),
+            values,
+            times: proto::SampleTimes::Period {
+                timestamp: oldest,
+                period,
+            },
+        }))
+        .expect("a block"),
+    );
+    model
+}
+
+/// The metadata model with a long description of the mode trace, which wraps in a
+/// tooltip.
+fn long_description_model() -> model::Model {
+    let mut model = metadata_model();
+    model.receive(
+        "",
+        &serde_cbor_2::to_vec(&proto::Message::TraceMetadata(proto::TraceMetadata {
+            path: "motor/mode".to_owned(),
+            description: "Operating mode of the motor controller: it idles until enabled, \
+                          ramps the speed up to the setpoint, runs there, and drops into \
+                          fault when the current limit trips"
+                .to_owned(),
+            labels: [(0, "Idle"), (1, "Ramp"), (2, "Run"), (3, "Fault")]
+                .into_iter()
+                .map(|(number, label)| (number, label.to_owned()))
+                .collect(),
+            ..Default::default()
+        }))
+        .expect("a message"),
+    );
+    model
+}
+
 fn demo_layout() -> layout::Layout {
     let mut presets = presets::read("demo-presets.json", PRESETS).expect("the demo presets read");
     layout::Layout::from_saved(presets.remove(0).layout)
@@ -328,6 +398,37 @@ fn screenshots_views() {
     for (name, json) in views {
         view_shot(name, json);
     }
+    // bands that write the labels a target declares
+    view_shot_of(
+        "view-states-labels",
+        metadata_model(),
+        r#"{"name": "Motor", "kind": {"States": {"traces": ["motor.state", "motor/mode"]}}}"#,
+        None,
+    );
+    // the tooltip over the lower band row: the label, the number faint, and the
+    // description of the trace
+    view_shot_of(
+        "view-states-labels-tooltip",
+        metadata_model(),
+        r#"{"name": "Motor", "kind": {"States": {"traces": ["motor.state", "motor/mode"]}}}"#,
+        Some(egui::pos2(360.0, 270.0)),
+    );
+
+    // the plot of a labelled trace: the tooltip writes the label, the number faint, and
+    // the description wrapped
+    view_shot_of(
+        "view-plot-labels-tooltip",
+        long_description_model(),
+        r#"{"name": "Motor", "kind": {"Plot": {"traces": ["motor.speed_rpm", "motor/mode"]}}}"#,
+        Some(egui::pos2(345.0, 345.0)),
+    );
+    // label cells in the table
+    view_shot_of(
+        "view-table-labels",
+        metadata_model(),
+        r#"{"name": "Values", "kind": {"Table": {"traces": ["motor.speed_rpm", "motor.state", "motor/mode"]}}}"#,
+        None,
+    );
 
     // boxes of loop timings at their edge cases: many outliers, a long name, no
     // samples in the window, all samples equal, and a fixed value range that one box
@@ -401,7 +502,7 @@ fn timing_model() -> model::Model {
     let mut normal = move |sigma: f64| (random() + random() + random() - 1.5) * 2.0 * sigma;
     let mut model = model::Model::default();
     let append = |model: &mut model::Model, path: &str, seconds: f64, value: f64| {
-        model.traces.append(&proto::Value {
+        model.traces.append(&proto::Sample {
             timestamp: (seconds * 1.0e9).round() as u64,
             path: path.to_owned(),
             value: proto::Data::Float(value),
@@ -456,7 +557,15 @@ fn timing_model() -> model::Model {
         "comms/poll_period",
         "adc/conversion",
     ] {
-        model.traces.set_unit(path, "µs");
+        model.receive(
+            "",
+            &serde_cbor_2::to_vec(&proto::Message::TraceMetadata(proto::TraceMetadata {
+                path: path.to_owned(),
+                unit: "µs".to_owned(),
+                ..Default::default()
+            }))
+            .expect("metadata"),
+        );
     }
     model
 }
@@ -611,4 +720,155 @@ fn screenshots_panels() {
     theme::install(&harness.ctx);
     harness.run_steps(4);
     save_both(&mut harness, "panel-properties-distribution");
+
+    // the properties of a plot of traces the target describes
+    let mut layout = layout::Layout::from_saved(
+        serde_json::from_str(
+            r#"{"name": "", "kind": "Tabs", "active": 0, "children": [{"View": {"name": "Motor", "kind": {"Plot": {"traces": ["motor.speed_rpm", "motor/mode"]}}}}]}"#,
+        )
+        .expect("a layout"),
+    );
+    layout.select_named("Motor");
+    let model = metadata_model();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(300.0, 900.0))
+        .with_pixels_per_point(PIXELS_PER_POINT)
+        .wgpu()
+        .build_ui_state(
+            move |ui, layout: &mut layout::Layout| {
+                paint_background(ui, ui.tokens().card);
+                let connected = Default::default();
+                let context = view::PropertiesContext {
+                    model: &model,
+                    connected: &connected,
+                    plots: &NO_PLOTS,
+                };
+                layout.properties_ui(ui, &context);
+            },
+            layout,
+        );
+    theme::install(&harness.ctx);
+    harness.run_steps(4);
+    save_both(&mut harness, "panel-properties-traces");
+
+    // the properties of a records table, with the facts a target declares under a column
+    let mut layout = layout::Layout::from_saved(
+        serde_json::from_str(
+            r#"{"name": "", "kind": "Tabs", "active": 0, "children": [{"View": {"name": "Motor", "kind": {"Table": {"layout": "Records", "traces": ["motor"]}}}}]}"#,
+        )
+        .expect("a layout"),
+    );
+    layout.select_named("Motor");
+    let model = metadata_model();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(300.0, 420.0))
+        .with_pixels_per_point(PIXELS_PER_POINT)
+        .wgpu()
+        .build_ui_state(
+            move |ui, layout: &mut layout::Layout| {
+                paint_background(ui, ui.tokens().card);
+                let connected = Default::default();
+                let context = view::PropertiesContext {
+                    model: &model,
+                    connected: &connected,
+                    plots: &NO_PLOTS,
+                };
+                layout.properties_ui(ui, &context);
+            },
+            layout,
+        );
+    theme::install(&harness.ctx);
+    harness.run_steps(4);
+    save_both(&mut harness, "panel-properties-records-facts");
+
+    // the status chip while a connection speaks a newer protocol
+    let open: HashSet<String> = ["lab".to_owned()].into();
+    let newer = vec!["lab: protocol 2 is newer than blip".to_owned()];
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(260.0, 36.0))
+        .with_pixels_per_point(PIXELS_PER_POINT)
+        .wgpu()
+        .build_ui(move |ui| {
+            paint_background(ui, ui.tokens().canvas);
+            ui.horizontal_centered(|ui| {
+                status_chip(ui, &open, &newer, Some(RATE));
+            });
+        });
+    theme::install(&harness.ctx);
+    harness.run_steps(4);
+    save_both(&mut harness, "chip-connections-newer");
+}
+
+/// Serves one `hello` to the first client on `port`. Returns the address. The port is
+/// fixed so that the screenshot shows the same address on every render.
+fn serve_hello(port: u16, hello: proto::Hello) -> String {
+    let listener = TcpListener::bind(("127.0.0.1", port)).expect("the port is free");
+    let message = serde_cbor_2::to_vec(&proto::Message::Hello(hello)).expect("a Hello");
+    let (go, wait) = mpsc::channel();
+    go.send(()).expect("the server waits");
+    std::thread::spawn(move || serve(listener, vec![message], wait));
+    format!("ws://127.0.0.1:{port}/ws/outpost")
+}
+
+#[test]
+#[ignore = "renders the screenshots of the documentation, see the module"]
+fn screenshots_connections() {
+    let bench = serve_hello(
+        47101,
+        proto::Hello {
+            version: 1,
+            name: Some("rig-7".to_owned()),
+            clock: Some(proto::Clock::Boot),
+            sender: Some("sonde 1.2".to_owned()),
+        },
+    );
+    let lab = serve_hello(
+        47102,
+        proto::Hello {
+            version: 2,
+            name: Some("lab-pc".to_owned()),
+            clock: Some(proto::Clock::Epoch),
+            sender: Some("blip-outpost 0.4".to_owned()),
+        },
+    );
+    let mut connections = connections::Connections::default();
+    connections.set_saved(
+        [
+            ("bench", bench),
+            ("lab", lab),
+            ("spare", "ws://127.0.0.1:9/spare".to_owned()),
+        ]
+        .into_iter()
+        .map(|(name, address)| connections::Connection {
+            name: name.to_owned(),
+            address,
+        })
+        .collect(),
+    );
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(330.0, 260.0))
+        .with_pixels_per_point(PIXELS_PER_POINT)
+        .wgpu()
+        .build_ui_state(
+            |ui, connections: &mut connections::Connections| {
+                paint_background(ui, ui.tokens().canvas);
+                connections.receive(|_| {});
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_width(300.0);
+                    connections.ui(ui, false);
+                });
+            },
+            connections,
+        );
+    theme::install(&harness.ctx);
+    harness.run_steps(2);
+    harness.get_by_label_contains("bench").click();
+    harness.run_steps(2);
+    harness.get_by_label_contains("lab").click();
+    harness.event(egui::Event::PointerGone);
+    step_until(&mut harness, "the Hellos", |connections| {
+        connections.newer().len() == 1 && connections.is_connected()
+    });
+    harness.run_steps(4);
+    save_both(&mut harness, "popup-connections");
 }

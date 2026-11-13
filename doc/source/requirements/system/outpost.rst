@@ -85,7 +85,9 @@ The blip-outpost library and command line.
    The outpost shall come with a simulator, an example script that streams
    synthetic CPU load and sensor values at different sampling rates, and log
    records of all severity levels, without hardware, and offers actions that
-   change what it streams.
+   change what it streams. It shall send a ``Hello``, trace metadata with
+   descriptions, labels of integer values and expected ranges, and at least
+   one trace as ``Samples`` blocks.
 
 .. req:: Record messages
    :id: REQ_OUTPOST_RECORD
@@ -105,3 +107,38 @@ The blip-outpost library and command line.
    The outpost shall send the messages of a recording file to blip unchanged,
    except that recorded actions are disabled, at the pace of their timestamps
    or faster.
+
+.. req:: Hello of the outpost
+   :id: REQ_OUTPOST_HELLO
+   :status: implemented
+   :component: outpost
+   :satisfies: STK_DEVICE_IF, STK_LIVE_OBSERVE
+
+   The outpost serving a script shall send a ``Hello`` to each client when it
+   connects, with the target name and clock the script gives, by default the
+   hostname of the machine and the clock ``epoch``, and itself and its
+   version as the sender. The outpost shall keep the latest ``Hello`` a
+   target of its passthrough sends and give it to clients connecting later,
+   and forward a new one to all clients. The outpost shall forward messages
+   of a passthrough target that have the old names ``Value`` and
+   ``ValueMetadata`` unchanged.
+
+.. req:: Metadata in the outpost
+   :id: REQ_OUTPOST_METADATA
+   :status: implemented
+   :component: outpost
+   :satisfies: STK_DEVICE_IF, STK_MEANING
+
+   The API of the outpost shall let a script declare, for a trace, its unit, a
+   description, labels of integer values and an expected range, also for the
+   fields of a dataclass, and send them as ``TraceMetadata`` once per path,
+   also to clients connecting later.
+
+.. req:: Blocks of samples in the outpost
+   :id: REQ_OUTPOST_SAMPLES
+   :status: implemented
+   :component: outpost
+   :satisfies: STK_DEVICE_IF, STK_LIVE_OBSERVE
+
+   The outpost shall send the many samples of one trace that a script hands
+   over, at their timestamps or at a fixed period, as one ``Samples`` message.

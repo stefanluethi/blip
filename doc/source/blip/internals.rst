@@ -97,7 +97,7 @@ draws as often as data arrives, not more.
 
 * ``logic`` drains all sockets. Each message goes through ``State::apply`` to
   ``Model::receive`` (while recording) or ``Model::receive_unrecorded``
-  (otherwise: only units, actions and answers). Answers to invocations go to
+  (otherwise: only the hello, metadata, actions and answers). Answers to invocations go to
   the invoker.
 * ``ui`` first updates the time range from the model (the span of the data;
   playing moves the window on), then draws the panels and the views, which
@@ -146,6 +146,21 @@ What happens to a message on its way into the model:
   are joined to the path of their record with ``.`` (``imu.acc``), array
   elements written with indices (``imu.acc[0]``); ``fields_start`` marks where
   the field names begin in the path, so the tree can fold a record.
+* **Messages.** A ``Sample`` is applied as it comes. A ``Samples`` block is
+  decoded by ``decode.rs`` in two passes over the frame: the first reads its
+  fields, checks each value and collects the timestamps, then
+  ``proto::SampleTimes::new`` checks the form of the times (the one function
+  proto and blip share); only if all passes is any sample applied, one by
+  one as a ``Sample`` would be. So a malformed block is dropped whole, with a
+  warning in the log and an error notice, and the other messages of the frame
+  are kept. The old names ``Value`` and ``ValueMetadata`` are read as
+  ``Sample`` and ``TraceMetadata``. The model collects the notices
+  (``Model::take_notices``, without repeats); ``App::logic`` turns them into
+  toasts, also those of an opened recording. A block counts once for the
+  rate of a readback.
+* **Hello.** ``connections.rs`` reads the ``Hello`` of a frame to show it and
+  passes it on; the model keeps it as a description of its source and takes
+  the clock from it.
 * **Kinds.** Integers are stored as ``i64``, as ``u64`` once one is above
   ``i64::MAX``, and the column switches to ``f64`` with the first float.
   Arrays are stored row-major with their shape. A sample of an incompatible
@@ -154,23 +169,34 @@ What happens to a message on its way into the model:
   newest (e.g. from a second outpost) is moved into place. One older than the
   newest 65 536 values of its path is dropped with a warning, as moving all of
   them for each value of a clock minutes behind would stall blip.
-* **Time base.** The first timestamp fixes the time base, UTC or time since
-  boot, and the origin the views count from. A value or log record of the
-  other base is dropped with a single warning, as it would land decades away
-  from the others.
-* **Units** come from ``ValueMetadata`` and are kept by path, also before the
-  first sample.
+* **Time base.** The model keeps the clock of each source from its latest
+  ``Hello``. The base of a sample is the clock of its source, else a guess
+  from its timestamp (``TimeBase::guess``: before 10\ :sup:`18` ns is time since
+  boot). The first accepted sample or log record, or an epoch ``Hello``, sets
+  the model's base, UTC or time since boot, and the first timestamp the
+  origin the views count from. A sample or log record of the other base is
+  dropped with a single warning, as it would land decades away from the
+  others. An epoch ``Hello`` while the base is time since boot removes the
+  samples and log records already received (``Model::drop_samples``, keeping
+  metadata, actions, descriptions and the recording) and sets the base to UTC;
+  later boot samples are dropped. The warning that connections send different
+  clocks is given once per model.
+* **Metadata** comes from ``TraceMetadata`` and is kept by path in ``Traces``,
+  also before the first sample, and through ``drop_samples``. A newer message
+  of a path replaces all of the earlier one. Lookups of the unit, the
+  description, the labels and the expected range fall back from the path of an
+  array element (``imu.acc[0]``) to its array trace (``imu.acc``).
 * **Log records** are kept, all of them, by path, in the order of their
   timestamps. A
   record with the timestamp 0 gets the newest time of the data received so
   far (or the wall clock if there is none), so it lines up with the samples
   of its target. Should the first timestamp then be in another time base,
-  e.g. an uptime, such records move to it. Levels above 4 count as errors, a record without a path is
+  e.g. an uptime, such records move to it. Levels above 4 count as errors (``proto::level``), a record without a path is
   at the path ``log/default``. Log records have no component: the part that
   wrote one is in its path, by convention ``log/<part>``. A ``component`` key
   of an old recording is ignored when decoding.
 * **Recording versus receiving.** Samples are kept only while recording.
-  What a target sends only once or seldom -- its units and its actions -- is
+  What a target sends only once or seldom -- its hello, its trace metadata and its actions -- is
   kept regardless, as the latest **description** per source and path.
   Clearing the data, or starting a recording, re-applies these descriptions,
   so a new recording starts with them and a saved recording is complete on
@@ -185,7 +211,7 @@ The model
 
 ``Model`` owns everything received since the data was last cleared:
 
-* ``Traces``: a table for each path values are sent to, with a column per leaf
+* ``Traces``: the trace metadata by path, and a table for each path values are sent to, with a column per leaf
   of its values, its traces, sorted by path so the fields of a record follow
   each other. The columns of a table share its ascending timestamps, so the
   fields of a record are kept together. The first record at a path sets its
@@ -207,7 +233,7 @@ The model
   between where the source changes, compressed fast as they arrive, a gzip
   member per 64 KiB, each a fraction of a millisecond of work, so the view
   does not stutter; saving writes the members one after another as they are.
-* The **descriptions**: the latest units and actions frame of each source,
+* The **descriptions**: the latest hello, metadata and actions frame of each source,
   re-applied by ``Model::clear``.
 
 Two ``Version`` counters let views and the timeline cache work: the
@@ -232,6 +258,10 @@ window length is persisted.
 
 Its times are seconds as floats, counted from the **origin**, the first
 timestamp the model received, so they keep nanoseconds also at Unix times.
+The **time base** of the time axes, the log table and the log tooltips is the
+one of the model (``Model::time_base``, time since boot while there is none),
+set by the clock of the ``Hello`` or guessed, not guessed again from the
+latest timestamp.
 Views turn them into integer nanoseconds with ``TimeRange::timestamp`` to look
 up samples, and the time axes write the times from those nanoseconds.
 
@@ -297,6 +327,38 @@ right-aligned ``Value``\ s in the tones strong, text, weak or faint. A view
 builds the tooltip from what is under the pointer, so all of them keep the
 same frame, spacing and colours.
 
+A labelled number is a ``Value`` with the label and, in the faint tone, the
+number (``Value::labelled``). A ``Footer`` below a rule holds the short name of
+the trace under the pointer and its description, wrapped to the larger of the
+grid's width and 200 points and cut with an ellipsis after three rows
+(``Tooltip::describe``). Which trace that is depends on the view: the band row
+under the pointer in States (``row_at``), the curve whose value at the hovered
+time is nearest the pointer within 12 points in Plot (``nearest_curve``), the
+trace of the header in the others.
+
+Trace metadata in the views
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Labels** is a ``DisplayFormat``, offered first for number and array traces
+  that declare labels (``DisplayFormat::of_kind``). ``Formats`` keeps a choice
+  only when it differs from the default of the trace (Labels if it has labels,
+  else Default), so layouts saved before give labelled traces Labels.
+  ``Number::format_labelled`` writes the label, or the number if it has none.
+  A band's colour follows the number, except for a label that is a log level
+  name. Stats and distributions keep numbers.
+* **The Traces section** of the properties (``traces_ui``) shows per trace its
+  format, unit, description, expected range and labels
+  (``trace_facts_rows``); the Records layout of a table adds the same rows
+  under each column. ``trace_hover`` writes the hover text of the tree, the
+  table and the Records headers.
+* **Fit.** ``Fit`` (``Expected`` or ``Values``) is saved in ``Plot`` and
+  ``Xy``, default ``Expected``, so older layouts get it. The row *Fit to* shows
+  only while a shown trace declares a range. ``Plot::range_y`` takes the union
+  of the declared ranges and the values of the traces without one, with the
+  usual margin, values beyond the declared range growing it; ``Xy::axis_ranges``
+  does the same for both axes. The heatmap's Auto colour scale is the declared
+  range of its array.
+
 Links between views
 ~~~~~~~~~~~~~~~~~~~
 
@@ -339,7 +401,8 @@ the connections.
 version and the presets, as JSON, described for users in
 :doc:`/reference/files`. ``presets::read`` reads the version first and
 brings older versions up to date, one version after another, before reading
-the presets; a file of a newer version is refused, and so are layout files of
+the presets; version 1 needs no migration, as version 2 only adds values and a
+field with a default. A file of a newer version is refused, and so are layout files of
 the versions before presets and presets without a name or with the same name.
 The connections read are kept apart as editing keeps them
 (``Connection::sanitized``). Format changes must add a migration there, not

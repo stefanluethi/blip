@@ -6,7 +6,7 @@ use proto::Data;
 fn traces(samples: &[(u64, &str, Data)]) -> Traces {
     let mut traces = Traces::default();
     for (timestamp, path, value) in samples {
-        traces.append(&proto::Value {
+        traces.append(&proto::Sample {
             timestamp: *timestamp,
             path: path.to_string(),
             value: value.clone(),
@@ -133,7 +133,7 @@ fn showing_an_array_keeps_the_axes_of_the_traces() {
     xy.against.insert("p.y".to_owned(), "rpm".to_owned());
     let lines = lines_of(&xy);
     let mut model = Model::default();
-    model.traces.append(&proto::Value {
+    model.traces.append(&proto::Sample {
         timestamp: 0,
         path: "adc".to_owned(),
         value: Data::Array(vec![Data::Float(1.0); 4]),
@@ -291,7 +291,7 @@ fn xy_harness(xy: Xy) -> egui_kittest::Harness<'static, State> {
         let timestamp = second * 1_000_000_000;
         let elements = (0..32).map(|i| Data::Float(value * f64::from(i))).collect();
         for (path, data) in [("adc", Data::Array(elements)), ("rpm", Data::Float(value))] {
-            model.traces.append(&proto::Value {
+            model.traces.append(&proto::Sample {
                 timestamp,
                 path: path.to_owned(),
                 value: data,
@@ -383,7 +383,11 @@ fn the_tooltips_of_points_and_elements() {
     use crate::app::model::numbers::Number::{Float, Int, Null};
     let mut model = Model::default();
     for (path, unit) in [("pose.x", "m"), ("pose.y", "m"), ("adc", "V")] {
-        model.traces.set_unit(path, unit);
+        model.traces.set_metadata(&proto::TraceMetadata {
+            path: path.into(),
+            unit: unit.into(),
+            ..Default::default()
+        });
     }
     let tooltip = point_tooltip(&model, ("pose.x", "pose.y"), "pose", 0, [1.25, -0.5]);
     let name = TraceName {
@@ -428,21 +432,63 @@ fn the_tooltips_of_points_and_elements() {
 }
 
 #[test]
+fn the_tooltips_of_points_and_elements_describe_the_trace() {
+    use super::super::tooltip::{Footer, Value};
+    use crate::app::model::numbers::Number::Float;
+    let mut model = Model::default();
+    model.traces.set_metadata(&proto::TraceMetadata {
+        path: "pose.y".into(),
+        description: "Lateral offset".into(),
+        labels: [(1, "left".to_owned())].into(),
+        ..Default::default()
+    });
+    model.traces.set_metadata(&proto::TraceMetadata {
+        path: "adc".into(),
+        description: "Raw reading".into(),
+        ..Default::default()
+    });
+    let tooltip = point_tooltip(&model, ("pose.x", "pose.y"), "pose", 0, [0.5, 1.0]);
+    assert_eq!(
+        tooltip.footer,
+        Some(Footer {
+            name: "y".into(),
+            description: "Lateral offset".into()
+        })
+    );
+    assert_eq!(
+        tooltip.groups[0][1].values,
+        [Value::text("left"), Value::faint("1")]
+    );
+    let one = [("adc", "adc", vec![Float(0.5)])];
+    assert!(element_tooltip(&model, 0, &one).footer.is_some());
+    let two = [one[0].clone(), ("b", "b", vec![Float(1.0)])];
+    assert_eq!(element_tooltip(&model, 0, &two).footer, None);
+}
+
+#[test]
 fn hovering_a_point_shows_the_trace_and_its_x_and_y() {
     use egui_kittest::kittest::Queryable;
 
     let mut model = Model::default();
     for i in 0..10_201_u64 {
         for (path, value) in [("pose.x", i % 101), ("pose.y", i / 101)] {
-            model.traces.append(&proto::Value {
+            model.traces.append(&proto::Sample {
                 timestamp: i * 1_000_000,
                 path: path.to_owned(),
                 value: Data::Float(value as f64),
             });
         }
     }
-    model.traces.set_unit("pose.x", "m");
-    model.traces.set_unit("pose.y", "m");
+    model.traces.set_metadata(&proto::TraceMetadata {
+        path: "pose.x".into(),
+        unit: "m".into(),
+        ..Default::default()
+    });
+    model.traces.set_metadata(&proto::TraceMetadata {
+        path: "pose.y".into(),
+        unit: "m".into(),
+        ..Default::default()
+    });
     let xy = Xy {
         traces: ["pose.x".to_owned(), "pose.y".to_owned()].into(),
         ..Xy::default()
@@ -492,4 +538,42 @@ fn hovering_arrays_shows_the_element_under_the_pointer() {
     let value = (2 * index).to_string();
     assert!(texts.contains(&value), "{value} in {texts:?}");
     assert!(harness.query_by_label_contains(" = ").is_none());
+}
+
+#[test]
+fn the_axes_fit_the_declared_ranges_with_expected() {
+    let mut model = Model::default();
+    for (timestamp, x, y, z) in [(1, 0.0, 2.0, 1.0), (2, 0.5, 3.0, 12.0)] {
+        for (path, value) in [("x", x), ("y", y), ("z", z)] {
+            model.traces.append(&proto::Sample {
+                timestamp,
+                path: path.to_owned(),
+                value: Data::Float(value),
+            });
+        }
+    }
+    for (path, min, max) in [("x", -1.0, 1.0), ("z", 0.0, 10.0)] {
+        model.traces.set_metadata(&proto::TraceMetadata {
+            path: path.into(),
+            range: Some(proto::ExpectedRange { min, max }),
+            ..Default::default()
+        });
+    }
+    let mut xy = Xy {
+        traces: ["x", "y", "z"].map(str::to_owned).into(),
+        xs: ["x".to_owned()].into(),
+        against: [("y", "x"), ("z", "x")]
+            .map(|(y, x)| (y.to_owned(), x.to_owned()))
+            .into(),
+        ..Xy::default()
+    };
+    assert_eq!(
+        xy.axis_ranges(&model, &[]),
+        [Some((-1.0, 1.0)), Some((0.0, 12.0))]
+    );
+    xy.fit = Fit::Values;
+    assert_eq!(
+        xy.axis_ranges(&model, &[]),
+        [Some((0.0, 0.5)), Some((1.0, 12.0))]
+    );
 }

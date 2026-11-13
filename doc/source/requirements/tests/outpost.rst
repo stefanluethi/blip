@@ -34,6 +34,18 @@ Tests of the requirements in :doc:`/requirements/system/outpost`.
    records, arrays, integers, bools, strings and nulls arrive as plain CBOR
    items.
 
+.. test:: Simulator outpost declares and blocks
+   :id: TEST_OUTPOST_SIM_META
+   :status: implemented
+   :component: outpost
+   :verifies: REQ_OUTPOST_SIM
+
+   ``outpost/tests/test_simulator.py::test_simulator_outpost_declares_and_blocks``
+   -- connects a WebSocket client to the outpost in simulator mode and
+   checks that it gets a ``Hello`` with the hostname and ``epoch`` clock, a
+   ``TraceMetadata`` with a description, one with labels and one with a range,
+   and at least one ``Samples`` block that is well-formed.
+
 .. test:: Simulator outpost streams traces at different rates
    :id: TEST_OUTPOST_SIM_RATES
    :status: implemented
@@ -126,3 +138,54 @@ Tests of the requirements in :doc:`/requirements/system/outpost`.
    ``outpost/tests/test_protobuf.py::test_log_records_take_level_text_and_the_component_as_a_path_level``
    -- the protobuf mapping appends the value of its component field to the
    path as one more level, below ``log`` when the path is empty.
+
+.. test:: The outpost sends and keeps a Hello
+   :id: TEST_OUTPOST_HELLO
+   :status: implemented
+   :component: outpost
+   :verifies: REQ_OUTPOST_HELLO
+
+   ``outpost/tests/test_outpost.py::test_a_client_gets_a_hello_first``,
+   ``test_name_and_clock_are_settable``, ``test_the_module_options_set_name_and_clock``,
+   ``test_a_hello_the_script_sends_replaces_its_own`` and
+   ``test_the_recording_starts_with_the_units_and_actions_sent_before`` check that a
+   client connecting to a script gets a ``Hello`` first with the name, clock (by
+   default the hostname and ``epoch``, both settable, a wrong clock refused) and the
+   sender ``blip-outpost`` with its version, that a ``Hello`` the script sends
+   replaces its own, and that the recording has it.
+   ``outpost/tests/test_socket.py::test_the_latest_hello_of_a_target_reaches_blips_connecting_later_and_a_new_one_is_forwarded``
+   checks that the latest ``Hello`` of a passthrough target is given to clients
+   connecting later and a new one is forwarded;
+   ``test_the_passthrough_the_replay_and_the_protobuf_link_send_no_hello_of_their_own``
+   (and ``outpost/tests/test_protobuf.py::test_the_protobuf_link_sends_no_hello_of_its_own``)
+   that they send none of their own;
+   ``outpost/tests/test_server.py::test_a_client_gets_the_hello_before_the_cached_messages``
+   the order and the cache of the server;
+   ``outpost/tests/test_socket.py::test_old_names_of_a_target_are_forwarded_unchanged_and_the_metadata_is_kept``
+   that ``Value`` and ``ValueMetadata`` of a passthrough target are forwarded unchanged.
+
+.. test:: The outpost sends metadata
+   :id: TEST_OUTPOST_METADATA
+   :status: implemented
+   :component: outpost
+   :verifies: REQ_OUTPOST_METADATA
+
+   ``outpost/tests/test_metadata.py`` -- checks that the unit, description, labels and range of a trace,
+   and those of the fields of a dataclass, are sent as ``TraceMetadata`` once
+   per path, that a client connecting later gets them, and that ones without
+   the optional fields are as before.
+
+.. test:: The outpost sends blocks of samples
+   :id: TEST_OUTPOST_SAMPLES
+   :status: implemented
+   :component: outpost
+   :verifies: REQ_OUTPOST_SAMPLES
+
+   ``outpost/tests/test_samples.py::test_a_block_has_a_period_or_timestamps``,
+   ``outpost/tests/test_samples.py::test_a_malformed_block_is_refused``,
+   ``outpost/tests/test_samples.py::test_a_script_hands_a_block_over_as_one_message``,
+   ``outpost/tests/test_samples.py::test_a_batch_hands_a_block_over_with_its_messages``,
+   ``outpost/tests/test_tracer.py::test_a_series_is_sent_at_its_timestamps`` --
+   checks that a series with timestamps and one with a period are
+   sent as one ``Samples`` message each, with exactly one of them and values of
+   the same length.

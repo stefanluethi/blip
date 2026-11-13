@@ -123,13 +123,17 @@ fn numbers_take_a_format_and_other_traces_do_not() {
         ("motor/errors", proto::Data::Uint(3)),
         ("motor/state", proto::Data::from("on")),
     ] {
-        model.traces.append(&proto::Value {
+        model.traces.append(&proto::Sample {
             timestamp: 0,
             path: path.to_owned(),
             value,
         });
     }
-    model.traces.set_unit("motor/errors", "count");
+    model.traces.set_metadata(&proto::TraceMetadata {
+        path: "motor/errors".into(),
+        unit: "count".into(),
+        ..Default::default()
+    });
     let mut harness = harness_with(model, |_, views| views[0]);
     let view = harness.state_mut().selected_view_mut().unwrap();
     let selection = view.selection_mut().unwrap().paths;
@@ -157,7 +161,7 @@ fn numbers_take_a_format_and_other_traces_do_not() {
 #[test]
 fn floats_are_not_offered_hex_or_binary() {
     let mut model = Model::default();
-    model.traces.append(&proto::Value {
+    model.traces.append(&proto::Sample {
         timestamp: 0,
         path: "motor/speed".to_owned(),
         value: proto::Data::Float(1.5),

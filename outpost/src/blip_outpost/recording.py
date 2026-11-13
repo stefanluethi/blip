@@ -3,7 +3,9 @@ one after another as a CBOR sequence (RFC 8742), compressed with gzip.
 
 blip opens these files, and saves the messages it received in the same format. Since
 version 2, a text string between the messages names the connection of blip the messages
-after it were received from. The outpost writes version 1, of one connection."""
+after it were received from. The outpost writes version 3, without connection names. The messages
+of versions 1 and 2 have Value and ValueMetadata, which blip reads as Sample and
+TraceMetadata."""
 
 import gzip
 import io
@@ -19,9 +21,9 @@ logger = logging.getLogger("blip_outpost.recording")
 
 FORMAT = "blip recording"
 # The version written, of the messages of one connection.
-VERSION = 1
+VERSION = 3
 # The newest version read.
-READ_VERSION = 2
+READ_VERSION = 3
 
 # The written messages are flushed this often, so a file is readable up to about
 # this long before the outpost stopped, also if it was killed.

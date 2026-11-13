@@ -13,7 +13,7 @@
 
 namespace sonde {
 
-/// Writes a blip recording: the header {"format": "blip recording", "version": 1} and
+/// Writes a blip recording: the header {"format": "blip recording", "version": 3} and
 /// then the batches, uncompressed. blip opens the file directly, the outpost replays it.
 /// Missing directories of the path are created.
 class FileSink final : public Sink {

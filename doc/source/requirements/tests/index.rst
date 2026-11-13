@@ -13,8 +13,11 @@ whose requirements the tests verify.
    distribution
    time
    connectivity
+   protocol
+   metadata
    control
    platforms
    files
    outpost
+   sonde
    documentation

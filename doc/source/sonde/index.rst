@@ -79,7 +79,8 @@ name, its log records at its name.
    #include <sonde/sonde.hpp>
 
    static sonde::Storage<512, 2> storage;              // 2 batches of 512 bytes
-   static sonde::Queue queue{storage, &uptime_ns};     // your clock, in ns
+   static sonde::Queue queue{storage, &uptime_ns,      // your clock, in ns
+                             sonde::Hello{"rig-7", sonde::TimeBase::Boot}};
    static sonde::Tracer motor{queue, "motor"};
    static sonde::Tracer left{motor, "left"};           // motor/left
 
@@ -103,10 +104,14 @@ nothing written). ``queue.dropped()`` counts the dropped messages.
    * - Call
      - Message
    * - ``value(path, value)``, ``value(timestamp, path, value)``
-     - ``Value`` of the trace ``path`` below the tracer, timestamped by the
+     - ``Sample`` of the trace ``path`` below the tracer, timestamped by the
        clock or explicitly
-   * - ``unit(path, unit)``
-     - ``ValueMetadata``
+   * - ``samples(path, values, timestamp, Period{ns})``,
+       ``samples(path, values, timestamps)``
+     - ``Samples``, a block of the trace ``path`` below the tracer, see
+       `Blocks of samples`_
+   * - ``unit(path, unit)``, ``metadata(path, Metadata{…})``
+     - ``TraceMetadata``, see `Metadata`_
    * - ``log(level, message)``, ``log(timestamp, level, message)``,
        ``logf(level, format, …)``, ``debug`` … ``error(message)``,
        ``debugf`` … ``errorf(format, …)``
@@ -130,6 +135,8 @@ path, e.g. for a gateway that passes on what other nodes send:
 
 It also has ``commit()``, which makes the open batch ready to send, and the
 calls of the consumer, see `Sending from firmware`_.
+
+Every queue sends a ``Hello`` before its first message, see `Hello`_.
 
 .. _sonde-values:
 
@@ -203,6 +210,62 @@ Your own types become values with an ``encode`` function next to the type:
 A message that does not fit into the open batch is encoded again into the
 next one, so fill and ``encode`` functions should have no side effects.
 
+Metadata
+--------
+
+``unit()`` tells blip the unit of a trace. ``metadata()`` sends the unit, a
+description, labels for integer values and the range the values are expected in,
+as one ``TraceMetadata``; what is empty is left out. Give the labels in
+ascending order of their value:
+
+.. code-block:: cpp
+
+   static const sonde::Label modes[] = {{0, "idle"}, {1, "ramp"}, {2, "run"}};
+   motor.metadata("mode", {{}, "Operating mode", {modes, 3}});
+   motor.metadata("speed", {"rpm", "Shaft speed", {}, sonde::Range{0, 3000}});
+
+blip shows the labels in place of the numbers, the description on hover and in
+tooltips, and fits plots to the range. Send the metadata of a trace in one call:
+a newer one replaces the earlier.
+
+Blocks of samples
+-----------------
+
+``samples()`` sends many samples of one trace as one message, much smaller than
+a ``value()`` for each. ``values`` is a C array, a ``std::array``, a
+``sonde::Span`` or ``sonde::array(n, fill)``. For samples at a fixed period give
+the timestamp of the first one and the period; sample ``i`` is at the timestamp
+plus ``i`` times the period. For irregular ones give a timestamp for each. The
+clock is not read for a block.
+
+.. code-block:: cpp
+
+   static std::uint16_t dma_buffer[64];
+
+   adc.samples("raw", dma_buffer, sonde::Timestamp{block_start_ns}, sonde::Period{250'000});
+
+   const float peaks[2] = {1.5f, 2.5f};
+   const sonde::Timestamp at[2] = {{4'000'000}, {4'500'000}};
+   adc.samples("peak", peaks, at);             // Invalid if the counts differ
+
+A block that is larger than a batch is ``TooLarge``: split it.
+
+Hello
+-----
+
+A queue sends a ``Hello`` once, before the first message of any kind, in the same
+batch: the version of the protocol (1), the name of the target, the clock of its
+timestamps and ``sonde 0.2.0`` as the sender. Give the name and the time base to the
+queue; a queue without a ``Hello`` sends the version and the sender only, and
+blip guesses the time base.
+
+.. code-block:: cpp
+
+   sonde::Queue queue{storage, &uptime_ns, sonde::Hello{"rig-7", sonde::TimeBase::Boot}};
+
+The queues of one link, e.g. a control task and an ISR on one UART, each send a
+``Hello``: give them the same one. It is not repeated, and cannot be turned off.
+
 Timestamps and clocks
 ---------------------
 
@@ -213,7 +276,11 @@ there, e.g. in an ISR. Hosted builds default to ``sonde::system_clock_ns``
 (UTC); on targets, pass your own. Without a clock, messages traced without a
 timestamp get 0.
 
-blip shows uptimes as time since boot, see :doc:`/overview/concepts`. When the
+The time base of the ``Hello`` tells blip which: ``TimeBase::Boot`` for an
+uptime, ``TimeBase::Epoch`` for UTC. blip shows uptimes as time since boot, see
+:doc:`/overview/concepts`; with ``TimeBase::Unknown``, the default, it guesses
+from the timestamps, which fails for a UTC clock that is not set yet. Give the time base
+whenever the clock is known. When the
 target restarts and its uptime starts over, the outpost shifts the new
 timestamps to follow the ones before.
 

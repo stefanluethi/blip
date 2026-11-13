@@ -610,7 +610,7 @@ fn row_ui(ui: &mut Ui, model: &Model, row: &Row, selection: &mut Selection<'_>) 
                 let Some(trace) = model.traces.get(path) else {
                     return;
                 };
-                let mut hover = format!("{}\n{}", trace.path, trace.samples.type_label());
+                let mut hover = super::trace_hover(model, trace);
                 let paths = match picks.view_type.selectable(trace) {
                     _ if picks.records => {
                         hover.push_str("\nTables of records show records");

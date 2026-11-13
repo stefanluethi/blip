@@ -107,6 +107,23 @@ void Encoder::close(const CborEncoder& container) {
     check(cbor_encoder_close_container(cbor_, &container));
 }
 
+namespace detail {
+
+void encode_labels(Encoder& encoder, Span<Label> labels) {
+    CborEncoder map;
+    if (!encoder.open_map(map, labels.size)) {
+        return;
+    }
+    Encoder entries{&map, encoder.error_};
+    for (std::size_t i = 0; i < labels.size; ++i) {
+        entries.sint(labels.data[i].value);
+        entries.string(labels.data[i].text.data(), labels.data[i].text.size());
+    }
+    encoder.close(map);
+}
+
+}  // namespace detail
+
 void Encoder::check(CborError error) {
     // Running out of space is no error here: tinycbor goes on counting the bytes needed,
     // and the tracer decides whether the message fits.

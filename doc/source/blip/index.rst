@@ -80,7 +80,7 @@ Preset
 
 Recording
    blip is connected all the time but keeps values and log records only while
-   **Record** is on; before, it collects only the units and actions the
+   **Record** is on; before, it collects only the trace metadata and actions the
    targets announce. A recording starts with the data cleared and can be
    saved to a ``.blip`` file and opened again. Actions are carried out only
    while recording, so the recording shows what they did. See :doc:`time`.

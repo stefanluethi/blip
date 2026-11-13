@@ -163,7 +163,7 @@ the plot in **Link** › **Plot**, upright or sideways:
 * The distribution shows the traces the plot shows, with their number formats,
   and follows as traces are checked in the plot. With the distribution
   selected, the tree shows them checked but greyed, under *Shows the traces
-  of the linked plot …*; check them in the plot. Its **Number format** is
+  of the linked plot …*; check them in the plot. Its number formats in **Traces** are
   greyed too (*Set by the linked plot*).
 * The value axis shows the y range the plot shows, as it is zoomed, panned
   or fixed. The bins cover that range, and the samples outside it are

@@ -709,9 +709,10 @@ fn paint_hatching(painter: &egui::Painter, rect: egui::Rect, stroke: egui::Strok
 /// Lists the log records of `model` of all paths in a bin, the first ones by time.
 fn log_tooltip_ui(ui: &mut egui::Ui, model: &Model, times: Range<u64>) {
     let (first, count) = (model.logs).first_between(times.start, times.end, TOOLTIP_ENTRIES);
+    let base = model.time_base().unwrap_or_default();
     for entry in first {
         ui.horizontal(|ui| {
-            ui.weak(TimeBase::guess(entry.time).format(entry.time, 3));
+            ui.weak(base.format(entry.time, 3));
             let level = egui::RichText::new(entry.level.as_str())
                 .color(theme::level_color(ui.visuals(), entry.level))
                 .monospace();

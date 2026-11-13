@@ -7,13 +7,13 @@ namespace sonde {
 
 namespace {
 
-// {"format": "blip recording", "version": 1}
+// {"format": "blip recording", "version": 3}
 constexpr std::uint8_t recording_header[] = {
     0xa2,                                                     // map of 2 pairs
     0x66, 'f', 'o', 'r', 'm', 'a', 't',                       // "format"
     0x6e, 'b', 'l', 'i', 'p', ' ', 'r', 'e', 'c', 'o', 'r', 'd', 'i', 'n', 'g',
     0x67, 'v', 'e', 'r', 's', 'i', 'o', 'n',                  // "version"
-    0x01,
+    0x03,
 };
 
 }  // namespace

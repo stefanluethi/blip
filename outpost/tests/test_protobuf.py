@@ -59,12 +59,19 @@ def up(schema: Schema, seq: int = 0, **item: Any) -> bytes:
 
 def values(sent: List[dict], plain: bool = False) -> List[tuple]:
     """The values sent, without those of the field `plain` of each Up unless asked."""
-    found = [(m["Value"]["path"], m["Value"]["value"], m["Value"]["timestamp"]) for m in sent if "Value" in m]
+    found = [(m["Sample"]["path"], m["Sample"]["value"], m["Sample"]["timestamp"]) for m in sent if "Sample" in m]
     return [v for v in found if plain or v[0] != "plain"]
 
 
 def units(sent: List[dict]) -> dict:
-    return {m["ValueMetadata"]["path"]: m["ValueMetadata"]["unit"] for m in sent if "ValueMetadata" in m}
+    return {m["TraceMetadata"]["path"]: m["TraceMetadata"]["unit"] for m in sent if "TraceMetadata" in m}
+
+
+def test_the_protobuf_link_sends_no_hello_of_its_own(schema):
+    outpost = Outpost()
+    ProtobufLink(outpost, schema, "ws://127.0.0.1:9/ws/robby", "test.link.Up")
+    assert outpost.send_hello is False
+    assert outpost._own_hello() is None
 
 
 def test_a_series_in_a_record_is_one_value_per_sample(schema):
@@ -140,7 +147,7 @@ def test_a_path_template_takes_field_values_and_units_go_once_per_path(schema):
         ("tasks/idle", {"runtime": pytest.approx(99.0), "priority": 0}, 3),
     ]
     assert units(sent) == {"tasks/idle.runtime": "%", "tasks/imu.runtime": "%"}
-    assert len([m for m in sent if "ValueMetadata" in m]) == 2
+    assert len([m for m in sent if "TraceMetadata" in m]) == 2
 
 
 def test_a_map_of_values_is_a_record_and_a_map_of_messages_a_level_per_key(schema):
@@ -495,8 +502,8 @@ async def test_the_link_translates_the_target_and_forwards_actions(schema):
                     got: dict = {}
                     while "battery/voltage" not in got or "bridge/rx" not in got:
                         message = cbor2.loads(await receive_message(blip))
-                        if "Value" in message:
-                            got[message["Value"]["path"]] = message["Value"]
+                        if "Sample" in message:
+                            got[message["Sample"]["path"]] = message["Sample"]
                     assert got["battery/voltage"]["value"] == pytest.approx(8.0)
                     assert got["bridge/rx"]["value"] == 10
 
@@ -510,8 +517,8 @@ async def test_the_link_translates_the_target_and_forwards_actions(schema):
 
                     while "outpost/frames" not in got:
                         message = cbor2.loads(await receive_message(blip))
-                        if "Value" in message:
-                            got[message["Value"]["path"]] = message["Value"]
+                        if "Sample" in message:
+                            got[message["Sample"]["path"]] = message["Sample"]
                     assert got["outpost/frames"]["value"] >= 2
             finally:
                 running.cancel()

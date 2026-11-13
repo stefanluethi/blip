@@ -181,3 +181,62 @@ fn floats_are_shortened_to_significant_digits() {
     assert_eq!(format_significant(1.234_5e-6, 3), "1.23e-6");
     assert_eq!(format_significant(0.0, 3), "0");
 }
+
+fn fault_labels() -> Labels {
+    [(-1, "fault"), (0, "off"), (1, "on")]
+        .into_iter()
+        .map(|(number, label)| (number, label.to_owned()))
+        .collect()
+}
+
+#[test]
+fn numbers_get_their_labels() {
+    let labels = fault_labels();
+    assert_eq!(Number::Int(-1).label(&labels), Some("fault"));
+    assert_eq!(Number::Uint(1).label(&labels), Some("on"));
+    assert_eq!(Number::Float(1.0).label(&labels), Some("on"));
+    for number in [
+        Number::Float(1.5),
+        Number::Bool(true),
+        Number::Uint(7),
+        Number::Uint(u64::MAX),
+        Number::Null,
+        Number::Float(f64::NAN),
+    ] {
+        assert_eq!(number.label(&labels), None, "{number:?}");
+    }
+}
+
+#[test]
+fn labels_replace_numbers_only_with_the_labels_format() {
+    let labels = fault_labels();
+    let write = |number: Number, format, labels| number.format_labelled(Some(4), format, labels);
+    let labelled = |number| write(number, DisplayFormat::Labels, Some(&labels));
+    assert_eq!(labelled(Number::Uint(1)), "on");
+    assert_eq!(labelled(Number::Uint(7)), "7");
+    assert_eq!(labelled(Number::Float(2.5)), "2.5");
+    assert_eq!(labelled(Number::Bool(true)), "true");
+    assert_eq!(
+        write(Number::Uint(1), DisplayFormat::Hex, Some(&labels)),
+        "0x1"
+    );
+    assert_eq!(write(Number::Uint(1), DisplayFormat::Labels, None), "1");
+}
+
+#[test]
+fn labels_are_offered_first_for_labelled_numbers() {
+    use DisplayFormat::*;
+    assert_eq!(
+        DisplayFormat::of_kind(NumberKind::Integer, true),
+        [Labels, Default, Hex, Binary, Scientific]
+    );
+    assert_eq!(
+        DisplayFormat::of_kind(NumberKind::Float, true),
+        [Labels, Default, Scientific]
+    );
+    assert!(DisplayFormat::of_kind(NumberKind::Bool, true).is_empty());
+    assert_eq!(
+        DisplayFormat::of_kind(NumberKind::Integer, false),
+        [Default, Hex, Binary, Scientific]
+    );
+}

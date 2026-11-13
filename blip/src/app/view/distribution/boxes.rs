@@ -489,6 +489,8 @@ pub struct Tip<'a> {
     pub orientation: Orientation,
     pub format: DisplayFormat,
     pub unit: Option<&'a str>,
+    /// What the target says of the trace.
+    pub description: Option<&'a str>,
 }
 
 impl Tip<'_> {
@@ -497,7 +499,9 @@ impl Tip<'_> {
     pub fn tooltip(&self) -> Tooltip {
         let tooltip = Tooltip::new(Header::Trace(self.trace.clone()));
         let Some(stats) = self.stats else {
-            return tooltip.note(NO_SAMPLES);
+            return tooltip
+                .note(NO_SAMPLES)
+                .describe(&self.trace.name, self.description);
         };
         let step = value_step(stats);
         let values = (tooltip_rows(stats, self.whiskers, self.orientation).into_iter())
@@ -521,7 +525,10 @@ impl Tip<'_> {
                 [Value::text(outliers.to_string()).faint_if(outliers == 0)],
             ));
         }
-        tooltip.group(values).group(counts)
+        tooltip
+            .group(values)
+            .group(counts)
+            .describe(&self.trace.name, self.description)
     }
 
     /// Shows the tooltip.

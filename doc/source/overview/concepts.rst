@@ -26,7 +26,7 @@ Connection
 Messages
 --------
 
-Everything a target sends is one of five messages, encoded in CBOR:
+Everything a target sends is one of seven messages, encoded in CBOR:
 
 .. list-table::
    :header-rows: 1
@@ -35,12 +35,22 @@ Everything a target sends is one of five messages, encoded in CBOR:
    * - Message
      - Meaning
      - Sent by the outpost with / by sonde with
-   * - ``Value``
+   * - ``Hello``
+     - Who is sending: the protocol version, the name of the target, the clock
+       of its timestamps and the sender. Sent first.
+     - ``Outpost(name=…, clock=…)`` / ``Hello``
+   * - ``Sample``
      - A sample of a trace: a timestamp, a path and a value.
      - ``value`` / ``value``
-   * - ``ValueMetadata``
-     - The unit of a trace, e.g. ``rpm``. Sent once or now and then.
-     - ``unit`` / ``unit``
+   * - ``Samples``
+     - A block of samples of one trace, with a first timestamp and a period or
+       a timestamp each.
+     - ``series`` / ``samples``
+   * - ``TraceMetadata``
+     - What a trace means: its unit, e.g. ``rpm``, a description, labels for
+       integer values and the range its values are expected in. Sent once or
+       now and then.
+     - ``metadata``, ``unit`` / ``metadata``
    * - ``Log``
      - A log record: timestamp, path, level and message text.
      - ``log`` / ``log``, ``logf``
@@ -87,15 +97,19 @@ Record
    with ``.``: the record ``imu`` gives the traces ``imu.acc`` and
    ``imu.valid``. The first record at a path sets its fields.
 
-Unit
-   Sent by the target in a ``ValueMetadata`` message, e.g. ``°C``, and shown
-   next to the values. Units come from the target only.
+Metadata
+   What the target says of a trace in a ``TraceMetadata`` message, all of it
+   optional: the **unit**, e.g. ``°C``, shown next to the values; a
+   **description**; **labels** for integer values, e.g. ``0`` is ``Idle`` and
+   ``1`` is ``Run``, so blip shows the words; and the **expected range** of the
+   values, which blip fits plots to. It comes from the target only. A newer
+   message of a trace replaces the earlier one.
 
 .. figure:: /diagrams/data-model.svg
    :target: ../_images/data-model.svg
    :class: diagram
-   :alt: Value messages with records become one trace per field; metadata sets
-         units; log messages become log records; the Actions message lists the
+   :alt: Sample messages with records become one trace per field; metadata sets
+         units, descriptions, labels and ranges; log messages become log records; the Actions message lists the
          actions.
 
    From messages to traces, log records and actions.
@@ -104,7 +118,8 @@ Log records
 -----------
 
 A log record has a timestamp, an optional path, one of the levels ``TRACE``,
-``DEBUG``, ``INFO``, ``WARN`` and ``ERROR`` and a message.
+``DEBUG``, ``INFO``, ``WARN`` and ``ERROR`` (0 to 4 on the wire; a higher one is
+shown as ``ERROR``) and a message.
 
 The path says where a record comes from, like the path of a trace, e.g.
 ``motor`` or ``robot/arm``; a record without a path is of the target as a
@@ -116,19 +131,23 @@ Timestamps
 ----------
 
 Each target stamps its own samples in nanoseconds: either the time of day
-(UTC since 1970) or the time since the target booted. A sample sent without a
+(UTC since 1970) or the time since the target booted, which it says in the
+``clock`` of its ``Hello``, ``"epoch"`` or ``"boot"``. A sample sent without a
 timestamp gets the time it is sent: by the outpost, the time of the PC, or the
 time of the target while the outpost passes one through or translates it; by
-sonde, the time of the queue's clock. blip shows timestamps that are too small
-to be a date (before 2001) as time since boot, e.g. ``0:01:23.456``, and others
-as local time of day. Targets with different time bases or clocks line up only
+sonde, the time of the queue's clock. A target that says nothing is guessed: blip shows
+timestamps that are too small to be a date (before 2001) as time since boot,
+e.g. ``0:01:23.456``, and others as local time of day. Targets with different time bases or clocks line up only
 as far as their clocks agree.
 
 The first sample sets the time base of the data: samples of the other base,
 e.g. at the time of day while the target sends its uptime, are dropped, with a
-warning, as one time axis cannot show both. Clearing the data starts afresh.
-Log records without a timestamp that arrive before any data get the time of
-the computer, and move to the first timestamp if it is an uptime.
+warning, as one time axis cannot show both. When one connection declares the
+time of day and another the time since boot, the time of day wins: blip warns
+once, removes the data of the uptime it has and drops the later. Clearing the
+data starts afresh. Log records with the timestamp 0, or without one, get the
+newest time of the data received so far, or the time of the computer while
+there is none, and move to the first timestamp if it is an uptime.
 
 When a target restarts, its uptime starts over. The outpost shifts the
 timestamps of the new run so that they follow the ones before, by the time

@@ -19,7 +19,7 @@ Everything a script needs is exported by the ``blip_outpost`` package:
      - Purpose
    * - ``start``, ``stop``, ``wait``
      - serve blip from a thread of its own, stop, block until :kbd:`Ctrl+C`
-   * - ``value``, ``series``, ``unit``, ``log``, ``send``
+   * - ``value``, ``series``, ``unit``, ``metadata``, ``log``, ``send``
      - send to blip, from any thread, each message with its full path
    * - ``batch``
      - hand what a thread sends in a block over at once, with one timestamp
@@ -39,21 +39,25 @@ Everything a script needs is exported by the ``blip_outpost`` package:
    * - ``Outpost``
      - an outpost of its own: the methods above, ``async with``,
        ``drain_async``, ``wait_for_client_async``, ``actions``, ``url``,
-       ``clients``, and ``on_invoke`` to carry out invocations in place of
+       ``clients``, ``name`` and ``clock`` of the ``Hello``, ``send_hello``, and
+       ``on_invoke`` to carry out invocations in place of
        the actions, e.g. by forwarding them
    * - ``Actions``
      - the registry of actions: ``add``, ``remove``, ``clear``,
        ``set_enabled``, ``is_enabled``, ``batch``, ``invoke``
    * - ``Range``, ``Unit``
-     - ``Annotated`` metadata of action parameters; ``Unit`` also of the
-       fields of a dataclass record
+     - ``Annotated`` metadata of action parameters; ``Unit`` and ``Range``
+       also of the fields of a dataclass record
+   * - ``Description``, ``Labels``
+     - ``Annotated`` metadata of the fields of a dataclass record
    * - ``ActionError``
      - raised by an action to reject an invocation
    * - ``LogLevel``
      - ``TRACE``, ``DEBUG``, ``INFO``, ``WARN``, ``ERROR``
    * - ``Message``, ``Data``
      - building messages by hand: ``Message.create_value``,
-       ``create_metadata``, ``create_log``, ``create_actions``
+       ``create_metadata``, ``create_samples``, ``create_hello``,
+       ``create_log``, ``create_actions``
    * - ``sleep_until``
      - sleep until a ``time.perf_counter()`` deadline in asyncio code
 
@@ -71,6 +75,7 @@ The functions of the module use one outpost of the script, see `get_outpost`.
 .. autofunction:: value
 .. autofunction:: series
 .. autofunction:: unit
+.. autofunction:: metadata
 .. autofunction:: log
 .. autofunction:: send
 .. autofunction:: batch
@@ -104,6 +109,8 @@ Actions
 
 .. autoclass:: Range
 .. autoclass:: Unit
+.. autoclass:: Description
+.. autoclass:: Labels
 .. autoexception:: ActionError
 
 Messages
@@ -114,7 +121,7 @@ Messages
    :undoc-members:
 
 .. autoclass:: Message
-   :members: create_value, create_metadata, create_log, create_actions, encode_cbor
+   :members: create_value, create_metadata, create_samples, create_hello, create_log, create_actions, encode_cbor
 
 .. py:data:: Data
 

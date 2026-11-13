@@ -3,7 +3,7 @@ use super::plotting::{is_point, to_screen};
 use super::stats::{self, Measurement};
 use super::time_axis::{self, TimeAxis, visible_range};
 use super::tooltip::{Header, Label, Row, Tooltip, TraceName, Value};
-use super::{Formats, PropertiesContext, ViewContext, Viewable, with_unit};
+use super::{Fit, Formats, PropertiesContext, ViewContext, Viewable, with_unit};
 use crate::app::model::numbers::{
     DisplayFormat, NumberKind, SHOWN_DIGITS, fixed_decimals, widest_fixed,
 };
@@ -208,6 +208,8 @@ pub struct Plot {
     pub y_min: Option<f64>,
     /// The top of the y axis, or `None` to fit all values of the shown traces.
     pub y_max: Option<f64>,
+    /// What the ends not set fit.
+    pub fit: Fit,
     /// The y range panned or zoomed to instead of the one of `y_min` and `y_max`, until
     /// a double click.
     #[serde(skip)]
@@ -235,6 +237,7 @@ impl Default for Plot {
             traces: BTreeSet::new(),
             y_min: None,
             y_max: None,
+            fit: Fit::default(),
             y_view: None,
             y_label: String::new(),
             interpolation: Interpolation::default(),
@@ -299,14 +302,23 @@ impl Plot {
         }
     }
 
-    /// The y range covered by all values of the shown traces, also outside the shown
-    /// window, with a margin.
-    fn range_y(&self, model: &Model) -> Option<(f64, f64)> {
+    /// The y range of the values of the shown traces for which `include` holds, also
+    /// outside the shown window, with a margin if `margin`.
+    fn values_y(
+        &self,
+        model: &Model,
+        include: impl Fn(&str) -> bool,
+        margin: bool,
+    ) -> Option<(f64, f64)> {
         let range = self
-            .selected_series_iter(model)
-            .filter_map(|(_, series, _)| series.range)
+            .selected_path_iter()
+            .filter(|&(path, _, _)| include(path))
+            .filter_map(|(path, _, _)| model.traces.series(path)?.range)
             .reduce(|(low_a, high_a), (low_b, high_b)| (low_a.min(low_b), high_a.max(high_b)));
         range.map(|(low, high)| {
+            if !margin {
+                return (low, high);
+            }
             let margin = if high > low {
                 (high - low) * Y_MARGIN_FRACTION
             } else {
@@ -314,6 +326,29 @@ impl Plot {
             };
             (low - margin, high + margin)
         })
+    }
+
+    /// The union of the expected ranges of the shown traces.
+    fn expected_y(&self, model: &Model) -> Option<(f64, f64)> {
+        (self.traces.iter())
+            .map(|path| model.traces.expected(path))
+            .fold(None, super::union)
+    }
+
+    /// The y range the axis fits, by `fit`: the declared ranges grown by the values of
+    /// the traces, those of traces without a range with a margin. Without a declared
+    /// range, or by `Values`, the values of all shown traces with a margin.
+    fn range_y(&self, model: &Model) -> Option<(f64, f64)> {
+        let declared = match self.fit {
+            Fit::Expected => self.expected_y(model),
+            Fit::Values => None,
+        };
+        let Some(declared) = declared else {
+            return self.values_y(model, |_| true, true);
+        };
+        let without = self.values_y(model, |path| model.traces.expected(path).is_none(), true);
+        let with = self.values_y(model, |path| model.traces.expected(path).is_some(), false);
+        super::union(Some(declared), super::union(without, with))
     }
 
     /// The y range the plot shows: the one panned or zoomed to, else the one of `y_min`
@@ -330,48 +365,70 @@ impl Plot {
         super::indexed_names(&self.traces)
     }
 
-    /// The shown numeric series that were received, with their names in the legend and
-    /// their indices, which pick their colors.
-    fn selected_series_iter<'a>(
-        &'a self,
-        model: &'a Model,
-    ) -> impl Iterator<Item = (&'a str, Series<'a>, usize)> {
-        self.selected_path_iter()
-            .filter_map(|(path, name, index)| Some((name, model.traces.series(path)?, index)))
-    }
-
     /// The tooltip with the values of the shown traces at `t` nanoseconds, a faint dash
-    /// for a trace without a series.
-    fn tooltip(&self, model: &Model, formats: &Formats, t: u64, base: TimeBase) -> Tooltip {
+    /// for a trace without a series, and the description of the trace `near` the
+    /// pointer, by its path.
+    fn tooltip(
+        &self,
+        model: &Model,
+        formats: &Formats,
+        t: u64,
+        base: TimeBase,
+        near: Option<&str>,
+    ) -> Tooltip {
+        let mut footer = None;
         let rows = self
             .selected_path_iter()
             .map(|(path, name, index)| {
-                let value = model
+                if near == Some(path) {
+                    footer = Some((name, model.traces.description(path)));
+                }
+                let labels = model.traces.labels(path);
+                let values = model
                     .traces
                     .series(path)
                     .and_then(|series| {
                         let number = series.number(closest_index(series.timestamps, t)?);
                         let unit = model.traces.unit(path);
-                        Some(Value::number(number, SHOWN_DIGITS, formats.of(path), unit))
+                        let format = formats.format_of(path, labels.is_some());
+                        Some(Value::labelled(number, SHOWN_DIGITS, format, unit, labels))
                     })
-                    .unwrap_or_else(Value::missing);
-                Row::new(Label::Trace(TraceName::new(name, path, index)), [value])
+                    .unwrap_or_else(|| vec![Value::missing()]);
+                Row::new(Label::Trace(TraceName::new(name, path, index)), values)
             })
             .collect();
-        Tooltip::new(Header::Text(base.format(t, 3))).group(rows)
+        let tooltip = Tooltip::new(Header::Text(base.format(t, 3))).group(rows);
+        match footer {
+            Some((name, description)) => tooltip.describe(name, description),
+            None => tooltip,
+        }
     }
 
-    /// Shows the values of the shown traces at `t` seconds.
+    /// Shows the values of the shown traces at `t` seconds, `y` being the height of the
+    /// pointer, with `points_per_value` points per unit of y.
     fn tooltip_ui(
         &self,
         ui: &mut egui::Ui,
         model: &Model,
         formats: &Formats,
-        t: f64,
+        (t, y, points_per_value): (f64, Option<f64>, f64),
         axis: TimeAxis,
     ) {
-        self.tooltip(model, formats, axis.timestamp(t), axis.base)
-            .ui(ui);
+        let t_ns = axis.timestamp(t);
+        let near = y.and_then(|y| {
+            let values: Vec<f64> = self
+                .selected_path_iter()
+                .map(|(path, ..)| {
+                    model.traces.series(path).map_or(f64::NAN, |series| {
+                        closest_index(series.timestamps, t_ns)
+                            .map_or(f64::NAN, |index| series.number(index).as_f64())
+                    })
+                })
+                .collect();
+            let index = nearest_curve(&values, y, points_per_value)?;
+            self.selected_path_iter().nth(index).map(|(path, ..)| path)
+        });
+        self.tooltip(model, formats, t_ns, axis.base, near).ui(ui);
     }
 
     /// Whether a stat of a shown trace is shown below the plot.
@@ -481,11 +538,33 @@ impl Plot {
             && !self.traces.is_empty()
         {
             let axis = response.axis;
+            let height = response.bounds.max()[1] - response.bounds.min()[1];
+            let at = (
+                t,
+                response.hovered_y,
+                f64::from(response.frame.height()) / height,
+            );
             response
                 .response
-                .on_hover_ui_at_pointer(|ui| self.tooltip_ui(ui, model, formats, t, axis));
+                .on_hover_ui_at_pointer(|ui| self.tooltip_ui(ui, model, formats, at, axis));
         }
     }
+}
+
+/// How near the pointer a curve is to be the one under it, in points.
+const NEAR_CURVE: f64 = 12.0;
+
+/// The index of the value in `values` nearest `y`, if within [`NEAR_CURVE`] at
+/// `points_per_value` points per unit of y; NaN values are skipped.
+fn nearest_curve(values: &[f64], y: f64, points_per_value: f64) -> Option<usize> {
+    values
+        .iter()
+        .enumerate()
+        .filter(|(_, value)| !value.is_nan())
+        .map(|(index, value)| (index, (value - y).abs() * points_per_value))
+        .filter(|&(_, distance)| distance <= NEAR_CURVE)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(index, _)| index)
 }
 
 /// The range of the y axis from `min` and `max` where they are set and from the ends of
@@ -621,16 +700,23 @@ impl Viewable for Plot {
             let Some(series) = model.traces.series(path) else {
                 continue;
             };
-            let format = formats.of(path);
+            let labels = model.traces.labels(path);
+            let format = formats.format_of(path, labels.is_some());
             let own_unit = model.traces.unit(path).filter(|_| unit.is_none());
             let (decimals, widest) = legend_slot(&series, format);
             let value = t.and_then(|t| {
                 let value = series.number(index_at(series.timestamps, t)?);
                 let text = match decimals {
                     Some(decimals) => value.format_fixed(decimals),
-                    None => value.format(Some(SHOWN_DIGITS), format),
+                    None => value.format_labelled(Some(SHOWN_DIGITS), format, labels),
                 };
-                Some(with_unit(text, own_unit.filter(|_| !value.is_null())))
+                // a label replaces the number without its unit
+                let labelled = format == DisplayFormat::Labels
+                    && labels.is_some_and(|labels| value.label(labels).is_some());
+                Some(with_unit(
+                    text,
+                    own_unit.filter(|_| !value.is_null() && !labelled),
+                ))
             });
             let widest = widest.map(|widest| with_unit(widest, own_unit));
             legend_value(ui, path, value.as_deref(), (widest.as_deref(), format));
@@ -667,10 +753,13 @@ impl Viewable for Plot {
             .unwrap_or_default()
             .to_owned();
         super::properties_section(ui, "Y axis", |ui| {
-            let range = (self.y_min, self.y_max);
-            super::optional_number_row(ui, "Min", &mut self.y_min);
-            super::optional_number_row(ui, "Max", &mut self.y_max);
-            if (self.y_min, self.y_max) != range {
+            let range = (self.y_min, self.y_max, self.fit);
+            let declared = self.expected_y(model).is_some();
+            super::fit_row(ui, &mut self.fit, declared);
+            let fitted = self.range_y(model);
+            super::optional_number_row(ui, "Min", &mut self.y_min, fitted.map(|r| r.0));
+            super::optional_number_row(ui, "Max", &mut self.y_max, fitted.map(|r| r.1));
+            if (self.y_min, self.y_max, self.fit) != range {
                 // show the range as set
                 self.y_view = None;
             }

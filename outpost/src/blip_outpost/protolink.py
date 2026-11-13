@@ -59,6 +59,7 @@ class ProtobufLink:
         idle_timeout: Optional[float] = 5.0,
     ) -> None:
         self.outpost = outpost
+        outpost.send_hello = False
         self.url = url
         # None or 0: wait for the target forever
         self.idle_timeout = idle_timeout or None

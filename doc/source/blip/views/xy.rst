@@ -24,13 +24,18 @@ spectrum. The axes of the other traces are kept for when no array is checked.
 
 Hover a point for a tooltip with the name of its line and the short names,
 values and units of its x and y traces; away from points there is none. For
-arrays it shows the index ``[i]`` and a row per array.
+arrays it shows the index ``[i]`` and a row per array. Values with a label show
+it, with the number faint beside it, and below a rule the description of the y
+trace, or of the array if one is shown, if the target sent it.
 
 The view fits all data of its traces until it is dragged or zoomed.
 
 Properties:
 
-* **Axes** -- for each trace whether it is on the **X** or the **Y** axis, and
+* **Axes** -- **Fit to** *Expected* or *Values*, shown while a shown trace
+  declares its expected range: the x axis fits the range of the x traces and the y
+  axis the ranges of the y traces, grown by values beyond them, as for the plot.
+  For each trace whether it is on the **X** or the **Y** axis, and
   for a y trace the x trace it is plotted against (any number of traces can be
   on the x axis, e.g. the positions of two robots); **Equal axes** gives a unit
   the same length on both axes, e.g. for positions.

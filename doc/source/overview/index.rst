@@ -43,7 +43,7 @@ The parts
        UDP, to an outpost; or write recording files from unit tests that blip
        opens.
 
-They exchange **messages**: values, units, log records, the list of actions and
+They exchange **messages**: samples of traces, what the traces mean (unit, description, labels), log records, the list of actions and
 the answers to invocations, as CBOR over WebSockets (see
 :doc:`/reference/protocol`). The same messages, as received, make up a
 **recording file**, whoever writes it: blip, the outpost or sonde.

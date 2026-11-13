@@ -49,3 +49,12 @@ Stakeholder Requirements
    As a developer I want documentation that gets me going without hardware,
    shows me how to do my task, lets me look up every control and option, and
    helps me when something does not work, for the version I use.
+
+.. stk:: Values with their meaning
+   :id: STK_MEANING
+   :status: implemented
+   :priority: medium
+
+   As a firmware developer I want to see values with the meaning the target
+   gives them, such as the name of a state, its unit, what it measures and the
+   range it is expected in, so that I need not look them up elsewhere.

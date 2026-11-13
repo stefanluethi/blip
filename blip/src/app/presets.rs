@@ -10,8 +10,9 @@
 use super::connections::Connection;
 use super::layout::Group;
 
-/// Version of the format of the presets, written by [`write`].
-pub const VERSION: u32 = 1;
+/// Version of the format of the presets, written by [`write`]. Version 2 adds the
+/// number format Labels and the Fit to of plots and XY views; version 1 reads as it is.
+pub const VERSION: u32 = 2;
 
 /// Storage key of the presets, in the format of the files.
 const PRESETS_KEY: &str = "presets";
@@ -111,7 +112,7 @@ pub fn read(name: &str, bytes: &[u8]) -> Result<Vec<Preset>, String> {
     if version > VERSION {
         return Err(format!("{name} holds presets of a newer version of blip"));
     }
-    // older versions are migrated here, when there are any
+    // older versions are migrated here, when there are any; version 1 needs no migration
     let file: PresetsFile = serde_json::from_slice(bytes)
         .map_err(|error| format!("{name} is no blip presets file: {error}"))?;
     let mut presets = file.presets;

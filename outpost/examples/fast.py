@@ -75,8 +75,8 @@ UNITS = {
     "fast/stats/lag_s": "s",
 }
 
-# A Value message is its head, the timestamp, the middle with its path and the value
-_VALUE_HEAD = b"\xa1" + cbor2.dumps("Value") + b"\xa3" + cbor2.dumps("timestamp")
+# A Sample message is its head, the timestamp, the middle with its path and the value
+_VALUE_HEAD = b"\xa1" + cbor2.dumps("Sample") + b"\xa3" + cbor2.dumps("timestamp")
 _STAMP = struct.Struct(">BQ").pack  # a CBOR unsigned integer of 64 bits
 _FLOAT = struct.Struct(">Bd").pack  # a CBOR float of 64 bits
 _UINT64, _FLOAT64 = 0x1B, 0xFB
@@ -88,7 +88,7 @@ def value_middle(path: str) -> bytes:
 
 
 def encode_float_value(stamp: bytes, middle: bytes, value: float) -> bytes:
-    """A Value message of a float, `stamp` from `encode_stamp`, as cbor2 encodes it."""
+    """A Sample message of a float, `stamp` from `encode_stamp`, as cbor2 encodes it."""
     return _VALUE_HEAD + stamp + middle + _FLOAT(_FLOAT64, value)
 
 
