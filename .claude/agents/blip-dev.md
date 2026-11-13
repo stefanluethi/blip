@@ -41,6 +41,10 @@ ranges.
   that the new ones work, and open at most one or two of them, shrunk first
   (`magick x.png -resize 50% x-small.png`). Add no temporary screenshot tests. Every
   image you open stays in your context and makes each later turn more expensive.
+- When you render screenshots, render into a scratch directory
+  (`BLIP_SCREENSHOTS_DIR=<dir>`) and copy into `doc/source/screenshots` only the PNGs
+  your change adds or intentionally changes; never leave re-encoded copies of unchanged
+  screenshots.
 - Read large files in parts: find the place with `grep -n`, then read that range
   (Read with offset and limit, or `sed -n`). Read a whole file only when you need all
   of it.
