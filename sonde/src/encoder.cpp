@@ -1,17 +1,14 @@
 #include <sonde/sonde.hpp>
 
-#include <cfloat>
-#include <cmath>
 #include <cstring>
 
 namespace sonde {
 
 namespace {
 
-/// The half precision bits of `value` if it is one exactly.
-bool to_half(float value, std::uint16_t& half) {
-    std::uint32_t bits;
-    std::memcpy(&bits, &value, sizeof bits);
+/// The half precision bits of the float with the bits `bits` if it is one exactly, any
+/// NaN as the quiet one.
+bool to_half(std::uint32_t bits, std::uint16_t& half) {
     const auto sign = static_cast<std::uint16_t>((bits >> 16) & 0x8000u);
     const std::uint32_t exponent = (bits >> 23) & 0xffu;
     const std::uint32_t mantissa = bits & 0x7fffffu;
@@ -20,7 +17,11 @@ bool to_half(float value, std::uint16_t& half) {
         half = sign;
         return true;
     }
-    if (exponent == 0 || exponent == 0xff) {  // subnormal floats are too small, inf, NaN
+    if (exponent == 0xff) {  // infinity or NaN
+        half = mantissa != 0 ? 0x7e00 : static_cast<std::uint16_t>(sign | 0x7c00u);
+        return true;
+    }
+    if (exponent == 0) {  // subnormal floats are too small
         return false;
     }
     const int power = static_cast<int>(exponent) - 127;
@@ -44,6 +45,52 @@ bool to_half(float value, std::uint16_t& half) {
     return false;
 }
 
+/// The single precision bits of the double with the bits `bits` if it is one exactly,
+/// or infinite or NaN. On the bits, as comparing and converting doubles takes library
+/// calls on a target without an FPU for them.
+bool to_single(std::uint64_t bits, std::uint32_t& single) {
+    const auto sign = static_cast<std::uint32_t>(bits >> 63) << 31;
+    const auto exponent = static_cast<std::uint32_t>(bits >> 52) & 0x7ffu;
+    const std::uint64_t mantissa = bits & ((std::uint64_t{1} << 52) - 1);
+
+    if (exponent == 0x7ff) {  // infinity or NaN
+        single = sign | 0x7f800000u | (mantissa != 0 ? 0x400000u : 0u);
+        return true;
+    }
+    if (exponent == 0) {  // zero, subnormal doubles are too small
+        single = sign;
+        return mantissa == 0;
+    }
+    const int power = static_cast<int>(exponent) - 1023;
+    if (power >= -126 && power <= 127) {  // a normal float, with 23 of the 52 bits
+        if ((mantissa & 0x1fffffffu) != 0) {
+            return false;
+        }
+        single = sign | (static_cast<std::uint32_t>(power + 127) << 23) |
+                 static_cast<std::uint32_t>(mantissa >> 29);
+        return true;
+    }
+    if (power >= -149 && power < -126) {  // a subnormal float, a multiple of 2^-149
+        const std::uint64_t significand = mantissa | (std::uint64_t{1} << 52);
+        const int shift = -(power + 97);
+        if ((significand & ((std::uint64_t{1} << shift) - 1)) != 0) {
+            return false;
+        }
+        single = sign | static_cast<std::uint32_t>(significand >> shift);
+        return true;
+    }
+    return false;
+}
+
+/// Writes the float with the bits `bits` as a half if that keeps it.
+CborError encode_single(CborEncoder* cbor, std::uint32_t bits) {
+    std::uint16_t half;
+    if (to_half(bits, half)) {
+        return cbor_encode_half_float(cbor, &half);
+    }
+    return cbor_encode_floating_point(cbor, CborFloatType, &bits);
+}
+
 }  // namespace
 
 void Encoder::null() {
@@ -64,26 +111,19 @@ void Encoder::sint(std::int64_t value) {
 
 // Floats take the shortest width that keeps the value, as serde_cbor writes them.
 void Encoder::floating(float value) {
-    std::uint16_t half;
-    if (std::isnan(value)) {
-        half = 0x7e00;
-    } else if (std::isinf(value)) {
-        half = value > 0 ? 0x7c00 : 0xfc00;
-    } else if (!to_half(value, half)) {
-        check(cbor_encode_float(cbor_, value));
-        return;
-    }
-    check(cbor_encode_half_float(cbor_, &half));
+    std::uint32_t bits;
+    std::memcpy(&bits, &value, sizeof bits);
+    check(encode_single(cbor_, bits));
 }
 
 void Encoder::floating(double value) {
-    if (!std::isfinite(value)) {
-        floating(static_cast<float>(value));
-    } else if (std::fabs(value) <= FLT_MAX &&
-               static_cast<double>(static_cast<float>(value)) == value) {
-        floating(static_cast<float>(value));
+    std::uint64_t bits;
+    std::memcpy(&bits, &value, sizeof bits);
+    std::uint32_t single;
+    if (to_single(bits, single)) {
+        check(encode_single(cbor_, single));
     } else {
-        check(cbor_encode_double(cbor_, value));
+        check(cbor_encode_floating_point(cbor_, CborDoubleType, &bits));
     }
 }
 

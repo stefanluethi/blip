@@ -77,6 +77,7 @@ endif()
 
 add_library(sonde
     src/encoder.cpp
+    src/logf.cpp
     src/queue.cpp
     src/tracer.cpp
     $<$<BOOL:${SONDE_HOSTED}>:src/file_sink.cpp>
@@ -96,6 +97,9 @@ if(MSVC)
     target_compile_definitions(sonde PRIVATE _CRT_SECURE_NO_WARNINGS)
 else()
     target_compile_options(sonde PRIVATE -Wall -Wextra -Wpedantic -Wshadow -Wconversion)
+    # a section per function, so that a linker that collects garbage (--gc-sections)
+    # drops what the program does not call, whatever flags the project builds with
+    target_compile_options(sonde PRIVATE -ffunction-sections -fdata-sections)
 endif()
 if(SONDE_WERROR)
     target_compile_options(sonde PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/WX,-Werror>)

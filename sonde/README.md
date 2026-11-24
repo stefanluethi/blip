@@ -776,7 +776,7 @@ sonde/
   CMakeLists.txt
   cmake/               toolchain file for arm-none-eabi-gcc
   include/sonde/       sonde.hpp, file_sink.hpp
-  src/                 queue.cpp, tracer.cpp, encoder.cpp, file_sink.cpp
+  src/                 queue.cpp, tracer.cpp, encoder.cpp, logf.cpp, file_sink.cpp
   tests/               Catch2 tests, data/recording.blip
   examples/            desktop and a bare-metal sketch
 ```

@@ -35,7 +35,15 @@ ewebsock = "0.8.0"
 flate2 = "1.1.10" # gzip of recordings
 image = { version = "0.25.6", default-features = false, features = ["png"] } # the icon in the menu bar
 log = "0.4"
-regex = "1"
+# the filter of the log table: without the Unicode tables of scripts, ages and
+# properties (\p{Greek}), which make most of its size; \w, \d, \s and matching
+# without case stay Unicode
+regex = { version = "1", default-features = false, features = [
+    "std",
+    "perf",
+    "unicode-case",
+    "unicode-perl",
+] }
 serde_cbor_2 = "0.13.0"
 serde_json = "1.0.154" # layout files
 

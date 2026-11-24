@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cfloat>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -109,6 +110,30 @@ TEST_CASE("floats take the shortest width that keeps the value") {
     CHECK(encoded(std::numeric_limits<double>::infinity()) == hex("f97c00"));
     CHECK(encoded(-std::numeric_limits<float>::infinity()) == hex("f9fc00"));
     CHECK(encoded(std::numeric_limits<double>::quiet_NaN()) == hex("f97e00"));
+    CHECK(encoded(std::numeric_limits<float>::quiet_NaN()) == hex("f97e00"));
+    CHECK(encoded(-std::numeric_limits<double>::infinity()) == hex("f9fc00"));
+    // doubles that are floats, up to the largest and down to the subnormal ones
+    CHECK(encoded(static_cast<double>(0.1f)) == hex("fa3dcccccd"));
+    CHECK(encoded(static_cast<double>(FLT_MAX)) == hex("fa7f7fffff"));
+    CHECK(encoded(-static_cast<double>(FLT_MAX)) == hex("faff7fffff"));
+    CHECK(encoded(std::ldexp(1.0, 128)) == hex("fb47f0000000000000"));
+    CHECK(encoded(static_cast<double>(FLT_MIN)) == hex("fa00800000"));
+    CHECK(encoded(std::ldexp(1.0, -149)) == hex("fa00000001"));  // the smallest float
+    CHECK(encoded(std::ldexp(3.0, -149)) == hex("fa00000003"));
+    CHECK(encoded(std::ldexp(1.0, -127)) == hex("fa00400000"));
+    CHECK(encoded(std::ldexp(1.0, -150)) == hex("fb3690000000000000"));
+    CHECK(encoded(std::ldexp(3.0, -150)) == hex("fb36a8000000000000"));
+    CHECK(encoded(1.0 + std::ldexp(1.0, -24)) == hex("fb3ff0000010000000"));
+    CHECK(encoded(std::numeric_limits<double>::denorm_min()) == hex("fb0000000000000001"));
+    CHECK(encoded(DBL_MAX) == hex("fb7fefffffffffffff"));
+    // every float as a double takes the bytes of the float
+    for (std::uint32_t bits = 0; bits < 0xff000000u; bits += 0x00010001u) {
+        float value;
+        std::memcpy(&value, &bits, sizeof value);
+        if (!std::isnan(value)) {
+            REQUIRE(encoded(static_cast<double>(value)) == encoded(value));
+        }
+    }
 }
 
 TEST_CASE("strings") {

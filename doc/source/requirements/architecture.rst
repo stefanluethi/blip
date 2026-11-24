@@ -102,7 +102,7 @@ satisfies. How each is built is described on the internals page of its part.
      each queue sends first.
    * ``include/sonde/file_sink.hpp`` -- ``FileSink`` and ``MemorySink``
      (hosted builds).
-   * ``src/`` -- ``queue.cpp``, ``tracer.cpp``, ``encoder.cpp``, ``file_sink.cpp``.
+   * ``src/`` -- ``queue.cpp``, ``tracer.cpp``, ``encoder.cpp``, ``logf.cpp``, ``file_sink.cpp``.
 
 Component traceability
 ----------------------

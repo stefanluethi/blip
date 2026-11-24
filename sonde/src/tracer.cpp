@@ -1,6 +1,5 @@
 #include <sonde/sonde.hpp>
 
-#include <cstdarg>
 #include <cstring>
 
 #ifndef SONDE_PATH_MAX
@@ -103,35 +102,5 @@ Status Tracer::log(Timestamp timestamp, Level level, std::string_view message) c
         return queue.log_with(&timestamp, full, level, message);
     });
 }
-
-Status Tracer::logv(Level level, const char* format, std::va_list args) const {
-    return with_path({}, [&](Queue& queue, std::string_view full) {
-        return queue.logv(full, level, format, args);
-    });
-}
-
-Status Tracer::logf(Level level, const char* format, ...) const {
-    std::va_list args;
-    va_start(args, format);
-    const Status status = logv(level, format, args);
-    va_end(args);
-    return status;
-}
-
-#define SONDE_LEVEL_LOGF(name, level)                           \
-    Status Tracer::name(const char* format, ...) const {        \
-        std::va_list args;                                      \
-        va_start(args, format);                                 \
-        const Status status = logv(Level::level, format, args); \
-        va_end(args);                                           \
-        return status;                                          \
-    }
-
-SONDE_LEVEL_LOGF(debugf, Debug)
-SONDE_LEVEL_LOGF(infof, Info)
-SONDE_LEVEL_LOGF(warnf, Warn)
-SONDE_LEVEL_LOGF(errorf, Error)
-
-#undef SONDE_LEVEL_LOGF
 
 }  // namespace sonde
