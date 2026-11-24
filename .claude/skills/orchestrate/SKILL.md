@@ -50,7 +50,7 @@ Then:
    the guide or reference page the change touches and the `changes.rst` entry. Skip the
    designer, the spec file, the simplify pass and the `docs-writer`.
 3. **Review.** Spawn `reviewer` on Sonnet (`model: "sonnet"`, `effort: "medium"`) as the
-   last pass, so it runs the checks once. If the change touches the look of `blip/src`,
+   last pass, so it runs the checks once. If the change touches the look of `blip/src` or `kit/src`,
    spawn `design-reviewer` in the same message.
 4. **Fix and finish** as in steps 8 and 9.
 
@@ -185,7 +185,7 @@ Later, run the same command again and `git diff <old id> <new id>` shows what ch
 since that round. Put the old id in the briefs of the next round.
 
 1. **First round.** Spawn `reviewer` with the requirement IDs in scope and a summary of
-   the change. If the change touches `blip/src`, spawn `design-reviewer` in the same
+   the change. If the change touches `blip/src` or `kit/src`, spawn `design-reviewer` in the same
    message, with the requirement IDs, the chosen design option and the views and panels
    that changed. The design reviewer renders its screenshots into a scratch directory,
    so the two do not get in each other's way. (The specialists have no Agent tool, so

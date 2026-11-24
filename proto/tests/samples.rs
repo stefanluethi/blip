@@ -1,6 +1,6 @@
 //! Blocks of samples: their two forms on the wire and the checks when decoding.
 
-use proto::{Data, Message, Sample, SampleTimes, Samples};
+use blip_proto::{Data, Message, Sample, SampleTimes, Samples};
 use serde::Serialize;
 
 fn hex(bytes: &[u8]) -> String {

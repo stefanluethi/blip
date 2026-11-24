@@ -27,14 +27,15 @@ embedded target  <-- any link -->  your script + outpost (Python)  <-- WebSocket
 | Directory  | Contents |
 |------------|----------|
 | `blip/`    | GUI app (Rust, egui), web and native |
-| `proto/`   | Wire protocol types shared between blip and embedded targets |
+| `kit/`   | `blip-kit`, the library the app is built from: store, widgets and workbench |
+| `proto/`   | `blip-proto`, the wire protocol types shared between blip and embedded targets |
 | `outpost/` | `blip-outpost`, the Python library your script uses to send to blip, and examples |
 | `sonde/`   | Tracing library for targets and unit tests (C++17), see [`sonde/README.md`](sonde/README.md) |
 | `doc/`     | Documentation (Sphinx): user guides, architecture, requirements; diagrams in draw.io |
 
 ## Prerequisites
 
-- [Rust](https://rustup.rs) 1.85 or newer
+- [Rust](https://rustup.rs) 1.88 or newer
 - The WASM target and [Trunk](https://trunkrs.dev) for the web build:
 
   ```bash

@@ -29,6 +29,17 @@ blip
    * Actions with buttons, checkboxes, sliders, fields and choices, carried
      out only while recording.
    * Connections to several outposts at once; in the browser and native.
+   * The code of blip is split into the application ``blip`` and the library
+     ``blip-kit`` it is built on, with the store, the widgets and the
+     workbench; the crate of the wire types is now named ``blip-proto``. blip
+     works as before, see :doc:`/blip/internals`.
+   * Internal: the received data is the ``MemoryStore`` (was ``Model``), which
+     the widgets read through the new ``Store`` trait, asking for the samples
+     they show in a ``Window``. A ``Session`` holds the store, the invoker and
+     the sources, and the new ``Source`` trait, with the ``WebSocket`` source,
+     tells where messages come from. The presets are kept through a ``Storage``
+     trait of the workbench, not eframe's. Saved presets and recordings are
+     unchanged.
    * Empty views, panels and lists show their hint in one style. Plot and States
      now say *Check the traces to show in the tree on the left* over their
      empty plot.
@@ -59,9 +70,31 @@ blip
      views: the axis fits the range a trace declares, grown by values beyond
      it. The colour scale *Auto* of a heatmap is that range.
    * A malformed block of samples is dropped alone, with an error notice.
-   * Internal: shared helpers for the timestamp searches (``model/sorted``),
+   * Internal: shared helpers for the timestamp searches (``store/sorted``),
      the drawing of the plot views (``view/plotting``), theme tokens, fields
      and property rows.
+
+blip-kit
+   * The library blip is built on, to build your own tracing UI in egui, in
+     the browser and natively, see :doc:`/library/index`.
+   * The ``store`` has no GUI dependency: the traces, logs and actions
+     received, the ``Store`` trait the widgets read through, the in-memory
+     ``MemoryStore``, the ``Source`` trait with a ``WebSocket`` source, the
+     ``Session`` that receives and sends the invocations each frame, recording
+     files and the invoker of actions.
+   * The ``widgets``: the views (plot, states, table, XY plot, distribution,
+     heatmap, log table and actions), made in code with ``view::showing``, the
+     time controls and the timeline, and the theme. A table takes columns of
+     the application, e.g. a button that invokes an action.
+   * Views of your own: register a type with ``custom::register``, to add it to
+     the layout like the others; presets save it by its name and keep views of
+     types that are not registered.
+   * The ``workbench``: the layout the user arranges the views in, the presets,
+     the connections, the toasts and the file dialogs, which is what blip is.
+   * The example ``dashboard`` is a whole application in code, with a simulated
+     target in the application itself.
+   * Not yet: a loading state in the widgets, publication on crates.io, a store
+     in a database.
 
 outpost
    * The Python library ``blip_outpost`` for scripts that connect a target:

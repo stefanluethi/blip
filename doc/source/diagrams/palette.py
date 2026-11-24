@@ -1,4 +1,4 @@
-"""The colours of blip (blip/src/app/theme.rs) for the draw.io diagrams.
+"""The colours of blip (kit/src/widgets/theme.rs) for the draw.io diagrams.
 
 The diagrams are drawn in the light theme with these colours only. `dark` maps each
 light colour to the one of the dark theme, so the dark variant of a diagram follows

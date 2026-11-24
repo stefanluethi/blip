@@ -20,7 +20,7 @@ Goals
 * The API follows ``proto``: one call per ``Message`` variant, with the same
   fields in the same order.
 * The output is exactly what the outpost and blip read: messages as a CBOR
-  sequence, byte for byte the encoding of the ``proto`` crate.
+  sequence, byte for byte the encoding of the ``blip-proto`` crate.
 
 The queue and its batches
 -------------------------
@@ -72,7 +72,7 @@ Values are encoded through overloads and templates: scalars, strings,
 by fill functions (template parameters, no ``std::function``), and user types
 with an ``encode`` function found by argument-dependent lookup. Floats use the
 shortest of 16, 32 and 64 bits that keeps the value; the sign of an integer
-decides its CBOR major type -- both as in the ``proto`` crate. Record and array
+decides its CBOR major type -- both as in the ``blip-proto`` crate. Record and array
 sizes are given up front and checked by tinycbor when closing; a mismatch ends
 the message as ``Invalid`` and leaves the batch unchanged.
 
@@ -117,7 +117,7 @@ Tests and CI
 ------------
 
 The Catch2 tests compare the encoding of each message and kind of value byte
-for byte with the ``proto`` crate, check the batch rules (whole messages,
+for byte with the ``blip-proto`` crate, check the batch rules (whole messages,
 ``Full``, ``TooLarge``, commits, drops), run a producer and a consumer on two
 threads (also under ThreadSanitizer), check that tracers send what the queue
 sends with their full paths, and check that ``FileSink`` writes the

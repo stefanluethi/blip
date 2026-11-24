@@ -59,8 +59,8 @@ fn messages() -> Vec<Vec<u8>> {
 }
 
 /// A model that received the recording, while recording.
-fn demo_model() -> model::Model {
-    let mut model = model::Model::default();
+fn demo_model() -> model::MemoryStore {
+    let mut model = model::MemoryStore::default();
     for message in messages() {
         model.receive("", &message);
     }
@@ -70,7 +70,7 @@ fn demo_model() -> model::Model {
 /// The demo model with what targets say about two traces: the unit, description and
 /// expected range of the motor speed, and the description and labels of a mode trace,
 /// which has a sample every 2 s.
-fn metadata_model() -> model::Model {
+fn metadata_model() -> model::MemoryStore {
     let mut model = demo_model();
     let mut send = |message: proto::Message| {
         model.receive("", &serde_cbor_2::to_vec(&message).expect("a message"));
@@ -116,7 +116,7 @@ fn metadata_model() -> model::Model {
 
 /// The metadata model with a long description of the mode trace, which wraps in a
 /// tooltip.
-fn long_description_model() -> model::Model {
+fn long_description_model() -> model::MemoryStore {
     let mut model = metadata_model();
     model.receive(
         "",
@@ -240,7 +240,7 @@ fn screenshots_window() {
     harness.state_mut().state.set_recording(true, true);
     go.send(()).expect("the server waits");
     step_until(&mut harness, "the recording", |app| {
-        app.state.model.recording.messages() >= total
+        app.state.session.store.recording.messages() >= total
     });
 
     let app = harness.state_mut();
@@ -263,7 +263,7 @@ fn screenshots_window() {
 
 /// What a view on its own is shown with.
 struct ViewShot {
-    model: model::Model,
+    model: model::MemoryStore,
     time: time::TimeRange,
     invoker: model::actions::Invoker,
     view: View,
@@ -277,7 +277,7 @@ fn view_shot(name: &str, json: &str) {
 
 /// Renders the view of `json` on its own as [`view_shot`] does, with the last 20 s of
 /// `model`, and the pointer at `hover` if given.
-fn view_shot_of(name: &str, model: model::Model, json: &str, hover: Option<egui::Pos2>) {
+fn view_shot_of(name: &str, model: model::MemoryStore, json: &str, hover: Option<egui::Pos2>) {
     view_shot_with(name, model, json, |harness| {
         if let Some(at) = hover {
             harness.hover_at(at);
@@ -290,7 +290,7 @@ fn view_shot_of(name: &str, model: model::Model, json: &str, hover: Option<egui:
 /// Renders the view as [`view_shot_of`] does, after `act` acted on the harness.
 fn view_shot_with(
     name: &str,
-    model: model::Model,
+    model: model::MemoryStore,
     json: &str,
     act: impl FnOnce(&mut Harness<'_, ViewShot>),
 ) {
@@ -489,7 +489,7 @@ fn screenshots_views() {
 
 /// A model of 30 s of loop timings in µs at 100 Hz, made up for the edge cases of the
 /// boxes, see [`screenshots_views`].
-fn timing_model() -> model::Model {
+fn timing_model() -> model::MemoryStore {
     // a fixed sequence of pseudo random numbers in [0, 1), xorshift
     let mut seed = 0x2545_f491_4f6c_dd1d_u64;
     let mut random = move || {
@@ -500,8 +500,8 @@ fn timing_model() -> model::Model {
     };
     // about normal around 0 with a spread of about `sigma`
     let mut normal = move |sigma: f64| (random() + random() + random() - 1.5) * 2.0 * sigma;
-    let mut model = model::Model::default();
-    let append = |model: &mut model::Model, path: &str, seconds: f64, value: f64| {
+    let mut model = model::MemoryStore::default();
+    let append = |model: &mut model::MemoryStore, path: &str, seconds: f64, value: f64| {
         model.traces.append(&proto::Sample {
             timestamp: (seconds * 1.0e9).round() as u64,
             path: path.to_owned(),
@@ -572,7 +572,7 @@ fn timing_model() -> model::Model {
 
 /// What a layout is shown with.
 struct LayoutShot {
-    model: model::Model,
+    model: model::MemoryStore,
     time: time::TimeRange,
     invoker: model::actions::Invoker,
     layout: layout::Layout,
@@ -651,7 +651,7 @@ fn linked_distribution(show: &str) -> String {
 fn screenshots_panels() {
     // the traces panel, choosing the traces of a plot
     let mut app = App::default();
-    app.state.model = demo_model();
+    app.state.session.store = demo_model();
     app.layout = demo_layout();
     app.layout.select_named("Acceleration");
     let mut harness = Harness::builder()
@@ -671,12 +671,10 @@ fn screenshots_panels() {
     save_both(&mut harness, "panel-traces");
 
     // the bottom panel while recording, live
-    let mut state = State {
-        model: demo_model(),
-        recording: true,
-        ..State::default()
-    };
-    state.time.update(&state.model, 0.0);
+    let mut state = State::default();
+    state.session.store = demo_model();
+    state.session.recording = true;
+    state.time.update(&state.session.store, 0.0);
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1200.0, 76.0))
         .with_pixels_per_point(PIXELS_PER_POINT)
@@ -684,7 +682,7 @@ fn screenshots_panels() {
         .build_ui_state(
             |ui, state: &mut State| {
                 let now = ui.input(|input| input.time);
-                state.time.update(&state.model, now);
+                state.time.update(&state.session.store, now);
                 paint_background(ui, ui.tokens().card);
                 state.bottom_ui(ui, true);
             },
@@ -709,7 +707,7 @@ fn screenshots_panels() {
                 paint_background(ui, ui.tokens().card);
                 let connected = Default::default();
                 let context = view::PropertiesContext {
-                    model: &model,
+                    store: &model,
                     connected: &connected,
                     plots: &NO_PLOTS,
                 };
@@ -739,7 +737,7 @@ fn screenshots_panels() {
                 paint_background(ui, ui.tokens().card);
                 let connected = Default::default();
                 let context = view::PropertiesContext {
-                    model: &model,
+                    store: &model,
                     connected: &connected,
                     plots: &NO_PLOTS,
                 };
@@ -769,7 +767,7 @@ fn screenshots_panels() {
                 paint_background(ui, ui.tokens().card);
                 let connected = Default::default();
                 let context = view::PropertiesContext {
-                    model: &model,
+                    store: &model,
                     connected: &connected,
                     plots: &NO_PLOTS,
                 };

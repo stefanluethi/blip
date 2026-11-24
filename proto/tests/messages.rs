@@ -1,6 +1,6 @@
 //! The messages of the protocol: their names and fields on the wire.
 
-use proto::{Clock, ExpectedRange, Hello, Message, Sample, TraceMetadata, level};
+use blip_proto::{Clock, ExpectedRange, Hello, Message, Sample, TraceMetadata, level};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -50,7 +50,7 @@ fn samples_and_metadata_have_the_new_names() {
     let sample = Sample {
         timestamp: 1,
         path: "a".to_owned(),
-        value: proto::Data::Uint(2),
+        value: blip_proto::Data::Uint(2),
     };
     let bytes = encode(&Message::Sample(sample.clone()));
     assert_eq!(hex(&bytes[..8]), "a16653616d706c65");
@@ -264,7 +264,7 @@ fn an_unknown_clock_is_none_and_a_missing_version_fails() {
 
 #[test]
 fn the_version_and_levels() {
-    assert_eq!(proto::VERSION, 1);
+    assert_eq!(blip_proto::VERSION, 1);
     assert_eq!(
         [
             level::TRACE,

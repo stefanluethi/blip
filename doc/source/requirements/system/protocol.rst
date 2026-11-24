@@ -50,7 +50,7 @@ The contract of the wire protocol and its messages beyond the basics of
       general. The old names stay readable so that old targets and recordings
       keep working.
 
-   The proto crate, the outpost and sonde shall send the sample of a trace as
+   The blip-proto crate, the outpost and sonde shall send the sample of a trace as
    a ``Sample`` message and the metadata of a trace as a ``TraceMetadata``
    message. blip shall also read the messages named ``Value`` and
    ``ValueMetadata``, which older senders and recordings have, as ``Sample``

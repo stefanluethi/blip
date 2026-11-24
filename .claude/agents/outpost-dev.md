@@ -25,7 +25,7 @@ sections your spec or brief names, or the ones on what you change.
   with pip. Add dependencies with `uv add` only when the brief allows it.
 - The package is typed (`py.typed`): type every public function and keep the existing
   style.
-- `blip_outpost/proto.py` mirrors the Rust `proto` crate. The messages it sends must
+- `blip_outpost/proto.py` mirrors the Rust `blip-proto` crate. The messages it sends must
   decode in blip. If the brief changes the protocol, keep both in step with the
   `blip-dev` work and the protocol reference in `doc/source/reference/protocol.rst`.
 - The public API is documented in `doc/source/reference/outpost-api.rst` and the CLI in

@@ -4,10 +4,69 @@ blip internals
 How blip is built, for those who change it. How to use it is in
 :doc:`index`; the messages it reads are in :doc:`/reference/protocol`.
 
-blip is an `egui <https://github.com/emilk/egui>`_/eframe application in the
-``blip`` crate. The same code compiles to WebAssembly, served by Trunk, and to
-a native binary. It is an immediate-mode GUI: each frame, blip applies what
-arrived and draws the whole window again from its state.
+blip is an `egui <https://github.com/emilk/egui>`_/eframe application. The
+same code compiles to WebAssembly, served by Trunk, and to a native binary. It
+is an immediate-mode GUI: each frame, blip applies what arrived and draws the
+whole window again from its state.
+
+Crates
+------
+
+blip is built from three crates of one workspace. How to use the library in your
+own application is in :doc:`/library/index`; this page is about how it is built.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 18 60
+
+   * - Crate
+     - Directory
+     - Contents
+   * - ``blip-proto``
+     - ``proto/``
+     - The wire types. The other crates use it under the name ``proto``.
+   * - ``blip-kit``
+     - ``kit/``
+     - The library: the ``store`` of what was received, the ``widgets`` that
+       show it and the ``workbench``, the layout the user arranges them in.
+       It re-exports the wire types as ``blip_kit::proto``.
+   * - ``blip``
+     - ``blip/``
+     - The application: ``main.rs`` and the ``App``, which puts the parts of
+       the workbench into a window. It is the reference of an application
+       built on ``blip-kit``.
+
+``blip-kit`` is one crate with features, as its parts change together:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 78
+
+   * - Feature
+     - What it adds
+   * - (none)
+     - ``store``: always there, and without a GUI crate among its
+       dependencies. ``check.sh`` builds it alone, natively and for the web,
+       and fails if ``egui`` or ``eframe`` shows up in its dependencies.
+   * - ``websocket`` (default)
+     - ``store::websocket``: the WebSocket ``Source``. Needs ``ewebsock``.
+   * - ``widgets`` (default)
+     - ``widgets``: the theme, the time range with its controls and timeline,
+       and the views. Needs egui.
+   * - ``workbench``
+     - ``workbench``: the layout, the presets, the connections, the toasts
+       and the file dialogs. Turns on ``widgets`` and ``websocket``. blip uses
+       it.
+   * - ``test-util``
+     - Helpers for the tests of an application, e.g. selecting a view by its
+       name. blip's tests use it.
+
+The library is described for its users in :doc:`/library/index`. The example
+``kit/examples/dashboard.rs`` is an application built on ``store`` and
+``widgets`` alone, see :doc:`/library/app`.
+
+The modules depend on each other in one direction only: ``workbench`` uses
+``widgets`` and ``store``, ``widgets`` uses ``store``, ``store`` uses neither.
 
 Structure
 ---------
@@ -15,12 +74,14 @@ Structure
 .. figure:: /diagrams/blip-modules.svg
    :target: ../_images/blip-modules.svg
    :class: diagram
-   :alt: The App holds the State (time range, model, invoker), the
+   :alt: The App holds the State (time range and session), the
          connections, the files, the toasts and the layout with its views; the
-         connections exchange binary frames with outposts; all use the proto
+         connections exchange binary frames with outposts; all use the blip-proto
          crate.
 
-   Modules of ``blip/src``.
+   Modules of blip and its library. The session holds the store, the invoker
+   and the sources, the connections hold the WebSocket sources; the table
+   below lists the modules.
 
 .. list-table::
    :header-rows: 1
@@ -28,52 +89,75 @@ Structure
 
    * - Module
      - Responsibility
-   * - ``main.rs``
+   * - ``blip/src/main.rs``
      - Starts eframe natively or on the canvas of ``index.html`` on the web;
        on the web also saves the state when the page is hidden.
-   * - ``app.rs``
+   * - ``blip/src/app.rs``
      - ``App``: the panels of the window, the menu, opening and saving files,
-       persistence. ``State``: the time range, whether recording, the model
-       and the invoker, and the rules between them (a recording starts only
-       while connected and clears the data; the first connection to open
-       starts afresh).
-   * - ``app/presets.rs``
-     - The ``Presets``: the kept presets and which is active, their menu, the
-       dialogs to rename, delete, export and import them, and the versioned
-       ``PresetsFile`` format.
-   * - ``app/connections.rs``
-     - The list of connections, opened from the status chip in the menu bar,
-       and one ``ewebsock`` socket per open address.
-       Splits frames into messages and passes them on with the name of their
-       connection; sends requests.
-   * - ``app/model``
-     - What was received: ``traces`` (with ``numbers``, the columns of numbers),
+       persistence. ``State``: the time range and the ``Session``, with the
+       rules of the session (a recording starts only while connected and
+       clears the data; the first connection to open starts afresh).
+   * - ``store``
+     - What was received. ``store.rs`` is the ``MemoryStore``, which applies
+       the messages, and the ``Level`` of the notices for the user. Its
+       parts: ``traces`` (with ``numbers``, the columns of numbers),
        ``logs``, ``actions`` (the announced actions and the ``Invoker``) and
        ``recording`` (the received messages, and reading and writing recording
        files); ``cbor`` and ``decode`` read the messages; ``sorted`` holds the
-       searches of ascending timestamps.
-   * - ``app/time.rs``, ``app/time/timeline.rs``
+       searches of ascending timestamps; ``time_base`` what the timestamps
+       count from, with ``seconds_since`` and ``timestamp_at`` (re-exported by
+       ``widgets::time``).
+   * - ``store/query.rs``
+     - The ``Store`` trait all widgets read through (as ``&dyn Store``), the
+       ``Window`` a widget asks for and the ``Loaded`` answer. See
+       :doc:`/library/stores`.
+   * - ``store/source.rs``, ``store/websocket.rs``
+     - The ``Source`` trait with its ``Event``\ s, and the ``WebSocket`` source
+       on ``ewebsock``. See :doc:`/library/sources`.
+   * - ``store/session.rs``
+     - The ``Session``: the ``MemoryStore``, the ``Invoker``, whether
+       recording and the sources, and what happens each frame apart from the
+       GUI.
+   * - ``widgets/time.rs``, ``widgets/time/timeline.rs``
      - The ``TimeRange`` shared by all views, its controls and the timeline
        with the activity bars.
-   * - ``app/layout``
-     - The ``Layout``: an ``egui_tiles`` tree of views, the menus to add and
-       delete them in the center, the properties panel (``properties.rs``), dragging in
-       the center (``drag.rs``) and the saved form (``file.rs``).
-   * - ``app/view``
+   * - ``widgets/view``
      - The views and what they share: the ``Viewable`` trait, the
        ``trace_selection`` tree, the ``time_axis`` of the views over time,
        ``plotting``, the drawing pieces the plot views share, and the
-       properties widgets.
-   * - ``app/files.rs``
+       properties widgets. ``view::showing`` makes a view in code.
+   * - ``widgets/view/custom.rs``
+     - The registry of the view types of an application, ``custom::register``,
+       and ``CustomView``, the state of a view of such a type, saved by its
+       name.
+   * - ``widgets/theme.rs``
+     - The colours, fonts and shared widgets of the look. The fonts are in
+       ``kit/assets/fonts``.
+   * - ``workbench/presets.rs``
+     - The ``Presets``: the kept presets and which is active, their menu, the
+       dialogs to rename, delete, export and import them, the versioned
+       ``PresetsFile`` format and the ``Storage`` trait they are kept in.
+   * - ``workbench/connections.rs``
+     - The list of connections, opened from the status chip in the menu bar,
+       and one ``WebSocket`` source per open address. Splits frames into
+       messages and passes them on with the name of their connection; reads
+       the ``Hello`` to show it; sends requests.
+   * - ``workbench/layout``
+     - The ``Layout``: an ``egui_tiles`` tree of views, the menus to add and
+       delete them in the center, the properties panel (``properties.rs``), dragging in
+       the center (``drag.rs``) and the saved form (``file.rs``).
+   * - ``workbench/files.rs``, ``workbench/opening.rs``
      - Open and save dialogs (``rfd`` natively, a file input and a download
-       on the web) and dropped files.
-   * - ``app/toasts.rs``, ``app/theme.rs``
-     - The notices in the bottom right, and the colours, fonts and shared
-       widgets of the look.
+       on the web) and dropped files; reading a recording a part in each
+       frame.
+   * - ``workbench/toasts.rs``
+     - The notices in the bottom right.
 
-The ``proto`` crate holds the wire types. Values and log records, which arrive
-all the time, are read by blip's own CBOR reader (``model/cbor.rs`` and
-``model/decode.rs``) in one pass: it borrows the strings of the frame and
+The modules without a crate before them are in ``kit/src``.
+
+The ``blip-proto`` crate holds the wire types. Values and log records, which arrive
+all the time, are read by the store's own CBOR reader (``store/cbor.rs`` and
+``store/decode.rs``) in one pass: it borrows the strings of the frame and
 flattens a value into its leaves, the fields of records and their arrays of
 numbers, into a buffer kept for the next value. The other messages are decoded
 with ``serde_cbor_2``.
@@ -89,23 +173,34 @@ draws as often as data arrives, not more.
    :target: ../_images/blip-frame.svg
    :class: diagram
    :alt: logic(): receive from the connections, split frames, apply to the
-         state and model, pass answers to the invoker, update the invoker,
+         state and store, pass answers to the invoker, update the invoker,
          open files. ui(): menu, update the time range, bottom, left and right
          panels, the views, then send the invocations.
 
    What happens in a frame.
 
-* ``logic`` drains all sockets. Each message goes through ``State::apply`` to
-  ``Model::receive`` (while recording) or ``Model::receive_unrecorded``
-  (otherwise: only the hello, metadata, actions and answers). Answers to invocations go to
-  the invoker.
-* ``ui`` first updates the time range from the model (the span of the data;
+* ``logic`` drains the connections. Each message goes through ``State::apply`` to
+  ``Session::receive``, which gives it to ``MemoryStore::receive`` (while
+  recording) or ``MemoryStore::receive_unrecorded`` (otherwise: only the
+  hello, metadata, actions and answers). Answers to invocations go to the
+  invoker. ``Session::update_invoker`` then tells the invoker which
+  connections are open.
+* ``ui`` first updates the time range from the store (the span of the data;
   playing moves the window on), then draws the panels and the views, which
-  read the model and may change the time range and queue invocations.
-  ``send_invocations`` then sends what the views queued.
+  read the store and may change the time range and queue invocations.
+  ``send_invocations`` then takes the requests of the session
+  (``Session::take_requests``) and sends them through the connections.
 * ``raw_input_hook`` takes mouse wheel events before egui smooths them, so the
   wheel zooms the plot or timeline under the pointer without the rest of a
-  notch scrolling what the pointer moves on to.
+  notch scrolling what the pointer moves on to (``view::zoom_with_wheel`` and
+  ``time::take_wheel``).
+
+An application without the workbench has the same frame with the session
+polling its sources itself, see :doc:`/library/app`: ``Session::update``, then
+``TimeRange::update``, then the widgets, then ``Session::send_invocations``.
+blip holds its ``WebSocket`` sources in the ``Connections`` of the workbench
+instead, which add the list and the user's choices of connections, so it
+receives from them and passes each message to the session.
 
 What a frame costs follows what is shown, not how much data there is:
 
@@ -134,14 +229,16 @@ What a frame costs follows what is shown, not how much data there is:
 Receiving
 ---------
 
-What happens to a message on its way into the model:
+What happens to a message on its way into the store:
 
-* **Sources and frames.** A source is one connection, named in the
-  connections. A frame is one binary WebSocket message, holding one
-  ``Message`` or several as a CBOR sequence (RFC 8742), e.g. a batch of sonde
-  passed through by the outpost. ``connections.rs`` splits frames into
+* **Sources and frames.** A source is a ``Source`` (see
+  :doc:`/library/sources`), in blip one connection, named in the connections.
+  A frame is one ``Event::Frame``, e.g. one binary WebSocket message, holding
+  one ``Message`` or several as a CBOR sequence (RFC 8742), e.g. a batch of
+  sonde passed through by the outpost. ``connections.rs`` splits frames into
   messages before anything else and passes each on with the name of its
-  source, so everything later deals with single messages.
+  source; ``Session::update`` does the same (``Session::receive_frame``) for
+  the sources added to it. So everything later deals with single messages.
 * **Paths.** Paths are global, not prefixed with the source. Record fields
   are joined to the path of their record with ``.`` (``imu.acc``), array
   elements written with indices (``imu.acc[0]``); ``fields_start`` marks where
@@ -154,12 +251,13 @@ What happens to a message on its way into the model:
   one as a ``Sample`` would be. So a malformed block is dropped whole, with a
   warning in the log and an error notice, and the other messages of the frame
   are kept. The old names ``Value`` and ``ValueMetadata`` are read as
-  ``Sample`` and ``TraceMetadata``. The model collects the notices
-  (``Model::take_notices``, without repeats); ``App::logic`` turns them into
+  ``Sample`` and ``TraceMetadata``. The store collects the notices
+  (``MemoryStore::take_notices``, without repeats), ``Session::take_notices``
+  adds those of the sources; ``App::logic`` turns them into
   toasts, also those of an opened recording. A block counts once for the
   rate of a readback.
 * **Hello.** ``connections.rs`` reads the ``Hello`` of a frame to show it and
-  passes it on; the model keeps it as a description of its source and takes
+  passes it on; the store keeps it as a description of its source and takes
   the clock from it.
 * **Kinds.** Integers are stored as ``i64``, as ``u64`` once one is above
   ``i64::MAX``, and the column switches to ``f64`` with the first float.
@@ -169,18 +267,18 @@ What happens to a message on its way into the model:
   newest (e.g. from a second outpost) is moved into place. One older than the
   newest 65 536 values of its path is dropped with a warning, as moving all of
   them for each value of a clock minutes behind would stall blip.
-* **Time base.** The model keeps the clock of each source from its latest
+* **Time base.** The store keeps the clock of each source from its latest
   ``Hello``. The base of a sample is the clock of its source, else a guess
   from its timestamp (``TimeBase::guess``: before 10\ :sup:`18` ns is time since
   boot). The first accepted sample or log record, or an epoch ``Hello``, sets
-  the model's base, UTC or time since boot, and the first timestamp the
+  the store's base, UTC or time since boot, and the first timestamp the
   origin the views count from. A sample or log record of the other base is
   dropped with a single warning, as it would land decades away from the
   others. An epoch ``Hello`` while the base is time since boot removes the
-  samples and log records already received (``Model::drop_samples``, keeping
+  samples and log records already received (``MemoryStore::drop_samples``, keeping
   metadata, actions, descriptions and the recording) and sets the base to UTC;
   later boot samples are dropped. The warning that connections send different
-  clocks is given once per model.
+  clocks is given once per store.
 * **Metadata** comes from ``TraceMetadata`` and is kept by path in ``Traces``,
   also before the first sample, and through ``drop_samples``. A newer message
   of a path replaces all of the earlier one. Lookups of the unit, the
@@ -206,10 +304,20 @@ What happens to a message on its way into the model:
   an action at the same path; blip keeps each, and an actions view chooses the
   source it sends to.
 
-The model
+The store
 ---------
 
-``Model`` owns everything received since the data was last cleared:
+The widgets read the store through the ``Store`` trait (``store/query.rs``,
+see :doc:`/library/stores`), never from the type: each asks for the samples it
+shows with a ``Window`` and gets a ``Loaded`` answer. The calls are
+synchronous and must not block. The plot asks for the shown time range with
+two points per pixel of its width, tooltips and tables ask ``Window::at(t)``,
+the trace tree and the checks of what a view can show of a kind ask
+``Window::NONE``, the log table asks for all records. ``MemoryStore`` is the
+store of blip. It ignores the window and borrows its columns, so nothing is
+copied. The ``Session`` holds it and receives into it.
+
+``MemoryStore`` owns everything received since the data was last cleared:
 
 * ``Traces``: the trace metadata by path, and a table for each path values are sent to, with a column per leaf
   of its values, its traces, sorted by path so the fields of a record follow
@@ -234,7 +342,7 @@ The model
   member per 64 KiB, each a fraction of a millisecond of work, so the view
   does not stutter; saving writes the members one after another as they are.
 * The **descriptions**: the latest hello, metadata and actions frame of each source,
-  re-applied by ``Model::clear``.
+  re-applied by ``MemoryStore::clear``.
 
 Two ``Version`` counters let views and the timeline cache work: the
 ``paths_version`` changes when a trace, the first log record of a path or a
@@ -242,8 +350,9 @@ list of actions arrives (views
 expand their wildcards only then), the ``samples_version`` when a value or log
 record arrives.
 
-Opening a recording file creates a fresh ``Model`` and feeds it the file's
-messages with ``Model::receive``, exactly as if they had been received.
+Opening a recording file creates a fresh ``MemoryStore`` and feeds it the file's
+messages with ``MemoryStore::receive``, exactly as if they had been received;
+``Session::start_fresh`` then puts it in place of the old one.
 
 The time range
 --------------
@@ -251,24 +360,27 @@ The time range
 ``TimeRange`` holds the window length, the end of the window (``None`` while
 live), whether it is playing, the cursor (``None`` while at the end of the
 window) and the zoom of the timeline. Each frame ``update`` reads the span of
-the data from the model and moves the window on while playing; when it
+the data from the store and moves the window on while playing; when it
 reaches the newest data it goes live. Views call ``pan_zoom``, ``set_cursor``
 and ``go_to``, which pause where the user moved away from live. Only the
 window length is persisted.
 
 Its times are seconds as floats, counted from the **origin**, the first
-timestamp the model received, so they keep nanoseconds also at Unix times.
+timestamp the store received, so they keep nanoseconds also at Unix times.
 The **time base** of the time axes, the log table and the log tooltips is the
-one of the model (``Model::time_base``, time since boot while there is none),
+one of the store (``MemoryStore::time_base``, time since boot while there is none),
 set by the clock of the ``Hello`` or guessed, not guessed again from the
 latest timestamp.
 Views turn them into integer nanoseconds with ``TimeRange::timestamp`` to look
 up samples, and the time axes write the times from those nanoseconds.
 
 The timeline counts what arrived in bins of a round duration with
-``Model::activity`` -- a record once, as the values of its table -- and counts
+``Store::activity`` -- a record once, as the values of its table -- and counts
 again when the bins change, or the samples changed and a tenth of a second
 passed.
+
+``TimeRange::ui`` draws the controls with the timeline; ``controls_ui`` and
+``timeline_ui`` draw them apart, for an application that lays them out itself.
 
 Layout and views
 ----------------
@@ -280,7 +392,8 @@ titles) and does its own drag and drop with the dragged ``TileId`` as payload;
 ``drag.rs`` finds the side of the view under the pointer. Adding a view at a
 side from the menu of a view goes through the same drop.
 
-A ``View`` has a name, a ``ViewKind`` with the state of its type, the number
+A ``View`` has a name, a ``ViewKind`` with the state of its type (a variant for
+each built-in type, and ``Custom`` for a type an application registered), the number
 ``Formats`` of its traces and the ``wildcards`` (branch keys checked in the
 tree). The state of each type implements ``Viewable``, how it is shown, and
 ``ViewInfo``, what it is:
@@ -302,7 +415,7 @@ tree). The state of each type implements ``Viewable``, how it is shown, and
        fn shows_apart(trace: Trace<'_>) -> bool { false }
    }
 
-``ViewContext`` gives a view the model, the time range (mutable, to pan and
+``ViewContext`` gives a view the store (``&dyn Store``), the time range (mutable, to pan and
 set the cursor), the invoker (to queue invocations), its formats and the
 ``Plots`` of the layout; ``PropertiesContext`` gives the properties the
 ``Plots`` too.
@@ -310,12 +423,32 @@ set the cursor), the invoker (to queue invocations), its formats and the
 elements, the whole array, or nothing with a reason -- which the traces tree
 uses to enable checkboxes and to filter.
 
-To add a view type: add its struct with ``Default``, ``Viewable`` and
-``ViewInfo`` in a file in ``app/view``, and a line to the list in ``views!`` in
-``app/view/mod.rs``, which makes ``ViewKind``, ``ViewType`` and their
+``view::showing::<V>(paths)`` makes a view with its traces in code, for an
+application without the layout. ``ViewContext::new(&store, &mut time, &mut
+invoker)`` makes a context with the default formats and no plots.
+
+To add a view type to blip: add its struct with ``Default``, ``Viewable`` and
+``ViewInfo`` in a file in ``widgets/view``, and a line to the list in ``views!`` in
+``widgets/view/mod.rs``, which makes ``ViewKind``, ``ViewType`` and their
 dispatch. The name of the line is saved in presets. Its settings are saved
 with the layout through serde; give new fields defaults (``#[serde(default)]``)
-so older presets still load.
+so older presets still load. ``ViewType::BUILT_IN`` lists the types of the
+list, ``ViewType::all()`` those and the registered ones; the menus use the
+latter.
+
+An application adds its own view types with ``custom::register::<T>()``
+(``widgets/view/custom.rs``, written for users in :doc:`/library/widgets`). The
+registry is a static list of ``CustomType``\ s, which keep what ``ViewInfo``
+says of the type and functions to make a view and to load one from JSON.
+``ViewKind::Custom`` holds a ``CustomView``: the state behind a trait object,
+the name of its type and, for a type that is not registered, the saved state.
+It is saved as ``{"Custom": {"type": name, "state": ...}}`` and a view of an
+unknown type is the *Unknown* placeholder: it shows nothing, keeps the saved
+state and writes it back unchanged. The views of the built-in types are saved
+as before, so presets of earlier versions load unchanged.
+
+A ``Table`` can carry columns of the application (``Table::column``) with a
+``TableCell`` for each row. They are code, not saved with the table.
 
 Tooltips
 ~~~~~~~~
@@ -435,7 +568,10 @@ Persistence
 eframe's storage keeps the serialised ``App`` (window length, panel state;
 the data, the layout and the connections are skipped) under its app key, the
 JSON of the ``PresetsFile`` under ``presets`` and the name of the active
-preset under ``active preset``. Kept presets of a newer version are not
+preset under ``active preset``. The workbench does not depend on eframe: the
+``Presets`` read and write through their own ``Storage`` trait
+(``get_string`` and ``set_string``), and ``blip/src/app.rs`` adapts eframe's
+storage to it. An application that keeps its presets elsewhere implements it. Kept presets of a newer version are not
 overwritten, damaged ones are kept under ``unread presets``. eframe saves every 30 seconds and on exit; on the web,
 ``main.rs`` also saves when the page is hidden or left, as eframe's own save
 on closing does not run there. egui keeps its memory, e.g. the zoom and the
@@ -454,16 +590,30 @@ Web and native
 Checks and tests
 ----------------
 
-``check.sh`` runs what CI runs: ``cargo check`` natively and for WASM,
-``rustfmt``, ``clippy``, the tests and a ``trunk build``. UI behaviour is
+``check.sh`` runs what CI runs: ``cargo check`` natively and for WASM, the
+builds of the features of ``blip-kit`` (the store alone, natively and for the
+web, then with the widgets), a check that the store alone pulls in no GUI
+crate, the build of the example ``dashboard`` for the web, ``rustfmt``,
+``clippy``, the tests, the API documentation of the crates with warnings as
+errors, ``cargo package --no-verify`` of both library crates, as they would be
+published, and a ``trunk build``. UI behaviour is
 tested with ``egui_kittest`` harnesses next to the code, e.g. clicking the
 record button or dragging in the trace tree; connection tests run against a
 local ``tungstenite`` WebSocket server.
 
-The screenshots of this documentation are tests too (``app/screenshots.rs``,
+The screenshots of this documentation are tests of the ``blip`` crate too
+(``blip/src/app/screenshots.rs``,
 behind the ``screenshots`` feature and ignored by default): they render the
 app with wgpu from the recording ``tests/data/demo.blip`` and the preset
 ``tests/data/demo-presets.json``, the window connected to a WebSocket server in
 the test as to an outpost. ``make screenshots`` in ``doc`` runs them;
 ``make screenshots SCREENSHOTS_DIR=…`` writes them to another directory, so
 they can be compared with the committed ones.
+
+The library has its own tests. ``kit/examples/dashboard.rs`` has a test that
+runs the application in a harness, receives from its simulator and clicks the
+button of a row. ``kit/tests/store.rs`` reads a plot from a second ``Store``
+implementation and checks what it asked for.
+``kit/tests/baseline.rs`` measures how many samples a second the store takes in
+and how long a frame of a plot of a long trace takes; its tests are ignored by
+default, see :doc:`/library/stores`.

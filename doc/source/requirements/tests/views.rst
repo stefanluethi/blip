@@ -9,7 +9,7 @@ Tests of the requirements in :doc:`/requirements/system/views`.
    :component: blip
    :verifies: REQ_VIS_STATES, REQ_VIS_TABLE, REQ_VIS_XY, REQ_VIS_HEATMAP
 
-   ``blip/src/app/view`` unit tests -- merge equal values into state runs
+   ``kit/src/widgets/view`` unit tests -- merge equal values into state runs
    with gaps at nulls, hide collapsed rows of the table, pair samples with the
    current sample of their x trace, pair sibling x and y traces, sample arrays
    over time for heatmaps, and zoom plots with the mouse wheel without panning
@@ -21,7 +21,7 @@ Tests of the requirements in :doc:`/requirements/system/views`.
    :component: blip
    :verifies: REQ_VIS_LOG
 
-   ``blip/src/app/model/logs.rs`` and ``blip/src/app/view/log_table.rs`` unit
+   ``kit/src/store/logs.rs`` and ``kit/src/widgets/view/log_table.rs`` unit
    tests -- keep records by path in the order of their times, changing the
    order of a path only when a record arrives before others of it; show the
    records of the picked paths merged by time, filter only new records unless
@@ -35,8 +35,8 @@ Tests of the requirements in :doc:`/requirements/system/views`.
    :component: blip
    :verifies: REQ_VIS_LOG_DEFAULT, REQ_VIS_LOG_PICK, REQ_VIS_LOG_PATH_FILTER
 
-   ``blip/src/app/model/logs``, ``blip/src/app/model``,
-   ``blip/src/app/view/trace_selection`` and ``blip/src/app/view/log_table``
+   ``kit/src/store/logs``, ``kit/src/store``,
+   ``kit/src/widgets/view/trace_selection`` and ``kit/src/widgets/view/log_table``
    unit tests -- checks that a record without a path is kept at ``log/default``
    and one with a path at exactly that path (``log/imu``, ``motor``); that
    checking the folder ``log`` picks the log paths below it, also those that
@@ -53,7 +53,7 @@ Tests of the requirements in :doc:`/requirements/system/views`.
    :component: blip
    :verifies: REQ_VIS_INT
 
-   ``blip/src/app/model/numbers.rs`` and ``blip/src/app/model/traces.rs``
+   ``kit/src/store/numbers.rs`` and ``kit/src/store/traces.rs``
    tests -- keep integers beyond 2^53 exact, switch to unsigned for integers
    above ``i64::MAX``, reject integers that do not fit with the others, and
    write them in every number format.
@@ -64,29 +64,29 @@ Tests of the requirements in :doc:`/requirements/system/views`.
    :component: blip
    :verifies: REQ_VIS_TOOLTIP, REQ_VIS_DIST_BOX_HOVER, REQ_VIS_HIST_HOVER
 
-   ``blip/src/app/view/tooltip`` unit tests (``egui_kittest``) -- the shared
+   ``kit/src/widgets/view/tooltip`` unit tests (``egui_kittest``) -- the shared
    tooltip helper shows a header (a text in weak colour, or a trace dot and
    name), a row per entry with the dot and name or a weak label on the left, and
    the values right aligned in columns as wide as the widest value, with the
    unit, a missing or null value in the faint colour, and a rule between two
    groups of rows.
-   ``blip/src/app/view/plot`` unit tests (``egui_kittest``) -- hovering Plot
+   ``kit/src/widgets/view/plot`` unit tests (``egui_kittest``) -- hovering Plot
    shows the time as header and a row per trace with its value, through the
    helper.
-   ``blip/src/app/view/states`` unit tests (``egui_kittest``) -- hovering States
+   ``kit/src/widgets/view/states`` unit tests (``egui_kittest``) -- hovering States
    shows the time as header and a row per trace with its state, through the
    helper.
-   ``blip/src/app/view/heatmap`` unit tests (``egui_kittest``) -- hovering the
+   ``kit/src/widgets/view/heatmap`` unit tests (``egui_kittest``) -- hovering the
    bands of a Heatmap shows the time as header and the element index with its
    value, and hovering the grid the row and column as header and the value,
    through the helper.
-   ``blip/src/app/view/heatmap`` unit tests (``egui_kittest``) -- hovering the
+   ``kit/src/widgets/view/heatmap`` unit tests (``egui_kittest``) -- hovering the
    array line of a Heatmap shows the element index and its value in a framed
    tooltip, and no label of egui_plot.
-   ``blip/src/app/view/xy`` unit tests (``egui_kittest``) -- hovering XY shows
+   ``kit/src/widgets/view/xy`` unit tests (``egui_kittest``) -- hovering XY shows
    the name of the trace with its x and y values in a framed tooltip, and no
    label of egui_plot.
-   ``blip/src/app/view/distribution`` unit tests (``egui_kittest``) -- the
+   ``kit/src/widgets/view/distribution`` unit tests (``egui_kittest``) -- the
    tooltips of a bin and of a box of Distribution are built through the helper,
    with the bin range or the dot and name of the trace as header.
 

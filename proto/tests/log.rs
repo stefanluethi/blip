@@ -1,7 +1,7 @@
 //! Log records: their fields on the wire, and records of older targets that still have a
 //! component.
 
-use proto::{LogRecord, Message};
+use blip_proto::{LogRecord, Message};
 use serde::de::IgnoredAny;
 use std::collections::BTreeMap;
 

@@ -1,17 +1,22 @@
 [workspace]
 resolver = "3"
-members = ["blip", "proto"]
+members = ["blip", "proto", "kit"]
 
 [workspace.package]
 version = "0.1.0"
 authors = ["Stefan Lüthi <stefan.luethi@outlook.com>"]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88" # let chains
 license = "MIT"
+repository = "https://github.com/stefanluethi/blip"
+homepage = "https://stefanluethi.github.io/blip/"
+# the library crates say `publish = true` themselves, the application is not published
 publish = false
 
 [workspace.dependencies]
-proto = { path = "proto" }
+# the crates use blip-proto under the name `proto`
+proto = { package = "blip-proto", path = "proto", version = "0.1.0" }
+blip-kit = { path = "kit", version = "0.1.0" }
 serde = { version = "1.0.219", features = ["derive"] }
 
 [workspace.lints.rust]

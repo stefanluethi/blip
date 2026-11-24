@@ -32,8 +32,8 @@ Tests of the requirements in :doc:`/requirements/system/control`.
    :component: blip
    :verifies: REQ_CTRL_ACTION, REQ_CTRL_FEEDBACK, REQ_CTRL_VIEW, REQ_CTRL_SAFE
 
-   ``blip/src/app/model/actions.rs``, ``blip/src/app/view/actions.rs`` and
-   ``blip/src/app/view/trace_selection.rs`` tests -- send invocations with new
+   ``kit/src/store/actions.rs``, ``kit/src/widgets/view/actions.rs`` and
+   ``kit/src/widgets/view/trace_selection.rs`` tests -- send invocations with new
    ids, show only the outcome of the latest invocation of an action of an
    outpost, time out unanswered ones, send at most every interval while
    dragging and the final value on release; send buttons and checkboxes right

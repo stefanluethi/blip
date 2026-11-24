@@ -1,12 +1,18 @@
 [package]
-name = "proto"
+name = "blip-proto"
 description = "Wire protocol between the outpost and blip"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-publish.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/blip-proto"
+readme = "README.md"
+keywords = ["tracing", "embedded", "protocol", "cbor", "telemetry"]
+categories = ["embedded", "encoding"]
+publish = true
 
 [dependencies]
 serde.workspace = true

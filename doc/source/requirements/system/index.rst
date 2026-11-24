@@ -17,5 +17,6 @@ What the software shall do, one page per area. Each page of
    control
    platforms
    files
+   library
    outpost
    sonde

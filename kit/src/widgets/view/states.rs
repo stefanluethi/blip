@@ -1,0 +1,481 @@
+//! A states view: the values of traces over time as a row of coloured bands per
+//! trace, one band for each run of equal values.
+
+use super::Selectable;
+use super::time_axis::{self, visible_range};
+use super::tooltip::{Header, Label, Row, Tooltip, Value};
+use super::{Formats, PropertiesContext, ViewContext, Viewable, short_names, with_unit};
+use crate::store::logs::LogLevel;
+use crate::store::numbers::{DisplayFormat, Labels, NumberKind, SHOWN_DIGITS};
+use crate::store::sorted::index_at;
+use crate::store::traces::{Samples, Series, Strings, Trace};
+use crate::store::{Store, Window};
+use crate::widgets::theme::{self, TokensExt};
+use crate::widgets::time::{TimeBase, seconds_since, timestamp_at};
+use egui::Color32;
+use std::collections::BTreeSet;
+
+/// Runs narrower than this many points next to each other are drawn as one band that
+/// shows that the value changes too often to tell.
+const MIN_RUN_WIDTH: f64 = 3.0;
+
+/// The height in points of the edge in the full color on top of a band.
+const BAND_EDGE: f64 = 2.0;
+/// Approximate width of a character of a band label in points, to only label bands
+/// wide enough for it.
+const LABEL_CHAR_WIDTH: f64 = 8.0;
+
+/// The values of the selected traces as states over time.
+#[derive(serde::Deserialize, serde::Serialize, Clone)]
+#[serde(default)]
+pub struct States {
+    /// Paths of the shown traces.
+    pub traces: BTreeSet<String>,
+    /// Height of a band as a fraction of its row, the rest is the gap to the next row.
+    pub band_height: f64,
+    /// Whether the bands wide enough for their value are labelled with it.
+    pub show_values: bool,
+}
+
+impl Default for States {
+    fn default() -> Self {
+        Self {
+            traces: BTreeSet::new(),
+            band_height: 0.8,
+            show_values: true,
+        }
+    }
+}
+
+/// The samples of a trace shown as states.
+#[derive(Clone, Copy)]
+enum StateSamples<'a> {
+    /// Numbers, written in the display format, with the labels the target declares.
+    Numbers(Series<'a>, DisplayFormat, Option<&'a Labels>),
+    Strings {
+        timestamps: &'a [u64],
+        texts: &'a Strings,
+    },
+}
+
+impl<'a> StateSamples<'a> {
+    fn of(store: &'a dyn Store, path: &str, format: DisplayFormat, window: Window) -> Option<Self> {
+        if let Some(series) = store.series(path, window).data {
+            return Some(Self::Numbers(series, format, store.labels(path)));
+        }
+        let trace = store.trace(path, window).data?;
+        match &trace.samples {
+            Samples::Strings(texts) => Some(Self::Strings {
+                timestamps: trace.timestamps,
+                texts,
+            }),
+            _ => None,
+        }
+    }
+
+    fn timestamps(&self) -> &'a [u64] {
+        match self {
+            Self::Numbers(series, ..) => series.timestamps,
+            Self::Strings { timestamps, .. } => timestamps,
+        }
+    }
+
+    fn is_null(&self, index: usize) -> bool {
+        match self {
+            Self::Numbers(series, ..) => series.number(index).is_null(),
+            Self::Strings { texts, .. } => texts.get(index).is_none(),
+        }
+    }
+
+    /// Whether the samples at `a` and `b` have the same value.
+    fn same(&self, a: usize, b: usize) -> bool {
+        match self {
+            Self::Numbers(series, ..) => series.number(a) == series.number(b),
+            Self::Strings { texts, .. } => texts.same(a, b),
+        }
+    }
+
+    /// The value of the sample at `index`, which its colour follows: the number, but for
+    /// a label that is a log level name, which takes the level colour.
+    fn label(&self, index: usize) -> String {
+        match self {
+            Self::Numbers(series, DisplayFormat::Labels, Some(labels)) => {
+                let number = series.number(index);
+                match number.label(labels) {
+                    Some(label) if is_level_name(label) => label.to_owned(),
+                    _ => number.to_string(),
+                }
+            }
+            Self::Numbers(series, ..) => series.number(index).to_string(),
+            Self::Strings { .. } => self.text(index),
+        }
+    }
+
+    /// The value of the sample at `index` as shown, in the display format.
+    fn text(&self, index: usize) -> String {
+        match self {
+            Self::Numbers(series, format, labels) => {
+                series
+                    .number(index)
+                    .format_labelled(Some(SHOWN_DIGITS), *format, *labels)
+            }
+            Self::Strings { texts, .. } => texts.get(index).unwrap_or("null").to_owned(),
+        }
+    }
+
+    /// The tooltip values of the sample at `index`: as [`Value::labelled`] for numbers.
+    fn values(&self, index: usize, unit: Option<&str>) -> Vec<Value> {
+        match self {
+            Self::Numbers(series, format, labels) => {
+                Value::labelled(series.number(index), SHOWN_DIGITS, *format, unit, *labels)
+            }
+            Self::Strings { .. } => {
+                let null = self.is_null(index);
+                let unit = unit.filter(|_| !null);
+                vec![Value::text(with_unit(self.text(index), unit)).faint_if(null)]
+            }
+        }
+    }
+
+    fn is_bool(&self) -> bool {
+        matches!(self, Self::Numbers(series, ..) if series.kind == NumberKind::Bool)
+    }
+}
+
+/// The row at the y coordinate `y` of `rows` rows, the first on top, if it is on one.
+fn row_at(y: f64, rows: usize) -> Option<usize> {
+    let row = (rows as f64 - 1.0 - y).round();
+    (row >= 0.0 && row < rows as f64).then_some(row as usize)
+}
+
+/// A band from `start` to `end` seconds.
+#[derive(Debug, PartialEq)]
+struct Run {
+    start: f64,
+    end: f64,
+    /// A sample with the value of the run, or `None` if the run merges runs too narrow
+    /// to tell apart.
+    index: Option<usize>,
+}
+
+/// The runs of equal values of `samples` within `range` seconds, leaving gaps at nulls.
+/// Each sample holds its value until the next one, the last one until `latest` seconds.
+/// Neighbouring runs shorter than `min_width` seconds are merged into one. The times
+/// count from `origin` in nanoseconds.
+fn runs(
+    samples: StateSamples<'_>,
+    (from, to): (f64, f64),
+    latest: f64,
+    min_width: f64,
+    origin: u64,
+) -> Vec<Run> {
+    let timestamps = samples.timestamps();
+    let range = (timestamp_at(origin, from), timestamp_at(origin, to));
+    let indices = visible_range(timestamps, Some(range));
+    let mut runs: Vec<Run> = vec![];
+    for index in indices {
+        if samples.is_null(index) {
+            continue;
+        }
+        let start = seconds_since(origin, timestamps[index]);
+        let end = timestamps
+            .get(index + 1)
+            .map_or(latest.max(start), |&next| seconds_since(origin, next));
+        match runs.last_mut() {
+            Some(run)
+                if run.end == start
+                    && run
+                        .index
+                        .is_some_and(|previous| samples.same(previous, index)) =>
+            {
+                run.end = end;
+            }
+            _ => runs.push(Run {
+                start,
+                end,
+                index: Some(index),
+            }),
+        }
+    }
+    merge_narrow(runs, min_width)
+}
+
+/// Merges neighbouring runs shorter than `min_width` seconds into one run without a
+/// value. A single narrow run keeps its value, so short pulses stay visible.
+fn merge_narrow(runs: Vec<Run>, min_width: f64) -> Vec<Run> {
+    let is_narrow = |run: &Run| run.end - run.start < min_width;
+    let mut merged: Vec<Run> = Vec::with_capacity(runs.len());
+    // whether the last merged run is narrow or made of narrow runs
+    let mut last_narrow = false;
+    for run in runs {
+        let narrow = is_narrow(&run);
+        match merged.last_mut() {
+            Some(last) if narrow && last_narrow && last.end == run.start => {
+                last.end = run.end;
+                last.index = None;
+            }
+            _ => merged.push(run),
+        }
+        last_narrow = narrow;
+    }
+    merged
+}
+
+/// The log level that `name` names in any case.
+fn level_named(name: &str) -> Option<LogLevel> {
+    LogLevel::ALL
+        .into_iter()
+        .find(|level| level.as_str().eq_ignore_ascii_case(name))
+}
+
+fn is_level_name(name: &str) -> bool {
+    level_named(name).is_some()
+}
+
+/// The color of a band with the value `label`, a color of the trace palette, or `None`
+/// for a false bool, whose band stays empty so that true reads as on. Log levels take
+/// the colors they have in log views.
+fn state_color(label: &str, is_bool: bool, visuals: &egui::Visuals) -> Option<Color32> {
+    if let Some(level) = level_named(label) {
+        return Some(theme::level_color(visuals, level));
+    }
+    let color = match label.parse::<i64>() {
+        _ if is_bool && label == "false" => return None,
+        _ if is_bool => theme::palette_color(visuals, 0),
+        // consecutive integers, like the states of a state machine, get distinct colors
+        Ok(number) => theme::palette_color(visuals, number.rem_euclid(1 << 16) as usize),
+        Err(_) => theme::palette_color(visuals, (fnv1a(label) % (1 << 16)) as usize),
+    };
+    Some(color)
+}
+
+/// A hash of `text` that stays the same across runs, so values keep their colors.
+fn fnv1a(text: &str) -> u64 {
+    text.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    })
+}
+
+impl States {
+    /// Draws the bands of `samples` in the row centered at `y`.
+    fn plot_row(
+        &self,
+        samples: StateSamples<'_>,
+        y: f64,
+        range: (f64, f64),
+        latest: f64,
+        origin: u64,
+        plot_ui: &mut egui_plot::PlotUi<'_>,
+    ) {
+        let visuals = plot_ui.ctx().global_style().visuals.clone();
+        let [seconds_per_point, values_per_point] = plot_ui.transform().dvalue_dpos();
+        let seconds_per_point = seconds_per_point.abs();
+        // the edge in the full color on top of the quiet fill of a band
+        let edge = BAND_EDGE * values_per_point.abs();
+        let (top, bottom) = (y + self.band_height / 2.0, y - self.band_height / 2.0);
+        let min_width = MIN_RUN_WIDTH * seconds_per_point;
+        for run in runs(samples, range, latest, min_width, origin) {
+            let start = run.start.max(range.0);
+            let end = run.end.min(range.1);
+            let label = run.index.map(|index| samples.label(index));
+            // runs too short to tell apart are grey
+            let color = match &label {
+                Some(label) => state_color(label, samples.is_bool(), &visuals),
+                None => Some(theme::palette_grey(&visuals)),
+            };
+            let rect = |bottom: f64, top: f64, fill: Color32| {
+                let corners = vec![[start, bottom], [end, bottom], [end, top], [start, top]];
+                egui_plot::Polygon::new("", corners)
+                    .fill_color(fill)
+                    .stroke(egui::Stroke::NONE)
+                    .allow_hover(false)
+            };
+            let text_color = match color {
+                Some(color) => {
+                    plot_ui.polygon(rect(bottom, top, theme::tint(&visuals, color)));
+                    plot_ui.polygon(rect(top - edge, top, color));
+                    visuals.text_color()
+                }
+                None => {
+                    let line = visuals.tokens().border_strong;
+                    plot_ui.polygon(rect(top - edge / 2.0, top, line));
+                    visuals.weak_text_color()
+                }
+            };
+            if self.show_values
+                && let Some(label) = run.index.map(|index| samples.text(index))
+                && (end - start) / seconds_per_point
+                    > (label.chars().count() + 1) as f64 * LABEL_CHAR_WIDTH
+            {
+                let center = egui_plot::PlotPoint::new((start + end) / 2.0, y);
+                plot_ui.text(
+                    egui_plot::Text::new("", center, label)
+                        .color(text_color)
+                        .allow_hover(false),
+                );
+            }
+        }
+    }
+
+    /// The tooltip with the values of the shown traces current at `t` nanoseconds, a
+    /// faint dash for a trace without a sample then, and the description of the trace
+    /// of the `row` under the pointer.
+    fn tooltip(
+        &self,
+        store: &dyn Store,
+        formats: &Formats,
+        t: u64,
+        base: TimeBase,
+        row: Option<usize>,
+    ) -> Tooltip {
+        let names = short_names(self.traces.iter().map(String::as_str));
+        let rows = self
+            .traces
+            .iter()
+            .zip(&names)
+            .map(|(path, name)| {
+                let values = StateSamples::of(
+                    store,
+                    path,
+                    formats.format_of(path, store.labels(path).is_some()),
+                    Window::at(t),
+                )
+                .and_then(|samples| {
+                    let index = index_at(samples.timestamps(), t)?;
+                    Some(samples.values(index, store.unit(path)))
+                })
+                .unwrap_or_else(|| vec![Value::missing()]);
+                Row::new(Label::Weak((*name).to_owned()), values)
+            })
+            .collect();
+        let tooltip = Tooltip::new(Header::Text(base.format(t, 3))).group(rows);
+        match row.and_then(|row| Some((names.get(row)?, self.traces.iter().nth(row)?))) {
+            Some((name, path)) => tooltip.describe(name, store.description(path)),
+            None => tooltip,
+        }
+    }
+
+    /// Shows the values of the shown traces current at `t` seconds.
+    fn tooltip_ui(
+        &self,
+        ui: &mut egui::Ui,
+        store: &dyn Store,
+        formats: &Formats,
+        (t, row): (f64, Option<usize>),
+        axis: time_axis::TimeAxis,
+    ) {
+        self.tooltip(store, formats, axis.timestamp(t), axis.base, row)
+            .ui(ui);
+    }
+
+    fn show_states(&self, context: &mut ViewContext<'_>, ui: &mut egui::Ui) {
+        let (store, formats, time) = (context.store, context.formats, &mut *context.time);
+        let names: Vec<String> = short_names(self.traces.iter().map(String::as_str))
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        let rows = names.len();
+        // the first trace is the top row
+        let row_y = move |row: usize| (rows - 1 - row) as f64;
+        let id = ui.id().with("states");
+        let plot = time_axis::plot(id, time, ui.visuals())
+            .show_grid([true, false])
+            .y_grid_spacer(move |_input| {
+                (0..rows)
+                    .map(|row| egui_plot::GridMark {
+                        value: row_y(row),
+                        step_size: 1.0,
+                    })
+                    .collect()
+            })
+            .custom_y_axes(vec![super::plotting::time_y_axis().formatter(
+                move |mark, _range| {
+                    let row = rows as f64 - 1.0 - mark.value;
+                    names
+                        .get(row.round() as usize)
+                        .filter(|_| row >= 0.0 && row.fract() == 0.0)
+                        .cloned()
+                        .unwrap_or_default()
+                },
+            )]);
+
+        let latest = time.latest();
+        let response = time_axis::show(id, plot, ui, time, false, |plot_ui, axis| {
+            plot_ui.set_plot_bounds_y(-0.5..=rows.max(1) as f64 - 0.5);
+            let (Some(range), Some(latest)) = (axis.range, latest) else {
+                return;
+            };
+            for (row, path) in self.traces.iter().enumerate() {
+                if let Some(samples) = StateSamples::of(
+                    store,
+                    path,
+                    formats.format_of(path, store.labels(path).is_some()),
+                    Window::of(axis.timestamps()),
+                ) {
+                    let y = row_y(row);
+                    self.plot_row(samples, y, range, latest, axis.origin, plot_ui);
+                }
+            }
+        });
+
+        if self.traces.is_empty() {
+            theme::hint_over(ui, response.frame, super::CHECK_TRACES);
+        }
+        if let Some(t) = response.hovered
+            && !self.traces.is_empty()
+        {
+            let axis = response.axis;
+            let row = response.hovered_y.and_then(|y| row_at(y, rows));
+            response
+                .response
+                .on_hover_ui_at_pointer(|ui| self.tooltip_ui(ui, store, formats, (t, row), axis));
+        }
+    }
+}
+
+impl super::ViewInfo for States {
+    const NAME: &'static str = "States";
+    const ICON: &'static str = egui_phosphor::regular::CHART_BAR_HORIZONTAL;
+
+    fn selectable(trace: Trace<'_>) -> Selectable {
+        match trace.samples {
+            Samples::Numbers(numbers)
+            | Samples::Arrays {
+                elements: numbers, ..
+            } if numbers.kind() == Some(NumberKind::Float) => {
+                Selectable::No("States show strings, bools and integers".into())
+            }
+            Samples::Arrays { shape, .. } => super::elements(shape.as_slice()),
+            _ => Selectable::Trace,
+        }
+    }
+}
+
+impl Viewable for States {
+    fn selection(&mut self) -> Option<(&mut BTreeSet<String>, bool)> {
+        let records = false;
+        Some((&mut self.traces, records))
+    }
+
+    fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
+        self.show_states(context, ui);
+    }
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, _context: &PropertiesContext<'_>) {
+        super::properties_section(ui, "Bands", |ui| {
+            super::property_label(ui, "Height");
+            ui.add(egui::Slider::new(&mut self.band_height, 0.2..=1.0))
+                .on_hover_text("Height of a band as a fraction of its row");
+            ui.end_row();
+            super::checkbox_row(
+                ui,
+                "Values",
+                &mut self.show_values,
+                "Label the bands wide enough with their value",
+            );
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests;

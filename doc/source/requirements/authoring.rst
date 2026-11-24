@@ -44,7 +44,7 @@ Options and links
    One of ``draft``, ``approved``, ``implemented``, ``verified``,
    ``rejected``.
 ``:component:``
-   Affected component(s): ``blip``, ``proto``, ``outpost``, ``sonde``,
+   Affected component(s): ``blip``, ``blip-kit``, ``proto`` (``blip-proto``), ``outpost``, ``sonde``,
    ``doc`` (the user documentation).
 ``:priority:``
    ``high``, ``medium`` or ``low``.

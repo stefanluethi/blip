@@ -1,7 +1,7 @@
 # blip design
 
 The look and the UI rules of blip, for anyone who designs or reviews its UI. The colour,
-size and font values live in `blip/src/app/theme.rs`; this file says what they are for
+size and font values live in `kit/src/widgets/theme.rs`; this file says what they are for
 and which choices were made on purpose. Studies of past choices are in this folder
 (`blip-ideas.html`, `blip-actions.html`).
 

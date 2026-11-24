@@ -12,10 +12,10 @@ Tests of the requirements in :doc:`/requirements/system/protocol`.
    ``proto/tests/messages.rs`` ``samples_and_metadata_have_the_new_names``
    checks that ``proto`` encodes a sample and trace metadata as
    ``Sample`` and ``TraceMetadata`` and decodes both these and the old
-   ``Value`` and ``ValueMetadata``. ``blip/src/app/model/decode`` unit tests
+   ``Value`` and ``ValueMetadata``. ``kit/src/store/decode`` unit tests
    (``old_and_new_names_decode_alike``) check that blip reads the old names as the
    new ones, and ``recordings_of_versions_1_to_3_are_read`` in
-   ``blip/src/app/model/recording`` also in a recording of version 1 or 2.
+   ``kit/src/store/recording`` also in a recording of version 1 or 2.
    ``proto/tests/sonde.rs`` checks that the fixture sonde wrote decodes as
    ``Sample`` and ``TraceMetadata`` and encodes again byte for byte.
    Outpost: ``outpost/tests/test_proto.py``
@@ -42,8 +42,8 @@ Tests of the requirements in :doc:`/requirements/system/protocol`.
    :component: proto, blip
    :verifies: REQ_PROTO_TIME
 
-   ``blip/src/app/model`` unit tests (``a_declared_clock_decides_the_time_base``)
-   and ``blip/src/app/time`` unit tests -- check that a connection with a ``Hello`` of the clock ``epoch``
+   ``kit/src/store`` unit tests (``a_declared_clock_decides_the_time_base``)
+   and ``kit/src/widgets/time`` unit tests -- check that a connection with a ``Hello`` of the clock ``epoch``
    or ``boot`` has the time base of its clock whatever its timestamps are,
    that without a ``Hello`` timestamps before 2001-09-09 are the time since boot
    and later ones the Unix epoch, that timestamps are taken as
@@ -55,9 +55,9 @@ Tests of the requirements in :doc:`/requirements/system/protocol`.
    :component: blip
    :verifies: REQ_PROTO_LOG_NOW, REQ_PROTO_LEVELS
 
-   ``blip/src/app/model/logs`` unit tests
+   ``kit/src/store/logs`` unit tests
    (``records_at_0_are_placed_and_levels_above_4_are_errors``) and
-   ``blip/src/app/model`` unit tests (``a_record_at_0_follows_the_newest_data``,
+   ``kit/src/store`` unit tests (``a_record_at_0_follows_the_newest_data``,
    ``a_record_at_0_without_data_shows_the_time_of_day``)
    -- check that a record with the timestamp 0 is placed at the
    newest time of the data, or at the time of day without data; that levels 0
@@ -76,7 +76,7 @@ Tests of the requirements in :doc:`/requirements/system/protocol`.
    round-trips (also byte for byte), that one with only a path, as older senders
    send it, still decodes, that integer range ends decode as floats and that a
    label key outside ``i64`` fails the message.
-   ``blip/src/app/model/traces`` unit test
+   ``kit/src/store/traces`` unit test
    ``metadata_applies_to_fields_and_elements`` checks that blip applies the
    metadata of a path to the trace at it, to a record field trace (``imu.acc``)
    and to the elements of an array trace (``imu.acc[0]``), drops an unusable
@@ -121,16 +121,16 @@ Tests of the requirements in :doc:`/requirements/system/protocol`.
    :component: blip
    :verifies: REQ_PROTO_SAMPLES_APPLY, REQ_VIS_PLOT
 
-   ``blip/src/app/model`` unit tests: ``blocks_give_the_traces_of_single_samples``
+   ``kit/src/store`` unit tests: ``blocks_give_the_traces_of_single_samples``
    checks that a block with a period and one with timestamps, of numbers with a
    null and of records, give the same traces as the equivalent ``Sample``
    messages; ``a_malformed_block_is_dropped_alone`` that a malformed block is
    dropped whole with one error notice, also from a source without a name, while
    the other messages of its frame are kept; ``an_empty_block_gives_nothing``
    and ``the_latest_value_of_a_block_is_its_last`` the empty block and the
-   readback of a block. ``blip/src/app/model/decode`` unit tests
+   readback of a block. ``kit/src/store/decode`` unit tests
    (``blocks_are_read_sample_by_sample``, ``malformed_blocks_are_refused``) check
    the two-pass reader and the texts of the refused blocks.
-   ``a_plot_shows_blocks_as_single_samples`` in ``blip/src/app/view/plot`` checks
+   ``a_plot_shows_blocks_as_single_samples`` in ``kit/src/widgets/view/plot`` checks
    that a plot shows the samples of a ``Sample`` and of a ``Samples`` message
    alike.

@@ -46,7 +46,7 @@ source/
 ## Diagrams
 
 The diagrams are drawn with [draw.io](https://www.drawio.com) in the colours of
-blip (`blip/src/app/theme.rs`). Edit the `.drawio` file (in the desktop app, or
+blip (`kit/src/widgets/theme.rs`). Edit the `.drawio` file (in the desktop app, or
 the draw.io VS Code extension), then export the SVGs next to the sources:
 
 ```bash

@@ -24,7 +24,7 @@ You do not edit the app code.
    its look (Control Room), so you design within it and do not invent a new identity.
    Do not bring back anything under "Rejected on purpose".
 3. Look at how blip looks today: the screenshots in `doc/source/screenshots` (light and
-   `-dark`), the views in `blip/src/app/view`, `blip/src/app/theme.rs`, and the user
+   `-dark`), the views in `kit/src/widgets/view`, `kit/src/widgets/theme.rs`, and the user
    guide pages in `doc/source/blip`. Look at the earlier studies in `design/*.html` to
    see how options were shown before.
 

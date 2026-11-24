@@ -491,6 +491,30 @@ dependencies = [
 name = "blip"
 version = "0.1.0"
 dependencies = [
+ "blip-kit",
+ "blip-proto",
+ "chrono",
+ "eframe",
+ "egui 0.36.2",
+ "egui-phosphor",
+ "egui_kittest",
+ "env_logger",
+ "image",
+ "log",
+ "serde",
+ "serde_cbor_2",
+ "serde_json",
+ "tungstenite",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "blip-kit"
+version = "0.1.0"
+dependencies = [
+ "blip-proto",
  "chrono",
  "eframe",
  "egui 0.36.2",
@@ -499,13 +523,10 @@ dependencies = [
  "egui_kittest",
  "egui_plot",
  "egui_tiles",
- "env_logger",
  "ewebsock",
  "flate2",
- "image",
  "js-sys",
  "log",
- "proto",
  "regex",
  "rfd",
  "serde",
@@ -515,6 +536,14 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "blip-proto"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_cbor_2",
 ]
 
 [[package]]
@@ -2932,14 +2961,6 @@ name = "profiling"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d595e54a326bc53c1c197b32d295e14b169e3cfeaa8dc82b529f947fba6bcf5"
-
-[[package]]
-name = "proto"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_cbor_2",
-]
 
 [[package]]
 name = "pxfm"

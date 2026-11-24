@@ -2,7 +2,7 @@ Wire protocol
 =============
 
 Messages are exchanged as **binary WebSocket frames** containing CBOR-encoded
-values of the types defined in the ``proto`` crate (``proto/src/lib.rs``).
+values of the types defined in the ``blip-proto`` crate (``proto/src/lib.rs``).
 Enums use serde's externally tagged representation, i.e. a map with a single
 key naming the variant.
 
@@ -156,7 +156,7 @@ decides the kind of the value:
    * - float
      - float (16, 32 or 64 bit)
      - Decoded as ``f64``. Encoders should use the shortest width that keeps
-       the value, as the ``proto`` crate does.
+       the value, as the ``blip-proto`` crate does.
    * - bool
      - ``true`` / ``false``
      -

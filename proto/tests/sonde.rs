@@ -1,6 +1,6 @@
 //! The messages sonde, the C++ tracing library, encodes, as in a recording it wrote.
 
-use proto::{
+use blip_proto::{
     Clock, Data, ExpectedRange, Hello, LogRecord, Message, Sample, SampleTimes, Samples,
     TraceMetadata,
 };

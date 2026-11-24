@@ -58,7 +58,7 @@ Connections to targets and the wire protocol.
    :satisfies: STK_LIVE_OBSERVE, STK_CONTROL
 
    Messages shall be encoded as CBOR according to the types defined in the
-   ``proto`` crate.
+   ``blip-proto`` crate.
 
 .. req:: Several messages per frame
    :id: REQ_PROTO_SEQUENCE

@@ -1,5 +1,5 @@
 // The encoding of the messages and of each kind of Data, compared byte for byte with the
-// CBOR of the proto crate (serde_cbor) and of the outpost.
+// CBOR of the blip-proto crate (serde_cbor) and of the outpost.
 
 #include "cbor.hpp"
 

@@ -8,29 +8,32 @@ satisfies. How each is built is described on the internals page of its part.
    :id: ARCH_BLIP
    :status: implemented
    :component: blip
-   :satisfies: REQ_VIS_PLOT, REQ_VIS_LOG, REQ_VIS_LOG_DEFAULT, REQ_VIS_LOG_PICK, REQ_VIS_LOG_PATH_FILTER, REQ_VIS_STATES, REQ_VIS_TABLE, REQ_VIS_XY, REQ_VIS_HEATMAP, REQ_VIS_HIST, REQ_VIS_HIST_BINS, REQ_VIS_HIST_COUNTS, REQ_VIS_HIST_MARKERS, REQ_VIS_HIST_ORIENT, REQ_VIS_HIST_LINK, REQ_VIS_HIST_HOVER, REQ_VIS_HIST_EMPTY, REQ_VIS_HIST_SAVED, REQ_VIS_DIST_SHOW, REQ_VIS_DIST_BOX, REQ_VIS_DIST_WHISKERS, REQ_VIS_DIST_STATS, REQ_VIS_DIST_BOX_HOVER, REQ_VIS_DIST_BOX_EMPTY, REQ_VIS_DIST_PROPS, REQ_VIS_CURSOR, REQ_VIS_TOOLTIP, REQ_CONN_WS, REQ_PLAT_WEB, REQ_PLAT_NATIVE, REQ_PERSIST_STATE, REQ_PRESETS, REQ_CTRL_ACTION, REQ_CTRL_FEEDBACK, REQ_CTRL_VIEW, REQ_CTRL_SAFE, REQ_PROTO_TIME, REQ_PROTO_LOG_NOW, REQ_PROTO_LEVELS, REQ_PROTO_NAMES, REQ_PROTO_METADATA, REQ_PROTO_SAMPLES_APPLY, REQ_CONN_HELLO, REQ_CONN_HELLO_SHOW, REQ_CONN_NEWER, REQ_CONN_TIMELINE, REQ_FILE_VERSION, REQ_META_LABELS, REQ_META_PROPS, REQ_META_TOOLTIP, REQ_META_HOVER, REQ_META_FIT_PLOT, REQ_META_FIT_XY, REQ_META_HEATMAP, REQ_META_SAVED
+   :satisfies: REQ_VIS_PLOT, REQ_VIS_LOG, REQ_VIS_LOG_DEFAULT, REQ_VIS_LOG_PICK, REQ_VIS_LOG_PATH_FILTER, REQ_VIS_STATES, REQ_VIS_TABLE, REQ_VIS_XY, REQ_VIS_HEATMAP, REQ_VIS_HIST, REQ_VIS_HIST_BINS, REQ_VIS_HIST_COUNTS, REQ_VIS_HIST_MARKERS, REQ_VIS_HIST_ORIENT, REQ_VIS_HIST_LINK, REQ_VIS_HIST_HOVER, REQ_VIS_HIST_EMPTY, REQ_VIS_HIST_SAVED, REQ_VIS_DIST_SHOW, REQ_VIS_DIST_BOX, REQ_VIS_DIST_WHISKERS, REQ_VIS_DIST_STATS, REQ_VIS_DIST_BOX_HOVER, REQ_VIS_DIST_BOX_EMPTY, REQ_VIS_DIST_PROPS, REQ_VIS_CURSOR, REQ_VIS_TOOLTIP, REQ_CONN_WS, REQ_PLAT_WEB, REQ_PLAT_NATIVE, REQ_PERSIST_STATE, REQ_PRESETS, REQ_CTRL_ACTION, REQ_CTRL_FEEDBACK, REQ_CTRL_VIEW, REQ_CTRL_SAFE, REQ_PROTO_TIME, REQ_PROTO_LOG_NOW, REQ_PROTO_LEVELS, REQ_PROTO_NAMES, REQ_PROTO_METADATA, REQ_PROTO_SAMPLES_APPLY, REQ_CONN_HELLO, REQ_CONN_HELLO_SHOW, REQ_CONN_NEWER, REQ_CONN_TIMELINE, REQ_FILE_VERSION, REQ_META_LABELS, REQ_META_PROPS, REQ_META_TOOLTIP, REQ_META_HOVER, REQ_META_FIT_PLOT, REQ_META_FIT_XY, REQ_META_HEATMAP, REQ_META_SAVED, REQ_LIB_CRATES, REQ_LIB_REFERENCE, REQ_LIB_NO_CHANGE, REQ_LIB_COMPAT, REQ_LIB_PLATFORMS
 
    egui/eframe application compiled to WebAssembly (served by Trunk) or to a
-   native binary. Main modules in ``blip/src``, see :doc:`/blip/internals`:
+   native binary: ``main.rs`` and the ``App`` in ``blip/src``, built on the
+   library ``blip-kit`` in ``kit/src`` (``store``, ``widgets`` and
+   ``workbench``). Main modules, see :doc:`/blip/internals`:
 
    * ``app.rs`` -- the panels of the window, the menu, files and persistence,
-     and the ``State`` of time range, recording, model and invoker.
-   * ``app/presets.rs`` -- the presets, each a layout with its connections,
+     and the ``State`` of the time range and the session with the store, the
+     invoker and whether it records.
+   * ``workbench/presets.rs`` -- the presets, each a layout with its connections,
      their menu and dialogs and their versioned saved form, kept and in
      files.
-   * ``app/connections.rs`` -- the WebSocket connections and their panel;
+   * ``workbench/connections.rs`` -- the WebSocket connections and their panel;
      splits frames into messages and keeps the ``Hello`` of each connection
      to show it, with the warning of a newer protocol.
-   * ``app/model`` -- the data model: ``traces`` with the samples and the
+   * ``store`` -- the data model: ``traces`` with the samples and the
      metadata of each (blocks of samples are decoded whole), the clock of each
      source from its ``Hello`` and the time base, ``logs``, the
      announced ``actions`` with the ``Invoker``, which sends invocations and
      tracks their answers, the ``recording`` of the received messages, and
      ``sorted``, the searches of ascending timestamps.
-   * ``app/time.rs`` -- the time range shared by all views, and the timeline.
-   * ``app/layout`` -- the layout of the views as a tree of groups, shown
+   * ``widgets/time.rs`` -- the time range shared by all views, and the timeline.
+   * ``workbench/layout`` -- the layout of the views as a tree of groups, shown
      with ``egui_tiles``, the properties panel and its saved form.
-   * ``app/view`` -- views: time-series ``plot``, ``states`` over time,
+   * ``widgets/view`` -- views: time-series ``plot``, ``states`` over time,
      ``table`` of values, ``xy`` plot, ``distribution`` of values, ``heatmap``
      of arrays, ``log_table`` and the ``actions`` form; ``time_axis`` shared
      by the views over time, ``plotting`` shared by the plot views, ``tooltip`` shared by their hover
@@ -38,11 +41,11 @@ satisfies. How each is built is described on the internals page of its part.
      ``trace_selection``, the tree of the traces and actions to choose those of
      the selected view.
 
-.. arch:: proto crate
+.. arch:: blip-proto crate
    :id: ARCH_PROTO
    :status: implemented
    :component: proto
-   :satisfies: REQ_PROTO_CBOR, REQ_PROTO_LOG, REQ_CTRL_ANNOUNCE, REQ_PROTO_TIME, REQ_PROTO_LEVELS, REQ_PROTO_NAMES, REQ_PROTO_METADATA, REQ_PROTO_HELLO, REQ_PROTO_SAMPLES, REQ_PROTO_TYPES
+   :satisfies: REQ_PROTO_CBOR, REQ_PROTO_LOG, REQ_CTRL_ANNOUNCE, REQ_PROTO_TIME, REQ_PROTO_LEVELS, REQ_PROTO_NAMES, REQ_PROTO_METADATA, REQ_PROTO_HELLO, REQ_PROTO_SAMPLES, REQ_PROTO_TYPES, REQ_LIB_PROTO_CRATE, REQ_LIB_PUBLISH
 
    Rust crate defining the serde-serialisable wire types. It is the single
    source of truth for the message schema: ``Hello``, ``Sample``, ``Samples``,
@@ -50,6 +53,59 @@ satisfies. How each is built is described on the internals page of its part.
    protocol ``VERSION`` and the old names ``Value`` and ``ValueMetadata`` as
    aliases when reading. The outpost mirrors it in
    ``outpost/src/blip_outpost/proto.py``.
+
+.. arch:: blip-kit core
+   :id: ARCH_KIT_CORE
+   :status: implemented
+   :component: blip-kit
+   :satisfies: REQ_LIB_CRATES, REQ_LIB_FEATURES, REQ_LIB_NO_GUI, REQ_LIB_PLATFORMS, REQ_LIB_COMPAT, REQ_LIB_SOURCE, REQ_LIB_SOURCE_OWN, REQ_LIB_SESSION, REQ_LIB_STORE, REQ_LIB_STORE_ONLY, REQ_LIB_STORE_MEMORY, REQ_LIB_STORE_INFLUX, REQ_LIB_ACTIONS, REQ_LIB_PUBLISH
+
+   The part of the ``blip-kit`` library that is always built and has no GUI
+   dependency: the ``Store`` and ``Source`` traits, the in-memory store, the
+   recording files, the invoker of actions and the session that does the
+   receive and send logic of each frame. It uses the wire types of
+   ``blip-proto``.
+
+.. arch:: blip-kit widgets
+   :id: ARCH_KIT_WIDGETS
+   :status: implemented
+   :component: blip-kit
+   :satisfies: REQ_LIB_FEATURES, REQ_LIB_PLATFORMS, REQ_LIB_WIDGETS, REQ_LIB_WIDGETS_OWN, REQ_LIB_TABLE_COLUMNS, REQ_LIB_ACTIONS, REQ_LIB_EXAMPLE
+
+   Feature ``widgets`` of ``blip-kit``, on by default and needing egui: the
+   theme, the time range controls, the timeline, all views and the action
+   widgets, each usable on its own in any egui UI and configured in code, the
+   tree to choose the traces of a view, and the registry of the view types an
+   application adds.
+
+.. arch:: blip-kit workbench
+   :id: ARCH_KIT_WORKBENCH
+   :status: implemented
+   :component: blip-kit
+   :satisfies: REQ_LIB_FEATURES, REQ_LIB_PLATFORMS, REQ_LIB_REGISTRY
+
+   Feature ``workbench`` of ``blip-kit``, needing ``widgets``: the
+   user-configurable layout with the properties of its views, the presets, the
+   list of connections, the toasts and the file dialogs. The shipped ``blip`` application is built on it.
+
+.. arch:: blip-kit WebSocket source
+   :id: ARCH_KIT_WEBSOCKET
+   :status: implemented
+   :component: blip-kit
+   :satisfies: REQ_LIB_FEATURES, REQ_LIB_PLATFORMS, REQ_LIB_SOURCE_WS
+
+   Feature ``websocket`` of ``blip-kit``, on by default: the ``Source`` for
+   the WebSocket connection to an outpost, for web and native.
+
+.. arch:: Example application
+   :id: ARCH_LIB_EXAMPLE
+   :status: implemented
+   :component: blip-kit
+   :satisfies: REQ_LIB_EXAMPLE, REQ_LIB_SOURCE_OWN, REQ_LIB_TABLE_COLUMNS
+
+   A small application in the repository that uses ``blip-kit`` without the
+   ``workbench`` feature: a fixed dashboard fed by a simulated source in its
+   own process.
 
 .. arch:: outpost
    :id: ARCH_OUTPOST

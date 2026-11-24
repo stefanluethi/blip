@@ -62,7 +62,7 @@ Structure
      - ``OutpostServer``: the WebSocket server, the broadcast to all clients,
        the cache of units and actions, and carrying out invocations.
    * - ``proto.py``
-     - The wire types mirrored from the Rust ``proto`` crate, CBOR encoding,
+     - The wire types mirrored from the Rust ``blip-proto`` crate, CBOR encoding,
        splitting CBOR sequences and decoding requests.
    * - ``recording.py``
      - ``RecordingWriter`` and ``read_frames`` for recording files.

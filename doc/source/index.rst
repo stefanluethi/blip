@@ -36,6 +36,8 @@ Where to start
      - :doc:`outpost/index`
    * - trace from firmware or unit tests in C++
      - :doc:`sonde/index`
+   * - build your own tracing UI from blip's parts
+     - :doc:`library/index`
    * - fix something that does not work
      - :doc:`help/troubleshooting`
    * - look up an option, a function or a file format
@@ -65,6 +67,12 @@ Where to start
    blip/index
    outpost/index
    sonde/index
+
+.. toctree::
+   :caption: Library
+   :maxdepth: 2
+
+   library/index
 
 .. toctree::
    :caption: Help

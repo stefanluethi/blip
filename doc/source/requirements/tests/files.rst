@@ -9,7 +9,7 @@ Tests of the requirements in :doc:`/requirements/system/files`.
    :component: blip
    :verifies: REQ_FILE_RECORDING
 
-   ``blip/src/app/model/recording.rs`` and ``blip/src/app.rs`` tests -- save
+   ``kit/src/store/recording.rs`` and ``blip/src/app.rs`` tests -- save
    frames and read them back unchanged, read uncompressed files, files of
    several gzip members and files written by the Python outpost, read a cut
    off file up to the cut and reject other files; open a recording in place
@@ -21,9 +21,9 @@ Tests of the requirements in :doc:`/requirements/system/files`.
    :component: blip
    :verifies: REQ_FILE_PRESETS
 
-   ``blip/src/app/layout/file.rs::layouts_survive_json`` -- saves a layout
+   ``kit/src/workbench/layout/file.rs::layouts_survive_json`` -- saves a layout
    with a view of each type as JSON and checks it loads unchanged.
-   ``blip/src/app/presets.rs`` tests -- write presets with their layout and
+   ``kit/src/workbench/presets.rs`` tests -- write presets with their layout and
    connections to a file and read them back unchanged, export the chosen
    presets, import replacing those of the same names, refuse files of a newer
    version, layout files and presets without or with the same names, keep the
@@ -40,7 +40,7 @@ Tests of the requirements in :doc:`/requirements/system/files`.
    :component: blip
    :verifies: REQ_FILE_VERSION
 
-   ``blip/src/app/model/recording`` unit tests: ``recordings_are_written_as_version_3``
+   ``kit/src/store/recording`` unit tests: ``recordings_are_written_as_version_3``
    checks that blip writes the header with version 3 and the names of the
    connections as in version 2; ``recordings_of_versions_1_to_3_are_read`` that it
    reads recordings of versions 1, 2 and 3, with ``Value`` and ``ValueMetadata``

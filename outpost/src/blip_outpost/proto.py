@@ -1,4 +1,4 @@
-"""Protocol serialization and schema definition matching Rust proto crate."""
+"""Protocol serialization and schema definition matching Rust blip-proto crate."""
 
 import dataclasses
 import enum

@@ -20,7 +20,7 @@ Tests of the requirements in :doc:`/requirements/system/connectivity`.
    :component: blip
    :verifies: REQ_PROTO_SEQUENCE
 
-   ``blip/src/app/model.rs::a_cbor_sequence_is_split_into_its_items`` --
+   ``kit/src/store.rs::a_cbor_sequence_is_split_into_its_items`` --
    splits a CBOR sequence of a value and a log record into both messages, and
    one cut off or broken in the middle into the messages before and an error.
 
@@ -30,7 +30,7 @@ Tests of the requirements in :doc:`/requirements/system/connectivity`.
    :component: blip
    :verifies: REQ_CONN_WS, REQ_CONN_ERRORS
 
-   ``blip/src/app/connections.rs``, ``blip/src/app/toasts.rs`` and
+   ``kit/src/workbench/connections.rs``, ``kit/src/workbench/toasts.rs`` and
    ``blip/src/app.rs`` tests -- name connections after their address, add
    them with the + button, open several at once, pass on when the first one
    opens before its messages and start afresh then unless recording, keep
@@ -38,7 +38,7 @@ Tests of the requirements in :doc:`/requirements/system/connectivity`.
    broke, ask before dropping an unsaved recording, report why an invalid
    address fails to connect, show errors and warnings as toasts until they
    expire or are closed, count a repeated one instead of stacking it, and
-   warn when a recording is opened in part; ``blip/src/app/model/traces.rs``
+   warn when a recording is opened in part; ``kit/src/store/traces.rs``
    tests -- put the samples of a path in the order of their timestamps,
    also when several connections send it.
 
@@ -48,7 +48,7 @@ Tests of the requirements in :doc:`/requirements/system/connectivity`.
    :component: blip, outpost
    :verifies: REQ_CONN_TIMELINE
 
-   ``blip/src/app/model.rs`` tests -- drop values and log records of another
+   ``kit/src/store.rs`` tests -- drop values and log records of another
    time base than the first sample, move records without a timestamp to a
    first timestamp in another time base, and start afresh when cleared;
    ``outpost/tests/test_timing.py`` -- keep the time of a target, shift a run
@@ -69,12 +69,12 @@ Tests of the requirements in :doc:`/requirements/system/connectivity`.
    :component: blip
    :verifies: REQ_CONN_TIMELINE
 
-   ``blip/src/app/model`` unit tests (``different_clocks_share_the_utc_axis``)
+   ``kit/src/store`` unit tests (``different_clocks_share_the_utc_axis``)
    -- check that two connections with ``Hello`` clocks ``epoch`` and
    ``boot`` warn once and that the axis is the UTC one, that the boot data already
    received is removed when the UTC connection appears and later boot samples
    are dropped, that two with the same clock do not warn, and that the first
-   sample sets the axis as declared by its ``Hello``. The ``blip/src/app/model/actions``
+   sample sets the axis as declared by its ``Hello``. The ``kit/src/store/actions``
    unit test (``readbacks_follow_after_another_clock_dropped_the_data``) checks that the
    readback sample count does not go down when that data is dropped, so an accepted
    action's inputs follow the next readback sample.
@@ -99,7 +99,7 @@ Tests of the requirements in :doc:`/requirements/system/connectivity`.
    :component: blip
    :verifies: REQ_CONN_HELLO, REQ_CONN_HELLO_SHOW
 
-   ``blip/src/app/connections`` unit tests
+   ``kit/src/workbench/connections`` unit tests
    (``hello_lines_name_the_target_sender_and_clock``,
    ``a_hello_is_kept_and_replaced``) check that a ``Hello`` is kept for its connection and that a
    second replaces the first; that the popup row shows the target name right
@@ -113,7 +113,7 @@ Tests of the requirements in :doc:`/requirements/system/connectivity`.
    :component: blip
    :verifies: REQ_CONN_NEWER
 
-   ``blip/src/app/connections`` unit test
+   ``kit/src/workbench/connections`` unit test
    ``a_newer_protocol_is_warned_once_per_connect`` checks that a ``Hello`` of a newer version warns once in the log
    and as a notice for each connect and does not stop reading messages, that
    the dot of the row and the chip are amber while connected and the hover and
@@ -127,7 +127,7 @@ Tests of the requirements in :doc:`/requirements/system/connectivity`.
    :verifies: REQ_PROTO_LOG
 
    ``proto/tests/log.rs`` and ``proto/tests/sonde.rs`` tests, and the
-   ``blip/src/app/model/decode`` and ``blip/src/app/model/recording`` unit tests
+   ``kit/src/store/decode`` and ``kit/src/store/recording`` unit tests
    -- checks that a ``LogRecord`` without a component round-trips
    with its timestamp, path, level and message, that an empty path is left
    out, and that a record encoded with a ``component`` field still decodes and

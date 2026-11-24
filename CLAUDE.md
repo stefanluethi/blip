@@ -7,8 +7,9 @@ reference and the requirements.
 
 | Directory  | Contents |
 |------------|----------|
-| `blip/`    | GUI app (Rust, egui), web (WASM, Trunk) and native |
-| `proto/`   | Wire protocol types shared between blip and the bridge (Rust) |
+| `blip/`    | GUI app (Rust, egui), web (WASM, Trunk) and native: `main.rs` and the `App` on `blip-kit` |
+| `kit/`   | `blip-kit`, the library blip is built from: `store`, `widgets` and `workbench` as features (Rust) |
+| `proto/`   | `blip-proto`, the wire protocol types shared between blip and the bridge (Rust) |
 | `outpost/` | `blip-outpost`, the Python library and examples (uv) |
 | `sonde/`   | Tracing library for targets and unit tests (C++17, CMake) |
 | `doc/`     | Documentation (Sphinx, sphinx-needs), diagrams in draw.io |
@@ -22,6 +23,7 @@ that compiles (`build`, `run`, `check`, `clippy`, `test`, `doc`) and Trunk:
 ```bash
 cargo build --release -p blip
 cargo run --release -p blip
+cargo run --release -p blip-kit --example dashboard
 cargo check --release --workspace --all-targets
 cargo clippy --release --workspace --all-targets --all-features -- -D warnings -W clippy::all
 cargo test --release --workspace --all-targets --all-features
@@ -48,7 +50,8 @@ database that the sonde configure above writes to `sonde/build`.
 ## Checks
 
 `./check.sh` runs the CI-style checks (all in release): cargo check for native and
-WASM, rustfmt, clippy, the tests and a Trunk build. Run it before committing Rust
+WASM, the features of `blip-kit` and its example, rustfmt, clippy, the tests, the API
+docs, the packaging of the library crates and a Trunk build. Run it before committing Rust
 changes.
 
 - outpost: `cd outpost && uv run pytest`
@@ -59,6 +62,9 @@ changes.
 
 - Update the docs in `doc/source` (guides, architecture, requirements and tests) along
   with the code they describe.
+- `blip-kit` keeps its layers: `store` uses no GUI crate and neither `widgets` nor
+  `workbench`; `widgets` does not use `workbench`. Widgets read data only through the
+  `Store` trait (`&dyn Store`), with the `Window` they show.
 - Rust unit tests live in their own file: `src/x/foo/tests.rs`, declared in `foo.rs` as
   `#[cfg(test)] mod tests;`, not inline, so reading code doesn't load its tests. Skip
   `tests.rs` files when searching or reading code you don't test.

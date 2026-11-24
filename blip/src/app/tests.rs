@@ -48,27 +48,27 @@ fn unit_of(path: &str) -> Vec<u8> {
 #[test]
 fn a_recording_starts_only_while_connected_and_clears_the_data() {
     let mut state = State::default();
-    assert!(!state.recording);
-    state.receive("a", &unit(), 0.0);
-    state.receive("a", &value(1_000_000_000), 0.0);
-    assert!(!state.model.has_samples());
+    assert!(!state.session.recording);
+    state.session.receive("a", &unit(), 0.0);
+    state.session.receive("a", &value(1_000_000_000), 0.0);
+    assert!(!state.session.store.has_samples());
     state.set_recording(true, false);
-    assert!(!state.recording);
+    assert!(!state.session.recording);
 
     state.set_recording(true, true);
-    state.receive("a", &value(2_000_000_000), 0.0);
-    state.receive("a", &value(3_000_000_000), 0.0);
-    state.time.update(&state.model, 0.0);
+    state.session.receive("a", &value(2_000_000_000), 0.0);
+    state.session.receive("a", &value(3_000_000_000), 0.0);
+    state.time.update(&state.session.store, 0.0);
     state.time.set_cursor(2.5);
     // stopping keeps the data, also when no longer connected
     state.set_recording(false, false);
-    assert!(!state.recording);
-    assert!(state.model.has_samples());
+    assert!(!state.session.recording);
+    assert!(state.session.store.has_samples());
 
     state.set_recording(true, true);
-    assert!(state.recording);
-    assert!(!state.model.has_samples());
-    assert_eq!(state.model.traces.unit("rpm"), Some("rpm"));
+    assert!(state.session.recording);
+    assert!(!state.session.store.has_samples());
+    assert_eq!(state.session.store.traces.unit("rpm"), Some("rpm"));
     assert!(state.time.is_live() && state.time.is_playing());
 }
 
@@ -86,59 +86,59 @@ fn the_record_button_is_disabled_until_connected() {
     harness.run();
     harness.get_by_label_contains("Record").click();
     harness.run();
-    assert!(!harness.state().0.recording);
+    assert!(!harness.state().0.session.recording);
 
     harness.state_mut().1 = true;
     harness.run();
     harness.get_by_label_contains("Record").click();
     harness.run();
-    assert!(harness.state().0.recording);
+    assert!(harness.state().0.session.recording);
 
     harness.state_mut().1 = false;
     harness.run();
     harness.get_by_label_contains("Record").click();
     harness.run();
-    assert!(!harness.state().0.recording);
+    assert!(!harness.state().0.session.recording);
 }
 
 #[test]
 fn opening_a_recording_stops_recording_and_starts_afresh() {
-    let mut recorded = model::Model::default();
+    let mut recorded = model::MemoryStore::default();
     recorded.receive("a", &value(1));
     let file = files::File {
         name: "a.blip".to_owned(),
         bytes: recorded.recording.to_file(),
     };
     let mut app = App::default();
-    app.state.receive("old", &unit_of("temp"), 0.0);
-    app.state.recording = true;
+    app.state.session.receive("old", &unit_of("temp"), 0.0);
+    app.state.session.recording = true;
     app.trace_search = "temp".to_owned();
     let generation = app.traces_generation;
     app.open_all(file).unwrap();
-    assert!(!app.state.recording);
-    assert!(app.state.model.has_samples());
+    assert!(!app.state.session.recording);
+    assert!(app.state.session.store.has_samples());
     assert!(app.trace_search.is_empty());
     assert_ne!(app.traces_generation, generation);
     // the unit before is gone: clearing the data, which keeps the units and
     // actions to record them again, has none of the recording file to keep
     app.state.clear_data();
-    assert_eq!(app.state.model.recording.messages(), 0);
+    assert_eq!(app.state.session.store.recording.messages(), 0);
 }
 
 #[test]
 fn the_first_connection_to_open_starts_afresh_unless_recording() {
     let mut state = State::default();
     state.set_recording(true, true);
-    state.receive("old", &unit(), 0.0);
-    state.receive("old", &value(1), 0.0);
+    state.session.receive("old", &unit(), 0.0);
+    state.session.receive("old", &value(1), 0.0);
     // a connection opening while recording keeps the recording going
     assert!(!state.apply(Received::FirstOpened, 0.0));
-    assert!(state.recording && state.model.has_samples());
+    assert!(state.session.recording && state.session.store.has_samples());
 
     state.set_recording(false, false);
     assert!(state.apply(Received::FirstOpened, 0.0));
-    assert!(state.model.traces.iter().next().is_none());
-    assert_eq!(state.model.recording.messages(), 0);
+    assert!(state.session.store.traces.iter().next().is_none());
+    assert_eq!(state.session.store.recording.messages(), 0);
     let message = unit();
     let received = Received::Message {
         source: "new",
@@ -147,7 +147,7 @@ fn the_first_connection_to_open_starts_afresh_unless_recording() {
     assert!(!state.apply(received, 0.0));
     // a recording starts with the unit of the new connection only, not the old one
     state.set_recording(true, true);
-    assert_eq!(state.model.recording.messages(), 1);
+    assert_eq!(state.session.store.recording.messages(), 1);
 }
 
 #[test]
@@ -161,7 +161,9 @@ fn starting_afresh_opens_the_branches_of_the_traces_again() {
     };
     app.layout.select_view_showing_traces();
     app.state.set_recording(true, true);
-    app.state.receive("a", &value_of("motor/rpm", 1), 0.0);
+    app.state
+        .session
+        .receive("a", &value_of("motor/rpm", 1), 0.0);
     let mut harness = Harness::builder()
         .with_size(egui::vec2(300.0, 400.0))
         .build_ui_state(|ui, app: &mut App| app.traces_panel_ui(ui), app);
@@ -203,7 +205,9 @@ fn a_linked_histogram_shows_the_traces_of_the_plot_greyed() {
     };
     assert!(app.layout.select_named("Spread"));
     app.state.set_recording(true, true);
-    app.state.receive("a", &value_of("motor/rpm", 1), 0.0);
+    app.state
+        .session
+        .receive("a", &value_of("motor/rpm", 1), 0.0);
     let mut harness = Harness::builder()
         .with_size(egui::vec2(300.0, 400.0))
         .build_ui_state(
@@ -266,7 +270,7 @@ fn a_recording_is_opened_across_frames_and_can_be_cancelled() {
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
 
-    let mut recorded = model::Model::default();
+    let mut recorded = model::MemoryStore::default();
     for timestamp in 0..200_000 {
         recorded.receive("a", &value(timestamp));
     }
@@ -276,20 +280,20 @@ fn a_recording_is_opened_across_frames_and_can_be_cancelled() {
     };
     let ctx = Context::default();
     let mut app = App::default();
-    app.state.receive("old", &unit_of("temp"), 0.0);
+    app.state.session.receive("old", &unit_of("temp"), 0.0);
     app.open(file()).unwrap();
     // the data shown stays until all is read
     app.continue_opening(&ctx);
     assert!(app.opening.is_some());
-    assert!(!app.state.model.has_samples());
+    assert!(!app.state.session.store.has_samples());
     let mut frames = 1;
     while app.opening.is_some() {
         app.continue_opening(&ctx);
         frames += 1;
     }
     assert!(frames > 1);
-    assert!(app.state.model.has_samples());
-    assert_eq!(app.state.model.recording.messages(), 200_000);
+    assert!(app.state.session.store.has_samples());
+    assert_eq!(app.state.session.store.recording.messages(), 200_000);
 
     // connecting while reading cancels it
     let mut app = App::default();
@@ -297,15 +301,15 @@ fn a_recording_is_opened_across_frames_and_can_be_cancelled() {
     app.connections.connect_first(&ctx);
     app.continue_opening(&ctx);
     assert!(app.opening.is_none());
-    assert!(!app.state.model.has_samples());
+    assert!(!app.state.session.store.has_samples());
     assert!(app.toasts.shown()[0].1.contains("cancelled by connecting"));
 
     // cancelled, the data shown stays
     let mut app = App::default();
-    app.state.recording = true;
-    app.state.receive("old", &value(1), 0.0);
+    app.state.session.recording = true;
+    app.state.session.receive("old", &value(1), 0.0);
     app.open(file()).unwrap();
-    assert!(!app.state.recording);
+    assert!(!app.state.session.recording);
     app.continue_opening(&ctx);
     let mut harness = Harness::builder()
         .with_size(egui::vec2(900.0, 500.0))
@@ -318,12 +322,12 @@ fn a_recording_is_opened_across_frames_and_can_be_cancelled() {
     harness.get_by_label(egui_phosphor::regular::X).click();
     harness.run_steps(2);
     assert!(harness.state().opening.is_none());
-    assert!(harness.state().state.model.has_samples());
+    assert!(harness.state().state.session.store.has_samples());
 }
 
 #[test]
 fn a_recording_opened_in_part_is_toasted() {
-    let mut recorded = model::Model::default();
+    let mut recorded = model::MemoryStore::default();
     for timestamp in 0..1000 {
         recorded.receive("a", &value(timestamp));
     }
@@ -431,7 +435,7 @@ fn presets_are_not_switched_while_recording() {
 
     let mut app = App::default();
     app.apply_preset(presets::Action::New, &Context::default());
-    app.state.recording = true;
+    app.state.session.recording = true;
     let mut harness = Harness::builder()
         .with_size(egui::vec2(900.0, 500.0))
         .build_ui_state(|ui, app: &mut App| app.menu_ui(ui), app);

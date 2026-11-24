@@ -821,7 +821,7 @@ target_link_libraries(firmware PRIVATE sonde::sonde)
 ### Tests
 
 - Encoding of each message type (`Sample`, `TraceMetadata`, `Log`; no `Value` or `ValueMetadata` is written; the `Level` numbers are pinned by `static_assert`) and each kind of `Data`, compared byte for byte with the
-  CBOR of the `proto` crate (e.g. the motor and IMU fixtures in `proto/src/data.rs`).
+  CBOR of the `blip-proto` crate (e.g. the motor and IMU fixtures in `proto/src/data.rs`).
 - The `Hello`: sent once before the first message of any kind, with and without a sink,
   with name and clock left out when empty or `Unknown`; a queue without one sends the
   default; a `Hello` too large for a batch is dropped once and counted; a static queue

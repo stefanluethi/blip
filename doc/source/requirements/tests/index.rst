@@ -18,6 +18,7 @@ whose requirements the tests verify.
    control
    platforms
    files
+   library
    outpost
    sonde
    documentation

@@ -23,7 +23,7 @@ What you need depends on what you use:
 Prerequisites
 -------------
 
-* `Rust <https://rustup.rs>`_ |ge| 1.85, with the ``wasm32-unknown-unknown``
+* `Rust <https://rustup.rs>`_ |ge| 1.88, with the ``wasm32-unknown-unknown``
   target for the web build::
 
      rustup target add wasm32-unknown-unknown

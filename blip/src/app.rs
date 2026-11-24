@@ -1,49 +1,14 @@
-/// Defines a fieldless enum with the name shown for each variant, written
-/// `Variant => "Name"`, and gives it `ALL` its variants in their order, `CHOICES` each
-/// with its name, e.g. for [`view::choice_row`], and `name()`.
-macro_rules! named_enum {
-    (
-        $(#[$meta:meta])*
-        $vis:vis enum $name:ident {
-            $($(#[$variant_meta:meta])* $variant:ident => $text:literal),* $(,)?
-        }
-    ) => {
-        $(#[$meta])*
-        $vis enum $name {
-            $($(#[$variant_meta])* $variant),*
-        }
-
-        #[allow(dead_code)]
-        impl $name {
-            pub const ALL: [Self; [$($text),*].len()] = [$(Self::$variant),*];
-            pub const CHOICES: [(Self, &'static str); [$($text),*].len()] =
-                [$((Self::$variant, $text)),*];
-
-            pub fn name(self) -> &'static str {
-                match self {
-                    $(Self::$variant => $text),*
-                }
-            }
-        }
-    };
-}
-
-mod connections;
-mod files;
-mod layout;
-mod model;
-mod opening;
-mod presets;
 #[cfg(all(test, feature = "screenshots"))]
 mod screenshots;
-mod theme;
-mod time;
-mod toasts;
-mod view;
+
+use blip_kit::store as model;
+use blip_kit::widgets::{theme, time, view};
+use blip_kit::workbench::{connections, files, layout, opening, presets, toasts};
 
 use connections::Received;
 use eframe::Frame;
 use egui::{Context, Key, KeyboardShortcut, Modifiers};
+use model::session::Session;
 use std::collections::HashSet;
 use theme::TokensExt;
 use view::{ViewContext, Viewable};
@@ -56,74 +21,41 @@ const SAVE_RECORDING: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAN
 pub struct State {
     time: time::TimeRange,
 
-    /// Whether the samples received from the connections are kept, else they are
-    /// dropped. A recording starts with an open connection and clears the data.
+    /// The store, the invoker and whether the samples received are recorded.
     #[serde(skip)]
-    recording: bool,
-
-    #[serde(skip)]
-    model: model::Model,
-
-    #[serde(skip)]
-    invoker: model::actions::Invoker,
+    session: Session,
 }
 
 impl State {
-    /// Applies a frame received from `source`, the name of its connection, at the time
-    /// `now`: records it while recording, and passes answers to the invoker.
-    fn receive(&mut self, source: &str, frame: &[u8], now: f64) {
-        let result = if self.recording {
-            self.model.receive(source, frame)
-        } else {
-            self.model.receive_unrecorded(source, frame)
-        };
-        if let Some(result) = result {
-            self.invoker.receive(source, &result, now, &self.model);
-        }
-    }
-
     /// Applies what the connections received at the time `now`. Returns whether the
     /// first connection opened, which starts afresh with no data, unless recording.
     fn apply(&mut self, received: Received<'_>, now: f64) -> bool {
         match received {
-            Received::FirstOpened if !self.recording => {
-                self.start_fresh(model::Model::default());
-                true
-            }
-            Received::FirstOpened => false,
+            Received::FirstOpened => self.session.first_opened(),
             Received::Message { source, message } => {
-                self.receive(source, message, now);
+                self.session.receive(source, message, now);
                 false
             }
         }
     }
 
-    /// Removes the received data, see [`model::Model::clear`]. The readbacks and their
-    /// counts stay, so the invocations still tell which readback samples are newer.
+    /// Removes the received data, see [`Session::clear_data`].
     fn clear_data(&mut self) {
-        self.model.clear();
+        self.session.clear_data();
     }
 
-    /// Starts afresh with `model`, e.g. of an opened recording: drops all data, also the
-    /// descriptions of the targets that [`Self::clear_data`] keeps, stops recording and
-    /// forgets the invocations.
-    fn start_fresh(&mut self, model: model::Model) {
-        self.recording = false;
-        self.invoker.reset();
-        self.model = model;
+    /// Starts afresh with `model`, e.g. of an opened recording, see
+    /// [`Session::start_fresh`].
+    fn start_fresh(&mut self, model: model::MemoryStore) {
+        self.session.start_fresh(model);
     }
 
     /// Starts or stops recording. A recording starts only while `connected`, clears the
     /// data and follows it live.
     fn set_recording(&mut self, recording: bool, connected: bool) {
-        if recording && !self.recording {
-            if !connected {
-                return;
-            }
-            self.clear_data();
+        if self.session.set_recording(recording, connected) {
             self.time.go_live();
         }
-        self.recording = recording;
     }
 
     /// The bottom panel: the record button and the time range.
@@ -131,12 +63,12 @@ impl State {
         // larger controls than elsewhere, as the bar is used all the time
         ui.spacing_mut().interact_size.y = 28.0;
         ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
-        let recording = self.recording;
-        let clicked = self.time.ui(ui, &self.model, recording, |ui| {
+        let recording = self.session.recording;
+        let clicked = self.time.ui(ui, &self.session.store, recording, |ui| {
             record_button(ui, recording, connected)
         });
         if clicked {
-            self.set_recording(!self.recording, connected);
+            self.set_recording(!self.session.recording, connected);
         }
     }
 }
@@ -189,17 +121,28 @@ fn record_button(ui: &mut egui::Ui, recording: bool, connected: bool) -> bool {
 
 //--------------------------------------------------------------------------------------------------
 
-/// A name that is not `taken`: `base`, else `base` with the first number from 2 that
-/// gives one, or always numbered, from 1, if `numbered`. E.g. for connections and
-/// presets.
-fn unused_name(base: &str, numbered: bool, taken: impl Fn(&str) -> bool) -> String {
-    let plain = (!numbered).then(|| base.to_owned());
-    let from = if numbered { 1 } else { 2 };
-    plain
-        .into_iter()
-        .chain((from..).map(|n| format!("{base} {n}")))
-        .find(|name| !taken(name))
-        .expect("there is always an unused name")
+/// The storage of eframe as the presets read it.
+struct KeptIn<'a>(&'a dyn eframe::Storage);
+
+impl presets::Storage for KeptIn<'_> {
+    fn get_string(&self, key: &str) -> Option<String> {
+        self.0.get_string(key)
+    }
+
+    fn set_string(&mut self, _key: &str, _value: String) {}
+}
+
+/// The storage of eframe as the presets are kept in it.
+struct KeptInMut<'a>(&'a mut dyn eframe::Storage);
+
+impl presets::Storage for KeptInMut<'_> {
+    fn get_string(&self, key: &str) -> Option<String> {
+        self.0.get_string(key)
+    }
+
+    fn set_string(&mut self, key: &str, value: String) {
+        self.0.set_string(key, value);
+    }
 }
 
 #[derive(serde::Deserialize, serde::Serialize, Default)]
@@ -280,7 +223,7 @@ impl App {
             return Default::default();
         };
         let mut app: Self = eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
-        app.presets = presets::Presets::load(storage);
+        app.presets = presets::Presets::load(&KeptIn(storage));
         if let Some(problem) = app.presets.take_problem() {
             app.toasts.warning(problem);
         }
@@ -347,8 +290,8 @@ impl App {
                 {
                     self.files.open(files::Kind::Recording, ui.ctx());
                 }
-                let recorded = self.state.model.has_samples();
-                let messages = self.state.model.recording.messages();
+                let recorded = self.state.session.store.has_samples();
+                let messages = self.state.session.store.recording.messages();
                 let save = shortcut("Save recording…", &SAVE_RECORDING);
                 if ui
                     .add_enabled(recorded, save)
@@ -367,7 +310,7 @@ impl App {
             });
             ui.menu_button("View", |ui| {
                 ui.menu_button("Add view", |ui| {
-                    for view_type in view::ViewType::ALL {
+                    for view_type in view::ViewType::all() {
                         let text = format!("{} {}", view_type.icon(), view_type.name());
                         if ui.button(text).clicked() {
                             self.layout.add_view(view_type);
@@ -386,7 +329,7 @@ impl App {
                 ui.weak(format!("Zoom {:.0} %", ui.ctx().zoom_factor() * 100.0));
             });
             ui.menu_button("Presets", |ui| {
-                if let Some(action) = self.presets.menu_ui(ui, self.state.recording) {
+                if let Some(action) = self.presets.menu_ui(ui, self.state.session.recording) {
                     self.apply_preset(action, ui.ctx());
                 }
             });
@@ -427,7 +370,7 @@ impl App {
             .show(ui.ctx(), |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     ui.set_width(CONNECTIONS_WIDTH);
-                    self.connections.ui(ui, self.state.recording);
+                    self.connections.ui(ui, self.state.session.recording);
                 });
             });
         let pressed = ui.input(|input| {
@@ -458,7 +401,7 @@ impl App {
             self.files.open(files::Kind::Recording, ctx);
         }
         if ctx.input_mut(|input| input.consume_shortcut(&SAVE_RECORDING))
-            && self.state.model.has_samples()
+            && self.state.session.store.has_samples()
         {
             self.save_recording();
         }
@@ -495,7 +438,7 @@ impl App {
 
     fn save_recording(&mut self) {
         let name = format!("{}.blip", chrono::Local::now().format("%Y-%m-%d-%H%M%S"));
-        let file = self.state.model.recording.to_file();
+        let file = self.state.session.store.recording.to_file();
         if let Err(error) = files::save(files::Kind::Recording, &name, &file) {
             self.toasts.error(error);
         }
@@ -553,7 +496,7 @@ impl App {
         let (model, loaded) = opening.finish();
         self.state.start_fresh(model);
         self.reset_traces_panel();
-        self.state.time.fit(&self.state.model);
+        self.state.time.fit(&self.state.session.store);
         if let Some(problem) = loaded.problem {
             self.toasts.warning(format!(
                 "{name} was opened up to message {}, {problem}",
@@ -576,16 +519,7 @@ impl App {
     /// Sends the invocations of the views to the connections of the outposts chosen
     /// for their actions, unless the outpost no longer announces the action.
     fn send_invocations(&mut self) {
-        for (source, request) in self.state.invoker.take_outbox() {
-            let proto::Request::Invoke(invocation) = &request;
-            let actions = &self.state.model.actions;
-            if actions.announced(&source, &invocation.path).is_none() {
-                log::warn!(
-                    "dropping an invocation of {} on {source:?}, which no longer announces it",
-                    invocation.path
-                );
-                continue;
-            }
+        for (source, request) in self.state.session.take_requests() {
             self.connections.send(&source, &request);
         }
     }
@@ -618,7 +552,7 @@ impl App {
             &mut self.compatible_only,
             filterable,
         );
-        let model = &self.state.model;
+        let model = &self.state.session.store;
         let colored = (view.as_ref()).map_or_else(Vec::new, |view| view.colored_paths(model));
         let selection = view.and_then(|view| view.selection_mut());
         ui.add_enabled_ui(linked.is_none(), |ui| {
@@ -643,18 +577,16 @@ impl eframe::App for App {
     fn logic(&mut self, ctx: &Context, _frame: &mut Frame) {
         let now = ctx.input(|input| input.time);
         // before receiving, which may find a connection broken
-        self.connections.set_recording(self.state.recording);
+        self.connections.set_recording(self.state.session.recording);
         self.receive(now);
-        for (level, text) in self.state.model.take_notices() {
+        for (level, text) in self.state.session.take_notices() {
             match level {
                 toasts::Level::Error => self.toasts.error(text),
                 toasts::Level::Warning => self.toasts.warning(text),
             }
         }
-        let state = &mut self.state;
-        state.invoker.connected = self.connections.open_names();
-        state.invoker.recording = state.recording;
-        state.invoker.update(now);
+        let connected = self.connections.open_names();
+        self.state.session.update_invoker(connected, now);
         for error in self.connections.take_errors() {
             self.toasts.error(error);
         }
@@ -680,7 +612,7 @@ impl eframe::App for App {
             .show(ui, |ui| self.menu_ui(ui));
 
         let now = ui.input(|input| input.time);
-        self.state.time.update(&self.state.model, now);
+        self.state.time.update(&self.state.session.store, now);
 
         let bottom_frame =
             egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin::symmetric(10, 8));
@@ -716,8 +648,8 @@ impl eframe::App for App {
             .show_collapsible(ui, &mut right_open, |ui| {
                 ui.add_space(4.0);
                 let context = view::PropertiesContext {
-                    model: &self.state.model,
-                    connected: &self.state.invoker.connected,
+                    store: &self.state.session.store,
+                    connected: &self.state.session.invoker.connected,
                     // the layout lists its plots
                     plots: &view::NO_PLOTS,
                 };
@@ -738,14 +670,14 @@ impl eframe::App for App {
             )
             .show(ui, |ui| {
                 let mut context = ViewContext::new(
-                    &self.state.model,
+                    &self.state.session.store,
                     &mut self.state.time,
-                    &mut self.state.invoker,
+                    &mut self.state.session.invoker,
                 );
                 self.layout.ui(ui, &mut context);
             });
         self.send_invocations();
-        if let Some(seconds) = self.state.invoker.repaint_after(now) {
+        if let Some(seconds) = self.state.session.invoker.repaint_after(now) {
             ui.ctx().request_repaint_after_secs(seconds as f32);
         }
 
@@ -756,7 +688,10 @@ impl eframe::App for App {
         if self.toasts.ui(ui.ctx(), central.response.rect, progress) {
             self.opening = None;
         }
-        if let Some(action) = self.presets.dialog_ui(ui.ctx(), self.state.recording) {
+        if let Some(action) = self
+            .presets
+            .dialog_ui(ui.ctx(), self.state.session.recording)
+        {
             self.apply_preset(action, ui.ctx());
         }
     }
@@ -764,7 +699,7 @@ impl eframe::App for App {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);
         self.store_preset();
-        self.presets.save(storage);
+        self.presets.save(&mut KeptInMut(storage));
         // the layout kept apart before presets
         storage.remove_string("layout");
     }
@@ -882,7 +817,7 @@ fn group_thousands(number: u64) -> String {
     let digits = number.to_string();
     let mut grouped = String::new();
     for (index, digit) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index) % 3 == 0 {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
             grouped.push('\u{202f}');
         }
         grouped.push(digit);

@@ -192,7 +192,7 @@ needs_fields = {
         },
     },
     "component": {
-        "description": "Affected component(s): blip, proto, outpost, sonde, doc",
+        "description": "Affected component(s): blip, blip-kit, proto (blip-proto), outpost, sonde, doc",
         "schema": {"type": "string"},
     },
     "priority": {

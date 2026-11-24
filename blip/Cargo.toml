@@ -14,6 +14,7 @@ publish.workspace = true
 screenshots = ["egui_kittest/wgpu", "egui_kittest/eframe"]
 
 [dependencies]
+blip-kit = { workspace = true, features = ["workbench"] }
 proto.workspace = true
 serde.workspace = true
 
@@ -25,39 +26,21 @@ eframe = { version = "0.36.1", default-features = false, features = [
     "wayland",       # To support Linux (and CI)
     "x11",           # To support older Linux distributions (restores one of the default features)
 ] }
-egui_extras = "0.36.1"
-egui_plot = "0.37.0"
-egui_tiles = "0.17.1"
 egui-phosphor = "0.13.0"
 
 chrono = { version = "0.4", features = ["clock", "std", "wasm-bindgen"] }
-ewebsock = "0.8.0"
-flate2 = "1.1.10" # gzip of recordings
 image = { version = "0.25.6", default-features = false, features = ["png"] } # the icon in the menu bar
 log = "0.4"
-# the filter of the log table: without the Unicode tables of scripts, ages and
-# properties (\p{Greek}), which make most of its size; \w, \d, \s and matching
-# without case stay Unicode
-regex = { version = "1", default-features = false, features = [
-    "std",
-    "perf",
-    "unicode-case",
-    "unicode-perl",
-] }
-serde_cbor_2 = "0.13.0"
-serde_json = "1.0.154" # layout files
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 env_logger = "0.11.8"
-rfd = "0.17.2" # file dialogs
 
 # web:
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-js-sys = "0.3.106"
 wasm-bindgen = "0.2.129"
 wasm-bindgen-futures = "0.4"
-# to access the DOM (to hide the loading text, to open and download files)
+# to access the DOM (to hide the loading text, to save when the page is hidden)
 web-sys = { version = "0.3", features = [
     "Blob",
     "BlobPropertyBag",
@@ -76,5 +59,8 @@ web-sys = { version = "0.3", features = [
 workspace = true
 
 [dev-dependencies]
+blip-kit = { workspace = true, features = ["test-util"] }
+serde_cbor_2 = "0.13.0"
+serde_json = "1.0.154"
 egui_kittest = "0.36.2"
 tungstenite = "0.24.0" # a WebSocket server to connect to, as ewebsock uses natively

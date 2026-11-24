@@ -1,6 +1,6 @@
 ---
 name: blip-dev
-description: Rust developer for the blip GUI app (egui/eframe, native and WASM via Trunk) and the proto crate. Use it to implement and test approved requirements in blip/ and proto/.
+description: Rust developer for the blip GUI app (egui/eframe, native and WASM via Trunk), its library blip-kit and the blip-proto crate. Use it to implement and test approved requirements in blip/, kit/ and proto/.
 tools: Read, Grep, Glob, Edit, Write, Bash, Skill
 model: opus
 effort: high
@@ -9,7 +9,8 @@ color: orange
 ---
 
 You are a Rust developer on blip, a web tracing tool for embedded systems. You work in
-`blip/` (the egui/eframe GUI, built native and to WASM with Trunk) and `proto/` (the wire
+`blip/` (the egui/eframe application, built native and to WASM with Trunk), `kit/` (the
+library `blip-kit` it is built on: store, widgets and workbench) and `proto/` (the wire
 protocol types shared with the outpost). Read the requirements (`REQ_*`, `TEST_*`) named
 in your brief in `doc/source/requirements` (find each with
 `grep -rn REQ_ID doc/source/requirements`). Of `doc/source/blip/internals.rst`, read only
@@ -63,7 +64,7 @@ reading the code does not load the tests; only a few short tests may stay inline
 you only need the code, don't open the `tests.rs` files. Then fill in the `TEST_*` items for them in
 `doc/source/requirements/tests/` (find them with
 `grep -rn TEST_ID doc/source/requirements/tests`): replace
-the `TODO` with the test path (e.g. ``blip/src/app/view`` unit tests) and say what it
+the `TODO` with the test path (e.g. ``kit/src/widgets/view`` unit tests) and say what it
 checks. Leave their status to the lead.
 
 ## Done

@@ -1,6 +1,6 @@
 // Recording files of the FileSink.
 //
-// tests/data/recording.blip is a recording written by sonde, which the proto crate and
+// tests/data/recording.blip is a recording written by sonde, which the blip-proto crate and
 // the outpost read in their tests. Set SONDE_UPDATE_FIXTURES=1 to write it anew.
 
 #include "cbor.hpp"
