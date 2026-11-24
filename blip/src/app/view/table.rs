@@ -310,10 +310,7 @@ impl Table {
                 formats[column],
                 labels[column],
             );
-            match model.traces.unit(trace.path) {
-                Some(unit) if value != "null" => format!("{value} {unit}"),
-                _ => value,
-            }
+            with_unit_of(model, trace, index, value)
         };
         // the sample of each field current at t, with its value written as text
         let cells: Vec<Vec<Option<Cell<'_>>>> = records
@@ -488,10 +485,7 @@ impl Table {
                 formats.format_of(trace.path, labels.is_some()),
                 labels,
             );
-            match model.traces.unit(trace.path) {
-                Some(unit) if value != "null" => format!("{value} {unit}"),
-                _ => value,
-            }
+            with_unit_of(model, trace, index, value)
         };
 
         // the sample of each row current at t, with its value written as text
@@ -603,6 +597,13 @@ impl Viewable for Table {
             }
         });
     }
+}
+
+/// `value`, the `index`th sample of `trace` written as text, followed by the unit of
+/// the trace, unless the sample is null.
+fn with_unit_of(model: &Model, trace: Trace<'_>, index: usize, value: String) -> String {
+    let unit = model.traces.unit(trace.path);
+    super::with_unit(value, unit.filter(|_| !trace.samples.is_null(index)))
 }
 
 #[cfg(test)]

@@ -441,6 +441,38 @@ fn the_tooltip_has_the_time_and_a_row_per_trace() {
 }
 
 #[test]
+fn the_tooltip_of_a_curve_of_steps_has_the_value_held_at_the_time() {
+    use super::super::tooltip::Value;
+    let mut model = Model::default();
+    for (seconds, value) in [(10, 1.0), (20, 2.0)] {
+        model.traces.append(&proto::Sample {
+            timestamp: seconds * 1_000_000_000,
+            path: "a".to_owned(),
+            value: proto::Data::Float(value),
+        });
+    }
+    let mut plot = Plot::default();
+    plot.traces.insert("a".to_owned());
+    // nearer the second sample, while the first is held
+    let value = |plot: &Plot, t| {
+        let tooltip = plot.tooltip(
+            &model,
+            &super::super::NO_FORMATS,
+            t,
+            TimeBase::SinceBoot,
+            None,
+        );
+        tooltip.groups[0][0].values.clone()
+    };
+    assert_eq!(value(&plot, 19_000_000_000), [Value::text("2")]);
+    plot.interpolation = Interpolation::Step;
+    assert_eq!(value(&plot, 19_000_000_000), [Value::text("1")]);
+    assert_eq!(value(&plot, 20_000_000_000), [Value::text("2")]);
+    // no value is held before the first sample
+    assert_eq!(value(&plot, 9_000_000_000), [Value::missing()]);
+}
+
+#[test]
 fn the_curve_nearest_the_pointer_within_12_points_is_the_one_under_it() {
     let values = [0.0, 10.0, 5.0];
     assert_eq!(nearest_curve(&values, 9.0, 2.0), Some(1));

@@ -16,7 +16,8 @@ was received.
    :alt: The tooltip of a plot, with the time and a row per trace with its value.
 
 Hovering the plot shows a tooltip with the time and a row per shown trace: its
-dot and name, and its value at the pointer with the unit. A trace without a
+dot and name, and its value at the pointer with the unit: that of the closest
+sample, or on a curve of steps the value held there. A trace without a
 value there shows a faint *—*. A value with a label shows the label and the
 number faint beside it. Below a rule, the tooltip gives the name and
 description of the curve nearest the pointer, if it is within a few pixels of

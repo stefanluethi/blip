@@ -235,6 +235,16 @@ impl Samples {
         }
     }
 
+    /// Whether the `index`th sample is null; an array is not, whatever its elements.
+    pub fn is_null(&self, index: usize) -> bool {
+        match self {
+            Self::Empty(_) => true,
+            Self::Numbers(numbers) => numbers.get(index).is_null(),
+            Self::Strings(strings) => strings.get(index).is_none(),
+            Self::Arrays { .. } => false,
+        }
+    }
+
     /// The type of the samples, e.g. `float` or `int[2×3]`.
     pub fn type_label(&self) -> String {
         match self {

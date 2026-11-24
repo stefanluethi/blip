@@ -404,10 +404,10 @@ impl Connections {
         self.editing.is_some()
     }
 
-    /// Shows the connections to connect, disconnect and edit them, unless `recording`:
-    /// a recording keeps the connections it started with, so they are disabled but for
-    /// connecting again those that broke, and an edit is dropped.
-    pub fn ui(&mut self, ui: &mut egui::Ui, recording: bool) {
+    /// Tells whether the app is `recording`, every frame: remembers the connections
+    /// that are active when a recording starts, also while they are not shown, as only
+    /// those can be connected again when they break.
+    pub fn set_recording(&mut self, recording: bool) {
         if !recording {
             self.recorded = None;
         } else if self.recorded.is_none() {
@@ -418,6 +418,13 @@ impl Connections {
             let active = addresses.filter(|address| self.status(address).is_active());
             self.recorded = Some(active.cloned().collect());
         }
+    }
+
+    /// Shows the connections to connect, disconnect and edit them, unless `recording`:
+    /// a recording keeps the connections it started with, so they are disabled but for
+    /// connecting again those that broke, and an edit is dropped.
+    pub fn ui(&mut self, ui: &mut egui::Ui, recording: bool) {
+        self.set_recording(recording);
         let mut actions = vec![];
         theme::section_header(ui, "Connections", |ui| {
             if ui

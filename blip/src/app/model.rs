@@ -291,9 +291,10 @@ impl Model {
                 self.describe(source, DescriptionKind::Hello, frame);
                 self.greet(source, &hello);
             }
+            // decode() gives samples and logs as the messages above or refuses them
             Ok(decode::Message::Other(
                 proto::Message::Sample(_) | proto::Message::Samples(_) | proto::Message::Log(_),
-            )) => unreachable!("samples and logs are decoded apart"),
+            )) => {}
             Err(error) => {
                 log::warn!("error parsing message: {error}");
                 if decode::message_name(frame) == Some("Samples") {

@@ -200,6 +200,41 @@ fn connections_that_broke_while_recording_can_be_connected_again() {
 }
 
 #[test]
+fn a_connection_that_broke_while_the_list_was_closed_can_be_connected_again() {
+    let (a, b) = ("ws://127.0.0.1:1/a", "ws://127.0.0.1:1/b");
+    // the list is shown only once the recording runs
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(300.0, 300.0))
+        .build_ui_state(
+            |ui, (connections, recording): &mut (Connections, bool)| {
+                if *recording {
+                    connections.ui(ui, true);
+                }
+            },
+            (connections(&[a, b]), false),
+        );
+    // the recording starts and a breaks before then
+    let ctx = harness.ctx.clone();
+    harness.state_mut().0.apply(Action::Connect(0), &ctx);
+    harness.state_mut().0.set_recording(true);
+    harness.state_mut().0.disconnect(a);
+    harness.state_mut().1 = true;
+    harness.run_steps(2);
+    harness.get_by_label_contains(b).click();
+    harness.get_by_label_contains(a).click();
+    harness.run_steps(2);
+    assert!(harness.state().0.status(a).is_active());
+    assert!(!harness.state().0.status(b).is_active());
+    // the next recording starts with what is connected then
+    harness.state_mut().0.disconnect(a);
+    harness.state_mut().0.set_recording(false);
+    harness.run_steps(2);
+    harness.get_by_label_contains(a).click();
+    harness.run_steps(2);
+    assert!(!harness.state().0.status(a).is_active());
+}
+
+#[test]
 fn a_connected_row_is_not_highlighted() {
     use egui::accesskit::Toggled;
     use egui_kittest::kittest::NodeT;

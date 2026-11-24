@@ -261,6 +261,8 @@ class Outpost:
             if recorder:
                 recorder.close()
             raise
+        # what other threads handed over as the outpost last stopped, see `_close`
+        self._flush()
         self._client_event = asyncio.Event()
         self._loop = asyncio.get_running_loop()
         self._loop_thread = threading.get_ident()
@@ -273,6 +275,9 @@ class Outpost:
         self._loop_thread = None
         self._client_event = None
         self._has_client.clear()
+        # another thread may have handed messages over meanwhile, and the flush it
+        # scheduled may never run as the loop ends: left scheduled, none would follow
+        self._flush()
 
     # Sending
 
@@ -498,7 +503,8 @@ class Outpost:
             try:
                 loop.call_soon_threadsafe(self._flush)
             except RuntimeError:
-                pass  # the outpost stopped just now
+                # the outpost stopped just now: the next message schedules it again
+                self._flush_scheduled = False
 
     def _flush(self) -> None:
         # cleared first, so a message added meanwhile schedules another flush

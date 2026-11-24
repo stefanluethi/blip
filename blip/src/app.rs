@@ -642,6 +642,8 @@ impl eframe::App for App {
 
     fn logic(&mut self, ctx: &Context, _frame: &mut Frame) {
         let now = ctx.input(|input| input.time);
+        // before receiving, which may find a connection broken
+        self.connections.set_recording(self.state.recording);
         self.receive(now);
         for (level, text) in self.state.model.take_notices() {
             match level {

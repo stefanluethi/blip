@@ -211,3 +211,39 @@ fn labelled_cells_write_the_label_until_the_default_is_chosen() {
     harness.get_by_label("0");
     assert!(harness.query_by_label("Idle").is_none());
 }
+
+#[test]
+fn a_sample_has_the_unit_of_its_trace_unless_it_is_null() {
+    use proto::Data;
+    let mut model = Model::default();
+    let samples = [
+        ("state", Data::String("null".to_owned())),
+        ("state", Data::Null),
+        ("u", Data::Float(1.5)),
+        ("u", Data::Null),
+    ];
+    for (timestamp, (path, value)) in samples.into_iter().enumerate() {
+        model.traces.append(&proto::Sample {
+            timestamp: timestamp as u64,
+            path: path.to_owned(),
+            value,
+        });
+        model.traces.set_metadata(&proto::TraceMetadata {
+            path: path.into(),
+            unit: "V".into(),
+            ..Default::default()
+        });
+    }
+    let written = |path: &str, index: usize| {
+        let trace = model.traces.get(path).unwrap();
+        let value = trace
+            .samples
+            .format(index, 4, None, Default::default(), None);
+        with_unit_of(&model, trace, index, value)
+    };
+    // a text that reads null is a value
+    assert_eq!(written("state", 0), "null V");
+    assert_eq!(written("state", 1), "null");
+    assert_eq!(written("u", 0), "1.5 V");
+    assert_eq!(written("u", 1), "null");
+}

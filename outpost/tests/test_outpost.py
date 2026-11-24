@@ -39,6 +39,33 @@ def test_a_started_outpost_serves_from_its_own_thread():
     assert not outpost.wait_for_client(0.0)
 
 
+def test_sends_from_other_threads_go_on_after_a_flush_was_lost():
+    outpost = Outpost(port=3982)
+    # the outpost stopped as another thread handed a message over: the loop is closed
+    loop = asyncio.new_event_loop()
+    loop.close()
+    outpost._schedule_flush(loop)
+    assert not outpost._flush_scheduled
+    # or the loop ended before it ran the flush
+    outpost._flush_scheduled = True
+    outpost.start()
+    try:
+
+        async def blip() -> List[dict]:
+            async with connect(3982) as ws:
+                assert await asyncio.to_thread(outpost.wait_for_client, 2.0)
+                await asyncio.to_thread(send_from_another_thread, outpost)
+                return await messages_until(ws, "Sample", 100)
+
+        values = [m["Sample"]["value"] for m in asyncio.run(blip()) if "Sample" in m]
+        assert values == list(range(100))
+        outpost._flush_scheduled = True
+    finally:
+        outpost.stop()
+    assert not outpost._flush_scheduled
+    assert not outpost._pending
+
+
 def send_from_another_thread(outpost: Outpost) -> None:
     for i in range(100):
         outpost.value("count", i)

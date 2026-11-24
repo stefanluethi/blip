@@ -252,6 +252,21 @@ impl Default for Plot {
 }
 
 impl Plot {
+    /// Whether the curve of `series` holds each value until the next sample.
+    fn steps(&self, series: &Series<'_>) -> bool {
+        self.interpolation == Interpolation::Step || series.kind == NumberKind::Bool
+    }
+
+    /// Index of the sample that the curve of `series` shows at `t` nanoseconds: the
+    /// current one of a curve of steps, else the closest one.
+    fn index_shown(&self, series: &Series<'_>, t: u64) -> Option<usize> {
+        if self.steps(series) {
+            index_at(series.timestamps, t)
+        } else {
+            closest_index(series.timestamps, t)
+        }
+    }
+
     /// Draws the values of `series` within the window of `axis`, as set in the
     /// properties of the plot, with its line in `style`.
     #[allow(clippy::too_many_arguments)]
@@ -272,7 +287,7 @@ impl Plot {
         }
         let show_points = style.marks_points(self.points, points.len(), width);
         let line_style = style.plot_style(&points, plot_ui.transform());
-        let step = self.interpolation == Interpolation::Step || series.kind == NumberKind::Bool;
+        let step = self.steps(&series);
         // lines and markers of the same name share one legend entry
         for segment in points
             .split(|point| point[1].is_nan())
@@ -388,7 +403,7 @@ impl Plot {
                     .traces
                     .series(path)
                     .and_then(|series| {
-                        let number = series.number(closest_index(series.timestamps, t)?);
+                        let number = series.number(self.index_shown(&series, t)?);
                         let unit = model.traces.unit(path);
                         let format = formats.format_of(path, labels.is_some());
                         Some(Value::labelled(number, SHOWN_DIGITS, format, unit, labels))
@@ -420,7 +435,7 @@ impl Plot {
                 .selected_path_iter()
                 .map(|(path, ..)| {
                     model.traces.series(path).map_or(f64::NAN, |series| {
-                        closest_index(series.timestamps, t_ns)
+                        self.index_shown(&series, t_ns)
                             .map_or(f64::NAN, |index| series.number(index).as_f64())
                     })
                 })

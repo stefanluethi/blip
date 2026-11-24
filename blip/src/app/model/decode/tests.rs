@@ -385,3 +385,58 @@ fn malformed_blocks_are_refused() {
     let error = decode(&bytes, &mut Flat::default()).unwrap_err();
     assert!(error.contains("duplicate record field"), "{error}");
 }
+
+/// The message `name` with `fields` as they are, CBOR values by name.
+fn raw(name: &str, fields: &[(&str, &[u8])]) -> Vec<u8> {
+    let text = |text: &str| [&[0x60 | text.len() as u8][..], text.as_bytes()].concat();
+    let mut bytes = [vec![0xa1], text(name), vec![0xa0 | fields.len() as u8]].concat();
+    for (field, value) in fields {
+        bytes.extend(text(field));
+        bytes.extend_from_slice(value);
+    }
+    bytes
+}
+
+#[test]
+fn repeated_fields_are_refused() {
+    let mut flat = Flat::default();
+    let (path, one) = (&[0x61, b'a'][..], &[0x01][..]);
+    let values = &[0x81, 0x01][..];
+    let message = &[0x61, b'm'][..];
+    let sample = [("timestamp", one), ("path", path), ("value", one)];
+    let block = [
+        ("path", path),
+        ("values", values),
+        ("timestamp", one),
+        ("period", one),
+    ];
+    let log = [("timestamp", one), ("level", one), ("message", message)];
+    for (name, fields) in [("Sample", &sample[..]), ("Samples", &block), ("Log", &log)] {
+        assert!(decode(&raw(name, fields), &mut flat).is_ok(), "{name}");
+        for &repeated in fields {
+            let fields = [fields, &[repeated]].concat();
+            let bytes = raw(name, &fields);
+            let refused = decode(&bytes, &mut flat).is_err();
+            assert!(refused, "{name} with two {}", repeated.0);
+        }
+    }
+}
+
+#[test]
+fn samples_and_logs_in_another_encoding_are_refused() {
+    let mut flat = Flat::default();
+    let log = frame(&proto::Message::Log(proto::LogRecord {
+        timestamp: 7,
+        path: String::new(),
+        level: 4,
+        message: "hot".to_owned(),
+    }));
+    for mut bytes in [value_frame(Data::Uint(1)), adc(), log] {
+        assert!(decode(&bytes, &mut flat).is_ok());
+        // an array of the name and the content, which serde reads as the enum too
+        assert_eq!(bytes[0], 0xa1);
+        bytes[0] = 0x82;
+        assert!(serde_cbor_2::from_slice::<proto::Message>(&bytes).is_ok());
+        assert!(decode(&bytes, &mut flat).is_err());
+    }
+}

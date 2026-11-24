@@ -337,9 +337,15 @@ pub fn decode<'b>(frame: &'b [u8], flat: &mut Flat) -> Result<Message<'b>, Strin
     })();
     match fast {
         Ok(Some(message)) => Ok(message),
-        Ok(None) => serde_cbor_2::from_slice(frame)
-            .map(Message::Other)
-            .map_err(|error| error.to_string()),
+        Ok(None) => match serde_cbor_2::from_slice(frame) {
+            // serde also reads encodings that the readers above do not, e.g. an enum
+            // as an array; the model takes samples and logs from those readers only
+            Ok(proto::Message::Sample(_) | proto::Message::Samples(_) | proto::Message::Log(_)) => {
+                Err("a sample or log that is not a map of one entry".to_owned())
+            }
+            Ok(message) => Ok(Message::Other(message)),
+            Err(error) => Err(error.to_string()),
+        },
         Err(error) => Err(error),
     }
 }
@@ -359,27 +365,36 @@ fn fields<'b>(
     Ok(())
 }
 
+/// Sets the field `slot` of a message, which may hold it once only, as with serde.
+fn set<T>(slot: &mut Option<T>, value: T, reader: &Reader<'_>) -> cbor::Result<()> {
+    if slot.replace(value).is_some() {
+        return Err(error(reader, "a repeated field"));
+    }
+    Ok(())
+}
+
 fn sample<'b>(
     reader: &mut Reader<'b>,
     frame: &'b [u8],
     flat: &mut Flat,
 ) -> cbor::Result<Message<'b>> {
     flat.clear();
-    let (mut timestamp, mut path, mut has_value) = (None, None, false);
+    let (mut timestamp, mut path, mut value) = (None, None, None);
     fields(reader, |reader, name| {
         match name {
-            "timestamp" => timestamp = Some(reader.u64()?),
-            "path" => path = Some(reader.str()?),
+            "timestamp" => set(&mut timestamp, reader.u64()?, reader)?,
+            "path" => set(&mut path, reader.str()?, reader)?,
             "value" => {
+                // before reading it: a second value would add to the leaves of the first
+                set(&mut value, (), reader)?;
                 flat.value(reader, frame)?;
-                has_value = true;
             }
             _ => reader.skip()?,
         }
         Ok(())
     })?;
-    match (timestamp, path, has_value) {
-        (Some(timestamp), Some(path), true) => Ok(Message::Sample { timestamp, path }),
+    match (timestamp, path, value) {
+        (Some(timestamp), Some(path), Some(())) => Ok(Message::Sample { timestamp, path }),
         _ => Err(error(reader, "a Sample lacks a field")),
     }
 }
@@ -394,20 +409,20 @@ fn samples<'b>(
         (None, None, None, None, None);
     fields(reader, |reader, name| {
         match name {
-            "path" => path = Some(reader.str()?),
+            "path" => set(&mut path, reader.str()?, reader)?,
             "values" => {
                 let Head::Array(Some(len)) = reader.head()? else {
                     return Err(error(reader, "expected an array of values"));
                 };
                 let len = usize::try_from(len).map_err(|_| error(reader, "unexpected end"))?;
-                values = Some((reader.clone(), len));
+                set(&mut values, (reader.clone(), len), reader)?;
                 for _ in 0..len {
                     flat.clear();
                     flat.value(reader, frame)?;
                 }
             }
-            "timestamp" => timestamp = Some(reader.u64()?),
-            "period" => period = Some(reader.u64()?),
+            "timestamp" => set(&mut timestamp, reader.u64()?, reader)?,
+            "period" => set(&mut period, reader.u64()?, reader)?,
             "timestamps" => {
                 let Head::Array(Some(len)) = reader.head()? else {
                     return Err(error(reader, "expected an array of timestamps"));
@@ -416,7 +431,7 @@ fn samples<'b>(
                 for _ in 0..len {
                     list.push(reader.u64()?);
                 }
-                timestamps = Some(list);
+                set(&mut timestamps, list, reader)?;
             }
             _ => reader.skip()?,
         }
@@ -436,16 +451,17 @@ fn samples<'b>(
 }
 
 fn log<'b>(reader: &mut Reader<'b>) -> cbor::Result<Message<'b>> {
-    let (mut timestamp, mut path, mut level, mut message) = (None, "", None, None);
+    let (mut timestamp, mut path, mut level, mut message) = (None, None, None, None);
     fields(reader, |reader, name| {
         match name {
-            "timestamp" => timestamp = Some(reader.u64()?),
-            "path" => path = reader.str()?,
+            "timestamp" => set(&mut timestamp, reader.u64()?, reader)?,
+            "path" => set(&mut path, reader.str()?, reader)?,
             "level" => {
                 let value = reader.u64()?;
-                level = Some(u8::try_from(value).map_err(|_| error(reader, "level above 255"))?);
+                let value = u8::try_from(value).map_err(|_| error(reader, "level above 255"))?;
+                set(&mut level, value, reader)?;
             }
-            "message" => message = Some(reader.str()?),
+            "message" => set(&mut message, reader.str()?, reader)?,
             _ => reader.skip()?,
         }
         Ok(())
@@ -453,7 +469,7 @@ fn log<'b>(reader: &mut Reader<'b>) -> cbor::Result<Message<'b>> {
     match (timestamp, level, message) {
         (Some(timestamp), Some(level), Some(message)) => Ok(Message::Log {
             timestamp,
-            path,
+            path: path.unwrap_or(""),
             level,
             message,
         }),
