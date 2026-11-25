@@ -106,4 +106,7 @@ Tests of the requirements in :doc:`/requirements/system/time`.
    -- the session waits for Record while a source is connected, not recording
    and without samples, and not while recording or once samples are shown.
    ``kit/src/widgets/time/timeline/tests.rs::the_empty_timeline_says_how_to_get_data``
-   -- the timeline says so. The amber dot and its hover are checked by hand.
+   -- the timeline says so. The emphasised Record button (inverted fill, label and dot
+   in the background colour, no amber, also with data shown), its red look while
+   recording, its plain disabled look while not connected and its hover texts are
+   checked by hand.

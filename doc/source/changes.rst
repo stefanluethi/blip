@@ -159,6 +159,10 @@ blip
      row, and **Show empty traces**.
    * The native window starts at 1280 × 800, the browser without WebGL says
      so, and **Help › Documentation** opens a new tab.
+   * While connected and not recording, also with data shown, the whole
+     **Record** button is inverted, filled with the strong text colour with
+     its label and dot in the background colour, instead of an amber dot:
+     amber stays for problems.
    * Internal: ``Toasts::info``, ``notice``, ``with_action``, ``take_actions``
      and ``dismiss``, with a ``toasts::Level`` of their own;
      ``files::save`` returns the name saved (``Result<Option<String>, _>``)

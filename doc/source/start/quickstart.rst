@@ -68,7 +68,8 @@ the center and the time range at the bottom.
 #. Click **Record** in the bottom panel (or press :kbd:`R`). blip keeps the
    values and log records only while recording; before, it only learns which
    traces and actions there are. While connected and not recording, the
-   Record dot is amber to remind you that the incoming data is dropped.
+   **Record** button is inverted, filled with the text colour, to remind you
+   that the incoming data is dropped.
 
 4. Plot something
 -----------------

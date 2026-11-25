@@ -704,6 +704,27 @@ fn screenshots_panels() {
     harness.run_steps(4);
     save_both(&mut harness, "panel-time");
 
+    // the bottom panel while connected, not recording and without data: Record is
+    // inverted, as what arrives is dropped
+    let mut state = State::default();
+    state.session.invoker.connected.insert(String::new());
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 76.0))
+        .with_pixels_per_point(PIXELS_PER_POINT)
+        .wgpu()
+        .build_ui_state(
+            |ui, state: &mut State| {
+                let now = ui.input(|input| input.time);
+                state.time.update(&state.session.store, now);
+                paint_background(ui, ui.tokens().card);
+                state.bottom_ui(ui, true);
+            },
+            state,
+        );
+    theme::install(&harness.ctx);
+    harness.run_steps(4);
+    save_both(&mut harness, "panel-time-connected");
+
     // the properties of a sideways distribution showing boxes, linked to a plot
     let mut layout = layout::Layout::from_saved(
         serde_json::from_str(&linked_distribution("Boxes")).expect("a layout"),

@@ -32,11 +32,21 @@ Recording
 * A recording starts only while a connection is open. Starting it clears the
   data as **File › Clear recording** does and follows the newest data live.
   Press :kbd:`R` instead of clicking the button.
-* While a connection is open, blip does not record and has no data, the
-  **Record** dot is amber and says on hover that the incoming data is dropped
-  until you press Record; the empty timeline says *Press Record to collect
-  data*. Without a connection it says *Connect to an outpost or open a
-  recording*, and while recording without data *Waiting for data*.
+* While a connection is open and blip does not record, the **Record** button
+  is inverted, filled with the text colour, also with data shown. Without data
+  it says on hover that the incoming data is dropped until you press Record,
+  and the empty timeline says *Press Record to collect data*. Without a
+  connection it says *Connect to an outpost or open a recording*, and while
+  recording without data *Waiting for data*.
+
+  .. figure:: /screenshots/panel-time-connected.png
+     :target: ../_images/panel-time-connected.png
+     :class: screenshot
+     :alt: The bottom panel while connected and not recording: the Record
+           button is inverted and the empty timeline says Press Record to
+           collect data.
+
+     Connected, not recording yet.
 * Stopping it keeps the data, also when the connections close.
 * While recording, the connections cannot be changed, but a broken one can be
   connected again, see :doc:`/blip/connecting`.

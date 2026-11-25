@@ -104,35 +104,37 @@ impl State {
     }
 }
 
-/// A button showing whether `recording`, which can be started only while `connected`,
-/// in the `warn` colour while `waiting` for it to record what arrives. Returns whether
-/// it was clicked, to switch.
+/// A button showing whether `recording`, which can be started only while `connected`.
+/// It is inverted while connected and not recording, as the samples that arrive are
+/// dropped until then, and says so on hover while `waiting` for it with no data shown.
+/// Returns whether it was clicked, to switch.
 fn record_button(ui: &mut egui::Ui, recording: bool, connected: bool, waiting: bool) -> bool {
-    // plain while idle, red like a record key and filled with a tint of it while recording
+    // red like a record key and filled with a tint of it while recording, inverted while
+    // it could record, plain and disabled while it cannot
     let tokens = ui.tokens();
     let red = tokens.error;
+    let emphasised = connected && !recording;
+    let strong = ui.visuals().strong_text_color();
+    let background = ui.visuals().panel_fill;
     let color = if recording {
         red
+    } else if emphasised {
+        background
     } else {
         ui.visuals().text_color()
     };
-    // the dot asks for attention while the samples that arrive are dropped
-    let dot_color = if waiting && !recording {
-        tokens.warn
-    } else {
-        color
-    };
     let dot = egui::Id::new("record dot");
     let text = egui::RichText::new("Record").color(color);
-    let (fill, stroke) = if recording {
-        (tokens.control.lerp_to_gamma(red, 0.2), red)
-    } else {
-        (tokens.control, tokens.border)
-    };
-    let button = egui::Button::new((egui::Atom::custom(dot, egui::vec2(9.0, 9.0)), text))
-        .selected(recording)
-        .fill(fill)
-        .stroke(egui::Stroke::new(1.0, stroke));
+    let mut button = egui::Button::new((egui::Atom::custom(dot, egui::vec2(9.0, 9.0)), text))
+        .selected(recording);
+    if !emphasised {
+        let (fill, stroke) = if recording {
+            (tokens.control.lerp_to_gamma(red, 0.2), red)
+        } else {
+            (tokens.control, tokens.border)
+        };
+        button = button.fill(fill).stroke(egui::Stroke::new(1.0, stroke));
+    }
     let hint = if recording {
         "Recording the received samples, click to stop"
     } else if waiting {
@@ -142,7 +144,25 @@ fn record_button(ui: &mut egui::Ui, recording: bool, connected: bool, waiting: b
     };
     let hint = format!("{hint} ({})", ui.ctx().format_shortcut(&RECORD));
     let enabled = recording || connected;
-    let shown = ui.add_enabled_ui(enabled, |ui| button.atom_ui(ui)).inner;
+    let shown = ui
+        .add_enabled_ui(enabled, |ui| {
+            if emphasised {
+                // filled with the strong text, mixed a little toward the background under
+                // the pointer and when pressed, as a fill of the button would hide both
+                let widgets = &mut ui.visuals_mut().widgets;
+                for (state, mix) in [
+                    (&mut widgets.inactive, 0.0),
+                    (&mut widgets.hovered, 0.12),
+                    (&mut widgets.active, 0.24),
+                ] {
+                    let fill = strong.lerp_to_gamma(background, mix);
+                    state.weak_bg_fill = fill;
+                    state.bg_stroke = egui::Stroke::new(1.0, fill);
+                }
+            }
+            button.atom_ui(ui)
+        })
+        .inner;
     if let Some(rect) = shown.rect(dot) {
         // a dot, like the key of a recorder
         let alpha = if enabled {
@@ -151,7 +171,7 @@ fn record_button(ui: &mut egui::Ui, recording: bool, connected: bool, waiting: b
             ui.visuals().disabled_alpha
         };
         ui.painter()
-            .circle_filled(rect.center(), 4.5, dot_color.gamma_multiply(alpha));
+            .circle_filled(rect.center(), 4.5, color.gamma_multiply(alpha));
     }
     shown
         .response

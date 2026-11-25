@@ -90,9 +90,15 @@ The time cursor, recording and playback.
    :component: blip, blip-kit
    :satisfies: STK_LIVE_OBSERVE, STK_CONFIDENCE
    :rationale: Samples arrive but are dropped until Record is pressed, which a
-      new user does not know.
+      new user does not know. Amber means a problem on every status dot, and a
+      small dot does not draw the eye, so the whole button is emphasised.
 
-   While a connection is open, blip is not recording and holds no data, the dot
-   of the Record button shall be amber and its hover shall say that the incoming
-   data is dropped until Record is pressed. It shall not be amber while
-   recording or with data shown.
+   While a connection is open and blip is not recording, with or without data
+   shown, the Record button shall be emphasised: filled with the strong text
+   colour, with its label and its dot in the background colour and the dot in
+   the colour of the label, never amber. Its hover shall say that the incoming
+   data is dropped until Record is pressed when no data is shown, and that a
+   click clears the data and records when data is shown. While recording, the
+   button shall have a red label and dot, a red tint and a red border, and its
+   hover shall say that a click stops. While no connection is open and blip is
+   not recording, the button shall be plain and disabled.

@@ -118,8 +118,10 @@ oscilloscope, not like a web app.
 - Tooltips add the description of the one trace under the pointer only, as a footer
   below a rule, at most 3 lines.
 - Status dots: green when fine, amber (`warn`) when connected with a problem, red when
-  failed. The Record dot is amber while connected and not recording, as the data is
-  dropped.
+  failed. Amber is only for problems.
+- The Record button is inverted while connected and not recording, as the data is
+  dropped: filled with the strong text colour, its label and dot in the background
+  colour. Red while recording; plain and disabled while not connected.
 - A field whose entry is wrong keeps it, outlined in the error colour (`view::mark`),
   with the reason on hover; the value in use is the last good one. A value that is limited
   or changed for the user is outlined in the warning colour, with what is in use on hover.
