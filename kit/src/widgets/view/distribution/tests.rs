@@ -2,6 +2,7 @@ use super::*;
 use crate::store::MemoryStore;
 use crate::store::actions::Invoker;
 use crate::widgets::view::stats::Stats;
+use crate::widgets::view::tests::{double_click, drag};
 use crate::widgets::view::tooltip::{self, Header, Label, Row, Tone, TraceName, Value};
 use crate::widgets::view::{NO_PLOTS, PlotInfo, ViewType};
 use egui_kittest::Harness;
@@ -13,11 +14,12 @@ use proto::Data;
 fn append(model: &mut MemoryStore, path: &str, (start, step): (f64, f64), values: &[Data]) {
     for (index, value) in values.iter().enumerate() {
         let seconds = start + index as f64 * step;
-        model.traces.append(&proto::Sample {
-            timestamp: (seconds * 1.0e9).round() as u64,
-            path: path.to_owned(),
-            value: value.clone(),
-        });
+        crate::store::testing::append(
+            &mut model.traces,
+            (seconds * 1.0e9).round() as u64,
+            path,
+            value.clone(),
+        );
     }
 }
 
@@ -827,20 +829,6 @@ fn a_linked_histogram_bins_the_y_range_of_the_plot_in_either_orientation() {
     assert_eq!(counting.fixed, Some((0.0, 1.0)));
 }
 
-/// Drags in `harness` from `from` to `to` in steps.
-fn drag(harness: &mut Harness<'_, State>, from: egui::Pos2, to: egui::Pos2) {
-    harness.hover_at(from);
-    harness.run();
-    harness.drag_at(from);
-    harness.run();
-    for step in 1..=5 {
-        harness.hover_at(from + (to - from) * step as f32 / 5.0);
-        harness.run();
-    }
-    harness.drop_at(to);
-    harness.run();
-}
-
 #[test]
 fn a_linked_plot_sets_the_values_which_do_not_pan_or_zoom() {
     for orientation in Orientation::ALL {
@@ -1097,17 +1085,7 @@ fn the_wheel_zooms_and_a_drag_pans_the_values_without_binning_anew() {
     );
     assert_eq!((state.time.range(), state.time.cursor()), (range, cursor));
 
-    let at = egui::pos2(200.0, 150.0);
-    harness.hover_at(at);
-    for pressed in [true, false, true, false] {
-        harness.event(egui::Event::PointerButton {
-            pos: at,
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: egui::Modifiers::NONE,
-        });
-        harness.run();
-    }
+    double_click(&mut harness, egui::pos2(200.0, 150.0));
     let state = harness.state();
     assert!(state.distribution.value_view.is_none());
     assert_eq!(

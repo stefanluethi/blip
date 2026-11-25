@@ -1,5 +1,6 @@
 use super::*;
 use crate::store::MemoryStore;
+use crate::store::testing::append;
 use egui_kittest::Harness;
 
 #[test]
@@ -16,11 +17,7 @@ fn the_number_formats_of_a_linked_histogram_are_greyed() {
     let format_disabled = |view: View, plots: Plots| {
         use egui_kittest::kittest::{NodeT, Queryable};
         let mut model = MemoryStore::default();
-        model.traces.append(&proto::Sample {
-            timestamp: 0,
-            path: "motor/errors".to_owned(),
-            value: proto::Data::Uint(3),
-        });
+        append(&mut model.traces, 0, "motor/errors", proto::Data::Uint(3));
         let mut harness = Harness::builder()
             .with_size(egui::vec2(300.0, 600.0))
             .build_ui_state(
@@ -320,11 +317,7 @@ fn facts_model(described: bool) -> MemoryStore {
         ("m", proto::Data::Uint(1)),
         ("p", proto::Data::Float(2.0)),
     ] {
-        model.traces.append(&proto::Sample {
-            timestamp: 0,
-            path: path.to_owned(),
-            value,
-        });
+        append(&mut model.traces, 0, path, value);
     }
     model.traces.set_metadata(&proto::TraceMetadata {
         path: "a".to_owned(),
@@ -498,4 +491,85 @@ fn text_that_is_no_end_stays_and_keeps_the_end() {
     harness.run();
     assert!(harness.query_all_by_value("2x").next().is_some());
     assert_eq!(*harness.state(), Some(2.0));
+}
+
+/// What a harness of a view keeps: the view, the store it shows and the time and
+/// invoker of its context.
+pub(in crate::widgets::view) struct ViewState<V> {
+    pub(in crate::widgets::view) view: V,
+    pub(in crate::widgets::view) model: MemoryStore,
+    pub(in crate::widgets::view) time: TimeRange,
+    pub(in crate::widgets::view) invoker: Invoker,
+}
+
+/// A harness of `size` showing `view` of `model`, or its title row if `titled`.
+pub(in crate::widgets::view) fn view_harness<V: Viewable + 'static>(
+    view: V,
+    model: MemoryStore,
+    size: egui::Vec2,
+    titled: bool,
+) -> Harness<'static, ViewState<V>> {
+    let state = ViewState {
+        view,
+        model,
+        time: TimeRange::default(),
+        invoker: Invoker::default(),
+    };
+    Harness::builder()
+        .with_size(size)
+        // fast enough for double clicks
+        .with_step_dt(1.0 / 60.0)
+        .with_max_steps(60)
+        .build_ui_state(
+            move |ui, state: &mut ViewState<V>| {
+                state
+                    .time
+                    .update(&state.model, ui.input(|input| input.time));
+                let mut context =
+                    ViewContext::new(&state.model, &mut state.time, &mut state.invoker);
+                context.titled = titled;
+                if titled {
+                    ui.horizontal(|ui| state.view.title_ui(ui, &mut context));
+                } else {
+                    state.view.view(ui, &mut context);
+                }
+            },
+            state,
+        )
+}
+
+/// Drags the pointer from `from` to `to` in steps.
+pub(in crate::widgets::view) fn drag<State>(
+    harness: &mut Harness<'_, State>,
+    from: egui::Pos2,
+    to: egui::Pos2,
+) {
+    harness.hover_at(from);
+    harness.run();
+    harness.drag_at(from);
+    harness.run();
+    for step in 1..=5 {
+        harness.hover_at(from + (to - from) * step as f32 / 5.0);
+        harness.run();
+    }
+    harness.drop_at(to);
+    harness.run();
+}
+
+/// Double clicks at `at`, without `drop_at`, which takes the pointer away.
+pub(in crate::widgets::view) fn double_click<State>(
+    harness: &mut Harness<'_, State>,
+    at: egui::Pos2,
+) {
+    harness.hover_at(at);
+    harness.run();
+    for pressed in [true, false, true, false] {
+        harness.event(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+    }
 }

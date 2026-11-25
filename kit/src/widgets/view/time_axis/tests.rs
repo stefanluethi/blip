@@ -1,6 +1,8 @@
 use super::*;
 use crate::store::MemoryStore;
+use crate::store::testing::append;
 use crate::store::traces::Traces;
+use crate::widgets::view::tests::{double_click, drag};
 use egui_kittest::Harness;
 
 /// A harness showing a time plot of data from 0 to 40 seconds, its state is the
@@ -13,11 +15,12 @@ fn time_plot_harness() -> Harness<'static, TimeRange> {
 fn time_plot_harness_stepping(step: f32) -> Harness<'static, TimeRange> {
     let mut traces = Traces::default();
     for second in 0..=40 {
-        traces.append(&proto::Sample {
-            timestamp: second * 1_000_000_000,
-            path: "a".to_owned(),
-            value: proto::Data::Float(1.0),
-        });
+        append(
+            &mut traces,
+            second * 1_000_000_000,
+            "a",
+            proto::Data::Float(1.0),
+        );
     }
     let mut model = MemoryStore::default();
     model.traces = traces;
@@ -32,20 +35,6 @@ fn time_plot_harness_stepping(step: f32) -> Harness<'static, TimeRange> {
             },
             TimeRange::default(),
         )
-}
-
-/// Drags the pointer from `from` to `to` in steps.
-fn drag(harness: &mut Harness<'_, TimeRange>, from: egui::Pos2, to: egui::Pos2) {
-    harness.hover_at(from);
-    harness.run();
-    harness.drag_at(from);
-    harness.run();
-    for step in 1..=5 {
-        harness.hover_at(from + (to - from) * step as f32 / 5.0);
-        harness.run();
-    }
-    harness.drop_at(to);
-    harness.run();
 }
 
 #[test]
@@ -83,21 +72,6 @@ fn clicking_a_time_plot_sets_the_cursor_which_can_be_dragged() {
     let time = harness.state();
     assert_eq!(time.cursor(), cursor);
     assert_ne!(time.range(), range);
-}
-
-/// Double clicks at `at`, without `drop_at`, which takes the pointer away.
-fn double_click(harness: &mut Harness<'_, TimeRange>, at: egui::Pos2) {
-    harness.hover_at(at);
-    harness.run();
-    for pressed in [true, false, true, false] {
-        harness.event(egui::Event::PointerButton {
-            pos: at,
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: egui::Modifiers::NONE,
-        });
-        harness.run();
-    }
 }
 
 #[test]

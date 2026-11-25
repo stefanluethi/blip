@@ -1,6 +1,7 @@
 use super::*;
 use crate::store::MemoryStore;
 use crate::store::Window;
+use crate::store::testing::append;
 
 #[test]
 fn collapsed_branches_hide_their_rows() {
@@ -29,16 +30,17 @@ fn collapsed_branches_hide_their_rows() {
 fn records_have_a_column_per_field_in_the_chosen_order() {
     let mut model = MemoryStore::default();
     for (path, fields) in [("dev/a", ["temp", "volt"]), ("dev/b", ["temp", "fw"])] {
-        model.traces.append(&proto::Sample {
-            timestamp: 0,
-            path: path.to_owned(),
-            value: proto::Data::Record(
+        append(
+            &mut model.traces,
+            0,
+            path,
+            proto::Data::Record(
                 fields
                     .iter()
                     .map(|field| (field.to_string(), proto::Data::Uint(1)))
                     .collect(),
             ),
-        });
+        );
     }
     let mut table = Table {
         layout: TableLayout::Records,
@@ -92,14 +94,15 @@ fn columns_are_hidden_and_formatted_in_the_properties() {
     use egui_kittest::kittest::Queryable;
 
     let mut model = MemoryStore::default();
-    model.traces.append(&proto::Sample {
-        timestamp: 0,
-        path: "dev/a".to_owned(),
-        value: proto::Data::Record(vec![
+    append(
+        &mut model.traces,
+        0,
+        "dev/a",
+        proto::Data::Record(vec![
             ("temp".to_owned(), proto::Data::Uint(1)),
             ("name".to_owned(), proto::Data::String("x".to_owned())),
         ]),
-    });
+    );
     model.traces.set_metadata(&proto::TraceMetadata {
         path: "dev/a.temp".to_owned(),
         range: Some(proto::ExpectedRange {
@@ -144,11 +147,12 @@ fn columns_are_hidden_and_formatted_in_the_properties() {
 fn traces_are_listed_by_path_or_name_without_empty_ones() {
     let mut traces = crate::store::traces::Traces::default();
     for (seconds, path) in [(1, "cpu"), (1, "left/speed"), (3, "right/speed")] {
-        traces.append(&proto::Sample {
-            timestamp: seconds * 1_000_000_000,
-            path: path.to_owned(),
-            value: proto::Data::Float(1.0),
-        });
+        append(
+            &mut traces,
+            seconds * 1_000_000_000,
+            path,
+            proto::Data::Float(1.0),
+        );
     }
     let mut table = Table {
         traces: BTreeSet::from(["left/speed".to_owned(), "right/speed".to_owned()]),
@@ -181,11 +185,7 @@ fn labelled_cells_write_the_label_until_the_default_is_chosen() {
     use egui_kittest::kittest::Queryable;
 
     let mut model = MemoryStore::default();
-    model.traces.append(&proto::Sample {
-        timestamp: 0,
-        path: "m".to_owned(),
-        value: proto::Data::Uint(0),
-    });
+    append(&mut model.traces, 0, "m", proto::Data::Uint(0));
     model.traces.set_metadata(&proto::TraceMetadata {
         path: "m".into(),
         labels: [(0, "Idle".to_owned())].into(),
@@ -225,11 +225,7 @@ fn a_sample_has_the_unit_of_its_trace_unless_it_is_null() {
         ("u", Data::Null),
     ];
     for (timestamp, (path, value)) in samples.into_iter().enumerate() {
-        model.traces.append(&proto::Sample {
-            timestamp: timestamp as u64,
-            path: path.to_owned(),
-            value,
-        });
+        append(&mut model.traces, timestamp as u64, path, value);
         model.traces.set_metadata(&proto::TraceMetadata {
             path: path.into(),
             unit: "V".into(),
@@ -255,11 +251,7 @@ fn a_column_of_the_application_invokes_an_action_for_its_row() {
     use egui_kittest::kittest::Queryable as _;
     let mut model = MemoryStore::default();
     for path in ["pump/a", "pump/b"] {
-        model.traces.append(&proto::Sample {
-            timestamp: 0,
-            path: path.to_owned(),
-            value: proto::Data::Uint(1),
-        });
+        append(&mut model.traces, 0, path, proto::Data::Uint(1));
     }
     let table =
         crate::widgets::view::showing::<Table>(["pump/a", "pump/b"]).column("Reset", |ui, cell| {

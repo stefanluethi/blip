@@ -1,17 +1,15 @@
 use super::*;
 use crate::store::MemoryStore;
+use crate::store::testing::append;
 use crate::store::traces::Traces;
+use crate::widgets::view::tests::{ViewState, view_harness};
 use proto::Data;
 
 /// Traces of the given samples at the given timestamps.
 fn traces(samples: &[(u64, &str, Data)]) -> Traces {
     let mut traces = Traces::default();
     for (timestamp, path, value) in samples {
-        traces.append(&proto::Sample {
-            timestamp: *timestamp,
-            path: path.to_string(),
-            value: value.clone(),
-        });
+        append(&mut traces, *timestamp, path, value.clone());
     }
     traces
 }
@@ -134,11 +132,12 @@ fn showing_an_array_keeps_the_axes_of_the_traces() {
     xy.against.insert("p.y".to_owned(), "rpm".to_owned());
     let lines = lines_of(&xy);
     let mut model = MemoryStore::default();
-    model.traces.append(&proto::Sample {
-        timestamp: 0,
-        path: "adc".to_owned(),
-        value: Data::Array(vec![Data::Float(1.0); 4]),
-    });
+    append(
+        &mut model.traces,
+        0,
+        "adc",
+        Data::Array(vec![Data::Float(1.0); 4]),
+    );
     xy.traces.insert("adc".to_owned());
     xy.assign_axes(&model);
     xy.traces.remove("adc");
@@ -317,58 +316,18 @@ fn layouts_without_the_new_properties_fade_as_before() {
     assert!(!json.contains("line_styles"), "{json}");
 }
 
-struct State {
-    xy: Xy,
-    model: MemoryStore,
-    time: TimeRange,
-    invoker: crate::store::actions::Invoker,
-}
-
 /// A harness showing `xy` of an array trace `adc` of 32 elements and a float trace
 /// `rpm`, both with two samples.
-fn xy_harness(xy: Xy) -> egui_kittest::Harness<'static, State> {
+fn xy_harness(xy: Xy) -> egui_kittest::Harness<'static, ViewState<Xy>> {
     let mut model = MemoryStore::default();
     for (second, value) in [(0, 1.0), (1, 2.0)] {
         let timestamp = second * 1_000_000_000;
         let elements = (0..32).map(|i| Data::Float(value * f64::from(i))).collect();
         for (path, data) in [("adc", Data::Array(elements)), ("rpm", Data::Float(value))] {
-            model.traces.append(&proto::Sample {
-                timestamp,
-                path: path.to_owned(),
-                value: data,
-            });
+            append(&mut model.traces, timestamp, path, data);
         }
     }
-    xy_harness_of(xy, model)
-}
-
-/// A harness showing `xy` of the traces of `model`.
-fn xy_harness_of(xy: Xy, model: MemoryStore) -> egui_kittest::Harness<'static, State> {
-    let state = State {
-        xy,
-        model,
-        time: Default::default(),
-        invoker: Default::default(),
-    };
-    egui_kittest::Harness::builder()
-        .with_size(egui::vec2(400.0, 300.0))
-        .build_ui_state(
-            |ui, state: &mut State| {
-                state
-                    .time
-                    .update(&state.model, ui.input(|input| input.time));
-                let mut context = ViewContext {
-                    store: &state.model,
-                    time: &mut state.time,
-                    invoker: &mut state.invoker,
-                    formats: &super::super::NO_FORMATS,
-                    titled: false,
-                    plots: &super::super::NO_PLOTS,
-                };
-                state.xy.view(ui, &mut context);
-            },
-            state,
-        )
+    view_harness(xy, model, egui::vec2(400.0, 300.0), false)
 }
 
 #[test]
@@ -382,7 +341,7 @@ fn a_single_array_is_plotted_over_its_indices() {
     let mut harness = xy_harness(xy);
     harness.run();
     let state = harness.state();
-    assert_eq!(state.xy.array_paths(&state.model), ["adc"]);
+    assert_eq!(state.view.array_paths(&state.model), ["adc"]);
     assert!(harness.query_by_label_contains("Select").is_none());
 
     // a single trace that is no array is not enough
@@ -395,7 +354,7 @@ fn a_single_array_is_plotted_over_its_indices() {
     assert!(
         harness
             .state()
-            .xy
+            .view
             .array_paths(&harness.state().model)
             .is_empty()
     );
@@ -517,11 +476,12 @@ fn hovering_a_point_shows_the_trace_and_its_x_and_y() {
     let mut model = MemoryStore::default();
     for i in 0..10_201_u64 {
         for (path, value) in [("pose.x", i % 101), ("pose.y", i / 101)] {
-            model.traces.append(&proto::Sample {
-                timestamp: i * 1_000_000,
-                path: path.to_owned(),
-                value: Data::Float(value as f64),
-            });
+            append(
+                &mut model.traces,
+                i * 1_000_000,
+                path,
+                Data::Float(value as f64),
+            );
         }
     }
     model.traces.set_metadata(&proto::TraceMetadata {
@@ -538,7 +498,7 @@ fn hovering_a_point_shows_the_trace_and_its_x_and_y() {
         traces: ["pose.x".to_owned(), "pose.y".to_owned()].into(),
         ..Xy::default()
     };
-    let mut harness = xy_harness_of(xy, model);
+    let mut harness = view_harness(xy, model, egui::vec2(400.0, 300.0), false);
     harness.run();
     harness.hover_at(egui::pos2(200.0, 150.0));
     harness.run_steps(40);
@@ -590,11 +550,7 @@ fn the_axes_fit_the_declared_ranges_with_expected() {
     let mut model = MemoryStore::default();
     for (timestamp, x, y, z) in [(1, 0.0, 2.0, 1.0), (2, 0.5, 3.0, 12.0)] {
         for (path, value) in [("x", x), ("y", y), ("z", z)] {
-            model.traces.append(&proto::Sample {
-                timestamp,
-                path: path.to_owned(),
-                value: Data::Float(value),
-            });
+            append(&mut model.traces, timestamp, path, Data::Float(value));
         }
     }
     for (path, min, max) in [("x", -1.0, 1.0), ("z", 0.0, 10.0)] {

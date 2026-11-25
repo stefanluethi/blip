@@ -1,7 +1,7 @@
-use super::super::ViewContext;
 use super::*;
+use crate::store::testing::append;
 use crate::store::traces::Traces;
-use crate::widgets::time::TimeRange;
+use crate::widgets::view::tests::{ViewState, double_click, view_harness};
 use egui_kittest::kittest::Queryable;
 use proto::Data;
 
@@ -25,11 +25,12 @@ fn value_range_skips_nulls() {
 fn over_time_holds_each_sample_until_the_next() {
     let mut traces = Traces::default();
     for (second, elements) in [(1, [1.0, 2.0]), (3, [3.0, 4.0])] {
-        traces.append(&proto::Sample {
-            timestamp: second * 1_000_000_000,
-            path: "a".to_owned(),
-            value: Data::Array(elements.iter().copied().map(Data::Float).collect()),
-        });
+        append(
+            &mut traces,
+            second * 1_000_000_000,
+            "a",
+            Data::Array(elements.iter().copied().map(Data::Float).collect()),
+        );
     }
     let trace = traces.get("a").unwrap();
     // columns centered at 0.5, 1.5, ... 5.5 seconds
@@ -49,11 +50,12 @@ fn over_time_holds_each_sample_until_the_next() {
 fn frame_traces() -> Traces {
     let mut traces = Traces::default();
     for (second, elements) in [(1, [1.0, 2.0]), (3, [3.0, 4.0])] {
-        traces.append(&proto::Sample {
-            timestamp: second * 1_000_000_000,
-            path: "a".to_owned(),
-            value: Data::Array(elements.iter().copied().map(Data::Float).collect()),
-        });
+        append(
+            &mut traces,
+            second * 1_000_000_000,
+            "a",
+            Data::Array(elements.iter().copied().map(Data::Float).collect()),
+        );
     }
     traces
 }
@@ -171,23 +173,20 @@ fn the_tooltips_of_bands_cells_and_elements() {
     );
 }
 
-struct State {
-    heatmap: Heatmap,
-    model: crate::store::MemoryStore,
-    time: TimeRange,
-    invoker: crate::store::actions::Invoker,
-}
-
 /// A harness showing a heatmap of the trace `frame` (1D, `[0, 1, 2, 3]` V every second
 /// to 40 s) or `grid` (2D, 3 × 3 of 10 * row + column °C at 0 and 1 s).
-fn heatmap_harness(path: &str, mode: ArrayMode) -> egui_kittest::Harness<'static, State> {
+fn heatmap_harness(
+    path: &str,
+    mode: ArrayMode,
+) -> egui_kittest::Harness<'static, ViewState<Heatmap>> {
     let mut model = crate::store::MemoryStore::default();
     for second in 0..=40 {
-        model.traces.append(&proto::Sample {
-            timestamp: second * 1_000_000_000,
-            path: "frame".to_owned(),
-            value: Data::Array((0..4).map(|i| Data::Float(f64::from(i))).collect()),
-        });
+        append(
+            &mut model.traces,
+            second * 1_000_000_000,
+            "frame",
+            Data::Array((0..4).map(|i| Data::Float(f64::from(i))).collect()),
+        );
     }
     model.traces.set_metadata(&proto::TraceMetadata {
         path: "frame".into(),
@@ -195,17 +194,18 @@ fn heatmap_harness(path: &str, mode: ArrayMode) -> egui_kittest::Harness<'static
         ..Default::default()
     });
     for second in 0..2 {
-        model.traces.append(&proto::Sample {
-            timestamp: second * 1_000_000_000,
-            path: "grid".to_owned(),
-            value: Data::Array(
+        append(
+            &mut model.traces,
+            second * 1_000_000_000,
+            "grid",
+            Data::Array(
                 (0..3)
                     .map(|r| {
                         Data::Array((0..3).map(|c| Data::Float(f64::from(10 * r + c))).collect())
                     })
                     .collect(),
             ),
-        });
+        );
     }
     model.traces.set_metadata(&proto::TraceMetadata {
         path: "grid".into(),
@@ -217,37 +217,11 @@ fn heatmap_harness(path: &str, mode: ArrayMode) -> egui_kittest::Harness<'static
         mode,
         ..Heatmap::default()
     };
-    let state = State {
-        heatmap,
-        model,
-        time: Default::default(),
-        invoker: Default::default(),
-    };
-    egui_kittest::Harness::builder()
-        .with_size(egui::vec2(400.0, 300.0))
-        .with_step_dt(1.0 / 60.0)
-        .with_max_steps(60)
-        .build_ui_state(
-            |ui, state: &mut State| {
-                state
-                    .time
-                    .update(&state.model, ui.input(|input| input.time));
-                let mut context = ViewContext {
-                    store: &state.model,
-                    time: &mut state.time,
-                    invoker: &mut state.invoker,
-                    formats: &super::super::NO_FORMATS,
-                    titled: false,
-                    plots: &super::super::NO_PLOTS,
-                };
-                state.heatmap.view(ui, &mut context);
-            },
-            state,
-        )
+    view_harness(heatmap, model, egui::vec2(400.0, 300.0), false)
 }
 
 /// The texts of the tooltip after hovering the middle of the heatmap.
-fn hovered_texts(mut harness: egui_kittest::Harness<'static, State>) -> Vec<String> {
+fn hovered_texts(mut harness: egui_kittest::Harness<'static, ViewState<Heatmap>>) -> Vec<String> {
     harness.run();
     harness.hover_at(egui::pos2(200.0, 150.0));
     harness.run_steps(40);
@@ -415,8 +389,8 @@ fn a_grid_fills_its_frame_with_square_cells_only_while_they_fill_half_of_it() {
 }
 
 /// The y range the line at the cursor shows.
-fn line_y(harness: &egui_kittest::Harness<'static, State>) -> (f64, f64) {
-    let heatmap = &harness.state().heatmap;
+fn line_y(harness: &egui_kittest::Harness<'static, ViewState<Heatmap>>) -> (f64, f64) {
+    let heatmap = &harness.state().view;
     (heatmap.y_view)
         .or_else(|| heatmap.value_range.over(heatmap.fitted_y()))
         .expect("a y range")
@@ -429,24 +403,15 @@ fn the_y_axis_at_the_cursor_stays_where_zoomed_until_a_double_click() {
     // the values 0 to 3 with a margin
     let (low, high) = line_y(&harness);
     assert!((low + 0.15).abs() < 1.0e-9 && (high - 3.15).abs() < 1.0e-9);
-    assert!(harness.state().heatmap.y_view.is_none());
+    assert!(harness.state().view.y_view.is_none());
 
     super::super::scroll_wheel(&mut harness, egui::pos2(200.0, 150.0), 100.0);
-    let (low, high) = harness.state().heatmap.y_view.expect("zoomed");
+    let (low, high) = harness.state().view.y_view.expect("zoomed");
     assert!(high - low < 3.3 * 0.9, "{low} {high}");
     // it stays while the frame is shown again
     harness.run_steps(5);
-    assert_eq!(harness.state().heatmap.y_view, Some((low, high)));
+    assert_eq!(harness.state().view.y_view, Some((low, high)));
 
-    let at = egui::pos2(200.0, 150.0);
-    for pressed in [true, false, true, false] {
-        harness.event(egui::Event::PointerButton {
-            pos: at,
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: egui::Modifiers::NONE,
-        });
-        harness.run();
-    }
-    assert!(harness.state().heatmap.y_view.is_none());
+    double_click(&mut harness, egui::pos2(200.0, 150.0));
+    assert!(harness.state().view.y_view.is_none());
 }

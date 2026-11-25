@@ -1,6 +1,8 @@
 use super::*;
 use crate::store::MemoryStore;
+use crate::store::testing::append;
 use crate::store::traces::Traces;
+use crate::widgets::view::tests::{ViewState, double_click, drag, view_harness};
 
 /// A float trace `a` of `count` values 1 ms apart, with a null every 7th value if
 /// `with_nulls`.
@@ -12,11 +14,7 @@ fn traces(count: u64, with_nulls: bool) -> Traces {
         } else {
             proto::Data::Float((i % 7) as f64)
         };
-        traces.append(&proto::Sample {
-            timestamp: i * 1_000_000,
-            path: "a".to_owned(),
-            value,
-        });
+        append(&mut traces, i * 1_000_000, "a", value);
     }
     traces
 }
@@ -47,59 +45,21 @@ fn downsample_keeps_gaps() {
     assert!(points.iter().any(|p| p[1] == 6.0));
 }
 
-struct State {
-    plot: Plot,
-    model: MemoryStore,
-    time: crate::widgets::time::TimeRange,
-    invoker: crate::store::actions::Invoker,
-}
-
 /// A harness showing a plot of a trace `a` whose value is the time in seconds from 0
 /// to 40 seconds, of which the last 20 seconds are shown.
-fn plot_harness() -> egui_kittest::Harness<'static, State> {
+fn plot_harness() -> egui_kittest::Harness<'static, ViewState<Plot>> {
     let mut model = MemoryStore::default();
     for second in 0..=40 {
-        model.traces.append(&proto::Sample {
-            timestamp: second * 1_000_000_000,
-            path: "a".to_owned(),
-            value: proto::Data::Float(second as f64),
-        });
+        append(
+            &mut model.traces,
+            second * 1_000_000_000,
+            "a",
+            proto::Data::Float(second as f64),
+        );
     }
     let mut plot = Plot::default();
     plot.traces.insert("a".to_owned());
-    plot_harness_of(plot, model)
-}
-
-/// A harness showing `plot` of `model`.
-fn plot_harness_of(plot: Plot, model: MemoryStore) -> egui_kittest::Harness<'static, State> {
-    let state = State {
-        plot,
-        model,
-        time: Default::default(),
-        invoker: Default::default(),
-    };
-    egui_kittest::Harness::builder()
-        .with_size(egui::vec2(400.0, 300.0))
-        // fast enough for double clicks
-        .with_step_dt(1.0 / 60.0)
-        .with_max_steps(60)
-        .build_ui_state(
-            |ui, state: &mut State| {
-                state
-                    .time
-                    .update(&state.model, ui.input(|input| input.time));
-                let mut context = ViewContext {
-                    store: &state.model,
-                    time: &mut state.time,
-                    invoker: &mut state.invoker,
-                    formats: &super::super::NO_FORMATS,
-                    titled: false,
-                    plots: &super::super::NO_PLOTS,
-                };
-                state.plot.view(ui, &mut context);
-            },
-            state,
-        )
+    view_harness(plot, model, egui::vec2(400.0, 300.0), false)
 }
 
 #[test]
@@ -108,11 +68,7 @@ fn legend_slots_fit_the_kind_of_the_values() {
     for (second, (int, bool)) in [(-3, true), (120, false)].into_iter().enumerate() {
         let timestamp = second as u64 * 1_000_000_000;
         for (path, value) in [("i", proto::Data::Int(int)), ("b", proto::Data::Bool(bool))] {
-            model.traces.append(&proto::Sample {
-                timestamp,
-                path: path.to_owned(),
-                value,
-            });
+            append(&mut model.traces, timestamp, path, value);
         }
     }
     let slot = |path| legend_slot(&model.traces.series(path).unwrap(), DisplayFormat::Default);
@@ -132,37 +88,16 @@ fn values_in_the_title_legend_keep_their_place() {
     let texts = ["-0.140", "0.080", "9.836", "1.500", "-3.200"];
     let mut model = MemoryStore::default();
     for (second, value) in values.into_iter().enumerate() {
-        model.traces.append(&proto::Sample {
-            timestamp: second as u64 * 1_000_000_000,
-            path: "v".to_owned(),
-            value: proto::Data::Float(value),
-        });
+        append(
+            &mut model.traces,
+            second as u64 * 1_000_000_000,
+            "v",
+            proto::Data::Float(value),
+        );
     }
     let mut plot = Plot::default();
     plot.traces.insert("v".to_owned());
-    let state = State {
-        plot,
-        model,
-        time: Default::default(),
-        invoker: Default::default(),
-    };
-    let mut harness = egui_kittest::Harness::builder()
-        .with_size(egui::vec2(400.0, 40.0))
-        .build_ui_state(
-            |ui, state: &mut State| {
-                state.time.update(&state.model, 0.0);
-                let mut context = ViewContext {
-                    store: &state.model,
-                    time: &mut state.time,
-                    invoker: &mut state.invoker,
-                    formats: &super::super::NO_FORMATS,
-                    titled: true,
-                    plots: &super::super::NO_PLOTS,
-                };
-                ui.horizontal(|ui| state.plot.title_ui(ui, &mut context));
-            },
-            state,
-        );
+    let mut harness = view_harness(plot, model, egui::vec2(400.0, 40.0), true);
     let mut right_edges = vec![];
     for (second, text) in texts.into_iter().enumerate() {
         let state = harness.state_mut();
@@ -183,21 +118,8 @@ fn values_in_the_title_legend_keep_their_place() {
 }
 
 /// The y range of `plot`, the panned or zoomed one or else the fitted one.
-fn shown_y(state: &State) -> (f64, f64) {
-    state.plot.shown_y(&state.model).unwrap()
-}
-
-fn drag(harness: &mut egui_kittest::Harness<'_, State>, from: egui::Pos2, to: egui::Pos2) {
-    harness.hover_at(from);
-    harness.run();
-    harness.drag_at(from);
-    harness.run();
-    for step in 1..=5 {
-        harness.hover_at(from + (to - from) * step as f32 / 5.0);
-        harness.run();
-    }
-    harness.drop_at(to);
-    harness.run();
+fn shown_y(state: &ViewState<Plot>) -> (f64, f64) {
+    state.view.shown_y(&state.model).unwrap()
 }
 
 #[test]
@@ -208,7 +130,7 @@ fn the_y_axis_fits_all_values_and_not_only_the_shown_ones() {
     assert!(start > 10.0, "{start}");
     let (low, high) = shown_y(harness.state());
     assert!(low < 0.0 && high > 40.0, "{low} {high}");
-    assert!(harness.state().plot.y_view.is_none());
+    assert!(harness.state().view.y_view.is_none());
 }
 
 #[test]
@@ -225,7 +147,7 @@ fn a_vertical_drag_pans_the_y_axis_and_a_double_click_fits_it_again() {
         egui::pos2(250.0, 152.0),
     );
     assert_ne!(harness.state().time.range(), range);
-    assert!(harness.state().plot.y_view.is_none());
+    assert!(harness.state().view.y_view.is_none());
 
     // a vertical drag pans the y axis and leaves the time
     let range = harness.state().time.range();
@@ -235,28 +157,18 @@ fn a_vertical_drag_pans_the_y_axis_and_a_double_click_fits_it_again() {
         egui::pos2(152.0, 200.0),
     );
     assert_eq!(harness.state().time.range(), range);
-    let (panned_low, panned_high) = harness.state().plot.y_view.unwrap();
+    let (panned_low, panned_high) = harness.state().view.y_view.unwrap();
     assert!(panned_low > low + 1.0, "{panned_low} {low}");
     assert!(((panned_high - panned_low) - (high - low)).abs() < 1.0e-6);
     // and stays so in later frames
     harness.run();
-    assert_eq!(harness.state().plot.y_view, Some((panned_low, panned_high)));
+    assert_eq!(harness.state().view.y_view, Some((panned_low, panned_high)));
 
-    // without `drop_at`, which takes the pointer away; the time stays as it was
+    // a double click fits it again; the time stays as it was
     let range = harness.state().time.range();
     assert!(!harness.state().time.cursor_is_set());
-    let at = egui::pos2(200.0, 150.0);
-    harness.hover_at(at);
-    for pressed in [true, false, true, false] {
-        harness.event(egui::Event::PointerButton {
-            pos: at,
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: egui::Modifiers::NONE,
-        });
-        harness.run();
-    }
-    assert!(harness.state().plot.y_view.is_none());
+    double_click(&mut harness, egui::pos2(200.0, 150.0));
+    assert!(harness.state().view.y_view.is_none());
     assert_eq!(harness.state().time.range(), range);
     assert!(!harness.state().time.cursor_is_set());
 }
@@ -285,7 +197,7 @@ fn the_wheel_with_alt_zooms_the_y_axis_only() {
     harness.run_steps(60);
 
     assert_eq!(harness.state().time.range(), range);
-    let (zoomed_low, zoomed_high) = harness.state().plot.y_view.unwrap();
+    let (zoomed_low, zoomed_high) = harness.state().view.y_view.unwrap();
     assert!(
         zoomed_high - zoomed_low < (high - low) * 0.9,
         "{zoomed_low} {zoomed_high}"
@@ -302,7 +214,7 @@ fn stats_of_shown_traces_are_shown_below_the_plot() {
         trace: trace.to_owned(),
         stat,
     };
-    harness.state_mut().plot.stats = vec![
+    harness.state_mut().view.stats = vec![
         measurement("a", Stat::Max),
         measurement("a", Stat::Frequency),
         measurement("b", Stat::Min),
@@ -315,7 +227,7 @@ fn stats_of_shown_traces_are_shown_below_the_plot() {
     assert!(harness.query_by_label("Freq(a)").is_some());
     assert!(harness.query_by_label("—").is_some());
     assert!(harness.query_by_label("Min(b)").is_none());
-    assert_eq!(harness.state().plot.stats.len(), 3, "stats of b are kept");
+    assert_eq!(harness.state().view.stats.len(), 3, "stats of b are kept");
 }
 
 #[test]
@@ -378,22 +290,13 @@ fn tooltip_model() -> (Plot, MemoryStore) {
     let mut model = MemoryStore::default();
     for second in 0..=40u64 {
         let timestamp = second * 1_000_000_000;
-        let path = |path: &str| path.to_owned();
-        model.traces.append(&proto::Sample {
-            timestamp,
-            path: path("a"),
-            value: proto::Data::Float(1.5),
-        });
+        append(&mut model.traces, timestamp, "a", proto::Data::Float(1.5));
         let value = if second <= 20 {
             proto::Data::Float(2.0)
         } else {
             proto::Data::Null
         };
-        model.traces.append(&proto::Sample {
-            timestamp,
-            path: path("b"),
-            value,
-        });
+        append(&mut model.traces, timestamp, "b", value);
     }
     model.traces.set_metadata(&proto::TraceMetadata {
         path: "a".into(),
@@ -439,11 +342,12 @@ fn the_tooltip_of_a_curve_of_steps_has_the_value_held_at_the_time() {
     use super::super::tooltip::Value;
     let mut model = MemoryStore::default();
     for (seconds, value) in [(10, 1.0), (20, 2.0)] {
-        model.traces.append(&proto::Sample {
-            timestamp: seconds * 1_000_000_000,
-            path: "a".to_owned(),
-            value: proto::Data::Float(value),
-        });
+        append(
+            &mut model.traces,
+            seconds * 1_000_000_000,
+            "a",
+            proto::Data::Float(value),
+        );
     }
     let mut plot = Plot::default();
     plot.traces.insert("a".to_owned());
@@ -507,7 +411,7 @@ fn the_tooltip_describes_the_trace_near_the_pointer() {
 #[test]
 fn hovering_the_plot_shows_the_tooltip() {
     let (plot, model) = tooltip_model();
-    let mut harness = plot_harness_of(plot, model);
+    let mut harness = view_harness(plot, model, egui::vec2(400.0, 300.0), false);
     harness.run();
     harness.hover_at(egui::pos2(200.0, 150.0));
     harness.run_steps(40);
@@ -566,11 +470,12 @@ fn labels_show_in_the_title_legend() {
 
     let mut model = MemoryStore::default();
     for (second, value) in [0, 1, 3].into_iter().enumerate() {
-        model.traces.append(&proto::Sample {
-            timestamp: second as u64 * 1_000_000_000,
-            path: "m".to_owned(),
-            value: proto::Data::Uint(value),
-        });
+        append(
+            &mut model.traces,
+            second as u64 * 1_000_000_000,
+            "m",
+            proto::Data::Uint(value),
+        );
     }
     model.traces.set_metadata(&proto::TraceMetadata {
         path: "m".into(),
@@ -582,29 +487,7 @@ fn labels_show_in_the_title_legend() {
     assert_eq!(legend_slot(&series, DisplayFormat::Labels), (None, None));
     let mut plot = Plot::default();
     plot.traces.insert("m".to_owned());
-    let state = State {
-        plot,
-        model,
-        time: Default::default(),
-        invoker: Default::default(),
-    };
-    let mut harness = egui_kittest::Harness::builder()
-        .with_size(egui::vec2(400.0, 40.0))
-        .build_ui_state(
-            |ui, state: &mut State| {
-                state.time.update(&state.model, 0.0);
-                let mut context = ViewContext {
-                    store: &state.model,
-                    time: &mut state.time,
-                    invoker: &mut state.invoker,
-                    formats: &super::super::NO_FORMATS,
-                    titled: true,
-                    plots: &super::super::NO_PLOTS,
-                };
-                ui.horizontal(|ui| state.plot.title_ui(ui, &mut context));
-            },
-            state,
-        );
+    let mut harness = view_harness(plot, model, egui::vec2(400.0, 40.0), true);
     let state = harness.state_mut();
     state.time.update(&state.model, 0.0);
     let latest = state.time.latest().unwrap();
@@ -619,11 +502,12 @@ fn fit_model(paths: &[&str]) -> (Plot, MemoryStore) {
     let mut model = MemoryStore::default();
     for (path, values) in [("a", [10.0, 120.0]), ("b", [-5.0, 5.0])] {
         for (timestamp, value) in values.into_iter().enumerate() {
-            model.traces.append(&proto::Sample {
-                timestamp: timestamp as u64 * 1_000_000,
-                path: path.to_owned(),
-                value: proto::Data::Float(value),
-            });
+            append(
+                &mut model.traces,
+                timestamp as u64 * 1_000_000,
+                path,
+                proto::Data::Float(value),
+            );
         }
     }
     model.traces.set_metadata(&proto::TraceMetadata {

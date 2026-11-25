@@ -1,6 +1,7 @@
 use super::*;
 use crate::store::MemoryStore;
 use crate::store::Window;
+use crate::store::testing::append;
 use crate::store::traces::Traces;
 use proto::Data;
 
@@ -8,11 +9,12 @@ use proto::Data;
 fn traces(samples: &[(&str, Data)]) -> Traces {
     let mut traces = Traces::default();
     for (second, (path, value)) in samples.iter().enumerate() {
-        traces.append(&proto::Sample {
-            timestamp: second as u64 * 1_000_000_000,
-            path: path.to_string(),
-            value: value.clone(),
-        });
+        append(
+            &mut traces,
+            second as u64 * 1_000_000_000,
+            path,
+            value.clone(),
+        );
     }
     traces
 }
@@ -120,11 +122,7 @@ fn false_bools_are_empty_and_log_levels_take_their_colors() {
 fn tooltip_view_model() -> (States, MemoryStore) {
     let mut model = MemoryStore::default();
     let mut append = |second: u64, path: &str, value: Data| {
-        model.traces.append(&proto::Sample {
-            timestamp: second * 1_000_000_000,
-            path: path.to_owned(),
-            value,
-        });
+        append(&mut model.traces, second * 1_000_000_000, path, value);
     };
     append(0, "motor.state", Data::from("idle"));
     append(1, "motor.on", Data::Bool(true));
@@ -223,40 +221,9 @@ fn the_tooltip_has_the_time_and_the_state_of_each_trace() {
 
 #[test]
 fn hovering_the_states_shows_the_tooltip() {
-    struct State {
-        states: States,
-        model: MemoryStore,
-        time: crate::widgets::time::TimeRange,
-        invoker: crate::store::actions::Invoker,
-    }
     let (states, model) = tooltip_view_model();
-    let state = State {
-        states,
-        model,
-        time: Default::default(),
-        invoker: Default::default(),
-    };
-    let mut harness = egui_kittest::Harness::builder()
-        .with_size(egui::vec2(400.0, 300.0))
-        .with_step_dt(1.0 / 60.0)
-        .with_max_steps(60)
-        .build_ui_state(
-            |ui, state: &mut State| {
-                state
-                    .time
-                    .update(&state.model, ui.input(|input| input.time));
-                let mut context = ViewContext {
-                    store: &state.model,
-                    time: &mut state.time,
-                    invoker: &mut state.invoker,
-                    formats: &super::super::NO_FORMATS,
-                    titled: false,
-                    plots: &super::super::NO_PLOTS,
-                };
-                state.states.view(ui, &mut context);
-            },
-            state,
-        );
+    let mut harness =
+        super::super::tests::view_harness(states, model, egui::vec2(400.0, 300.0), false);
     harness.run();
     harness.hover_at(egui::pos2(200.0, 150.0));
     harness.run_steps(40);

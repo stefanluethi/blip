@@ -1,12 +1,23 @@
-//! Helpers of the tests of the store: typed messages into a [`MemoryStore`], with the same
-//! inputs and answer as the byte entry of the parser gives.
+//! Helpers of the tests of the store and the views: samples into [`Traces`], and typed
+//! messages into a [`MemoryStore`], with the same inputs and answer as the byte entry of
+//! the parser gives.
 
 use crate::proto;
 
 use super::ingest::Ingest;
 use super::protocol::Parser;
 use super::said::Said;
+use super::traces::Traces;
 use super::{Level, MemoryStore, said};
+
+/// Appends a sample of `value` at `path` and `timestamp` to `traces`.
+pub(crate) fn append(traces: &mut Traces, timestamp: u64, path: &str, value: proto::Data) {
+    traces.append(&proto::Sample {
+        timestamp,
+        path: path.to_owned(),
+        value,
+    });
+}
 
 /// Hands `message`, received from `source`, to `store` as recording.
 pub(crate) fn receive(

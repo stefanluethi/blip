@@ -1,5 +1,6 @@
 use super::*;
 use crate::store::MemoryStore;
+use crate::store::testing::append;
 
 /// What is picked for a view of `view_type` as `paths`, without wildcards.
 fn selection(paths: &mut BTreeSet<String>, view_type: ViewType) -> ViewSelection<'_> {
@@ -376,11 +377,7 @@ fn searching_shows_and_selects_only_the_matching_traces() {
 
     let mut model = MemoryStore::default();
     for path in ["motor/speed", "motor/current", "sensor/temp"] {
-        model.traces.append(&proto::Sample {
-            timestamp: 0,
-            path: path.to_owned(),
-            value: proto::Data::Uint(1),
-        });
+        append(&mut model.traces, 0, path, proto::Data::Uint(1));
     }
     let mut harness = Harness::builder()
         .with_size(egui::vec2(300.0, 400.0))
@@ -467,11 +464,8 @@ fn tree_frame_time() {
     let mut model = MemoryStore::default();
     for branch in 0..20 {
         for leaf in 0..100 {
-            model.traces.append(&proto::Sample {
-                timestamp: 0,
-                path: format!("node{branch}/sensor{leaf}"),
-                value: proto::Data::Float(1.0),
-            });
+            let path = format!("node{branch}/sensor{leaf}");
+            append(&mut model.traces, 0, &path, proto::Data::Float(1.0));
         }
     }
     let mut harness = egui_kittest::Harness::builder()
@@ -511,11 +505,7 @@ fn tree_frame_time() {
 
 fn tree_harness(view_type: ViewType) -> egui_kittest::Harness<'static, (String, BTreeSet<String>)> {
     let mut model = MemoryStore::default();
-    model.traces.append(&proto::Sample {
-        timestamp: 0,
-        path: "motor/rpm".to_owned(),
-        value: proto::Data::Uint(1),
-    });
+    append(&mut model.traces, 0, "motor/rpm", proto::Data::Uint(1));
     model.actions.set(
         "a",
         vec![proto::ActionDescriptor {
@@ -630,16 +620,13 @@ fn the_filter_shows_only_what_the_view_can_show() {
     use egui_kittest::kittest::{NodeT, Queryable};
 
     let mut model = MemoryStore::default();
-    model.traces.append(&proto::Sample {
-        timestamp: 0,
-        path: "motor/rpm".to_owned(),
-        value: proto::Data::Uint(1),
-    });
-    model.traces.append(&proto::Sample {
-        timestamp: 0,
-        path: "motor/mode".to_owned(),
-        value: proto::Data::String("idle".to_owned()),
-    });
+    append(&mut model.traces, 0, "motor/rpm", proto::Data::Uint(1));
+    append(
+        &mut model.traces,
+        0,
+        "motor/mode",
+        proto::Data::String("idle".to_owned()),
+    );
     model.actions.set(
         "a",
         vec![proto::ActionDescriptor {
@@ -760,22 +747,19 @@ fn the_buttons_are_as_high_as_the_search_field_and_fit_beside_it() {
 
 /// Adds a record with the fields "temp" and "volt" at `path` to `model`.
 fn add_record(model: &mut MemoryStore, path: &str) {
-    model.traces.append(&proto::Sample {
-        timestamp: 0,
-        path: path.to_owned(),
-        value: proto::Data::Record(vec![
+    append(
+        &mut model.traces,
+        0,
+        path,
+        proto::Data::Record(vec![
             ("temp".to_owned(), proto::Data::Float(1.0)),
             ("volt".to_owned(), proto::Data::Uint(3)),
         ]),
-    });
+    );
 }
 
 fn add_trace(model: &mut MemoryStore, path: &str) {
-    model.traces.append(&proto::Sample {
-        timestamp: 0,
-        path: path.to_owned(),
-        value: proto::Data::Uint(1),
-    });
+    append(&mut model.traces, 0, path, proto::Data::Uint(1));
 }
 
 type PickState = (MemoryStore, BTreeSet<String>, BTreeSet<String>, String);
@@ -935,11 +919,12 @@ fn shown_logs_of_paths_without_records_can_be_unchecked() {
 
 /// Adds an array of `len` floats at `path` to `model`.
 fn add_array(model: &mut MemoryStore, path: &str, len: usize) {
-    model.traces.append(&proto::Sample {
-        timestamp: 0,
-        path: path.to_owned(),
-        value: proto::Data::Array(vec![proto::Data::Float(1.0); len]),
-    });
+    append(
+        &mut model.traces,
+        0,
+        path,
+        proto::Data::Array(vec![proto::Data::Float(1.0); len]),
+    );
 }
 
 #[test]
@@ -1071,11 +1056,7 @@ fn the_tree_row_of_a_described_trace_has_its_description_on_hover() {
     use egui_kittest::kittest::Queryable;
 
     let mut model = MemoryStore::default();
-    model.traces.append(&proto::Sample {
-        timestamp: 0,
-        path: "motor/rpm".to_owned(),
-        value: proto::Data::Uint(1),
-    });
+    append(&mut model.traces, 0, "motor/rpm", proto::Data::Uint(1));
     model.traces.set_metadata(&proto::TraceMetadata {
         path: "motor/rpm".to_owned(),
         description: "Speed of the shaft".to_owned(),
