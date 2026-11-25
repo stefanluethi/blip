@@ -28,7 +28,8 @@ What the application holds
        table: Table,
    }
 
-* The ``Session`` holds the store, the invoker of actions and the sources.
+* The ``Session`` holds the store, the recorder, the invoker of actions and the
+  sources.
 * The ``TimeRange`` is the time all widgets show: the window, the cursor and
   whether it plays.
 * ``Plot`` and ``Table`` are views, the state of a widget. They are plain
@@ -49,6 +50,8 @@ invocations of its actions. :doc:`sources` shows how it works.
 ``Session::recording()`` makes a session that keeps the samples from the start,
 as the application has no record button. The name given to ``add_source`` is
 the name its messages are kept under and the name its actions are invoked by.
+It returns a ``SourceId``, which the example does not need; keep it to remove
+the source with ``remove_source(id)``.
 
 The widgets
 -----------
@@ -108,7 +111,10 @@ Each frame does the same things in the same order:
        }
    }
 
-``Session::update(now)`` takes the time in seconds, as egui counts it. The
+``Session::update(now)`` takes the time in seconds, as egui counts it. It
+returns an ``Update`` with the number of messages that arrived (``messages``)
+and whether the session started afresh (``started_fresh``), which the example
+ignores; blip uses them for the rate and to reset what shows old data. The
 notices are what went wrong in the store and with the sources, e.g. a
 connection that broke. The example logs them; blip shows them as toasts, see
 ``Toasts`` of the workbench.

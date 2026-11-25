@@ -5,7 +5,6 @@ use blip_kit::store as model;
 use blip_kit::widgets::{theme, time, view};
 use blip_kit::workbench::{connections, files, layout, opening, presets, toasts};
 
-use connections::Received;
 use eframe::Frame;
 use egui::{Context, Key, KeyboardShortcut, Modifiers};
 use model::session::Session;
@@ -63,27 +62,9 @@ pub struct State {
 }
 
 impl State {
-    /// Applies what the connections received at the time `now`. Returns whether the
-    /// first connection opened, which starts afresh with no data, unless recording.
-    fn apply(&mut self, received: Received<'_>, now: f64) -> bool {
-        match received {
-            Received::FirstOpened => self.session.first_opened(),
-            Received::Message { source, message } => {
-                self.session.receive(source, message, now);
-                false
-            }
-        }
-    }
-
     /// Removes the received data, see [`Session::clear_data`].
     fn clear_data(&mut self) {
         self.session.clear_data();
-    }
-
-    /// Starts afresh with `model`, e.g. of an opened recording, see
-    /// [`Session::start_fresh`].
-    fn start_fresh(&mut self, model: model::MemoryStore) {
-        self.session.start_fresh(model);
     }
 
     /// Starts or stops recording. A recording starts only while `connected`, clears the
@@ -329,11 +310,13 @@ impl App {
         self.presets.store(layout, connections);
     }
 
-    /// Shows the layout and the connections of the active preset, disconnected.
+    /// Shows the layout and the connections of the active preset; the open connections
+    /// it has too, by name and address, stay open.
     fn show_preset(&mut self) {
         let preset = self.presets.active();
         self.layout = layout::Layout::from_saved(preset.layout.clone());
-        self.connections.set_saved(preset.connections.clone());
+        self.connections
+            .set_saved(preset.connections.clone(), &mut self.state.session);
     }
 
     /// Applies a change of the presets asked for in their menu or a dialog. Those that
@@ -383,7 +366,7 @@ impl App {
                     self.files.open(files::Kind::Recording, ui.ctx());
                 }
                 let recorded = self.state.session.store.has_samples();
-                let messages = self.state.session.store.recording.messages();
+                let messages = self.state.session.recorder.messages();
                 let save_label = files::save_label("Save recording");
                 let save = shortcut(save_label.as_str(), &SAVE_RECORDING);
                 if ui
@@ -493,7 +476,7 @@ impl App {
             .show(ui.ctx(), |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     ui.set_width(CONNECTIONS_WIDTH);
-                    self.connections.ui(ui, self.state.session.recording);
+                    self.connections.ui(ui, &mut self.state.session);
                 });
             });
         let pressed = ui.input(|input| {
@@ -713,18 +696,15 @@ impl App {
         ui.push_id(self.traces_generation, |ui| self.traces_ui(ui));
     }
 
-    /// Receives from the connections at the time `now`. The first connection to open
-    /// starts afresh, see [`State::apply`].
+    /// Does the session's work of the frame at the time `now`: receives from the
+    /// connections, which then show what they told, and updates the invoker. The first
+    /// connection to open starts afresh with no data, unless recording or the data is an
+    /// unsaved recording.
     fn receive(&mut self, now: f64) {
-        let state = &mut self.state;
-        let mut fresh = false;
-        let mut messages = 0;
-        self.connections.receive(|received| {
-            messages += usize::from(matches!(received, Received::Message { .. }));
-            fresh |= state.apply(received, now);
-        });
-        self.rate.update(now, messages);
-        if fresh {
+        let update = self.state.session.update(now);
+        self.connections.observe(&self.state.session);
+        self.rate.update(now, update.messages);
+        if update.started_fresh {
             self.opened = None;
             self.reset_traces_panel();
         }
@@ -733,7 +713,7 @@ impl App {
     /// Saves the recording, and tells the file it was saved as.
     fn save_recording(&mut self) {
         let name = format!("{}.blip", chrono::Local::now().format("%Y-%m-%d-%H%M%S"));
-        let file = self.state.session.store.recording.to_file();
+        let file = self.state.session.recorder.to_file();
         match files::save(files::Kind::Recording, &name, &file) {
             Ok(Some(saved)) => {
                 self.state.session.mark_saved();
@@ -836,12 +816,11 @@ impl App {
     /// Shows the recording read by `opening`.
     fn show_opened(&mut self, opening: opening::Opening) {
         let name = opening.name.clone();
-        let (model, loaded) = opening.finish();
-        self.connections.disconnect_all();
+        self.connections.disconnect_all(&mut self.state.session);
         // the chip names the file, not why a connection ended
         self.connections.clear_failures();
         self.state.set_recording(false, false);
-        self.state.start_fresh(model);
+        let loaded = opening.finish(&mut self.state.session);
         self.opened = Some(file_name(&name).to_owned());
         self.reset_traces_panel();
         self.state.time.fit(&self.state.session.store);
@@ -864,12 +843,10 @@ impl App {
         Ok(())
     }
 
-    /// Sends the invocations of the views to the connections of the outposts chosen
-    /// for their actions, unless the outpost no longer announces the action.
+    /// Sends the invocations the views queued to their sources, unless the source no
+    /// longer announces the action.
     fn send_invocations(&mut self) {
-        for (source, request) in self.state.session.take_requests() {
-            self.connections.send(&source, &request);
-        }
+        self.state.session.send_invocations();
     }
 
     /// The tree of the traces and actions, to choose those of the selected view.
@@ -927,11 +904,6 @@ impl eframe::App for App {
         self.receive(now);
         for (level, text) in self.state.session.take_notices() {
             self.toasts.notice(level, text);
-        }
-        let connected = self.connections.open_names();
-        self.state.session.update_invoker(connected, now);
-        for error in self.connections.take_errors() {
-            self.toasts.error(error);
         }
         for warning in self.connections.take_warnings() {
             self.toasts.warning(warning);

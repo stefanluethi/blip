@@ -25,6 +25,7 @@ whose requirements the tests verify.
    files
    library
    workbench
+   ingest
    outpost
    sonde
    documentation

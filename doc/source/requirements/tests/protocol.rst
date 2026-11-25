@@ -12,7 +12,7 @@ Tests of the requirements in :doc:`/requirements/system/protocol`.
    ``proto/tests/messages.rs`` ``samples_and_metadata_have_the_new_names``
    checks that ``proto`` encodes a sample and trace metadata as
    ``Sample`` and ``TraceMetadata`` and decodes both these and the old
-   ``Value`` and ``ValueMetadata``. ``kit/src/store/decode`` unit tests
+   ``Value`` and ``ValueMetadata``. ``kit/src/store/protocol`` unit tests
    (``old_and_new_names_decode_alike``) check that blip reads the old names as the
    new ones, and ``recordings_of_versions_1_to_3_are_read`` in
    ``kit/src/store/recording`` also in a recording of version 1 or 2.
@@ -128,9 +128,9 @@ Tests of the requirements in :doc:`/requirements/system/protocol`.
    dropped whole with one error notice, also from a source without a name, while
    the other messages of its frame are kept; ``an_empty_block_gives_nothing``
    and ``the_latest_value_of_a_block_is_its_last`` the empty block and the
-   readback of a block. ``kit/src/store/decode`` unit tests
-   (``blocks_are_read_sample_by_sample``, ``malformed_blocks_are_refused``) check
-   the two-pass reader and the texts of the refused blocks.
+   readback of a block. ``kit/src/store/protocol`` unit tests
+   (``blocks_are_read_in_one_pass``, ``malformed_blocks_are_refused``) check
+   the one-pass reader and the texts of the refused blocks.
    ``a_plot_shows_blocks_as_single_samples`` in ``kit/src/widgets/view/plot`` checks
    that a plot shows the samples of a ``Sample`` and of a ``Samples`` message
    alike.

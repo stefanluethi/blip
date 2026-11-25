@@ -60,11 +60,20 @@ fn messages() -> Vec<Vec<u8>> {
 
 /// A model that received the recording, while recording.
 fn demo_model() -> model::MemoryStore {
-    let mut model = model::MemoryStore::default();
+    let mut session = model::session::Session::recording();
     for message in messages() {
-        model.receive("", &message);
+        session.inbox("", 0.0).frame(&message);
     }
-    model
+    session.store
+}
+
+/// Hands `message` to `model`, received from the connection without a name, while
+/// recording.
+fn send(model: &mut model::MemoryStore, message: &proto::Message) {
+    let mut session = model::session::Session::new(std::mem::take(model));
+    session.recording = true;
+    session.inbox("", 0.0).message(message);
+    *model = session.store;
 }
 
 /// The demo model with what targets say about two traces: the unit, description and
@@ -72,44 +81,46 @@ fn demo_model() -> model::MemoryStore {
 /// which has a sample every 2 s.
 fn metadata_model() -> model::MemoryStore {
     let mut model = demo_model();
-    let mut send = |message: proto::Message| {
-        model.receive("", &serde_cbor_2::to_vec(&message).expect("a message"));
-    };
-    send(proto::Message::TraceMetadata(proto::TraceMetadata {
-        path: "motor.speed_rpm".to_owned(),
-        unit: "rpm".to_owned(),
-        description: "Speed of the motor shaft, measured by the encoder".to_owned(),
-        range: Some(proto::ExpectedRange {
-            min: 0.0,
-            max: 3000.0,
+    send(
+        &mut model,
+        &proto::Message::TraceMetadata(proto::TraceMetadata {
+            path: "motor.speed_rpm".to_owned(),
+            unit: "rpm".to_owned(),
+            description: "Speed of the motor shaft, measured by the encoder".to_owned(),
+            range: Some(proto::ExpectedRange {
+                min: 0.0,
+                max: 3000.0,
+            }),
+            ..Default::default()
         }),
-        ..Default::default()
-    }));
-    send(proto::Message::TraceMetadata(proto::TraceMetadata {
-        path: "motor/mode".to_owned(),
-        description: "Operating mode of the motor controller".to_owned(),
-        labels: [(0, "Idle"), (1, "Ramp"), (2, "Run"), (3, "Fault")]
-            .into_iter()
-            .map(|(number, label)| (number, label.to_owned()))
-            .collect(),
-        ..Default::default()
-    }));
+    );
+    send(
+        &mut model,
+        &proto::Message::TraceMetadata(proto::TraceMetadata {
+            path: "motor/mode".to_owned(),
+            description: "Operating mode of the motor controller".to_owned(),
+            labels: [(0, "Idle"), (1, "Ramp"), (2, "Run"), (3, "Fault")]
+                .into_iter()
+                .map(|(number, label)| (number, label.to_owned()))
+                .collect(),
+            ..Default::default()
+        }),
+    );
     let (oldest, newest) = model.time_span().expect("the recording has data");
     let period = 2_000_000_000;
     let values = (0..=(newest - oldest) / period)
         .map(|i| proto::Data::Uint([0, 1, 2, 2, 2, 2, 1, 0, 3, 0][i as usize % 10]))
         .collect();
-    model.receive(
-        "",
-        &serde_cbor_2::to_vec(&proto::Message::Samples(proto::Samples {
+    send(
+        &mut model,
+        &proto::Message::Samples(proto::Samples {
             path: "motor/mode".to_owned(),
             values,
             times: proto::SampleTimes::Period {
                 timestamp: oldest,
                 period,
             },
-        }))
-        .expect("a block"),
+        }),
     );
     model
 }
@@ -118,9 +129,9 @@ fn metadata_model() -> model::MemoryStore {
 /// tooltip.
 fn long_description_model() -> model::MemoryStore {
     let mut model = metadata_model();
-    model.receive(
-        "",
-        &serde_cbor_2::to_vec(&proto::Message::TraceMetadata(proto::TraceMetadata {
+    send(
+        &mut model,
+        &proto::Message::TraceMetadata(proto::TraceMetadata {
             path: "motor/mode".to_owned(),
             description: "Operating mode of the motor controller: it idles until enabled, \
                           ramps the speed up to the setpoint, runs there, and drops into \
@@ -131,8 +142,7 @@ fn long_description_model() -> model::MemoryStore {
                 .map(|(number, label)| (number, label.to_owned()))
                 .collect(),
             ..Default::default()
-        }))
-        .expect("a message"),
+        }),
     );
     model
 }
@@ -220,10 +230,13 @@ fn screenshots_window() {
         .build_eframe(|cc| App::new(cc));
     let app = harness.state_mut();
     app.layout = demo_layout();
-    app.connections.set_saved(vec![connections::Connection {
-        name: "outpost".to_owned(),
-        address,
-    }]);
+    app.connections.set_saved(
+        vec![connections::Connection {
+            name: "outpost".to_owned(),
+            address,
+        }],
+        &mut app.state.session,
+    );
     harness.run_steps(2);
 
     // connect as the user does, from the list of the connection chip, then record
@@ -240,7 +253,7 @@ fn screenshots_window() {
     harness.state_mut().state.set_recording(true, true);
     go.send(()).expect("the server waits");
     step_until(&mut harness, "the recording", |app| {
-        app.state.session.store.recording.messages() >= total
+        app.state.session.recorder.messages() >= total
     });
 
     let app = harness.state_mut();
@@ -473,7 +486,7 @@ fn screenshots_views() {
             level,
             message: message.to_owned(),
         });
-        model.receive("", &serde_cbor_2::to_vec(&record).expect("a record"));
+        send(&mut model, &record);
     }
     view_shot_with(
         "view-logs-path-filter",
@@ -557,14 +570,13 @@ fn timing_model() -> model::MemoryStore {
         "comms/poll_period",
         "adc/conversion",
     ] {
-        model.receive(
-            "",
-            &serde_cbor_2::to_vec(&proto::Message::TraceMetadata(proto::TraceMetadata {
+        send(
+            &mut model,
+            &proto::Message::TraceMetadata(proto::TraceMetadata {
                 path: path.to_owned(),
                 unit: "µs".to_owned(),
                 ..Default::default()
-            }))
-            .expect("metadata"),
+            }),
         );
     }
     model
@@ -831,6 +843,7 @@ fn screenshots_connections() {
         },
     );
     let mut connections = connections::Connections::default();
+    let mut session = Session::default();
     connections.set_saved(
         [
             ("bench", bench),
@@ -843,21 +856,23 @@ fn screenshots_connections() {
             address,
         })
         .collect(),
+        &mut session,
     );
     let mut harness = Harness::builder()
         .with_size(egui::vec2(330.0, 260.0))
         .with_pixels_per_point(PIXELS_PER_POINT)
         .wgpu()
         .build_ui_state(
-            |ui, connections: &mut connections::Connections| {
+            |ui, (connections, session): &mut (connections::Connections, Session)| {
                 paint_background(ui, ui.tokens().canvas);
-                connections.receive(|_| {});
+                session.update(0.0);
+                connections.observe(session);
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     ui.set_width(300.0);
-                    connections.ui(ui, false);
+                    connections.ui(ui, session);
                 });
             },
-            connections,
+            (connections, session),
         );
     theme::install(&harness.ctx);
     harness.run_steps(2);
@@ -865,7 +880,7 @@ fn screenshots_connections() {
     harness.run_steps(2);
     harness.get_by_label_contains("lab").click();
     harness.event(egui::Event::PointerGone);
-    step_until(&mut harness, "the Hellos", |connections| {
+    step_until(&mut harness, "the Hellos", |(connections, _)| {
         connections.newer().len() == 1 && connections.is_connected()
     });
     harness.run_steps(4);

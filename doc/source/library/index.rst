@@ -71,7 +71,8 @@ What an application needs
 
 * A **source** of messages: anything that implements the ``Source`` trait,
   e.g. the ``WebSocket`` source, or your own, which reads a serial port or
-  simulates a target. See :doc:`sources`.
+  simulates a target. It hands over bytes in the blip protocol or, if its data
+  never was CBOR, typed values. See :doc:`sources`.
 * A **session**, which receives from the sources into its store and sends the
   invocations of actions back. See :doc:`sources`.
 * A **time range**, the time all widgets show.
@@ -83,8 +84,8 @@ What an application needs
 Without the workbench, the layout is yours: you decide which widgets there are
 and where they are. With the workbench the user arranges the views, and your own
 view types can be among them, see :doc:`widgets`. blip itself uses the
-workbench: its ``App`` holds the ``Connections`` of the workbench, which keep
-the ``WebSocket`` sources and show their list, and a ``Session``.
+workbench: its ``App`` holds the ``Connections`` of the workbench, which add
+the ``WebSocket`` sources to its ``Session`` and show their list.
 
 Web and native
 --------------
@@ -99,9 +100,9 @@ Limits
 
 * No widget shows a loading state yet. ``Store::pending`` and
   ``Loaded::pending`` are there for the application to show one.
-* A source delivers CBOR frames. There is no way to hand over decoded messages
-  without encoding them; ``Event::message`` encodes a message for a source
-  that makes its messages itself.
+* A value is one of the protocol's data model: null, integer, float, bool,
+  text, array or record. A source whose data has another form converts it,
+  e.g. bytes into a number or a text.
 * The file dialogs of the workbench (``rfd``) need the ``wayland`` feature of
   eframe or the libwayland development files on Linux.
 * The crates are prepared for crates.io: they have their metadata and

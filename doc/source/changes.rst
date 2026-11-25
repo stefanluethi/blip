@@ -40,6 +40,32 @@ blip
      tells where messages come from. The presets are kept through a ``Storage``
      trait of the workbench, not eframe's. Saved presets and recordings are
      unchanged.
+   * Internal: the store takes typed input, not CBOR. The ``Ingest`` trait with
+     its ``Input`` is the entry of a store, and the value of a sample is a
+     ``Value``, written by anything that is an ``AsValue``. A ``Source`` hands
+     what it has to an ``Inbox``: bytes in the blip protocol with ``frame``, or
+     typed samples, logs, metadata and actions, so a source whose data never was
+     CBOR does not encode it. The ``Session`` works with any store that takes
+     input and holds the ``Recorder`` that writes the recording file. The CBOR
+     reader and the parser are private. The rate at which the store takes in
+     samples and the frame time of a plot are as before.
+   * Internal: the connections of blip are sources of the session, so every
+     message reaches the store by one path, the inbox of the session. The
+     ``Connections`` add a ``WebSocket`` per address to the session and read
+     what happened from it. A connection error is now one of the session's
+     notices, in the order it happened; the texts are as before. A request to a
+     name with several open sources, e.g. two connections without a name that
+     both announce actions, goes to the one that announced its actions last;
+     before, to the first.
+   * Saved recordings are written again from what blip received: numbers in
+     their shortest form, a block of samples as a block, the old names
+     ``Value`` and ``ValueMetadata`` as ``Sample`` and ``TraceMetadata``. Messages
+     blip cannot read are kept as they arrived, and a recording that was opened
+     and is saved again is written unchanged. The format and its version are the
+     same, and old files open as before.
+   * CBOR the protocol does not allow inside a value (a byte string, a tag, an
+     indefinite-length array) now makes the whole message unreadable, where only
+     that value was dropped before.
    * Empty views, panels and lists show their hint in one style. Plot and States
      now say *Check the traces to show in the tree on the left* over their
      empty plot.
@@ -231,3 +257,52 @@ Upgrading
    Without a ``Hello`` blip guesses the time base as before, so old targets
    need no change; add ``clock`` to the ``Hello`` of your target to make it
    certain.
+
+   Recordings saved by blip are equivalent to what it received, not byte for
+   byte the same: numbers are written in their shortest exact form, the old
+   names ``Value`` and ``ValueMetadata`` as ``Sample`` and ``TraceMetadata``, and
+   fields blip does not know in a message it can read are not kept. A tool that
+   compares the file with the bytes a target sent must compare the messages
+   instead. Nothing to do for old files: they open as before, and an opened file
+   that is saved again is unchanged.
+
+   Applications built on ``blip-kit`` (not published yet, so there is no
+   compatibility layer):
+
+   * A ``Source`` no longer returns events. ``poll(&mut self)`` is now
+     ``poll(&mut self, inbox: &mut Inbox<'_>)``: tell ``inbox.opened()``,
+     ``inbox.closed()`` or ``inbox.failed(reason)``, and hand over data with
+     ``inbox.frame(bytes)`` for blip-protocol bytes or the typed calls
+     ``sample``, ``samples``, ``log``, ``metadata``, ``actions``, ``hello`` and
+     ``action_result``. ``Event``, ``Event::Frame`` and ``Event::message`` are
+     gone; ``inbox.message(&message)`` takes a ``proto::Message`` built by the
+     source. A source holds no parser.
+   * ``MemoryStore::receive`` and ``receive_unrecorded``, ``Session::receive``
+     and ``Session::receive_frame`` are gone. Use
+     ``Session::inbox(source, now)`` and its calls, or ``Ingest::ingest(source,
+     Input)`` on a store directly. The ``Session`` decides what is kept while
+     not recording, not the application.
+   * The recording is in the session: ``session.recorder`` (type ``Recorder``,
+     was ``Recording``) in place of ``store.recording``. ``Session::start_fresh``
+     takes the store and a recorder; ``FileReader::read`` takes a
+     ``&mut dyn Ingest`` and ``finish`` gives the recorder and what was loaded.
+   * ``Session<S>`` works with any store that is ``Ingest + Store``:
+     ``Session::new(store)``. A store of your own implements ``Ingest``.
+   * ``store::cbor``, ``store::decode`` (now the private ``protocol``),
+     ``store::growing`` and ``store::sorted`` are no longer public. What a view
+     needs of ``sorted`` are the methods ``index_at``, ``closest_index`` and
+     ``within`` of ``Series`` and ``Trace``.
+   * ``Session::add_source(name, source)`` returns a ``SourceId`` and no longer
+     replaces a source of the same name. ``remove_source`` takes the id, not
+     the name. ``update(now)`` returns an ``Update`` (``messages``,
+     ``started_fresh``). New are ``set_label(id, label)``, which the notices
+     use, and ``source_events()``, what the sources told in the last update.
+     ``poll_source`` and ``Polled`` are private; add the source to the session
+     and call ``update``. ``Received`` is gone.
+   * In the workbench, ``Connections::receive``, ``send`` and ``take_errors``
+     are gone: the session polls the sockets and sends the requests, and the
+     errors are in ``Session::take_notices``. Call
+     ``Connections::observe(&session)`` after each ``Session::update``.
+     ``ui``, ``set_saved``, ``disconnect_all`` and ``connect_first`` take the
+     session. ``Opening::finish(&mut session)`` puts the opened recording in
+     the session.

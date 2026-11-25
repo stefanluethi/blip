@@ -1,4 +1,4 @@
-//! The received messages as they arrived, to save them to a file and load them again.
+//! The received messages, to save them to a file and load them again.
 //!
 //! A recording file is a CBOR sequence (RFC 8742): a `Header` followed by the
 //! messages, each the CBOR item of a WebSocket frame, compressed with gzip. Uncompressed
@@ -10,7 +10,7 @@
 //! have no source, as all messages of version 1, which are those of one connection.
 //!
 //! Version 3 has the layout of version 2: it only adds messages (blocks of samples and
-//! the Hello), which are kept as they arrived.
+//! the Hello).
 //!
 //! While recording, the messages are compressed as they arrive, a gzip member for
 //! each `CHUNK` bytes of them, so a recording takes a fraction of the memory of the
@@ -18,12 +18,18 @@
 //! the view does not stutter. Saving writes the members one after another, as they
 //! are, which is the file.
 
+use super::Level;
+use super::cbor::Writer;
+use super::ingest::Ingest;
+use super::protocol::{Parser, encode};
+use super::said::{Said, malformed_block};
+use super::session::notify;
 use flate2::{Compression, read::MultiGzDecoder, write::GzEncoder};
 use std::io::{Cursor, Read, Write};
 
 /// The value of [`Header::format`].
 const FORMAT: &str = "blip recording";
-/// Version of the format written by [`Recording::to_file`].
+/// Version of the format written by [`Recorder::to_file`].
 const VERSION: u32 = 3;
 /// Bytes of messages compressed together into a gzip member while recording, at most
 /// about 1 ms of compressing.
@@ -41,21 +47,77 @@ struct Header {
     version: u32,
 }
 
-/// The frames received since the data was last cleared.
-pub struct Recording {
+/// The messages received since the data was last cleared, or those of an opened file.
+///
+/// It also keeps the latest descriptions of the targets, with which a new recording
+/// starts, whether it records or not.
+#[derive(Debug)]
+pub struct Recorder {
     /// The gzip members of the [`CHUNK`]s compressed so far, the first one starting
     /// with the [`Header`], each in a buffer of its own, so adding one never copies
     /// those before.
     members: Vec<Vec<u8>>,
-    /// The frames since the last member, one after another, and the names of their
+    /// The messages since the last member, one after another, and the names of their
     /// sources where it changes; the header before the first member.
     pending: Vec<u8>,
     len: usize,
-    /// The source of the last frame.
+    /// The source of the last message.
     source: String,
+    /// The latest descriptions of the targets, with which a new recording starts.
+    descriptions: Descriptions,
+    /// The file this was opened from, as it was opened, until the recording restarts.
+    opened: Option<Vec<u8>>,
 }
 
-impl Default for Recording {
+/// What a target describes itself with, which it sends only once or seldom.
+#[derive(Debug)]
+enum Described {
+    Hello(proto::Hello),
+    Actions(Vec<proto::ActionDescriptor>),
+    Metadata(proto::TraceMetadata),
+}
+
+/// The latest `Hello` and actions of each source and the latest metadata of each source
+/// and path, in the order they first arrived.
+#[derive(Default, Debug)]
+pub(crate) struct Descriptions(Vec<(String, Described)>);
+
+impl Descriptions {
+    /// Keeps `said` from `source` as the latest of its kind, if it describes.
+    pub(crate) fn keep(&mut self, source: &str, said: &Said<'_>) {
+        if !matches!(said, Said::Hello(_) | Said::Actions(_) | Said::Metadata(_)) {
+            return;
+        }
+        let known = self.0.iter_mut().find(|(name, described)| {
+            name == source
+                && match (described, said) {
+                    (Described::Hello(_), Said::Hello(_)) => true,
+                    (Described::Actions(_), Said::Actions(_)) => true,
+                    (Described::Metadata(known), Said::Metadata(new)) => known.path == new.path,
+                    _ => false,
+                }
+        });
+        match (known, said) {
+            (Some((_, Described::Hello(known))), Said::Hello(new)) => known.clone_from(new),
+            (Some((_, Described::Actions(known))), Said::Actions(new)) => {
+                known.clear();
+                known.extend_from_slice(new);
+            }
+            (Some((_, Described::Metadata(known))), Said::Metadata(new)) => known.clone_from(new),
+            (Some(_), _) => {}
+            (None, Said::Hello(new)) => self.add(source, Described::Hello((*new).clone())),
+            (None, Said::Actions(new)) => self.add(source, Described::Actions(new.to_vec())),
+            (None, Said::Metadata(new)) => self.add(source, Described::Metadata((*new).clone())),
+            (None, _) => {}
+        }
+    }
+
+    fn add(&mut self, source: &str, described: Described) {
+        self.0.push((source.to_owned(), described));
+    }
+}
+
+impl Default for Recorder {
     fn default() -> Self {
         let header = Header {
             format: FORMAT.to_owned(),
@@ -66,6 +128,8 @@ impl Default for Recording {
             pending: serde_cbor_2::to_vec(&header).expect("writing to memory"),
             len: 0,
             source: String::new(),
+            descriptions: Descriptions::default(),
+            opened: None,
         }
     }
 }
@@ -85,16 +149,88 @@ pub struct Loaded {
     pub messages: usize,
     /// Why the file could not be read to its end, e.g. as it was cut off.
     pub problem: Option<String>,
+    /// What went wrong reading the messages, e.g. a malformed block, without repeats.
+    pub notices: Vec<(Level, String)>,
 }
 
-impl Recording {
-    /// Records `frame` received from `source`, the name of its connection.
-    pub fn push(&mut self, source: &str, frame: &[u8]) {
+impl Recorder {
+    /// Records `frame`, the bytes of a message received from `source`, as they are.
+    pub(crate) fn push(&mut self, source: &str, frame: &[u8]) {
+        self.name(source);
+        self.pending.extend_from_slice(frame);
+        self.written();
+    }
+
+    /// Records `said` from `source` as the CBOR item of the message, in the shortest
+    /// form, if `recording`. What cannot be read is recorded as it arrived, but for a
+    /// text string, which would name a source. The latest value of a sample is no
+    /// message.
+    pub(crate) fn record(&mut self, source: &str, said: &Said<'_>, recording: bool) {
+        if recording && self.opened.is_some() {
+            self.restart();
+        }
+        self.descriptions.keep(source, said);
+        if !recording {
+            return;
+        }
+        match said {
+            Said::Latest { .. } => {}
+            Said::Unreadable { item, .. } => {
+                if item.first().is_none_or(|head| head >> 5 == 3) {
+                    log::warn!("dropped an unreadable text item of {source} from the recording");
+                } else {
+                    self.push(source, item);
+                }
+            }
+            _ => self.write(source, said),
+        }
+    }
+
+    /// Records `said` from `source` as the CBOR item of the message, if it is one.
+    fn write(&mut self, source: &str, said: &Said<'_>) {
+        self.name(source);
+        if encode(said, &mut self.pending) {
+            self.written();
+        }
+    }
+
+    /// Starts a new recording, which begins with the latest descriptions, and drops the
+    /// opened file.
+    pub(crate) fn restart(&mut self) {
+        let descriptions = std::mem::take(&mut self.descriptions);
+        *self = Self::default();
+        for (source, described) in &descriptions.0 {
+            let said = match described {
+                Described::Hello(hello) => Said::Hello(hello),
+                Described::Actions(actions) => Said::Actions(actions),
+                Described::Metadata(metadata) => Said::Metadata(metadata),
+            };
+            self.write(source, &said);
+        }
+        self.descriptions = descriptions;
+    }
+
+    /// The recording of the file `file` as it was opened, with the `messages` read from
+    /// it and the `descriptions` in it.
+    pub(crate) fn opened(file: Vec<u8>, messages: usize, descriptions: Descriptions) -> Self {
+        Self {
+            len: messages,
+            descriptions,
+            opened: Some(file),
+            ..Self::default()
+        }
+    }
+
+    /// Writes the name of `source` if it is not that of the last message.
+    fn name(&mut self, source: &str) {
         if source != self.source {
-            serde_cbor_2::to_writer(&mut self.pending, &source).expect("writing to memory");
+            Writer::new(&mut self.pending).text(source);
             source.clone_into(&mut self.source);
         }
-        self.pending.extend_from_slice(frame);
+    }
+
+    /// Counts the message written to the pending bytes and compresses them at a chunk.
+    fn written(&mut self) {
         self.len += 1;
         if self.pending.len() >= CHUNK {
             self.members.push(compress(&self.pending));
@@ -107,9 +243,13 @@ impl Recording {
         self.len
     }
 
-    /// The contents of a recording file of the frames: the members compressed while
-    /// recording and the frames since, compressed as one more.
+    /// The contents of a recording file of the messages: the members compressed while
+    /// recording and the messages since, compressed as one more. A file that was
+    /// opened and not recorded on since is returned as it was opened.
     pub fn to_file(&self) -> Vec<u8> {
+        if let Some(file) = &self.opened {
+            return file.clone();
+        }
         let mut file = self.members.concat();
         if !self.pending.is_empty() {
             file.extend(compress(&self.pending));
@@ -181,6 +321,11 @@ pub struct FileReader {
     name: String,
     messages: usize,
     problem: Option<String>,
+    /// What reads the messages.
+    parser: Parser,
+    /// The latest descriptions read.
+    descriptions: Descriptions,
+    notices: Vec<(Level, String)>,
 }
 
 impl FileReader {
@@ -201,6 +346,9 @@ impl FileReader {
             name: String::new(),
             messages: 0,
             problem: None,
+            parser: Parser::default(),
+            descriptions: Descriptions::default(),
+            notices: vec![],
         };
         // the header is a few bytes at the start
         reader.fill(READ_CHUNK);
@@ -237,10 +385,38 @@ impl FileReader {
         }
     }
 
-    /// Calls `receive` with the source and each frame of the file in the order they
-    /// were received, while `more` tells there is time for more, which it is asked
-    /// every few messages. Returns whether all are read.
-    pub fn read(
+    /// Reads the messages of the file into `store` in the order they were received,
+    /// while `more` tells there is time for more, which it is asked every few
+    /// messages. Answers to invocations are dropped, messages that cannot be read are
+    /// logged. Returns whether all are read.
+    pub fn read(&mut self, more: impl FnMut() -> bool, store: &mut dyn Ingest) -> bool {
+        let mut parser = std::mem::take(&mut self.parser);
+        let mut descriptions = std::mem::take(&mut self.descriptions);
+        let mut notices = std::mem::take(&mut self.notices);
+        let done = self.read_raw(more, |source, item| {
+            parser.item(item, true, |said| {
+                descriptions.keep(source, &said);
+                if let Said::Unreadable { name, error, .. } = said {
+                    log::warn!("error reading a message of {source}: {error}");
+                    if name == Some("Samples") {
+                        notify(&mut notices, Level::Error, malformed_block(source));
+                    }
+                }
+                if let Some(input) = said.input() {
+                    store.ingest(source, input);
+                }
+            });
+        });
+        self.parser = parser;
+        self.descriptions = descriptions;
+        self.notices = notices;
+        done
+    }
+
+    /// Calls `receive` with the source and each item of the file, as it is in the
+    /// file, in the order they were received, while `more` tells there is time for
+    /// more. Returns whether all are read.
+    pub(crate) fn read_raw(
         &mut self,
         mut more: impl FnMut() -> bool,
         mut receive: impl FnMut(&str, &[u8]),
@@ -311,7 +487,22 @@ impl FileReader {
         Loaded {
             messages: self.messages,
             problem: self.problem.clone(),
+            notices: self.notices.clone(),
         }
+    }
+
+    /// The recording of the file as it was opened, which saves it again as it is, and
+    /// what was found in it.
+    pub fn finish(self) -> (Recorder, Loaded) {
+        let loaded = self.loaded();
+        let file = match self.source {
+            Source::Gzip(decoder) => decoder.into_inner().into_inner(),
+            Source::Plain(cursor) => cursor.into_inner(),
+        };
+        (
+            Recorder::opened(file, self.messages, self.descriptions),
+            loaded,
+        )
     }
 }
 
@@ -320,7 +511,7 @@ impl FileReader {
 #[cfg(any(test, feature = "test-util"))]
 pub fn read_file(file: &[u8], mut receive: impl FnMut(&str, &[u8])) -> Result<Loaded, String> {
     let mut reader = FileReader::new(file.to_vec())?;
-    while !reader.read(|| true, &mut receive) {}
+    while !reader.read_raw(|| true, &mut receive) {}
     Ok(reader.loaded())
 }
 

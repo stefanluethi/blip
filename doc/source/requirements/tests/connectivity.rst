@@ -20,9 +20,13 @@ Tests of the requirements in :doc:`/requirements/system/connectivity`.
    :component: blip
    :verifies: REQ_PROTO_SEQUENCE
 
-   ``kit/src/store/cbor.rs::a_sequence_is_split_into_its_items`` --
-   splits a CBOR sequence of a value and a log record into both messages, and
-   one cut off or broken in the middle into the messages before and an error.
+   ``kit/src/store/protocol/tests.rs::a_frame_gives_its_messages_in_order`` and
+   ``kit/src/store/cbor/tests.rs::a_sequence_is_split_into_its_items`` -- the tests of the parser of the protocol and of the CBOR reader
+   (``a_sequence_is_split_into_its_items``; ``a_frame_is_read_as_its_items_are``
+   in ``kit/src/store/protocol/tests.rs`` checks that a frame is read item by item): a
+   frame of a value and a log record, handed to the inbox as bytes, gives both
+   messages in order, and one cut off or broken in the middle gives the messages
+   before it and a warning in the log, no notice.
 
 .. test:: Connections are edited, opened and their errors notified
    :id: TEST_BLIP_CONNECTIONS
@@ -132,7 +136,7 @@ Tests of the requirements in :doc:`/requirements/system/connectivity`.
    :verifies: REQ_PROTO_LOG
 
    ``proto/tests/log.rs`` and ``proto/tests/sonde.rs`` tests, and the
-   ``kit/src/store/decode`` and ``kit/src/store/recording`` unit tests
+   ``kit/src/store/protocol`` and ``kit/src/store/recording`` unit tests
    -- checks that a ``LogRecord`` without a component round-trips
    with its timestamp, path, level and message, that an empty path is left
    out, and that a record encoded with a ``component`` field still decodes and

@@ -6,7 +6,9 @@ blip split into a library for tracing UIs and the reference app built on it.
 The work is phased, and the tag of each requirement tells its phase
 (``phase1`` to ``phase6``). The phases 1 to 4 are ``implemented``. Of phase 6,
 the crates are prepared and packaged but not published, so its requirement is
-still ``draft``, as is the optional InfluxDB store of phase 5.
+still ``draft``, as is the optional InfluxDB store of phase 5. The requirements of
+the typed entry of the store and of the connections as sources of the session
+are on :doc:`ingest`.
 
 .. list-table::
    :header-rows: 1
@@ -142,12 +144,16 @@ still ``draft``, as is the optional InfluxDB store of phase 5.
    :tags: phase2
    :satisfies: STK_OWN_DATA
 
-   ``blip-kit`` shall define a ``Source`` trait. A source shall deliver
-   messages as frames, a source that makes its messages itself turning
-   ``blip-proto`` messages into frames with a function of the library, and take
-   requests, such as the invocation of an action. An application shall be able
-   to implement it for its own data, such as a serial port, UDP or a
-   simulator.
+   ``blip-kit`` shall define a ``Source`` trait. When the session polls it, a
+   source shall hand over what it has to an inbox it is given: the bytes of
+   blip-protocol messages as they are, one message or several, which the
+   library reads, or typed data of its own (samples, blocks of samples, log
+   records, trace metadata, announced actions, its ``Hello`` and the results of
+   actions), without encoding it and without building protocol messages. A
+   source shall tell when it opened, closed or failed, and take requests, such
+   as the invocation of an action. An application shall be able to implement it
+   for its own data, such as a serial port, UDP or a simulator, whether that
+   data is the blip protocol or not.
 
 .. req:: WebSocket source
    :id: REQ_LIB_SOURCE_WS
@@ -159,7 +165,8 @@ still ``draft``, as is the optional InfluxDB store of phase 5.
 
    With the ``websocket`` feature ``blip-kit`` shall provide a source for
    the WebSocket connection to an outpost, behaving as the connections of blip
-   do now.
+   do now: it hands the binary messages it receives over as they are, and
+   tells when the connection opened, closed or failed.
 
 .. req:: Own source in the same process
    :id: REQ_LIB_SOURCE_OWN
@@ -173,7 +180,8 @@ still ``draft``, as is the optional InfluxDB store of phase 5.
 
    An application shall be able to show data from a source of its own in its
    own process, without a WebSocket connection or an outpost, with the traces,
-   logs and actions of that source shown as those of any other.
+   logs and actions of that source shown as those of any other, though its
+   data never was CBOR or the blip protocol.
 
 .. req:: Session
    :id: REQ_LIB_SESSION
@@ -183,9 +191,14 @@ still ``draft``, as is the optional InfluxDB store of phase 5.
    :tags: phase2
    :satisfies: STK_OWN_UI, STK_OWN_DATA
 
-   ``blip-kit`` shall provide a session that, once per frame, takes the
-   messages of its sources into the store and sends the pending requests to
-   them, and shall need no GUI to do so.
+   ``blip-kit`` shall provide a session that, once per frame, polls its sources,
+   takes what they hand over into a store and sends the pending requests to
+   them, and shall need no GUI to do so. The store shall be the in-memory store
+   or a store of the application that takes the typed entry
+   (:need:`REQ_LIB_INGEST_TYPED`) and answers the queries of the ``Store``
+   trait. Whatever the store, the session shall record what arrives while
+   recording (:need:`REQ_FILE_REENCODE`) and hand the results of actions to the
+   invoker.
 
 .. req:: Store trait
    :id: REQ_LIB_STORE
@@ -218,11 +231,15 @@ still ``draft``, as is the optional InfluxDB store of phase 5.
    :priority: high
    :tags: phase3
    :satisfies: STK_LIVE_OBSERVE
-   :rationale: The trait must not cost the user of blip anything.
+   :rationale: Neither the trait nor the typed entry must cost the user of blip
+      anything.
 
-   The in-memory store shall implement ``Store`` and shall not be slower for
-   the user than before: the rate at which it takes in samples and the frame
-   time of a plot with tens of millions of samples shall stay as they are.
+   The in-memory store shall implement ``Store`` and take the typed entry
+   (:need:`REQ_LIB_INGEST_TYPED`), and shall not be slower for the user than
+   before: the rate at which it takes in samples, while recording and while not
+   recording, single samples and blocks of samples, and the frame time of a plot
+   with tens of millions of samples shall stay within 10 % of what they were
+   before the typed entry.
 
 .. req:: InfluxDB store
    :id: REQ_LIB_STORE_INFLUX

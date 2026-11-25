@@ -1,8 +1,9 @@
 //! The library blip is built from: the store of what the targets send, the widgets
 //! that show it and the workbench, the layout the user arranges them in.
 //!
-//! - [`store`]: the traces, logs and actions received, recording files and the invoker
-//!   of actions. Always there, without a GUI.
+//! - [`store`]: the traces, logs and actions received, the typed entry of a store, the
+//!   session with its sources, recording files and the invoker of actions. Always
+//!   there, without a GUI.
 //! - [`widgets`] (feature `widgets`, on by default): the look, the time range with its
 //!   controls and timeline, and the views.
 //! - [`workbench`] (feature `workbench`): the layout of views the user arranges, the

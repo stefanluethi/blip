@@ -550,10 +550,10 @@ fn a_plot_shows_blocks_as_single_samples() {
         },
     };
     let (mut blocks, mut singles) = (MemoryStore::default(), MemoryStore::default());
-    let encode = |message| serde_cbor_2::to_vec(&message).unwrap();
-    blocks.receive("a", &encode(proto::Message::Samples(adc.clone())));
+    use crate::store::testing::receive;
+    receive(&mut blocks, "a", &proto::Message::Samples(adc.clone()));
     for sample in adc.to_samples() {
-        singles.receive("a", &encode(proto::Message::Sample(sample)));
+        receive(&mut singles, "a", &proto::Message::Sample(sample));
     }
     let mut plot = Plot::default();
     plot.traces.insert("adc".to_owned());

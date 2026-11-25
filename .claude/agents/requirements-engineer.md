@@ -34,7 +34,12 @@ what you can, and list each open point in your report so the lead can ask the us
 ## Writing
 
 - One requirement per behaviour, in the style of the existing ones: "blip shall …",
-  short plain sentences, observable and testable, no implementation detail. Put it on the
+  short plain sentences, observable and testable, no implementation detail. For a
+  change of the structure or of the library's API, the one who observes is the
+  developer of an application on `blip-kit`: say what they can do and rely on (e.g.
+  what a source hands over, what a store need not know), not the names of types and
+  functions. The chosen architecture in your brief goes into the `ARCH_*` elements,
+  which may name modules and traits. Put it on the
   matching area page in `system/` (or in `documentation/` for docs needs). A new area
   gets its own page in `system/` and `tests/`, added to the toctree of both
   `index.rst` files.
@@ -51,6 +56,12 @@ what you can, and list each open point in your report so the lead can ask the us
   ``TODO`` -- checks that … .
 - Add the new `REQ_*` IDs to the `:satisfies:` list of the right `ARCH_*` element.
 - A requirement the user dropped gets `:status: rejected`, it is not deleted.
+- A requirement the change makes untrue (it describes the structure that goes away) is
+  changed or rejected, not left beside the new one. List these in your report.
+- A `STK_*` item is only as far as its requirements: if you add a `draft` requirement to
+  one that is `implemented`, say so in your report, the lead sets it back.
+- Check each existing `TEST_*` item you link: if its body names a test, `grep` the code
+  for that name, and report the ones that do not exist.
 
 ## Check
 

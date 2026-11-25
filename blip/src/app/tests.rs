@@ -19,45 +19,43 @@ fn thousands_are_grouped() {
     assert_eq!(group_thousands(1_234_567), "1\u{202f}234\u{202f}567");
 }
 
-fn value(timestamp: u64) -> Vec<u8> {
+fn value(timestamp: u64) -> proto::Message {
     value_of("rpm", timestamp)
 }
 
-fn value_of(path: &str, timestamp: u64) -> Vec<u8> {
-    serde_cbor_2::to_vec(&proto::Message::Sample(proto::Sample {
+fn value_of(path: &str, timestamp: u64) -> proto::Message {
+    proto::Message::Sample(proto::Sample {
         timestamp,
         path: path.to_owned(),
         value: proto::Data::Uint(1),
-    }))
-    .unwrap()
+    })
 }
 
-fn unit() -> Vec<u8> {
+fn unit() -> proto::Message {
     unit_of("rpm")
 }
 
-fn unit_of(path: &str) -> Vec<u8> {
-    serde_cbor_2::to_vec(&proto::Message::TraceMetadata(proto::TraceMetadata {
+fn unit_of(path: &str) -> proto::Message {
+    proto::Message::TraceMetadata(proto::TraceMetadata {
         path: path.to_owned(),
         unit: "rpm".to_owned(),
         ..Default::default()
-    }))
-    .unwrap()
+    })
 }
 
 #[test]
 fn a_recording_starts_only_while_connected_and_clears_the_data() {
     let mut state = State::default();
     assert!(!state.session.recording);
-    state.session.receive("a", &unit(), 0.0);
-    state.session.receive("a", &value(1_000_000_000), 0.0);
+    state.session.inbox("a", 0.0).message(&unit());
+    state.session.inbox("a", 0.0).message(&value(1_000_000_000));
     assert!(!state.session.store.has_samples());
     state.set_recording(true, false);
     assert!(!state.session.recording);
 
     state.set_recording(true, true);
-    state.session.receive("a", &value(2_000_000_000), 0.0);
-    state.session.receive("a", &value(3_000_000_000), 0.0);
+    state.session.inbox("a", 0.0).message(&value(2_000_000_000));
+    state.session.inbox("a", 0.0).message(&value(3_000_000_000));
     state.time.update(&state.session.store, 0.0);
     state.time.set_cursor(2.5);
     // stopping keeps the data, also when no longer connected
@@ -105,14 +103,17 @@ fn the_record_button_is_disabled_until_connected() {
 
 #[test]
 fn opening_a_recording_stops_recording_and_starts_afresh() {
-    let mut recorded = model::MemoryStore::default();
-    recorded.receive("a", &value(1));
+    let mut recorded = Session::recording();
+    recorded.inbox("a", 0.0).message(&value(1));
     let file = files::File {
         name: "a.blip".to_owned(),
-        bytes: recorded.recording.to_file(),
+        bytes: recorded.recorder.to_file(),
     };
     let mut app = App::default();
-    app.state.session.receive("old", &unit_of("temp"), 0.0);
+    app.state
+        .session
+        .inbox("old", 0.0)
+        .message(&unit_of("temp"));
     app.state.session.recording = true;
     app.trace_search = "temp".to_owned();
     let generation = app.traces_generation;
@@ -124,37 +125,32 @@ fn opening_a_recording_stops_recording_and_starts_afresh() {
     // the unit before is gone: clearing the data, which keeps the units and
     // actions to record them again, has none of the recording file to keep
     app.state.clear_data();
-    assert_eq!(app.state.session.store.recording.messages(), 0);
+    assert_eq!(app.state.session.recorder.messages(), 0);
 }
 
 #[test]
 fn the_first_connection_to_open_starts_afresh_unless_recording() {
     let mut state = State::default();
     state.set_recording(true, true);
-    state.session.receive("old", &unit(), 0.0);
-    state.session.receive("old", &value(1), 0.0);
+    state.session.inbox("old", 0.0).message(&unit());
+    state.session.inbox("old", 0.0).message(&value(1));
     // a connection opening while recording keeps the recording going
-    assert!(!state.apply(Received::FirstOpened, 0.0));
+    assert!(!state.session.first_opened());
     assert!(state.session.recording && state.session.store.has_samples());
 
     // nor does it drop the recording while it is unsaved
     state.set_recording(false, false);
-    assert!(!state.apply(Received::FirstOpened, 0.0));
+    assert!(!state.session.first_opened());
     assert!(state.session.store.has_samples());
 
     state.session.mark_saved();
-    assert!(state.apply(Received::FirstOpened, 0.0));
+    assert!(state.session.first_opened());
     assert!(state.session.store.traces.iter().next().is_none());
-    assert_eq!(state.session.store.recording.messages(), 0);
-    let message = unit();
-    let received = Received::Message {
-        source: "new",
-        message: &message,
-    };
-    assert!(!state.apply(received, 0.0));
+    assert_eq!(state.session.recorder.messages(), 0);
+    state.session.inbox("new", 0.0).message(&unit());
     // a recording starts with the unit of the new connection only, not the old one
     state.set_recording(true, true);
-    assert_eq!(state.session.store.recording.messages(), 1);
+    assert_eq!(state.session.recorder.messages(), 1);
 }
 
 #[test]
@@ -170,7 +166,8 @@ fn starting_afresh_opens_the_branches_of_the_traces_again() {
     app.state.set_recording(true, true);
     app.state
         .session
-        .receive("a", &value_of("motor/rpm", 1), 0.0);
+        .inbox("a", 0.0)
+        .message(&value_of("motor/rpm", 1));
     let mut harness = Harness::builder()
         .with_size(egui::vec2(300.0, 400.0))
         .build_ui_state(|ui, app: &mut App| app.traces_panel_ui(ui), app);
@@ -214,7 +211,8 @@ fn a_linked_histogram_shows_the_traces_of_the_plot_greyed() {
     app.state.set_recording(true, true);
     app.state
         .session
-        .receive("a", &value_of("motor/rpm", 1), 0.0);
+        .inbox("a", 0.0)
+        .message(&value_of("motor/rpm", 1));
     let mut harness = Harness::builder()
         .with_size(egui::vec2(300.0, 400.0))
         .build_ui_state(
@@ -277,17 +275,20 @@ fn a_recording_is_opened_across_frames_and_can_be_cancelled() {
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
 
-    let mut recorded = model::MemoryStore::default();
+    let mut recorded = Session::recording();
     for timestamp in 0..200_000 {
-        recorded.receive("a", &value(timestamp));
+        recorded.inbox("a", 0.0).message(&value(timestamp));
     }
     let file = || files::File {
         name: "a.blip".to_owned(),
-        bytes: recorded.recording.to_file(),
+        bytes: recorded.recorder.to_file(),
     };
     let ctx = Context::default();
     let mut app = App::default();
-    app.state.session.receive("old", &unit_of("temp"), 0.0);
+    app.state
+        .session
+        .inbox("old", 0.0)
+        .message(&unit_of("temp"));
     app.open(file()).unwrap();
     // the data shown stays until all is read
     app.continue_opening(&ctx);
@@ -300,12 +301,12 @@ fn a_recording_is_opened_across_frames_and_can_be_cancelled() {
     }
     assert!(frames > 1);
     assert!(app.state.session.store.has_samples());
-    assert_eq!(app.state.session.store.recording.messages(), 200_000);
+    assert_eq!(app.state.session.recorder.messages(), 200_000);
 
     // connecting while reading cancels it
     let mut app = App::default();
     app.open(file()).unwrap();
-    app.connections.connect_first(&ctx);
+    app.connections.connect_first(&ctx, &mut app.state.session);
     app.continue_opening(&ctx);
     assert!(app.opening.is_none());
     assert!(!app.state.session.store.has_samples());
@@ -315,7 +316,7 @@ fn a_recording_is_opened_across_frames_and_can_be_cancelled() {
     // read; cancelled, the data shown stays
     let mut app = App::default();
     app.state.session.recording = true;
-    app.state.session.receive("old", &value(1), 0.0);
+    app.state.session.inbox("old", 0.0).message(&value(1));
     app.open(file()).unwrap();
     assert!(app.opening.is_none());
     let mut harness = Harness::builder()
@@ -343,7 +344,7 @@ fn a_recording_is_opened_across_frames_and_can_be_cancelled() {
 fn unsaved() -> App {
     let mut app = App::default();
     app.state.set_recording(true, true);
-    app.state.session.receive("a", &value(1), 0.0);
+    app.state.session.inbox("a", 0.0).message(&value(1));
     app.state.set_recording(false, false);
     assert!(app.is_unsaved());
     app
@@ -447,11 +448,11 @@ fn saving_nothing_tells_so() {
 fn an_opened_recording_is_named_in_the_chip_until_other_data_replaces_it() {
     use egui_kittest::kittest::Queryable;
 
-    let mut recorded = model::MemoryStore::default();
-    recorded.receive("a", &value(1));
+    let mut recorded = Session::recording();
+    recorded.inbox("a", 0.0).message(&value(1));
     let file = files::File {
         name: "/home/me/runs/a.blip".to_owned(),
-        bytes: recorded.recording.to_file(),
+        bytes: recorded.recorder.to_file(),
     };
     let mut app = App::default();
     app.open_all(file).unwrap();
@@ -484,11 +485,11 @@ fn file_names_drop_their_folders() {
 
 #[test]
 fn a_recording_opened_in_part_is_toasted() {
-    let mut recorded = model::MemoryStore::default();
+    let mut recorded = Session::recording();
     for timestamp in 0..1000 {
-        recorded.receive("a", &value(timestamp));
+        recorded.inbox("a", 0.0).message(&value(timestamp));
     }
-    let mut bytes = recorded.recording.to_file();
+    let mut bytes = recorded.recorder.to_file();
     bytes.truncate(bytes.len() / 2);
     let file = files::File {
         name: "a.blip".to_owned(),
@@ -517,10 +518,13 @@ fn switching_presets_keeps_the_layout_and_connections_of_each() {
     let ctx = Context::default();
     let mut app = App::default();
     app.layout.add_view(view::ViewType::Plot);
-    app.connections.set_saved(vec![connections::Connection {
-        name: "bench".to_owned(),
-        address: "ws://bench:3000/ws/outpost".to_owned(),
-    }]);
+    app.connections.set_saved(
+        vec![connections::Connection {
+            name: "bench".to_owned(),
+            address: "ws://bench:3000/ws/outpost".to_owned(),
+        }],
+        &mut app.state.session,
+    );
     app.apply_preset(presets::Action::New, &ctx);
     assert_eq!(tabs(&app), 0);
     assert_eq!(addresses(&app), ["ws://127.0.0.1:3000/ws/outpost"]);
@@ -621,7 +625,8 @@ fn recorded() -> App {
     for second in 0..=10 {
         app.state
             .session
-            .receive("a", &value(second * 1_000_000_000), 0.0);
+            .inbox("a", 0.0)
+            .message(&value(second * 1_000_000_000));
     }
     app.state.set_recording(false, false);
     app.state.session.mark_saved();
@@ -718,11 +723,11 @@ fn delete_waits_while_a_menu_is_open() {
 
 #[test]
 fn recording_cancels_a_recording_being_opened() {
-    let mut recorded = model::MemoryStore::default();
-    recorded.receive("a", &value(1));
+    let mut recorded = Session::recording();
+    recorded.inbox("a", 0.0).message(&value(1));
     let file = files::File {
         name: "a.blip".to_owned(),
-        bytes: recorded.recording.to_file(),
+        bytes: recorded.recorder.to_file(),
     };
     let mut app = App::default();
     app.open(file).unwrap();
@@ -739,7 +744,7 @@ fn recording_cancels_a_recording_being_opened() {
     app.state.set_recording(true, true);
     app.open(files::File {
         name: "a.blip".to_owned(),
-        bytes: recorded.recording.to_file(),
+        bytes: recorded.recorder.to_file(),
     })
     .unwrap();
     app.recording_started(true);
@@ -780,4 +785,58 @@ fn a_cancelled_quit_asks_the_question_before_it_again() {
     harness.run_steps(2);
     assert!(matches!(harness.state().asked, Some(Asked::Clear)));
     assert!(harness.query_by_label(DISCARD_QUESTION).is_some());
+}
+
+#[test]
+fn a_reopened_recording_is_saved_as_it_was_opened() {
+    // a file of version 2: the header, then each message after the name of its source
+    let mut bytes = vec![0xa2, 0x66];
+    bytes.extend(b"format");
+    bytes.push(0x6e);
+    bytes.extend(b"blip recording");
+    bytes.push(0x67);
+    bytes.extend(b"version");
+    bytes.push(0x02);
+    bytes.extend(serde_cbor_2::to_vec(&"a").unwrap());
+    bytes.extend(serde_cbor_2::to_vec(&value(1)).unwrap());
+    bytes.extend(serde_cbor_2::to_vec(&value(2)).unwrap());
+
+    let mut app = App::default();
+    app.open_all(files::File {
+        name: "a.blip".to_owned(),
+        bytes: bytes.clone(),
+    })
+    .unwrap();
+    assert!(app.state.session.store.has_samples());
+    assert_eq!(app.state.session.recorder.to_file(), bytes);
+}
+
+#[test]
+fn a_connection_that_cannot_connect_is_toasted_with_its_address() {
+    let ctx = Context::default();
+    let mut app = App::default();
+    app.connections.set_saved(
+        vec![connections::Connection {
+            name: "x".to_owned(),
+            address: "ws://127.0.0.1:1/x".to_owned(),
+        }],
+        &mut app.state.session,
+    );
+    app.connections.connect_first(&ctx, &mut app.state.session);
+    let start = std::time::Instant::now();
+    while app.toasts.shown().is_empty() && start.elapsed().as_secs() < 5 {
+        eframe::App::logic(&mut app, &ctx, &mut Frame::_new_kittest());
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let shown = app.toasts.shown();
+    assert_eq!(shown.len(), 1);
+    assert_eq!(shown[0].0, toasts::Level::Error);
+    assert!(
+        shown[0]
+            .1
+            .starts_with("Cannot connect to ws://127.0.0.1:1/x: "),
+        "{shown:?}"
+    );
+    assert!(app.connections.is_idle());
+    assert!(app.state.session.open_sources().is_empty());
 }

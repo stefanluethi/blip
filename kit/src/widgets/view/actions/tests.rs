@@ -754,8 +754,7 @@ fn receive(
         path: path.to_owned(),
         value,
     });
-    let frame = serde_cbor_2::to_vec(&message).unwrap();
-    harness.state_mut().model.receive_unrecorded("", &frame);
+    crate::store::testing::receive_unrecorded(&mut harness.state_mut().model, "", &message);
 }
 
 /// Types `text` into the only text field and enters it.

@@ -10,11 +10,13 @@ Tests of the requirements in :doc:`/requirements/system/files`.
    :verifies: REQ_FILE_RECORDING
 
    ``kit/src/store/recording.rs`` and ``blip/src/app.rs`` tests -- save
-   frames and read them back unchanged, read uncompressed files, files of
+   messages and read them back with every value, read uncompressed files, files of
    several gzip members and files written by the Python outpost, read a cut
    off file up to the cut and reject other files; open a recording in place
    of the data and units before, and with the traces panel started anew
-   (``opening_a_recording_stops_recording_and_starts_afresh``).
+   (``opening_a_recording_stops_recording_and_starts_afresh``). The
+   recordings of before the typed entry (kept as test data) open with the same
+   data as before.
 
 .. test:: Presets are exported and imported as JSON
    :id: TEST_BLIP_PRESETS_FILE
@@ -48,7 +50,8 @@ Tests of the requirements in :doc:`/requirements/system/files`.
    reads recordings of versions 1, 2 and 3, with ``Value`` and ``ValueMetadata``
    of the old ones and ``Hello``, ``Sample``, ``Samples`` and ``TraceMetadata``
    of the new, and ``other_files_are_no_recordings`` that it refuses a version
-   above 3.
+   above 3. That an opened recording of version 1 or 2 keeps its version when
+   saved again is checked by :need:`TEST_BLIP_RECORDING_REOPEN`.
 
 .. test:: The outpost writes, reads and replays recording version 3
    :id: TEST_OUTPOST_RECORDING_V3
@@ -138,3 +141,60 @@ Tests of the requirements in :doc:`/requirements/system/files`.
    ``kit/src/workbench/toasts/tests.rs::a_toast_is_shown_until_it_is_closed``
    -- a neutral notice such as "Saved a.blip" is shown. The name a native or web
    save returns is checked by hand.
+
+.. test:: What arrives live is recorded without loss
+   :id: TEST_BLIP_RECORDING_LIVE
+   :status: implemented
+   :component: blip, blip-kit
+   :verifies: REQ_FILE_REENCODE, REQ_FILE_UNREADABLE
+
+   ``kit/src/store/session/tests.rs::what_arrives_live_is_recorded_without_loss``,
+   ``kit/src/store/recording/tests.rs::unreadable_messages_are_recorded_as_they_are`` -- a session records messages of two sources, one handing over bytes
+   of the protocol and one typed data, with a ``Hello``, trace metadata, actions,
+   the result of an action, log records, samples of every kind of value (also
+   those a trace cannot hold, such as an array of strings and records in arrays),
+   and blocks with a period and with timestamps, and the old names ``Value`` and
+   ``ValueMetadata``. The test saves the recording, reads it back and checks that
+   it holds every message with every value, in the order received, with the
+   names of the sources and with each block still a block, that the old names
+   are written as the new ones, that the header and the version 3 are as
+   before, and that a recording that starts after data was received begins with
+   the latest ``Hello``, actions and trace metadata of each source. A frame with
+   a malformed block of samples among good messages, and a message of a newer
+   protocol, are in the recording byte for byte at their place, while the store
+   drops the block with the notice as before.
+
+.. test:: Numbers are written in their shortest exact form
+   :id: TEST_BLIP_RECORDING_SHORTEST
+   :status: implemented
+   :component: blip-kit
+   :verifies: REQ_FILE_SHORTEST
+
+   ``kit/src/store/cbor/tests.rs`` (``numbers_are_written_in_their_shortest_exact_form``,
+   ``every_half_precision_float_is_written_as_one``,
+   ``floats_read_back_as_the_same_value``),
+   ``kit/src/store/protocol/tests.rs::the_writer_writes_what_serde_writes`` and
+   ``kit/src/store/recording/tests.rs::a_recording_is_not_longer_than_the_messages_it_was_made_from``
+   -- records integers of each size and floats that are exact in half,
+   single and double precision, and infinity, negative zero and NaN, and checks
+   that each is written in the shortest form that reads back as the same value
+   (a NaN as a NaN), that the file is not longer than the messages it was made
+   from, apart from the names of the sources, for messages written with every
+   float in double precision and for messages already in the shortest form, and
+   that a block of floats does not grow.
+
+.. test:: An opened recording is saved as opened
+   :id: TEST_BLIP_RECORDING_REOPEN
+   :status: implemented
+   :component: blip, blip-kit
+   :verifies: REQ_FILE_REOPEN
+
+   ``kit/src/store/recording/tests.rs::an_opened_recording_is_saved_as_it_was_opened``
+   and ``a_recording_after_opening_starts_with_the_descriptions_of_the_file`` --
+   opens recordings of versions 1, 2 and 3, compressed and not, one
+   with the old names, one with a field blip does not know, one with a message of a
+   newer protocol and one written by the outpost, saves each again and checks that
+   the bytes are those of the file opened.
+   ``blip/src/app/tests.rs::a_reopened_recording_is_saved_as_it_was_opened`` --
+   a file of version 2 opened in the app is saved again as the bytes opened, from
+   the recorder of the session.

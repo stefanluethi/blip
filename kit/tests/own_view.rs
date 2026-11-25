@@ -3,9 +3,9 @@
 //! own, and is added to the layout of the workbench, which saves it.
 
 use blip_kit::store::actions::Invoker;
-use blip_kit::store::sorted::index_at;
+use blip_kit::store::session::Session;
 use blip_kit::store::traces::Trace;
-use blip_kit::store::{MemoryStore, Window};
+use blip_kit::store::{MemoryStore, Store as _, Window};
 use blip_kit::widgets::theme;
 use blip_kit::widgets::time::TimeRange;
 use blip_kit::widgets::view::custom;
@@ -33,7 +33,7 @@ impl Viewable for Dial {
             let Some(series) = context.store.series(path, Window::at(t)).data else {
                 continue;
             };
-            let Some(index) = index_at(series.timestamps, t) else {
+            let Some(index) = series.index_at(t) else {
                 continue;
             };
             let unit = context.store.unit(path).unwrap_or_default();
@@ -56,7 +56,7 @@ impl ViewInfo for Dial {
 }
 
 fn store() -> MemoryStore {
-    let mut store = MemoryStore::default();
+    let mut session = Session::recording();
     let messages = [
         proto::Message::TraceMetadata(proto::TraceMetadata {
             path: "tank/level".to_owned(),
@@ -75,9 +75,9 @@ fn store() -> MemoryStore {
         }),
     ];
     for message in messages {
-        store.receive("target", &serde_cbor_2::to_vec(&message).expect("a frame"));
+        session.inbox("target", 0.0).message(&message);
     }
-    store
+    session.store
 }
 
 type Shown = (Dial, Plot, MemoryStore, TimeRange, Invoker);
@@ -135,4 +135,32 @@ fn a_registered_view_type_is_kept_by_the_layout() {
     let loaded = Layout::from_saved(serde_json::from_value(saved.clone()).expect("a layout"));
     let again = serde_json::to_value(loaded.to_saved()).expect("a saved layout");
     assert_eq!(again, saved);
+}
+
+#[test]
+fn the_lookups_of_a_series_and_a_trace_find_samples_by_time() {
+    let store = store();
+    let series = store
+        .series("tank/level", Window::at(2_000_000_000))
+        .data
+        .expect("a series");
+    assert_eq!(series.index_at(2_000_000_000), Some(0));
+    assert_eq!(series.index_at(500_000_000), None);
+    assert_eq!(series.index_at(3_000_000_000), Some(1));
+    assert_eq!(series.closest_index(2_600_000_000), Some(1));
+    assert_eq!(series.closest_index(1_900_000_000), Some(0));
+    assert_eq!(series.within((0, 2_000_000_000)), 0..1);
+    assert_eq!(series.within((1_000_000_000, 3_000_000_000)), 0..2);
+
+    let trace = store
+        .trace("tank/level", Window::at(2_000_000_000))
+        .data
+        .expect("a trace");
+    assert_eq!(trace.index_at(2_000_000_000), Some(0));
+    assert_eq!(trace.index_at(500_000_000), None);
+    assert_eq!(trace.index_at(3_000_000_000), Some(1));
+    assert_eq!(trace.closest_index(2_600_000_000), Some(1));
+    assert_eq!(trace.closest_index(1_900_000_000), Some(0));
+    assert_eq!(trace.within((0, 2_000_000_000)), 0..1);
+    assert_eq!(trace.within((1_000_000_000, 3_000_000_000)), 0..2);
 }

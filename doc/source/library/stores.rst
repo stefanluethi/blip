@@ -114,18 +114,101 @@ store that loads keeps what it loaded in the same types:
    * - ``Logs``
      - The log records by path, those of each path in the order of their times.
 
+Putting data in
+---------------
+
+A store takes data through the ``Ingest`` trait, with typed arguments: no CBOR
+and no bytes.
+
+.. code-block:: rust
+
+   pub trait Ingest {
+       fn ingest(&mut self, source: &str, input: Input<'_>);
+       fn clear(&mut self);
+       fn reset(&mut self);
+       fn take_notices(&mut self) -> Vec<(Level, String)> { Vec::new() }
+   }
+
+``source`` is the name of the connection or file the input came from. The
+paths of traces and logs are kept as they come, without it. An ``Input`` is one
+of:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - Input
+     - Meaning
+   * - ``Sample``
+     - The ``value`` of a path at a ``timestamp``, in nanoseconds.
+   * - ``Samples``
+     - Several values of a path (``values``, ``Rows``) taken at ``times``. A
+       block counts once for the readbacks of actions.
+   * - ``Latest``
+     - The newest value of a path while samples are not kept (not recording):
+       only the latest value of each path is kept, for the readbacks.
+   * - ``Log``
+     - A log record: timestamp, path, level and message.
+   * - ``Metadata``
+     - What describes a trace: unit, description, labels, expected range.
+   * - ``Actions``
+     - All actions of a source, replacing those it announced before.
+   * - ``Clock``
+     - The clock of the timestamps of a source, or none.
+
+``Times`` tells when the values of a block were taken: ``Times::Period {
+timestamp, period }`` (value ``i`` at ``timestamp + i * period``) or
+``Times::Each(&[u64])``, a timestamp for each value. ``clear`` removes the
+samples and log records and keeps what describes the sources and the latest
+values; ``reset`` drops everything. ``take_notices`` is what the user is to be
+told, e.g. that sources have different clocks.
+
+You rarely call ``ingest`` yourself. A ``Session`` does it with what its sources
+hand over, see :doc:`sources`, and also decides what goes in: while not
+recording, a sample arrives as ``Latest`` and a log record not at all. A store
+only does what it is told.
+
+The value of a sample
+---------------------
+
+A sample holds a ``Value``, the protocol's data model (null, integer, float,
+bool, text, array, record) in two buffers that are reused, so a value that is
+set again allocates nothing once they grew. ``ValueRef`` borrows one; its
+``node()`` says what it is, a ``Node`` that is a number, a text, ``Array`` or
+``Record`` whose elements and fields are read in order. ``Rows`` is the values
+of a block.
+
+Anything that is an ``AsValue`` can be written as a value: numbers, ``bool``,
+text, ``Option``, arrays and slices of these, a ``&proto::Data`` and a record
+built with ``record``:
+
+.. code-block:: rust
+
+   use blip_kit::store::value::{record, Value};
+
+   let mut value = Value::default();
+   value.set(21.5);
+   value.set(record(|r| {
+       r.field("t", 21.5);
+       r.field("mode", "run");
+   }));
+
 The in-memory store
 -------------------
 
-``MemoryStore`` implements ``Store``. It keeps everything it received since
-the data was cleared, also the received messages for saving a recording file
-(``store.recording``), and the actions the targets announced. It ignores the
+``MemoryStore`` implements ``Ingest`` and ``Store``. It keeps everything it
+took in since the data was cleared, the latest value of each path, and the
+actions the targets announced. It has no method that takes bytes. It ignores the
 window and answers with all it has, borrowing its columns, so a plot of ten
-million samples costs no copy. It is what ``Session`` holds. The public fields
-``traces``, ``logs``, ``actions`` and ``recording`` are there for the
-application, e.g. to read a trace without a window.
+million samples costs no copy. It is what ``Session`` holds by default. The
+public fields ``traces``, ``logs`` and ``actions`` are there for the
+application, e.g. to read a trace without a window. ``Series`` and ``Trace``
+find a sample by time: ``index_at(t)`` (the sample current at ``t``),
+``closest_index(t)`` and ``within((start, end))`` (the range of indices).
 
-How it ingests and keeps the samples is in :doc:`/blip/internals`.
+What it keeps for a recording file is not in the store: the ``Recorder`` of the
+session is beside it, see :doc:`sources`. How the store ingests and keeps the
+samples is in :doc:`/blip/internals`.
 
 Writing another store
 ---------------------
@@ -148,9 +231,12 @@ it, and the test checks what the plot asked for:
        }
    }
 
-The widgets work with a store that is not the session's. A ``Session`` holds a
-``MemoryStore``, so an application with a store of its own reads that one in
-``ViewContext::new(&store, ...)`` and feeds it itself.
+Also implement ``Ingest`` to have a session feed the store. ``Session<S>`` works
+with any ``S: Ingest + Store``, so an application with a store of its own gives
+it to ``Session::new(my_store)`` and the sources, the recorder and the invoker
+work as with the ``MemoryStore``. The widgets read it as ``&session.store``. An
+application that feeds its store itself does not need a session:
+``ViewContext::new(&store, ...)`` takes any ``Store``.
 
 Baseline
 --------
@@ -163,7 +249,8 @@ by default:
 
    cargo test --release -p blip-kit --test baseline -- --ignored --nocapture
 
-On the development machine the store takes in about 1.5 million samples a second
-and a plot of 10 million samples takes about 0.7 ms a frame. That was the same
-before and after the ``Store`` trait was introduced. The numbers depend on the
+On the development machine the store takes in about 1.8 million samples a second
+while recording, 7 million while not recording, and a plot of 10 million samples
+takes about 0.7 ms a frame. That was the same before and after the ``Store``
+trait was introduced and before and after the entry became typed. The numbers depend on the
 machine: compare runs of the same machine only.

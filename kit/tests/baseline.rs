@@ -10,6 +10,7 @@
 
 use blip_kit::store::MemoryStore;
 use blip_kit::store::actions::Invoker;
+use blip_kit::store::session::Session;
 use blip_kit::widgets::time::TimeRange;
 use blip_kit::widgets::view::plot::Plot;
 use blip_kit::widgets::view::{ViewContext, Viewable as _};
@@ -27,11 +28,11 @@ fn frame(i: u64) -> Vec<u8> {
 
 /// A model that received `count` samples of the trace `a`.
 fn model_of(count: u64) -> MemoryStore {
-    let mut model = MemoryStore::default();
+    let mut session = Session::recording();
     for i in 0..count {
-        model.receive("target", &frame(i));
+        session.inbox("target", 0.0).frame(&frame(i));
     }
-    model
+    session.store
 }
 
 #[test]
@@ -39,17 +40,126 @@ fn model_of(count: u64) -> MemoryStore {
 fn ingest_rate() {
     const COUNT: u64 = 2_000_000;
     let frames: Vec<_> = (0..COUNT).map(frame).collect();
-    let mut model = MemoryStore::default();
+    let mut session = Session::recording();
     let start = Instant::now();
     for frame in &frames {
-        model.receive("target", frame);
+        session.inbox("target", 0.0).frame(frame);
     }
     let seconds = start.elapsed().as_secs_f64();
-    assert!(model.has_samples());
+    assert!(session.store.has_samples());
     println!(
         "baseline ingest: {COUNT} samples in {seconds:.3} s, {:.2} million samples/s",
         COUNT as f64 / seconds / 1.0e6
     );
+}
+
+#[test]
+#[ignore = "a measurement, run on its own"]
+fn ingest_typed() {
+    const COUNT: u64 = 2_000_000;
+    let mut session = Session::recording();
+    let start = Instant::now();
+    {
+        let mut inbox = session.inbox("target", 0.0);
+        for i in 0..COUNT {
+            inbox.sample(i * 1_000_000, "a", (i % 1000) as f64);
+        }
+    }
+    let seconds = start.elapsed().as_secs_f64();
+    assert!(session.store.has_samples());
+    println!(
+        "baseline ingest typed: {COUNT} samples in {seconds:.3} s, {:.2} million samples/s",
+        COUNT as f64 / seconds / 1.0e6
+    );
+}
+
+#[test]
+#[ignore = "a measurement, run on its own"]
+fn ingest_unrecorded() {
+    const COUNT: u64 = 2_000_000;
+    let frames: Vec<_> = (0..COUNT).map(frame).collect();
+    let mut session = Session::default();
+    let start = Instant::now();
+    for frame in &frames {
+        session.inbox("target", 0.0).frame(frame);
+    }
+    let seconds = start.elapsed().as_secs_f64();
+    assert!(!session.store.has_samples());
+    println!(
+        "baseline ingest unrecorded: {COUNT} samples in {seconds:.3} s, {:.2} million samples/s",
+        COUNT as f64 / seconds / 1.0e6
+    );
+}
+
+/// The frame of the block `i` of 100 float samples of the trace `adc`, 1 ms apart.
+fn floats_block(i: u64) -> Vec<u8> {
+    let block = proto::Message::Samples(proto::Samples {
+        path: "adc".to_owned(),
+        values: (0..100)
+            .map(|k| proto::Data::Float(((i * 100 + k) % 1000) as f64))
+            .collect(),
+        times: proto::SampleTimes::Period {
+            timestamp: i * 100_000_000,
+            period: 1_000_000,
+        },
+    });
+    serde_cbor_2::to_vec(&block).expect("a frame")
+}
+
+/// The frame of the block `i` of 100 record samples of the trace `imu`, 1 ms apart.
+fn records_block(i: u64) -> Vec<u8> {
+    let block = proto::Message::Samples(proto::Samples {
+        path: "imu".to_owned(),
+        values: (0..100)
+            .map(|k| {
+                proto::Data::Record(vec![
+                    (
+                        "t".to_owned(),
+                        proto::Data::Float(((i * 100 + k) % 1000) as f64 * 0.5),
+                    ),
+                    (
+                        "acc".to_owned(),
+                        proto::Data::Array(vec![
+                            proto::Data::Float(0.1),
+                            proto::Data::Float(0.2),
+                            proto::Data::Float(9.8),
+                        ]),
+                    ),
+                    ("mode".to_owned(), proto::Data::String("run".to_owned())),
+                ])
+            })
+            .collect(),
+        times: proto::SampleTimes::Period {
+            timestamp: i * 100_000_000,
+            period: 1_000_000,
+        },
+    });
+    serde_cbor_2::to_vec(&block).expect("a frame")
+}
+
+/// Times how long a fresh store takes to receive `frames` of `samples` samples, and
+/// prints it as `what`.
+fn ingest_blocks_of(what: &str, frames: &[Vec<u8>], samples: u64) {
+    let mut session = Session::recording();
+    let start = Instant::now();
+    for frame in frames {
+        session.inbox("target", 0.0).frame(frame);
+    }
+    let seconds = start.elapsed().as_secs_f64();
+    assert!(session.store.has_samples());
+    println!(
+        "baseline ingest blocks of {what}: {samples} samples in {seconds:.3} s, {:.2} million samples/s",
+        samples as f64 / seconds / 1.0e6
+    );
+}
+
+#[test]
+#[ignore = "a measurement, run on its own"]
+fn ingest_blocks() {
+    let floats: Vec<_> = (0..20_000).map(floats_block).collect();
+    ingest_blocks_of("floats", &floats, 2_000_000);
+    let records: Vec<_> = (0..10_000).map(records_block).collect();
+    ingest_blocks_of("records", &records, 1_000_000);
 }
 
 struct State {

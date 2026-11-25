@@ -24,5 +24,6 @@ What the software shall do, one page per area. Each page of
    files
    library
    workbench
+   ingest
    outpost
    sonde

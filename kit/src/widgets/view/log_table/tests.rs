@@ -375,7 +375,7 @@ fn the_columns_follow_the_properties() {
             clock: Some(proto::Clock::Epoch),
             sender: None,
         });
-        model.receive("", &serde_cbor_2::to_vec(&hello).unwrap());
+        crate::store::testing::receive(&mut model, "", &hello);
         let mut time = TimeRange::default();
         time.update(&model, 0.0);
         Harness::builder()
@@ -499,7 +499,7 @@ fn timed_harness(auto_scroll: bool) -> Harness<'static, Timed> {
             level: proto::level::INFO,
             message: format!("message {second}"),
         });
-        model.receive("", &serde_cbor_2::to_vec(&record).unwrap());
+        crate::store::testing::receive(&mut model, "", &record);
     }
     let mut table = table();
     table.filter.auto_scroll = auto_scroll;
@@ -545,7 +545,7 @@ fn push(harness: &mut Harness<'_, Timed>, second: u64) {
         message: format!("message {second}"),
     });
     let (_, model, time) = harness.state_mut();
-    model.receive("", &serde_cbor_2::to_vec(&record).unwrap());
+    crate::store::testing::receive(model, "", &record);
     time.update(model, 0.0);
     harness.run_steps(4);
 }

@@ -20,10 +20,14 @@ File menu
 **Save recording** (:kbd:`Ctrl+S`)
    Saves all messages received since the data was last cleared to a ``.blip``
    file named after the current time, with the names of their connections,
-   also those of an opened recording. In the browser, the file is downloaded,
-   and the menu item has no ellipsis, as it asks for nothing. blip tells *Saved
-   <name>* in a notice; with nothing recorded, :kbd:`Ctrl+S` says *Nothing
-   recorded to save*.
+   also those of an opened recording. The file holds the same as blip received,
+   but not the same bytes: it is written again, with numbers in their shortest
+   form, so a file that was sent by a target may differ from the one blip
+   saves. Messages blip cannot read, e.g. of a newer protocol, are kept as they
+   arrived. A recording you opened and save again is written unchanged, as it
+   was opened. In the browser, the file is downloaded, and the menu item has
+   no ellipsis, as it asks for nothing. blip tells *Saved <name>* in a notice;
+   with nothing recorded, :kbd:`Ctrl+S` says *Nothing recorded to save*.
 
 **Clear recording**
    Removes all received data but the latest trace metadata and actions of the targets,

@@ -1,8 +1,9 @@
 //! The connections panel: the WebSocket addresses of outposts and targets, to connect to
 //! any number of them at once.
 
-use crate::store::source::{Event, Source as _};
+use crate::store::session::{Session, SourceEvent, SourceId, cannot_connect};
 use crate::store::websocket::WebSocket;
+use crate::store::{Ingest, Level, Store};
 use crate::widgets::theme::{self, TokensExt};
 use egui_phosphor::regular;
 use std::collections::{HashMap, HashSet};
@@ -16,13 +17,18 @@ const RECORDING_HINT: &str = "Stop recording to change the connections";
 /// What a failed connection tells when the other side closed it.
 const CLOSED_REASON: &str = "closed by the other side";
 
+/// What to check when a connection cannot be made.
+const OUTPOST_HINT: &str = "Is the outpost running?";
+
 /// The scheme given to an address typed without one.
 const DEFAULT_SCHEME: &str = "ws://";
 
 /// The height of the list of connections from which it scrolls.
 const MAX_LIST_HEIGHT: f32 = 320.0;
 
-/// The connections of the active preset, see [`super::presets`].
+/// The connections of the active preset, see [`super::presets`]. Each open connection, and
+/// each one being opened, is a WebSocket source of the session; the connections show what
+/// the session tells of it.
 pub struct Connections {
     /// The connections in the order they were added, their addresses differ.
     connections: Vec<Connection>,
@@ -31,8 +37,6 @@ pub struct Connections {
     /// Why connecting to an address failed or its connection broke, until it is
     /// connected again.
     failed: HashMap<String, Failure>,
-    /// What went wrong since [`Self::take_errors`] was last called, to tell the user.
-    errors: Vec<String>,
     editing: Option<Editing>,
     /// The index of the connection whose deletion is asked to be confirmed.
     deleting: Option<usize>,
@@ -51,7 +55,6 @@ impl Default for Connections {
             connections: Connection::defaults(),
             sockets: vec![],
             failed: HashMap::new(),
-            errors: vec![],
             editing: None,
             deleting: None,
             recorded: None,
@@ -104,26 +107,17 @@ impl Connection {
 
 /// The connection to one of the addresses.
 struct Socket {
+    /// The source of the connection in the session.
+    id: SourceId,
     address: String,
     /// The name of the connection when it was opened, the source of its messages.
     name: String,
-    source: WebSocket,
     /// Whether the connection is open, it is being opened until then.
     open: bool,
     /// Whether this connection sent its Hello, so the kept one is its own.
     greeted: bool,
     /// Whether a newer protocol was warned of on this connection.
     warned_newer: bool,
-}
-
-/// What [`Connections::receive`] passes on, in the order it arrived.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Received<'a> {
-    /// A connection opened while no other was open: the first one, before any of its
-    /// messages.
-    FirstOpened,
-    /// A message from the connection named `source`.
-    Message { source: &'a str, message: &'a [u8] },
 }
 
 /// What the connections do as a whole, e.g. for the status chip of the app, see
@@ -221,7 +215,12 @@ enum Action {
 
 impl Connections {
     /// Connects to the connection at `index`, unless it is connected.
-    fn connect(&mut self, index: usize, ctx: egui::Context) {
+    fn connect<S: Ingest + Store>(
+        &mut self,
+        index: usize,
+        ctx: egui::Context,
+        session: &mut Session<S>,
+    ) {
         let Connection { name, address } = self.connections[index].clone();
         if self.socket(&address).is_some() {
             return;
@@ -229,17 +228,23 @@ impl Connections {
         self.failed.remove(&address);
         let wakeup = move || ctx.request_repaint();
         match WebSocket::connect(&address, wakeup) {
-            Ok(source) => self.sockets.push(Socket {
-                address,
-                name,
-                source,
-                open: false,
-                greeted: false,
-                warned_newer: false,
-            }),
+            Ok(socket) => {
+                let id = session.add_source(&name, socket);
+                session.set_label(id, &address);
+                session.set_hint(id, OUTPOST_HINT);
+                self.sockets.push(Socket {
+                    id,
+                    address,
+                    name,
+                    open: false,
+                    greeted: false,
+                    warned_newer: false,
+                });
+            }
             Err(error) => {
                 log::warn!("ws cannot connect to {address}: {error}");
-                self.errors.push(cannot_connect(&address, &error));
+                let text = cannot_connect(&address, &error, Some(OUTPOST_HINT));
+                session.notify(Level::Error, text);
                 let failure = Failure {
                     reason: error,
                     lost: false,
@@ -253,12 +258,12 @@ impl Connections {
         self.sockets.iter().find(|socket| socket.address == address)
     }
 
-    fn disconnect(&mut self, address: &str) {
+    fn disconnect<S: Ingest + Store>(&mut self, address: &str, session: &mut Session<S>) {
         self.sockets.retain_mut(|socket| {
             if socket.address != address {
                 return true;
             }
-            socket.source.close();
+            session.remove_source(socket.id);
             log::info!("ws disconnected from {address}");
             false
         });
@@ -272,15 +277,19 @@ impl Connections {
     /// Replaces the connections with those of a preset, kept apart as
     /// [`Connection::sanitized`] does. A connection open or being opened stays when the
     /// preset has a connection of the same name and address, the others are
-    /// disconnected.
-    pub fn set_saved(&mut self, saved: Vec<Connection>) {
+    /// disconnected: their sources are removed from `session`.
+    pub fn set_saved<S: Ingest + Store>(
+        &mut self,
+        saved: Vec<Connection>,
+        session: &mut Session<S>,
+    ) {
         let connections = Connection::sanitized(saved);
         // a kept socket goes on to name its messages after the connection
-        self.sockets.retain_mut(|socket| {
+        self.sockets.retain(|socket| {
             let kept =
                 (connections.iter()).any(|c| c.address == socket.address && c.name == socket.name);
             if !kept {
-                socket.source.close();
+                session.remove_source(socket.id);
                 log::info!("ws disconnected from {}", socket.address);
             }
             kept
@@ -299,108 +308,52 @@ impl Connections {
         self.failed.clear();
     }
 
-    /// Closes all connections. Why connections failed stays, see
-    /// [`Self::clear_failures`].
-    pub fn disconnect_all(&mut self) {
-        for mut socket in self.sockets.drain(..) {
-            socket.source.close();
+    /// Disconnects every connection: removes its source from `session`. Why
+    /// connections failed stays, see [`Self::clear_failures`].
+    pub fn disconnect_all<S: Ingest + Store>(&mut self, session: &mut Session<S>) {
+        for socket in self.sockets.drain(..) {
+            session.remove_source(socket.id);
             log::info!("ws disconnected from {}", socket.address);
         }
     }
 
-    /// Passes each message received since the last call to `receive` with the name of
-    /// its connection, and when the first connection opens, ending connections when they
-    /// are closed or fail. A frame holds one message or several as a CBOR sequence, e.g.
-    /// a batch of a target.
-    pub fn receive(&mut self, mut receive: impl FnMut(Received<'_>)) {
-        let failed = &mut self.failed;
-        let errors = &mut self.errors;
-        let hellos = &mut self.hellos;
-        let warnings = &mut self.warnings;
-        let mut open = self.sockets.iter().filter(|socket| socket.open).count();
-        self.sockets.retain_mut(|socket| {
-            while let Some(event) = socket.source.poll() {
-                match event {
-                    Event::Opened => {
-                        log::info!("ws connected to {}", socket.address);
-                        if open == 0 {
-                            receive(Received::FirstOpened);
-                        }
-                        open += 1;
-                        socket.open = true;
-                    }
-                    Event::Frame(frame) => {
-                        for message in crate::store::cbor::items(&frame) {
-                            match message {
-                                Ok(message) => {
-                                    if crate::store::decode::message_name(message) == Some("Hello")
-                                    {
-                                        keep_hello(socket, message, hellos, warnings);
-                                    }
-                                    receive(Received::Message {
-                                        source: &socket.name,
-                                        message,
-                                    });
-                                }
-                                Err(error) => log::warn!(
-                                    "error reading a message of {}: {error}",
-                                    socket.address
-                                ),
-                            }
-                        }
-                    }
-                    Event::Failed(error) => {
-                        log::warn!("ws error of {}: {error}", socket.address);
-                        socket.source.close();
-                        errors.push(if socket.open {
-                            format!("The connection to {} broke: {error}", socket.address)
-                        } else {
-                            cannot_connect(&socket.address, &error)
-                        });
-                        let failure = Failure {
-                            reason: error,
-                            lost: socket.open,
-                        };
-                        failed.insert(socket.address.clone(), failure);
-                        open -= usize::from(socket.open);
-                        return false;
-                    }
-                    Event::Closed => {
-                        log::info!("ws disconnected from {}", socket.address);
-                        // the user's disconnecting drops the socket before it is closed
-                        errors.push(format!("{} closed the connection", socket.address));
-                        let failure = Failure {
-                            reason: CLOSED_REASON.to_owned(),
-                            lost: socket.open,
-                        };
-                        failed.insert(socket.address.clone(), failure);
-                        open -= usize::from(socket.open);
-                        return false;
-                    }
+    /// Takes what the connections told in the last update of `session`: which opened, their
+    /// Hello, which closed or failed and why. Call it after every [`Session::update`]. The
+    /// session tells the user what went wrong, by the address of the connection.
+    pub fn observe<S: Ingest + Store>(&mut self, session: &Session<S>) {
+        for (id, event) in session.source_events() {
+            let Some(index) = self.sockets.iter().position(|socket| socket.id == *id) else {
+                continue;
+            };
+            let socket = &mut self.sockets[index];
+            match event {
+                SourceEvent::Opened => {
+                    log::info!("ws connected to {}", socket.address);
+                    socket.open = true;
+                }
+                SourceEvent::Hello(hello) => {
+                    keep_hello(socket, hello.clone(), &mut self.hellos, &mut self.warnings);
+                }
+                SourceEvent::Failed(error) => {
+                    log::warn!("ws error of {}: {error}", socket.address);
+                    let failure = Failure {
+                        reason: error.clone(),
+                        lost: socket.open,
+                    };
+                    self.failed.insert(socket.address.clone(), failure);
+                    self.sockets.remove(index);
+                }
+                SourceEvent::Closed => {
+                    log::info!("ws disconnected from {}", socket.address);
+                    let failure = Failure {
+                        reason: CLOSED_REASON.to_owned(),
+                        lost: socket.open,
+                    };
+                    self.failed.insert(socket.address.clone(), failure);
+                    self.sockets.remove(index);
                 }
             }
-            true
-        });
-    }
-
-    /// Takes what went wrong since the last call, e.g. why connecting failed, to tell the
-    /// user.
-    pub fn take_errors(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.errors)
-    }
-
-    /// Sends `request` to the open connection named `name`, or drops it if there is none.
-    pub fn send(&mut self, name: &str, request: &proto::Request) {
-        let Some(socket) = self
-            .sockets
-            .iter_mut()
-            .find(|socket| socket.open && socket.name == name)
-        else {
-            log::warn!("dropping a request to {name:?}, which is not connected");
-            return;
-        };
-        log::debug!("send request {request:?} to {name}");
-        socket.source.send(request);
+        }
     }
 
     /// The names of the open connections, the sources whose actions can be invoked.
@@ -424,8 +377,12 @@ impl Connections {
 
     /// Connects to the first connection, as a click on its row does.
     #[cfg(any(test, feature = "test-util"))]
-    pub fn connect_first(&mut self, ctx: &egui::Context) {
-        self.connect(0, ctx.clone());
+    pub fn connect_first<S: Ingest + Store>(
+        &mut self,
+        ctx: &egui::Context,
+        session: &mut Session<S>,
+    ) {
+        self.connect(0, ctx.clone(), session);
     }
 
     /// `<name>: protocol N is newer than blip` of each open connection that speaks one.
@@ -521,10 +478,11 @@ impl Connections {
         }
     }
 
-    /// Shows the connections to connect, disconnect and edit them, unless `recording`:
-    /// a recording keeps the connections it started with, so they are disabled but for
-    /// connecting again those that broke, and an edit is dropped.
-    pub fn ui(&mut self, ui: &mut egui::Ui, recording: bool) {
+    /// Shows the connections to connect, disconnect and edit them, unless `session` is
+    /// recording: a recording keeps the connections it started with, so they are disabled
+    /// but for connecting again those that broke, and an edit is dropped.
+    pub fn ui<S: Ingest + Store>(&mut self, ui: &mut egui::Ui, session: &mut Session<S>) {
+        let recording = session.recording;
         self.set_recording(recording);
         let mut actions = vec![];
         theme::section_header(ui, "Connections", |ui| {
@@ -585,7 +543,7 @@ impl Connections {
         self.editing = editing;
 
         for action in actions {
-            self.apply(action, ui.ctx());
+            self.apply(action, ui.ctx(), session);
         }
     }
 
@@ -756,12 +714,17 @@ impl Connections {
         });
     }
 
-    fn apply(&mut self, action: Action, ctx: &egui::Context) {
+    fn apply<S: Ingest + Store>(
+        &mut self,
+        action: Action,
+        ctx: &egui::Context,
+        session: &mut Session<S>,
+    ) {
         match action {
-            Action::Connect(index) => self.connect(index, ctx.clone()),
+            Action::Connect(index) => self.connect(index, ctx.clone(), session),
             Action::Disconnect(index) => {
                 let address = self.connections[index].address.clone();
-                self.disconnect(&address);
+                self.disconnect(&address, session);
             }
             Action::StartEdit(edited, field) => {
                 let text = match (edited, field) {
@@ -779,7 +742,7 @@ impl Connections {
             }
             Action::FinishEdit { entered } => {
                 if let Some(editing) = self.editing.take() {
-                    self.finish_edit(editing, entered);
+                    self.finish_edit(editing, entered, session);
                 }
             }
             Action::CancelEdit => self.editing = None,
@@ -788,14 +751,19 @@ impl Connections {
                 self.editing = None;
             }
             Action::CancelRemove => self.deleting = None,
-            Action::Remove(index) => self.remove(index),
+            Action::Remove(index) => self.remove(index, session),
         }
     }
 
     /// Applies the text of `editing`, ended with Enter if `entered`. Text that cannot
     /// be applied keeps the field open to tell why, unless a new address was left blank
     /// by a click elsewhere, which drops it.
-    fn finish_edit(&mut self, mut editing: Editing, entered: bool) {
+    fn finish_edit<S: Ingest + Store>(
+        &mut self,
+        mut editing: Editing,
+        entered: bool,
+        session: &mut Session<S>,
+    ) {
         if self.problem(&editing).is_some() {
             let blank = editing.text.trim().is_empty();
             if entered || !blank || editing.edited != Edited::New {
@@ -807,7 +775,7 @@ impl Connections {
         let text = editing.text.trim();
         match (editing.edited, editing.field) {
             (Edited::Connection(index), Field::Name) => self.rename(index, text),
-            (edited, _) => self.set_address(edited, &with_scheme(text)),
+            (edited, _) => self.set_address(edited, &with_scheme(text), session),
         }
     }
 
@@ -866,13 +834,18 @@ impl Connections {
     /// Changes the address of a connection or adds a connection named after its
     /// address, unless the address is blank or of another connection. A connection
     /// whose address changes is disconnected.
-    fn set_address(&mut self, edited: Edited, address: &str) {
+    fn set_address<S: Ingest + Store>(
+        &mut self,
+        edited: Edited,
+        address: &str,
+        session: &mut Session<S>,
+    ) {
         if address.is_empty() || self.connections.iter().any(|c| c.address == address) {
             return;
         }
         match edited {
             Edited::Connection(index) => {
-                self.forget(index);
+                self.forget(index, session);
                 self.connections[index].address = address.to_owned();
             }
             Edited::New => {
@@ -885,17 +858,17 @@ impl Connections {
         }
     }
 
-    fn remove(&mut self, index: usize) {
-        self.forget(index);
+    fn remove<S: Ingest + Store>(&mut self, index: usize, session: &mut Session<S>) {
+        self.forget(index, session);
         self.connections.remove(index);
         self.editing = None;
         self.deleting = None;
     }
 
     /// Disconnects the connection at `index` and drops why it failed.
-    fn forget(&mut self, index: usize) {
+    fn forget<S: Ingest + Store>(&mut self, index: usize, session: &mut Session<S>) {
         let address = self.connections[index].address.clone();
-        self.disconnect(&address);
+        self.disconnect(&address, session);
         self.failed.remove(&address);
         self.hellos.remove(&address);
     }
@@ -915,18 +888,10 @@ fn display_name<'a>(name: &'a str, address: &'a str) -> &'a str {
 /// connection when its protocol is newer than blip's.
 fn keep_hello(
     socket: &mut Socket,
-    message: &[u8],
+    hello: proto::Hello,
     hellos: &mut HashMap<String, proto::Hello>,
     warnings: &mut Vec<String>,
 ) {
-    let hello = match serde_cbor_2::from_slice::<proto::Message>(message) {
-        Ok(proto::Message::Hello(hello)) => hello,
-        Ok(_) => return,
-        Err(error) => {
-            log::warn!("error reading the Hello of {}: {error}", socket.address);
-            return;
-        }
-    };
     socket.greeted = true;
     if hello.version > proto::VERSION && !socket.warned_newer {
         socket.warned_newer = true;
@@ -993,12 +958,6 @@ fn with_scheme(address: &str) -> String {
     } else {
         format!("{DEFAULT_SCHEME}{address}")
     }
-}
-
-/// The error of connecting to `address` failing with `error`, with what to check.
-fn cannot_connect(address: &str, error: &str) -> String {
-    let error = error.trim_end_matches('.');
-    format!("Cannot connect to {address}: {error}. Is the outpost running?")
 }
 
 /// A field to edit a name or an address, ending with Enter or a click elsewhere, or

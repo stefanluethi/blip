@@ -99,7 +99,11 @@ part or by hand.
    Planned and not done: loads presets, layout files and recording files of
    the versions 1 to 3 written before the restructuring (kept as test data)
    and checks that they give the same layouts, connections and data as before,
-   in each phase.
+   in each phase. ``kit/src/store/recording/tests.rs::kept_recordings_show_the_same_data``
+   also opens the recordings of versions 1 (``blip/tests/data/demo.blip``), 2 (made from it
+   with the names of version 2) and 3 (``sonde/tests/data/recording.blip``) and the outpost's,
+   and compares a digest of their traces, units, logs and actions with the one taken before
+   the typed entry.
 
 .. test:: A source delivers messages and takes requests
    :id: TEST_LIB_SOURCE
@@ -110,10 +114,16 @@ part or by hand.
 
    ``kit/src/store/session/tests.rs`` -- a source of the test delivers frames of one and of several messages and takes the invocations.
 
-   Planned and not done: implements ``Source`` in a test, once delivering
-   frames and once decoded messages, runs a session frame by frame without
-   egui, checks that the messages arrive in the store in order and that an
-   action invocation reaches the source as a request.
+   ``kit/src/store/session/tests.rs`` (``a_store_of_the_application_takes_typed_data``,
+   ``a_frame_may_hold_several_messages``, ``a_source_that_ends_is_dropped_with_a_notice``,
+   ``invocations_go_to_the_source_that_announced_the_action``)
+   -- implements ``Source`` in a test, once handing over the bytes of
+   protocol messages and once typed data of each kind with no protocol message
+   built, runs a session frame by frame without egui, and checks that what a
+   source hands over arrives in the store in order, that a source tells when it
+   opened, closed or failed, and that an action invocation reaches the source as
+   a request. The same messages as bytes and as typed data giving the same is
+   checked by :need:`TEST_LIB_INGEST_SAME`.
 
 .. test:: The WebSocket source behaves as the connections did
    :id: TEST_LIB_SOURCE_WS
@@ -124,7 +134,9 @@ part or by hand.
 
    ``kit/src/workbench/connections/tests.rs`` -- the tests of the connections of blip, now on the WebSocket
    source, pass: open, messages before the first ``Hello``, errors, newer
-   protocol, and invocations sent.
+   protocol, and invocations sent. ``kit/src/store/websocket/tests.rs`` (``a_websocket_hands_over_its_frames_as_they_are``, ``a_websocket_that_cannot_connect_fails``) also checks that the source hands
+   the binary messages of the socket over as they are, one frame as received,
+   and tells when the socket opened, closed or failed.
 
 .. test:: Data of the same process is shown without an outpost
    :id: TEST_LIB_SOURCE_OWN
@@ -135,7 +147,10 @@ part or by hand.
 
    ``kit/src/store/session/tests.rs``, ``kit/examples/dashboard.rs`` -- a source in the test process delivers traces, a log record and
    an action with no socket open, and checks that the store holds them as if
-   an outpost had sent them.
+   an outpost had sent them. ``kit/src/store/session/tests.rs::a_store_of_the_application_takes_typed_data``
+   and the simulator of ``kit/examples/dashboard.rs`` (by review: typed calls only) also check that the source of the test
+   hands over its data typed, with no CBOR encoded and no protocol message built,
+   and that the example application's simulated source does the same.
 
 .. test:: Queries of a store are windowed, non-blocking and tell what is pending
    :id: TEST_LIB_STORE
@@ -161,10 +176,34 @@ part or by hand.
 
    ``kit/tests/baseline.rs`` (ignored, run by hand) -- measured before and after the ``Store`` trait on the same machine: 1.45 and 1.6 million samples a second taken in, 0.74 and 0.71 to 0.75 ms a frame of a plot of 10 million samples.
 
-   Planned and not done: a benchmark of the ingest rate and of the frame time
-   of a plot with tens of millions of samples, run before and after the trait,
-   with the result after no worse than before beyond the noise of the
+   Earlier, for the ``Store`` trait: a benchmark of the ingest rate and of the
+   frame time of a plot with tens of millions of samples, run before and after
+   the trait, with the result after no worse than before beyond the noise of the
    measurement.
+
+   ``kit/tests/baseline.rs`` (``ingest_rate``, ``ingest_unrecorded``, ``ingest_blocks``,
+   ``ingest_typed``, ``plot_frame_time``) -- for the typed entry, a measurement by hand with ``kit/tests/baseline.rs``
+   (ignored, run on its own) on one machine, before the change and after it:
+   the rate of taking in samples while recording (``ingest_rate``), while not
+   recording (``ingest_unrecorded``) and of blocks of floats and of small
+   records (``ingest_blocks``), and the frame time of a plot of 10 million
+   samples (``plot_frame_time``). Each of the four after the change shall be
+   within 10 % of its value before. The numbers of both runs are written here. The
+   rate of single samples handed over typed (``ingest_typed``) is
+   measured for information.
+
+   Measured on this machine, quiet runs only, with
+   ``cargo test --release -p blip-kit --test baseline -- --ignored --nocapture --test-threads=1``.
+   Before the change (2026-11-24, two runs), the store fed directly: taking in
+   samples while recording 1.69 and 1.67 million samples a second, while not
+   recording 6.31 and 6.63, blocks of 100 floats 4.04 and 4.21, blocks of 100
+   records 1.06 and 1.07, and a frame of a plot of 10 million samples 0.715 and
+   0.807 ms. After the change (2026-11-25, three runs), through the inbox of the
+   session, which includes splitting the frame: recording 1.80, 1.85 and 1.86,
+   not recording 7.69, 7.72 and 7.91, floats 4.22, 4.45 and 4.34, records 1.44,
+   1.49 and 1.46 million samples a second, and the plot 0.710, 0.715 and
+   0.675 ms. Each is within 10 % of its value before. Samples handed over typed
+   while recording, new: 2.18, 2.27 and 2.34 million samples a second.
 
 .. test:: InfluxDB store answers the store checks
    :id: TEST_LIB_STORE_INFLUX

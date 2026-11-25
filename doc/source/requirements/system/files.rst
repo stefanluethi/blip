@@ -42,7 +42,69 @@ Recordings and presets as files.
    outpost and uncompressed by sonde. blip and the outpost shall read the
    versions 1 to 3 and the outpost shall replay the messages of a recording
    of any of them. blip shall read the old names ``Value`` and ``ValueMetadata``
-   in them.
+   in them. A recording that blip opened and saves again unchanged keeps its
+   version (:need:`REQ_FILE_REOPEN`).
+
+.. req:: Recording what arrives live
+   :id: REQ_FILE_REENCODE
+   :status: implemented
+   :component: blip, blip-kit
+   :priority: high
+   :satisfies: STK_REVIEW, STK_OWN_DATA
+   :rationale: Data of an application's own source never was blip-protocol bytes, and
+      it must be recorded like any other.
+
+   While recording, blip shall write what it receives to the recording as it
+   arrives, whichever source it comes from and whether it arrived as bytes of the
+   blip protocol or as typed data of an application, in the format of version 3
+   (:need:`REQ_FILE_VERSION`). The recording shall hold every message with every
+   value, in the order received, with the name of its source and with a block of
+   samples still a block. A recording need not be byte for byte what was sent: it
+   shall hold the old names ``Value`` and ``ValueMetadata`` as ``Sample`` and
+   ``TraceMetadata``, and shall not hold the fields that blip does not know in a
+   message it can read. A recording that starts after data was received shall
+   begin, as before, with the latest ``Hello``, announced actions and trace
+   metadata of each source.
+
+.. req:: Shortest exact numbers in a recording
+   :id: REQ_FILE_SHORTEST
+   :status: implemented
+   :component: blip-kit
+   :priority: medium
+   :satisfies: STK_REVIEW
+   :rationale: A recording written again must not be longer than the messages it was
+      made from, or recording would cost memory and disk.
+
+   blip shall write the integers and floats of a recording in the shortest form
+   that reads back as exactly the same value, so that a recording is not longer
+   than the messages it was made from, apart from the names of the sources.
+
+.. req:: Unreadable messages stay in a recording
+   :id: REQ_FILE_UNREADABLE
+   :status: implemented
+   :component: blip, blip-kit
+   :priority: medium
+   :satisfies: STK_REVIEW
+   :rationale: A newer blip may read what this one cannot, such as a message of a
+      newer protocol.
+
+   While recording, blip shall keep the messages it cannot read, such as a
+   malformed block of samples or a message of a newer protocol, in the recording
+   byte for byte, at their place among the others. blip shall show only what it
+   can read, and notify of a malformed block as before.
+
+.. req:: A recording opened and saved again
+   :id: REQ_FILE_REOPEN
+   :status: implemented
+   :component: blip, blip-kit
+   :priority: medium
+   :satisfies: STK_REVIEW
+   :rationale: Opening a file to save it elsewhere must not change it, not even where
+      blip does not know what it holds.
+
+   When the user saves a recording that blip opened, blip shall write it as it
+   was opened, byte for byte, with its version and with everything in it, also
+   what blip does not know.
 
 .. req:: Ask before an unsaved recording is dropped
    :id: REQ_FILE_UNSAVED
