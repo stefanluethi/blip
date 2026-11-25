@@ -13,6 +13,12 @@ const DEFAULT_ADDRESS: &str = "ws://127.0.0.1:3000/ws/outpost";
 /// Why the connections are disabled while recording.
 const RECORDING_HINT: &str = "Stop recording to change the connections";
 
+/// What a failed connection tells when the other side closed it.
+const CLOSED_REASON: &str = "closed by the other side";
+
+/// The scheme given to an address typed without one.
+const DEFAULT_SCHEME: &str = "ws://";
+
 /// The height of the list of connections from which it scrolls.
 const MAX_LIST_HEIGHT: f32 = 320.0;
 
@@ -22,11 +28,14 @@ pub struct Connections {
     connections: Vec<Connection>,
     /// The open connections and those being opened.
     sockets: Vec<Socket>,
-    /// Why connecting to an address failed, until it is connected again.
-    failed: HashMap<String, String>,
+    /// Why connecting to an address failed or its connection broke, until it is
+    /// connected again.
+    failed: HashMap<String, Failure>,
     /// What went wrong since [`Self::take_errors`] was last called, to tell the user.
     errors: Vec<String>,
     editing: Option<Editing>,
+    /// The index of the connection whose deletion is asked to be confirmed.
+    deleting: Option<usize>,
     /// The addresses connected when the recording started, which can be connected
     /// again while recording if they break, `None` while not recording.
     recorded: Option<HashSet<String>>,
@@ -44,6 +53,7 @@ impl Default for Connections {
             failed: HashMap::new(),
             errors: vec![],
             editing: None,
+            deleting: None,
             recorded: None,
             hellos: HashMap::new(),
             warnings: vec![],
@@ -116,12 +126,38 @@ pub enum Received<'a> {
     Message { source: &'a str, message: &'a [u8] },
 }
 
+/// What the connections do as a whole, e.g. for the status chip of the app, see
+/// [`Connections::status`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Status {
+    /// No connection is open or being opened, and none failed.
+    None,
+    /// A connection is being opened and none is open.
+    Connecting,
+    /// A connection is open. `problem` when one speaks a newer protocol or another
+    /// one failed.
+    Open { problem: bool },
+    /// No connection is open or being opened, and one failed. `lost` when one broke or
+    /// was closed after it was open, else connecting failed.
+    Failed { lost: bool },
+}
+
+/// Why connecting to an address failed or its open connection ended.
+#[derive(Clone, PartialEq, Eq, Debug)]
+struct Failure {
+    reason: String,
+    /// Whether the connection was open, so it was lost rather than not made.
+    lost: bool,
+}
+
 /// The name or address being edited, or the address being added, and the text of its
 /// field.
 struct Editing {
     edited: Edited,
     field: Field,
     text: String,
+    /// Whether finishing was refused, so a blank text tells why too.
+    refused: bool,
 }
 
 /// Which connection is edited.
@@ -140,23 +176,22 @@ enum Field {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-enum Status {
+enum State {
     Disconnected,
     Connecting,
     Connected,
     /// Connected, the target speaks a newer protocol.
     Newer(u32),
-    /// Connecting failed or the open connection broke, with the reason.
+    /// Connecting failed, with the reason.
     Failed(String),
+    /// The open connection broke or was closed by the other side, with the reason.
+    Lost(String),
 }
 
-impl Status {
+impl State {
     /// Whether the connection is open or being opened.
     fn is_active(&self) -> bool {
-        matches!(
-            self,
-            Status::Connected | Status::Newer(_) | Status::Connecting
-        )
+        matches!(self, State::Connected | State::Newer(_) | State::Connecting)
     }
 }
 
@@ -173,8 +208,14 @@ enum Action {
     Connect(usize),
     Disconnect(usize),
     StartEdit(Edited, Field),
-    FinishEdit,
+    /// Ends editing, with Enter if `entered`, else by a click elsewhere.
+    FinishEdit {
+        entered: bool,
+    },
     CancelEdit,
+    /// Asks to confirm deleting the connection at this index.
+    AskRemove(usize),
+    CancelRemove,
     Remove(usize),
 }
 
@@ -198,9 +239,12 @@ impl Connections {
             }),
             Err(error) => {
                 log::warn!("ws cannot connect to {address}: {error}");
-                self.errors
-                    .push(format!("Cannot connect to {address}: {error}"));
-                self.failed.insert(address, error);
+                self.errors.push(cannot_connect(&address, &error));
+                let failure = Failure {
+                    reason: error,
+                    lost: false,
+                };
+                self.failed.insert(address, failure);
             }
         }
     }
@@ -225,16 +269,38 @@ impl Connections {
         self.connections.clone()
     }
 
-    /// Replaces the connections with those of a preset, disconnected, kept apart as
-    /// [`Connection::sanitized`] does.
+    /// Replaces the connections with those of a preset, kept apart as
+    /// [`Connection::sanitized`] does. A connection open or being opened stays when the
+    /// preset has a connection of the same name and address, the others are
+    /// disconnected.
     pub fn set_saved(&mut self, saved: Vec<Connection>) {
-        self.disconnect_all();
-        self.failed.clear();
-        self.hellos.clear();
+        let connections = Connection::sanitized(saved);
+        // a kept socket goes on to name its messages after the connection
+        self.sockets.retain_mut(|socket| {
+            let kept =
+                (connections.iter()).any(|c| c.address == socket.address && c.name == socket.name);
+            if !kept {
+                socket.source.close();
+                log::info!("ws disconnected from {}", socket.address);
+            }
+            kept
+        });
+        let listed = |address: &String| connections.iter().any(|c| c.address == *address);
+        self.failed.retain(|address, _| listed(address));
+        self.hellos.retain(|address, _| listed(address));
         self.editing = None;
-        self.connections = Connection::sanitized(saved);
+        self.deleting = None;
+        self.connections = connections;
     }
 
+    /// Forgets why connections failed or broke, e.g. once an opened recording shows in
+    /// place of their data, so that the status no longer tells of them.
+    pub fn clear_failures(&mut self) {
+        self.failed.clear();
+    }
+
+    /// Closes all connections. Why connections failed stays, see
+    /// [`Self::clear_failures`].
     pub fn disconnect_all(&mut self) {
         for mut socket in self.sockets.drain(..) {
             socket.source.close();
@@ -289,9 +355,13 @@ impl Connections {
                         errors.push(if socket.open {
                             format!("The connection to {} broke: {error}", socket.address)
                         } else {
-                            format!("Cannot connect to {}: {error}", socket.address)
+                            cannot_connect(&socket.address, &error)
                         });
-                        failed.insert(socket.address.clone(), error);
+                        let failure = Failure {
+                            reason: error,
+                            lost: socket.open,
+                        };
+                        failed.insert(socket.address.clone(), failure);
                         open -= usize::from(socket.open);
                         return false;
                     }
@@ -299,6 +369,11 @@ impl Connections {
                         log::info!("ws disconnected from {}", socket.address);
                         // the user's disconnecting drops the socket before it is closed
                         errors.push(format!("{} closed the connection", socket.address));
+                        let failure = Failure {
+                            reason: CLOSED_REASON.to_owned(),
+                            lost: socket.open,
+                        };
+                        failed.insert(socket.address.clone(), failure);
                         open -= usize::from(socket.open);
                         return false;
                     }
@@ -357,8 +432,8 @@ impl Connections {
     pub fn newer(&self) -> Vec<String> {
         self.connections
             .iter()
-            .filter_map(|connection| match self.status(&connection.address) {
-                Status::Newer(version) => {
+            .filter_map(|connection| match self.state(&connection.address) {
+                State::Newer(version) => {
                     let name = display_name(&connection.name, &connection.address);
                     Some(format!("{name}: {}", newer_text(version)))
                 }
@@ -378,23 +453,56 @@ impl Connections {
             .is_some_and(|socket| socket.open && socket.greeted)
     }
 
-    fn status(&self, address: &str) -> Status {
+    fn state(&self, address: &str) -> State {
         match (self.socket(address), self.failed.get(address)) {
             (Some(socket), _) if socket.open => match self.hellos.get(address) {
                 Some(hello) if socket.greeted && hello.version > proto::VERSION => {
-                    Status::Newer(hello.version)
+                    State::Newer(hello.version)
                 }
-                _ => Status::Connected,
+                _ => State::Connected,
             },
-            (Some(_), _) => Status::Connecting,
-            (None, Some(error)) => Status::Failed(error.clone()),
-            (None, None) => Status::Disconnected,
+            (Some(_), _) => State::Connecting,
+            (None, Some(failure)) if failure.lost => State::Lost(failure.reason.clone()),
+            (None, Some(failure)) => State::Failed(failure.reason.clone()),
+            (None, None) => State::Disconnected,
         }
     }
 
-    /// Whether the address or the name of a connection is being edited.
+    /// What the connections do as a whole, to show it in one place, e.g. a status chip:
+    /// open beats being opened, which beats failed.
+    pub fn status(&self) -> Status {
+        // the failures of the listed connections, others are not shown
+        let mut failures = (self.connections.iter())
+            .filter(|connection| self.socket(&connection.address).is_none())
+            .filter_map(|connection| self.failed.get(&connection.address));
+        if self.is_connected() {
+            let newer = self
+                .connections
+                .iter()
+                .any(|connection| matches!(self.state(&connection.address), State::Newer(_)));
+            let problem = newer || failures.next().is_some();
+            Status::Open { problem }
+        } else if !self.sockets.is_empty() {
+            Status::Connecting
+        } else {
+            let mut failed = false;
+            let mut lost = false;
+            for failure in failures {
+                failed = true;
+                lost |= failure.lost;
+            }
+            if failed {
+                Status::Failed { lost }
+            } else {
+                Status::None
+            }
+        }
+    }
+
+    /// Whether the address or the name of a connection is being edited, or deleting one
+    /// waits to be confirmed: Escape ends that first.
     pub fn is_editing(&self) -> bool {
-        self.editing.is_some()
+        self.editing.is_some() || self.deleting.is_some()
     }
 
     /// Tells whether the app is `recording`, every frame: remembers the connections
@@ -408,7 +516,7 @@ impl Connections {
                 .connections
                 .iter()
                 .map(|connection| &connection.address);
-            let active = addresses.filter(|address| self.status(address).is_active());
+            let active = addresses.filter(|address| self.state(address).is_active());
             self.recorded = Some(active.cloned().collect());
         }
     }
@@ -432,6 +540,7 @@ impl Connections {
 
         if recording {
             self.editing = None;
+            self.deleting = None;
         }
         let mut editing = self.editing.take();
         egui::ScrollArea::vertical()
@@ -441,10 +550,16 @@ impl Connections {
             .show(ui, |ui| {
                 for (index, connection) in self.connections.iter().enumerate() {
                     ui.horizontal(|ui| {
-                        status_ui(ui, &self.status(&connection.address));
+                        let state = self.state(&connection.address);
+                        status_ui(ui, &state);
                         match editing.as_mut() {
                             Some(editing) if editing.edited == Edited::Connection(index) => {
-                                edit_ui(ui, editing, &mut actions);
+                                let note = self.edit_note(editing);
+                                edit_ui(ui, editing, note, &mut actions);
+                            }
+                            _ if self.deleting == Some(index) => {
+                                let name = display_name(&connection.name, &connection.address);
+                                delete_ui(ui, name, state.is_active(), index, &mut actions);
                             }
                             _ => {
                                 let row = Row { index, recording };
@@ -456,8 +571,9 @@ impl Connections {
                 match editing.as_mut() {
                     Some(editing) if editing.edited == Edited::New => {
                         ui.horizontal(|ui| {
-                            status_ui(ui, &Status::Disconnected);
-                            edit_ui(ui, editing, &mut actions);
+                            status_ui(ui, &State::Disconnected);
+                            let note = self.edit_note(editing);
+                            edit_ui(ui, editing, note, &mut actions);
                         });
                     }
                     _ if self.connections.is_empty() => {
@@ -482,7 +598,7 @@ impl Connections {
         actions: &mut Vec<Action>,
     ) {
         let Row { index, recording } = row;
-        let active = self.status(&connection.address).is_active();
+        let active = self.state(&connection.address).is_active();
         let reconnect = recording
             && !active
             && self
@@ -634,8 +750,8 @@ impl Connections {
             {
                 actions.push(Action::StartEdit(Edited::Connection(index), Field::Address));
             }
-            if ui.button(format!("{} Delete", regular::TRASH)).clicked() {
-                actions.push(Action::Remove(index));
+            if ui.button(format!("{} Delete…", regular::TRASH)).clicked() {
+                actions.push(Action::AskRemove(index));
             }
         });
     }
@@ -657,19 +773,80 @@ impl Connections {
                     edited,
                     field,
                     text: text.to_owned(),
+                    refused: false,
                 });
+                self.deleting = None;
             }
-            Action::FinishEdit => {
+            Action::FinishEdit { entered } => {
                 if let Some(editing) = self.editing.take() {
-                    let text = editing.text.trim();
-                    match (editing.edited, editing.field) {
-                        (Edited::Connection(index), Field::Name) => self.rename(index, text),
-                        (edited, _) => self.set_address(edited, text),
-                    }
+                    self.finish_edit(editing, entered);
                 }
             }
             Action::CancelEdit => self.editing = None,
+            Action::AskRemove(index) => {
+                self.deleting = Some(index);
+                self.editing = None;
+            }
+            Action::CancelRemove => self.deleting = None,
             Action::Remove(index) => self.remove(index),
+        }
+    }
+
+    /// Applies the text of `editing`, ended with Enter if `entered`. Text that cannot
+    /// be applied keeps the field open to tell why, unless a new address was left blank
+    /// by a click elsewhere, which drops it.
+    fn finish_edit(&mut self, mut editing: Editing, entered: bool) {
+        if self.problem(&editing).is_some() {
+            let blank = editing.text.trim().is_empty();
+            if entered || !blank || editing.edited != Edited::New {
+                editing.refused = true;
+                self.editing = Some(editing);
+            }
+            return;
+        }
+        let text = editing.text.trim();
+        match (editing.edited, editing.field) {
+            (Edited::Connection(index), Field::Name) => self.rename(index, text),
+            (edited, _) => self.set_address(edited, &with_scheme(text)),
+        }
+    }
+
+    /// Why the text of `editing` cannot be applied: a blank address, or a name or an
+    /// address that another connection has.
+    fn problem(&self, editing: &Editing) -> Option<&'static str> {
+        let text = editing.text.trim();
+        let mut others = (self.connections.iter().enumerate())
+            .filter(|&(index, _)| editing.edited != Edited::Connection(index))
+            .map(|(_, connection)| connection);
+        match editing.field {
+            Field::Name => (!text.is_empty() && others.any(|c| c.name == text))
+                .then_some("Another connection has this name"),
+            Field::Address if text.is_empty() => Some("Enter the address to connect to"),
+            Field::Address => {
+                let address = with_scheme(text);
+                (others.any(|c| c.address == address))
+                    .then_some("Another connection has this address")
+            }
+        }
+    }
+
+    /// What to show below the field of `editing` and whether it is an error: why its
+    /// text cannot be applied, or that a new address disconnects the connection. A
+    /// blank text tells why only once finishing it was refused.
+    fn edit_note(&self, editing: &Editing) -> Option<(&'static str, bool)> {
+        let problem = self
+            .problem(editing)
+            .filter(|_| editing.refused || !editing.text.trim().is_empty());
+        if let Some(problem) = problem {
+            return Some((problem, true));
+        }
+        match (editing.edited, editing.field) {
+            (Edited::Connection(index), Field::Address)
+                if self.state(&self.connections[index].address).is_active() =>
+            {
+                Some(("A new address disconnects this connection", false))
+            }
+            _ => None,
         }
     }
 
@@ -712,6 +889,7 @@ impl Connections {
         self.forget(index);
         self.connections.remove(index);
         self.editing = None;
+        self.deleting = None;
     }
 
     /// Disconnects the connection at `index` and drops why it failed.
@@ -808,50 +986,121 @@ fn name_of(address: &str) -> &str {
         .unwrap_or("connection")
 }
 
+/// `address` with the scheme `ws://` if it has none.
+fn with_scheme(address: &str) -> String {
+    if address.contains("://") {
+        address.to_owned()
+    } else {
+        format!("{DEFAULT_SCHEME}{address}")
+    }
+}
+
+/// The error of connecting to `address` failing with `error`, with what to check.
+fn cannot_connect(address: &str, error: &str) -> String {
+    let error = error.trim_end_matches('.');
+    format!("Cannot connect to {address}: {error}. Is the outpost running?")
+}
+
 /// A field to edit a name or an address, ending with Enter or a click elsewhere, or
-/// Escape to cancel.
-fn edit_ui(ui: &mut egui::Ui, editing: &mut Editing, actions: &mut Vec<Action>) {
+/// Escape to cancel, with the `note` below it, an error if its flag is set.
+fn edit_ui(
+    ui: &mut egui::Ui,
+    editing: &mut Editing,
+    note: Option<(&str, bool)>,
+    actions: &mut Vec<Action>,
+) {
     let hint = match editing.field {
         Field::Name => "No name: traces are not put below it",
         Field::Address => DEFAULT_ADDRESS,
     };
-    let field = theme::wide_field(&mut editing.text).hint_text(hint);
-    match theme::focused_edit(ui, field) {
-        Some(true) => actions.push(Action::FinishEdit),
-        Some(false) => actions.push(Action::CancelEdit),
-        None => {}
-    }
+    ui.vertical(|ui| {
+        let field = theme::wide_field(&mut editing.text).hint_text(hint);
+        match theme::focused_edit(ui, field) {
+            Some(true) => {
+                let entered = ui.input(|input| input.key_pressed(egui::Key::Enter));
+                actions.push(Action::FinishEdit { entered });
+            }
+            Some(false) => actions.push(Action::CancelEdit),
+            None => {}
+        }
+        if let Some((note, error)) = note {
+            let color = if error {
+                ui.tokens().error
+            } else {
+                ui.visuals().weak_text_color()
+            };
+            let font = egui::TextStyle::Small.resolve(ui.style());
+            ui.label(egui::RichText::new(note).font(font).color(color));
+        }
+    });
 }
 
-/// A dot showing the status of a connection: hollow when disconnected, a spinner while
-/// connecting, green when connected, amber when it speaks a newer protocol and red when it failed.
-fn status_ui(ui: &mut egui::Ui, status: &Status) {
+/// Asks to confirm deleting the connection `name` at `index`, which is disconnected
+/// first if `active`. Enter deletes it while nothing else has the focus, Escape keeps
+/// it.
+fn delete_ui(ui: &mut egui::Ui, name: &str, active: bool, index: usize, actions: &mut Vec<Action>) {
+    ui.vertical(|ui| {
+        let question = if active {
+            format!("Disconnect and delete {name}?")
+        } else {
+            format!("Delete {name}?")
+        };
+        ui.add(egui::Label::new(question).wrap());
+        // Enter goes to a widget that has the focus, e.g. a field or a button
+        let unfocused = ui.memory(|memory| memory.focused().is_none());
+        let mut pressed = ui.input(|input| {
+            if input.key_pressed(egui::Key::Escape) {
+                Some(Action::CancelRemove)
+            } else if unfocused && input.key_pressed(egui::Key::Enter) {
+                Some(Action::Remove(index))
+            } else {
+                None
+            }
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let delete = egui::RichText::new("Delete").color(ui.tokens().error);
+            if ui.button(delete).clicked() {
+                pressed = Some(Action::Remove(index));
+            }
+            if ui.button("Cancel").clicked() {
+                pressed = Some(Action::CancelRemove);
+            }
+        });
+        actions.extend(pressed);
+    });
+}
+
+/// A dot showing the state of a connection: hollow when disconnected, a spinner while
+/// connecting, green when connected, amber when it speaks a newer protocol and red when
+/// it failed or was lost.
+fn status_ui(ui: &mut egui::Ui, state: &State) {
     let size = egui::Vec2::splat(ui.spacing().icon_width);
-    let hint = match status {
-        Status::Disconnected => "Disconnected".to_owned(),
-        Status::Connecting => "Connecting…".to_owned(),
-        Status::Connected => "Connected".to_owned(),
-        Status::Newer(version) => format!("Connected, {}", newer_text(*version)),
-        Status::Failed(error) => format!("Failed: {error}"),
+    let hint = match state {
+        State::Disconnected => "Disconnected".to_owned(),
+        State::Connecting => "Connecting…".to_owned(),
+        State::Connected => "Connected".to_owned(),
+        State::Newer(version) => format!("Connected, {}", newer_text(*version)),
+        State::Failed(error) => format!("Failed: {error}"),
+        State::Lost(error) => format!("Connection lost: {error}"),
     };
-    let response = if *status == Status::Connecting {
+    let response = if *state == State::Connecting {
         ui.add_sized(size, egui::Spinner::new())
     } else {
         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
         let radius = size.x * 0.3;
         let painter = ui.painter();
         let center = rect.center();
-        match status {
-            Status::Connected => {
+        match state {
+            State::Connected => {
                 painter.circle_filled(center, radius, ui.tokens().ok);
             }
-            Status::Newer(_) => {
+            State::Newer(_) => {
                 painter.circle_filled(center, radius, ui.tokens().warn);
             }
-            Status::Failed(_) => {
+            State::Failed(_) | State::Lost(_) => {
                 painter.circle_filled(center, radius, ui.tokens().error);
             }
-            Status::Disconnected | Status::Connecting => {
+            State::Disconnected | State::Connecting => {
                 let stroke = egui::Stroke::new(1.0, ui.visuals().weak_text_color());
                 painter.circle_stroke(center, radius, stroke);
             }

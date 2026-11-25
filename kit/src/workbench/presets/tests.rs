@@ -148,7 +148,8 @@ fn the_active_preset_is_not_replaced_while_recording() {
     let mut harness = importing(true);
     harness.state_mut().1 = false;
     harness.run();
-    harness.get_by_label("Import").click();
+    // the active preset is replaced now, which the button tells
+    harness.get_by_label("Import and replace").click();
     harness.run();
     let both = vec![DEFAULT_NAME.to_owned(), "New".to_owned()];
     assert_eq!(harness.state().2, Some(both));
@@ -285,6 +286,116 @@ fn presets_are_written_as_version_2_and_version_1_is_read() {
         write(&read("a.json", json.as_bytes()).unwrap()),
         json.as_bytes()
     );
+}
+
+/// The presets, whether recording, and whether the dialog asked to delete the active
+/// preset.
+type DialogState = (Presets, bool, bool);
+
+/// A harness showing `dialog` of the presets Default and Other, not run yet.
+fn showing(dialog: Dialog) -> egui_kittest::Harness<'static, DialogState> {
+    let mut presets = Presets::default();
+    presets.add_new();
+    presets.switch(0);
+    presets.dialog = Some(dialog);
+    egui_kittest::Harness::builder()
+        .with_size(egui::vec2(600.0, 400.0))
+        .build_ui_state(
+            |ui, (presets, recording, deleted): &mut DialogState| {
+                if let Some(Action::Delete) = presets.dialog_ui(ui.ctx(), *recording) {
+                    *deleted = true;
+                }
+            },
+            (presets, false, false),
+        )
+}
+
+#[test]
+fn the_rename_field_takes_the_focus_once_with_the_name_selected() {
+    use egui_kittest::kittest::Queryable;
+
+    let name = DEFAULT_NAME.to_owned();
+    let focused = false;
+    let mut harness = showing(Dialog::Rename { name, focused });
+    harness.run();
+    assert!(
+        harness
+            .get_by_role(egui::accesskit::Role::TextInput)
+            .is_focused()
+    );
+    // typing replaces the selected name
+    harness.event(egui::Event::Text("Bench".to_owned()));
+    harness.run();
+    let Some(Dialog::Rename { name, .. }) = &harness.state().0.dialog else {
+        panic!("the dialog stays open");
+    };
+    assert_eq!(name, "Bench");
+    // Tab moves on to the buttons
+    harness.key_press(egui::Key::Tab);
+    harness.run();
+    assert!(
+        !harness
+            .get_by_role(egui::accesskit::Role::TextInput)
+            .is_focused()
+    );
+}
+
+#[test]
+fn deleting_a_preset_is_confirmed_with_enter_or_kept_with_escape() {
+    use egui_kittest::kittest::Queryable;
+
+    // the Enter that opened the dialog does not confirm it
+    let mut harness = showing(Dialog::Delete { shown: false });
+    harness.run();
+    // as if the dialog opened in the frame that Enter is pressed in
+    harness.state_mut().0.dialog = Some(Dialog::Delete { shown: false });
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    assert!(!harness.state().2);
+    assert!(harness.state().0.has_dialog());
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    assert!(harness.state().2);
+    assert!(!harness.state().0.has_dialog());
+
+    let mut harness = showing(Dialog::Delete { shown: false });
+    harness.run();
+    harness.key_press(egui::Key::Escape);
+    harness.run();
+    assert!(!harness.state().2);
+    assert!(!harness.state().0.has_dialog());
+
+    let mut harness = showing(Dialog::Delete { shown: false });
+    harness.run();
+    harness.get_by_label("Delete").click();
+    harness.run();
+    assert!(harness.state().2);
+}
+
+#[test]
+fn the_presets_menu_tells_while_changes_are_not_kept() {
+    use egui_kittest::kittest::Queryable;
+
+    let menu = |presets: Presets| {
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(300.0, 300.0))
+            .build_ui_state(
+                |ui, presets: &mut Presets| {
+                    presets.menu_ui(ui, false);
+                },
+                presets,
+            );
+        harness.run();
+        harness.query_by_label_contains(NOT_KEPT).is_some()
+    };
+    assert!(!menu(Presets::default()));
+    let mut storage = Memory::default();
+    let newer = format!(r#"{{"version": {}, "presets": []}}"#, VERSION + 1);
+    storage.set_string(PRESETS_KEY, newer);
+    let mut presets = Presets::load(&storage);
+    // it stays after the problem was told
+    presets.take_problem();
+    assert!(menu(presets));
 }
 
 #[test]

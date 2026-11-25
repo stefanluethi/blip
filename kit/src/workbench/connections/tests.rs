@@ -21,6 +21,13 @@ fn names(connections: &Connections) -> Vec<&str> {
         .collect()
 }
 
+fn failure(reason: &str, lost: bool) -> Failure {
+    Failure {
+        reason: reason.to_owned(),
+        lost,
+    }
+}
+
 fn addresses(connections: &Connections) -> Vec<&str> {
     connections
         .connections
@@ -84,12 +91,12 @@ fn changing_or_removing_a_failed_address_forgets_the_failure() {
     let mut connections = connections(&["ws://a", "ws://b"]);
     connections
         .failed
-        .insert("ws://a".to_owned(), "refused".to_owned());
+        .insert("ws://a".to_owned(), failure("refused", false));
     assert_eq!(
-        connections.status("ws://a"),
-        Status::Failed("refused".to_owned())
+        connections.state("ws://a"),
+        State::Failed("refused".to_owned())
     );
-    assert_eq!(connections.status("ws://b"), Status::Disconnected);
+    assert_eq!(connections.state("ws://b"), State::Disconnected);
     connections.remove(1);
     assert!(!connections.failed.is_empty());
     connections.remove(0);
@@ -112,10 +119,7 @@ fn several_connections_are_opened_at_once() {
         .collect();
     assert_eq!(sources, ["a", "b"]);
     connections.apply(Action::Disconnect(0), &ctx);
-    assert_eq!(
-        connections.status("ws://127.0.0.1:1/a"),
-        Status::Disconnected
-    );
+    assert_eq!(connections.state("ws://127.0.0.1:1/a"), State::Disconnected);
     assert!(connections.socket("ws://127.0.0.1:1/b").is_some());
 }
 
@@ -195,8 +199,8 @@ fn connections_that_broke_while_recording_can_be_connected_again() {
     harness.get_by_label_contains(b).click();
     harness.get_by_label_contains(a).click();
     harness.run_steps(2);
-    assert!(harness.state().0.status(a).is_active());
-    assert!(!harness.state().0.status(b).is_active());
+    assert!(harness.state().0.state(a).is_active());
+    assert!(!harness.state().0.state(b).is_active());
 }
 
 #[test]
@@ -223,15 +227,15 @@ fn a_connection_that_broke_while_the_list_was_closed_can_be_connected_again() {
     harness.get_by_label_contains(b).click();
     harness.get_by_label_contains(a).click();
     harness.run_steps(2);
-    assert!(harness.state().0.status(a).is_active());
-    assert!(!harness.state().0.status(b).is_active());
+    assert!(harness.state().0.state(a).is_active());
+    assert!(!harness.state().0.state(b).is_active());
     // the next recording starts with what is connected then
     harness.state_mut().0.disconnect(a);
     harness.state_mut().0.set_recording(false);
     harness.run_steps(2);
     harness.get_by_label_contains(a).click();
     harness.run_steps(2);
-    assert!(!harness.state().0.status(a).is_active());
+    assert!(!harness.state().0.state(a).is_active());
 }
 
 #[test]
@@ -250,7 +254,7 @@ fn a_connected_row_is_not_highlighted() {
     harness.state_mut().apply(Action::Connect(0), &ctx);
     // the spinner of the connecting row keeps repainting
     harness.run_steps(2);
-    assert!(harness.state().status("ws://127.0.0.1:1/a").is_active());
+    assert!(harness.state().state("ws://127.0.0.1:1/a").is_active());
     let row = harness.get_by_label_contains("ws://127.0.0.1:1/a");
     assert_ne!(row.accesskit_node().toggled(), Some(Toggled::True));
 }
@@ -317,13 +321,11 @@ fn an_invalid_address_fails_to_connect() {
         connections.receive(|_| {});
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    assert!(matches!(
-        connections.status("no address"),
-        Status::Failed(_)
-    ));
+    assert!(matches!(connections.state("no address"), State::Failed(_)));
     let errors = connections.take_errors();
     assert_eq!(errors.len(), 1);
     assert!(errors[0].starts_with("Cannot connect to no address: "));
+    assert!(errors[0].ends_with(". Is the outpost running?"));
     assert!(connections.take_errors().is_empty());
 }
 
@@ -467,7 +469,7 @@ fn a_newer_protocol_is_warned_once_per_connect() {
     let warning = "a sends protocol 2, blip reads up to 1. Update blip to see all of it.";
     assert_eq!(connections.take_warnings(), [warning]);
     let address = connections.connections[0].address.clone();
-    assert_eq!(connections.status(&address), Status::Newer(2));
+    assert_eq!(connections.state(&address), State::Newer(2));
     assert_eq!(connections.newer(), ["a: protocol 2 is newer than blip"]);
 
     connections.apply(Action::Connect(1), &ctx);
@@ -483,6 +485,291 @@ fn a_newer_protocol_is_warned_once_per_connect() {
     assert_eq!(receive_some(&mut connections, 2).len(), 2);
     assert!(connections.take_warnings().is_empty());
     let address = connections.connections[2].address.clone();
-    assert_eq!(connections.status(&address), Status::Connected);
+    assert_eq!(connections.state(&address), State::Connected);
     assert_eq!(connections.newer().len(), 2);
+}
+
+/// Serves one WebSocket client on a free local port, sending `frame` and then closing
+/// the connection. Returns the address.
+fn serve_and_close(frame: Vec<u8>) -> String {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = format!("ws://{}/a", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        let stream = listener.incoming().next().unwrap().unwrap();
+        let mut socket = tungstenite::accept(stream).unwrap();
+        socket.send(tungstenite::Message::Binary(frame)).unwrap();
+        socket.close(None).unwrap();
+        // ends the closing handshake
+        while socket.read().is_ok() {}
+    });
+    address
+}
+
+/// Receives until no connection is open or being opened, or 5 s passed.
+fn receive_until_idle(connections: &mut Connections) {
+    let start = std::time::Instant::now();
+    while !connections.is_idle() && start.elapsed().as_secs() < 5 {
+        connections.receive(|_| {});
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn a_connection_closed_by_the_other_side_is_lost() {
+    let address = serve_and_close(vec![1]);
+    let mut connections = connections(&[&address]);
+    connections.apply(Action::Connect(0), &egui::Context::default());
+    assert_eq!(receive_some(&mut connections, 2), ["first opened", "a [1]"]);
+    receive_until_idle(&mut connections);
+    assert_eq!(
+        connections.state(&address),
+        State::Lost(CLOSED_REASON.to_owned())
+    );
+    assert_eq!(connections.status(), Status::Failed { lost: true });
+    assert_eq!(
+        connections.take_errors(),
+        [format!("{address} closed the connection")]
+    );
+}
+
+#[test]
+fn the_status_sums_up_the_connections() {
+    let (a, b) = ("ws://127.0.0.1:1/a", "ws://127.0.0.1:1/b");
+    let ctx = egui::Context::default();
+    let mut connections = connections(&[a, b]);
+    assert_eq!(connections.status(), Status::None);
+    connections
+        .failed
+        .insert(a.to_owned(), failure("refused", false));
+    assert_eq!(connections.status(), Status::Failed { lost: false });
+    connections
+        .failed
+        .insert(b.to_owned(), failure("broke", true));
+    assert_eq!(connections.status(), Status::Failed { lost: true });
+    connections.remove(1);
+    assert_eq!(connections.status(), Status::Failed { lost: false });
+    // being opened beats failed
+    connections.set_address(Edited::New, b);
+    connections.apply(Action::Connect(1), &ctx);
+    assert_eq!(connections.status(), Status::Connecting);
+
+    // open beats being opened, another failed one is a problem
+    let served = serve("c", vec![]);
+    connections.set_address(Edited::New, &served);
+    connections.apply(Action::Connect(2), &ctx);
+    let start = std::time::Instant::now();
+    while !connections.is_connected() && start.elapsed().as_secs() < 5 {
+        connections.receive(|_| {});
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(connections.status(), Status::Open { problem: true });
+    connections.remove(0);
+    connections.remove(0);
+    assert_eq!(connections.status(), Status::Open { problem: false });
+}
+
+#[test]
+fn a_preset_keeps_the_open_connections_it_also_has() {
+    let (a, b, c) = (
+        "ws://127.0.0.1:1/a",
+        "ws://127.0.0.1:1/b",
+        "ws://127.0.0.1:1/c",
+    );
+    let ctx = egui::Context::default();
+    let mut connections = connections(&[a, b, c]);
+    connections.apply(Action::Connect(0), &ctx);
+    connections.apply(Action::Connect(1), &ctx);
+    connections
+        .failed
+        .insert(c.to_owned(), failure("refused", false));
+    let connection = |name: &str, address: &str| Connection {
+        name: name.to_owned(),
+        address: address.to_owned(),
+    };
+    // b is renamed, so its messages would change their source: it is disconnected
+    connections.set_saved(vec![
+        connection("x", "ws://x"),
+        connection("a", a),
+        connection("renamed", b),
+    ]);
+    let sockets: Vec<&str> = (connections.sockets.iter())
+        .map(|socket| socket.address.as_str())
+        .collect();
+    assert_eq!(sockets, [a]);
+    assert!(connections.state(a).is_active());
+    assert_eq!(connections.state(b), State::Disconnected);
+    assert!(connections.failed.is_empty());
+}
+
+#[test]
+fn an_address_without_a_scheme_gets_ws() {
+    assert_eq!(with_scheme("target:3000/ws"), "ws://target:3000/ws");
+    assert_eq!(with_scheme("wss://target/ws"), "wss://target/ws");
+    let ctx = egui::Context::default();
+    let mut connections = connections(&[]);
+    connections.apply(Action::StartEdit(Edited::New, Field::Address), &ctx);
+    connections.editing.as_mut().unwrap().text = " target:3000/ws ".to_owned();
+    connections.apply(Action::FinishEdit { entered: true }, &ctx);
+    assert_eq!(addresses(&connections), ["ws://target:3000/ws"]);
+    assert!(connections.editing.is_none());
+}
+
+/// Starts editing `field` of `edited` with `text` and finishes it, with Enter if
+/// `entered`. Returns why it is refused, if it is.
+fn finish(
+    connections: &mut Connections,
+    edited: Edited,
+    field: Field,
+    text: &str,
+    entered: bool,
+) -> Option<&'static str> {
+    let ctx = egui::Context::default();
+    connections.apply(Action::StartEdit(edited, field), &ctx);
+    connections.editing.as_mut().unwrap().text = text.to_owned();
+    connections.apply(Action::FinishEdit { entered }, &ctx);
+    let editing = connections.editing.take()?;
+    assert!(editing.refused);
+    let (note, error) = connections.edit_note(&editing).unwrap();
+    assert!(error);
+    Some(note)
+}
+
+#[test]
+fn a_refused_edit_stays_open_and_tells_why() {
+    let mut connections = connections(&["ws://a/x", "ws://b/y"]);
+    let (new, first) = (Edited::New, Edited::Connection(0));
+    let address = Field::Address;
+    let taken = Some("Another connection has this address");
+    let blank = Some("Enter the address to connect to");
+    assert_eq!(finish(&mut connections, new, address, "a/x", true), taken);
+    assert_eq!(
+        finish(&mut connections, first, address, "ws://b/y", false),
+        taken
+    );
+    assert_eq!(finish(&mut connections, first, address, " ", false), blank);
+    assert_eq!(finish(&mut connections, new, address, "", true), blank);
+    assert_eq!(
+        finish(&mut connections, first, Field::Name, "y", true),
+        Some("Another connection has this name")
+    );
+    // a new address left blank by a click elsewhere is dropped, a value kept is fine
+    assert_eq!(finish(&mut connections, new, address, "", false), None);
+    assert_eq!(
+        finish(&mut connections, first, address, "ws://a/x", true),
+        None
+    );
+    assert_eq!(
+        finish(&mut connections, first, Field::Name, "x", true),
+        None
+    );
+    assert_eq!(addresses(&connections), ["ws://a/x", "ws://b/y"]);
+}
+
+#[test]
+fn a_refused_address_is_shown_in_the_list() {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(300.0, 300.0))
+        .build_ui_state(
+            |ui, connections: &mut Connections| connections.ui(ui, false),
+            connections(&["ws://a"]),
+        );
+    harness.run();
+    harness.get_by_label(regular::PLUS).click();
+    harness.run();
+    // a blank field tells why only once finishing it is refused
+    assert!(
+        harness
+            .query_by_label("Enter the address to connect to")
+            .is_none()
+    );
+    harness
+        .get_by_role(egui::accesskit::Role::TextInput)
+        .type_text("a");
+    harness.run();
+    harness.get_by_label("Another connection has this address");
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    assert!(harness.state().editing.is_some());
+    assert_eq!(addresses(harness.state()), ["ws://a"]);
+}
+
+#[test]
+fn editing_the_address_of_a_connection_tells_it_disconnects() {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(300.0, 300.0))
+        .build_ui_state(
+            |ui, connections: &mut Connections| connections.ui(ui, false),
+            connections(&["ws://127.0.0.1:1/a"]),
+        );
+    let ctx = harness.ctx.clone();
+    let edit = Action::StartEdit(Edited::Connection(0), Field::Address);
+    harness.state_mut().apply(edit, &ctx);
+    harness.run();
+    let note = "A new address disconnects this connection";
+    assert!(harness.query_by_label(note).is_none());
+    harness.state_mut().apply(Action::CancelEdit, &ctx);
+    harness.state_mut().apply(Action::Connect(0), &ctx);
+    let edit = Action::StartEdit(Edited::Connection(0), Field::Address);
+    harness.state_mut().apply(edit, &ctx);
+    harness.run_steps(2);
+    harness.get_by_label(note);
+}
+
+#[test]
+fn deleting_a_connection_is_confirmed() {
+    let (a, b) = ("ws://127.0.0.1:1/a", "ws://127.0.0.1:1/b");
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(300.0, 300.0))
+        .build_ui_state(
+            |ui, connections: &mut Connections| connections.ui(ui, false),
+            connections(&[a, b]),
+        );
+    harness.run();
+    harness.get_by_label_contains(a).click_secondary();
+    harness.run();
+    harness.get_by_label_contains("Delete…").click();
+    harness.run();
+    harness.get_by_label("Delete a?");
+    assert!(harness.state().is_editing());
+    // Escape keeps it
+    harness.key_press(egui::Key::Escape);
+    harness.run();
+    assert!(harness.query_by_label("Delete a?").is_none());
+    assert_eq!(addresses(harness.state()), [a, b]);
+
+    let ctx = harness.ctx.clone();
+    harness.state_mut().apply(Action::AskRemove(0), &ctx);
+    harness.run();
+    harness.get_by_label("Cancel").click();
+    harness.run();
+    assert_eq!(addresses(harness.state()), [a, b]);
+
+    // a connected one is disconnected too, Enter confirms
+    harness.state_mut().apply(Action::Connect(1), &ctx);
+    harness.state_mut().apply(Action::AskRemove(1), &ctx);
+    harness.run_steps(2);
+    harness.get_by_label("Disconnect and delete b?");
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(2);
+    assert_eq!(addresses(harness.state()), [a]);
+    assert!(harness.state().is_idle());
+
+    harness.state_mut().apply(Action::AskRemove(0), &ctx);
+    harness.run();
+    harness.get_by_label("Delete").click();
+    harness.run();
+    assert!(addresses(harness.state()).is_empty());
+    assert!(!harness.state().is_editing());
+}
+
+#[test]
+fn clearing_the_failures_leaves_no_status() {
+    let address = "ws://127.0.0.1:1/a";
+    let mut connections = connections(&[address]);
+    (connections.failed).insert(address.to_owned(), failure("broke", true));
+    assert_eq!(connections.status(), Status::Failed { lost: true });
+    connections.disconnect_all();
+    assert_eq!(connections.status(), Status::Failed { lost: true });
+    connections.clear_failures();
+    assert_eq!(connections.status(), Status::None);
 }

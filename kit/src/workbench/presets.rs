@@ -9,6 +9,7 @@
 
 use super::connections::Connection;
 use super::layout::Group;
+use crate::widgets::theme::TokensExt;
 
 /// Version of the format of the presets, written by `write`. Version 2 adds the
 /// number format Labels and the Fit to of plots and XY views; version 1 reads as it is.
@@ -27,6 +28,12 @@ const DEFAULT_NAME: &str = "Default";
 
 /// Why the active preset cannot change while recording.
 const RECORDING_HINT: &str = "Stop recording to switch presets";
+
+/// What the Presets menu says while the kept presets are of a newer blip.
+const NOT_KEPT: &str = "Changes to presets are not kept";
+/// Why, as the hint of [`NOT_KEPT`].
+const NOT_KEPT_HINT: &str = "The kept presets are of a newer version of blip, which this \
+                             one leaves as they are";
 
 /// The width of the dialogs.
 const DIALOG_WIDTH: f32 = 320.0;
@@ -157,8 +164,14 @@ pub enum Action {
 enum Dialog {
     Rename {
         name: String,
+        /// Whether the field took the focus, which it does once, as the dialog opens.
+        focused: bool,
     },
-    Delete,
+    Delete {
+        /// Whether the dialog was shown before this frame, so an Enter that opened it
+        /// does not confirm it.
+        shown: bool,
+    },
     Export {
         /// Whether each preset is exported.
         chosen: Vec<bool>,
@@ -408,6 +421,12 @@ impl Presets {
     /// `recording`, the active preset stays.
     pub fn menu_ui(&mut self, ui: &mut egui::Ui, recording: bool) -> Option<Action> {
         let mut action = None;
+        if matches!(self.unread, Some(Unread::Newer)) {
+            let text = format!("{} {NOT_KEPT}", egui_phosphor::regular::WARNING);
+            ui.label(egui::RichText::new(text).color(ui.tokens().warn))
+                .on_hover_text(NOT_KEPT_HINT);
+            ui.separator();
+        }
         for (index, preset) in self.list.iter().enumerate() {
             let active = index == self.active;
             let button = egui::Button::selectable(active, preset.name.as_str());
@@ -433,7 +452,8 @@ impl Presets {
         }
         if ui.button("Rename preset…").clicked() {
             let name = self.active().name.clone();
-            self.dialog = Some(Dialog::Rename { name });
+            let focused = false;
+            self.dialog = Some(Dialog::Rename { name, focused });
         }
         let deletable = !recording && self.list.len() > 1;
         if ui
@@ -445,7 +465,7 @@ impl Presets {
             })
             .clicked()
         {
-            self.dialog = Some(Dialog::Delete);
+            self.dialog = Some(Dialog::Delete { shown: false });
         }
         ui.separator();
         if ui.button("Import presets…").clicked() {
@@ -464,8 +484,8 @@ impl Presets {
         let modal = egui::Modal::new(egui::Id::new("presets dialog")).show(ctx, |ui| {
             ui.set_width(DIALOG_WIDTH);
             match &mut dialog {
-                Dialog::Rename { name } => self.rename_ui(ui, name),
-                Dialog::Delete => self.delete_ui(ui, recording),
+                Dialog::Rename { name, focused } => self.rename_ui(ui, name, focused),
+                Dialog::Delete { shown } => self.delete_ui(ui, recording, shown),
                 Dialog::Export { chosen } => self.export_ui(ui, chosen),
                 Dialog::Import {
                     file,
@@ -485,13 +505,17 @@ impl Presets {
         }
     }
 
-    fn rename_ui(&mut self, ui: &mut egui::Ui, name: &mut String) -> Outcome {
+    /// The dialog to rename the active preset to `name`, whose field takes the focus
+    /// with its text selected unless it is `focused`, so Tab can move on.
+    fn rename_ui(&mut self, ui: &mut egui::Ui, name: &mut String, focused: &mut bool) -> Outcome {
         ui.heading("Rename preset");
         ui.add_space(4.0);
         let field = crate::widgets::theme::wide_field(name);
         let response = ui.add(field);
-        if !response.has_focus() && !response.lost_focus() {
+        if !*focused {
+            *focused = true;
             response.request_focus();
+            select_all(ui.ctx(), response.id, name);
         }
         let trimmed = name.trim();
         let taken = self
@@ -504,11 +528,15 @@ impl Presets {
         } else {
             None
         };
-        ui.weak(problem.unwrap_or(" "));
+        let problem_text = egui::RichText::new(problem.unwrap_or(" ")).color(ui.tokens().error);
+        ui.label(problem_text);
         let entered = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         let mut pressed = buttons_ui(ui, "Rename", problem.is_none());
         if entered && problem.is_none() {
             pressed = Pressed::Apply;
+        } else if entered {
+            // the name is to be fixed
+            response.request_focus();
         }
         match pressed {
             Pressed::Nothing => Outcome::Open,
@@ -520,7 +548,9 @@ impl Presets {
         }
     }
 
-    fn delete_ui(&self, ui: &mut egui::Ui, recording: bool) -> Outcome {
+    /// The dialog to confirm deleting the active preset, with Enter too once it was
+    /// `shown`. Escape closes it, as it does any modal.
+    fn delete_ui(&self, ui: &mut egui::Ui, recording: bool, shown: &mut bool) -> Outcome {
         ui.heading("Delete preset");
         ui.add_space(4.0);
         ui.label(format!(
@@ -528,7 +558,16 @@ impl Presets {
             self.active().name
         ));
         ui.add_space(4.0);
-        outcome(buttons_ui(ui, "Delete", !recording), || Action::Delete)
+        let delete = egui::RichText::new("Delete").color(ui.tokens().error);
+        let mut pressed = buttons_ui(ui, delete, !recording);
+        // a focused button takes Enter itself
+        let entered = ui.input(|input| input.key_pressed(egui::Key::Enter))
+            && ui.memory(|memory| memory.focused().is_none());
+        if pressed == Pressed::Nothing && *shown && !recording && entered {
+            pressed = Pressed::Apply;
+        }
+        *shown = true;
+        outcome(pressed, || Action::Delete)
     }
 
     fn export_ui(&self, ui: &mut egui::Ui, chosen: &mut [bool]) -> Outcome {
@@ -578,7 +617,8 @@ impl Presets {
                         ui.add_enabled(!locked, egui::Checkbox::new(checked, preset.name.as_str()))
                             .on_disabled_hover_text("Stop recording to replace the active preset");
                         if existing.is_some() {
-                            ui.weak("replaces the existing one");
+                            let color = ui.tokens().warn;
+                            ui.label(egui::RichText::new("replaces the existing one").color(color));
                         }
                     });
                 }
@@ -588,16 +628,33 @@ impl Presets {
             .filter(|&(preset, &chosen)| chosen && !locked(preset))
             .map(|(preset, _)| preset)
             .collect();
-        let pressed = buttons_ui(ui, "Import", !taken.is_empty());
+        let replaces = (taken.iter()).any(|preset| self.index_of(&preset.name).is_some());
+        let apply = if replaces {
+            "Import and replace"
+        } else {
+            "Import"
+        };
+        let pressed = buttons_ui(ui, apply, !taken.is_empty());
         outcome(pressed, || {
             Action::Imported(taken.into_iter().cloned().collect())
         })
     }
 }
 
+/// Selects all of `text` in the text field `id`.
+fn select_all(ctx: &egui::Context, id: egui::Id, text: &str) {
+    use egui::text::{CCursor, CCursorRange};
+    if let Some(mut state) = egui::TextEdit::load_state(ctx, id) {
+        let end = CCursor::new(text.chars().count());
+        let all = CCursorRange::two(CCursor::new(0), end);
+        state.cursor.set_char_range(Some(all));
+        egui::TextEdit::store_state(ctx, id, state);
+    }
+}
+
 /// The buttons at the bottom of a dialog: Cancel and the one that applies it, named
 /// `apply` and enabled if `enabled`.
-fn buttons_ui(ui: &mut egui::Ui, apply: &str, enabled: bool) -> Pressed {
+fn buttons_ui(ui: &mut egui::Ui, apply: impl Into<egui::WidgetText>, enabled: bool) -> Pressed {
     let mut pressed = Pressed::Nothing;
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         if ui.add_enabled(enabled, egui::Button::new(apply)).clicked() {
