@@ -64,6 +64,7 @@ impl State {
         ui.spacing_mut().interact_size.y = 28.0;
         ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
         let recording = self.session.recording;
+        self.time.set_connected(connected);
         let clicked = self.time.ui(ui, &self.session.store, recording, |ui| {
             record_button(ui, recording, connected)
         });
@@ -163,6 +164,8 @@ pub struct App {
     /// Whether the traces panel shows only the traces and actions the selected view can
     /// show.
     compatible_only: bool,
+    /// Whether the traces panel shows only what is checked for the selected view.
+    checked_only: bool,
     /// Counts the fresh starts of the traces panel. The state of its widgets, e.g.
     /// which branches of the tree are open, is kept apart per start, see
     /// [`Self::reset_traces_panel`].
@@ -526,15 +529,15 @@ impl App {
 
     /// The tree of the traces and actions, to choose those of the selected view.
     fn traces_ui(&mut self, ui: &mut egui::Ui) {
-        theme::section_header(ui, "Traces & actions", |_| {});
+        theme::section_header(ui, "Traces, actions and logs", |_| {});
         // a distribution linked to a plot shows the traces of the plot
         let linked = (self.layout.selected_link())
             .map(|plot| format!("Shows the traces of the linked plot {plot}"));
         let view = self.layout.selected_view_mut();
         let hint = match &view {
-            None => Some("Select a view to choose its traces or actions"),
+            None => Some("Select a view to choose its traces, actions or logs"),
             Some(view) if !view.has_selection() => {
-                Some("The selected view shows no traces or actions")
+                Some("The selected view shows no traces, actions or logs")
             }
             Some(_) => None,
         };
@@ -550,21 +553,19 @@ impl App {
             ui,
             &mut self.trace_search,
             &mut self.compatible_only,
+            &mut self.checked_only,
             filterable,
         );
         let model = &self.state.session.store;
         let colored = (view.as_ref()).map_or_else(Vec::new, |view| view.colored_paths(model));
         let selection = view.and_then(|view| view.selection_mut());
-        ui.add_enabled_ui(linked.is_none(), |ui| {
-            view::trace_selection::show(
-                ui,
-                model,
-                &self.trace_search,
-                self.compatible_only,
-                selection,
-                &colored,
-            );
-        });
+        let filter = view::trace_selection::TreeFilter {
+            search: &self.trace_search,
+            compatible_only: self.compatible_only,
+            checked_only: self.checked_only,
+        };
+        // a linked view shows its checks, which the user cannot change
+        view::trace_selection::show(ui, model, filter, selection, &colored, linked.is_none());
     }
 }
 

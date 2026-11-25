@@ -11,6 +11,229 @@ fn selection(paths: &mut BTreeSet<String>, view_type: ViewType) -> ViewSelection
     }
 }
 
+/// The filter of the tree with `search`, showing only what the view can show if
+/// `compatible_only`.
+fn filter(search: &str, compatible_only: bool) -> TreeFilter<'_> {
+    TreeFilter {
+        search,
+        compatible_only,
+        checked_only: false,
+    }
+}
+
+#[test]
+fn wildcard_folders_are_marked_and_tell_their_state() {
+    use egui_kittest::kittest::Queryable;
+
+    let mut model = MemoryStore::default();
+    add_trace(&mut model, "motor/rpm");
+    add_trace(&mut model, "imu/x");
+    let mut harness = pick_harness(model, ViewType::Plot.into());
+    assert!(harness.query_by_label(WILDCARD_MARK).is_none());
+    harness.get_by_label("motor").hover();
+    harness.run();
+    assert!(
+        harness
+            .query_by_label_contains("Check to also show traces added later")
+            .is_some()
+    );
+    harness.get_by_label("motor").click();
+    harness.run();
+    assert_eq!(harness.state().2, set(&["/motor"]));
+    // only the wildcard folder is marked
+    assert_eq!(harness.query_all_by_label(WILDCARD_MARK).count(), 1);
+    harness.get_by_label("imu").hover();
+    harness.run();
+    harness.get_by_label("motor").hover();
+    harness.run();
+    assert!(
+        harness
+            .query_by_label_contains("Also shows traces added here later")
+            .is_some()
+    );
+}
+
+#[test]
+fn branches_and_wildcards_below_others_are_known() {
+    let mut paths = BTreeSet::new();
+    let mut wildcards = set(&["/motor"]);
+    let selection = Selection {
+        paths: &mut paths,
+        apart: &BTreeSet::new(),
+        wildcards: &mut wildcards,
+        picks: ViewType::Plot.into(),
+        searching: false,
+        colored: &[],
+        editable: true,
+    };
+    assert!(selection.is_wildcard("/motor"));
+    assert!(selection.is_wildcard("/motor/left"));
+    assert!(!selection.is_wildcard("/motors"));
+    assert_eq!(branch_path("/imu/.acc"), "imu.acc");
+}
+
+#[test]
+fn one_trace_views_pick_with_radio_buttons() {
+    use egui_kittest::kittest::Queryable;
+
+    let mut model = MemoryStore::default();
+    add_array(&mut model, "a", 3);
+    add_array(&mut model, "b", 3);
+    let mut harness = pick_harness(model, ViewType::Heatmap.into());
+    let radios = || egui::accesskit::Role::RadioButton;
+    assert_eq!(harness.query_all_by_role(radios()).count(), 2);
+    assert_eq!(
+        harness
+            .query_all_by_role(egui::accesskit::Role::CheckBox)
+            .count(),
+        0
+    );
+    harness.get_by_label("a").click();
+    harness.run();
+    harness.get_by_label("b").click();
+    harness.run();
+    assert_eq!(harness.state().1, set(&["b"]));
+}
+
+#[test]
+fn without_a_view_the_folders_still_open_and_close() {
+    use egui_kittest::kittest::{NodeT, Queryable};
+
+    let mut model = MemoryStore::default();
+    add_trace(&mut model, "motor/rpm");
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(300.0, 400.0))
+        .build_ui(move |ui| show(ui, &model, filter("", false), None, &[], true));
+    harness.run();
+    assert!(
+        harness
+            .get_by_label_contains("rpm")
+            .accesskit_node()
+            .is_disabled()
+    );
+    let caret = harness.get_by_label("Collapse");
+    assert!(!caret.accesskit_node().is_disabled());
+    caret.click();
+    harness.run();
+    assert!(harness.query_by_label_contains("rpm").is_none());
+}
+
+#[test]
+fn alt_click_and_the_menu_open_and_close_all_below() {
+    use egui_kittest::kittest::Queryable;
+
+    let mut model = MemoryStore::default();
+    add_trace(&mut model, "a/b/c");
+    add_trace(&mut model, "a/d/e");
+    let mut harness = pick_harness(model, ViewType::Plot.into());
+    let shown = |harness: &egui_kittest::Harness<'_, PickState>| {
+        ["b", "c", "d", "e"]
+            .into_iter()
+            .filter(|label| harness.query_by_label(label).is_some())
+            .count()
+    };
+    assert_eq!(shown(&harness), 4);
+    harness.get_by_label(DOTS_THREE_VERTICAL).click();
+    harness.run();
+    harness.get_by_label("Collapse all").click();
+    harness.run_steps(2);
+    assert_eq!(shown(&harness), 0);
+    // opening the top branch alone leaves the ones below closed
+    harness.get_by_label("Expand").click();
+    harness.run_steps(2);
+    assert_eq!(shown(&harness), 2);
+    // with Alt, it closes and opens all below it
+    harness.get_by_label("Collapse").click();
+    harness.run_steps(2);
+    harness
+        .get_by_label("Expand")
+        .click_modifiers(egui::Modifiers::ALT);
+    harness.run_steps(2);
+    assert_eq!(shown(&harness), 4);
+}
+
+#[test]
+fn checked_only_shows_the_checked_and_hidden_ones_are_counted() {
+    use egui_kittest::kittest::Queryable;
+
+    let mut model = MemoryStore::default();
+    add_trace(&mut model, "motor/rpm");
+    add_trace(&mut model, "motor/temp");
+    add_array(&mut model, "arr", 3);
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(300.0, 400.0))
+        .build_ui_state(
+            move |ui, (search, checked_only, paths): &mut (String, bool, BTreeSet<String>)| {
+                search_ui(ui, search, &mut false, checked_only, true);
+                let filter = TreeFilter {
+                    search,
+                    compatible_only: false,
+                    checked_only: *checked_only,
+                };
+                show(
+                    ui,
+                    &model,
+                    filter,
+                    Some(selection(paths, ViewType::Plot)),
+                    &[],
+                    true,
+                );
+            },
+            (String::new(), false, set(&["motor/rpm", "arr[1]"])),
+        );
+    harness.run();
+    assert!(harness.query_by_label_contains("temp").is_some());
+    harness.get_by_label(CHECK_SQUARE).click();
+    harness.run_steps(2);
+    assert!(harness.state().1);
+    assert!(harness.query_by_label_contains("temp").is_none());
+    assert!(harness.query_by_label_contains("rpm").is_some());
+    assert!(harness.query_by_label_contains("arr").is_some());
+    // the search hides a checked trace, which is counted
+    harness.state_mut().0 = "rpm".to_owned();
+    harness.run_steps(2);
+    assert!(
+        harness
+            .query_by_label("1 checked trace is hidden by the search or the filter")
+            .is_some()
+    );
+    assert!(has_trace_or_element(&set(&["arr[1]"]), "arr"));
+    assert!(!has_trace_or_element(&set(&["arr2"]), "arr"));
+}
+
+#[test]
+fn ctrl_f_focuses_the_search() {
+    use egui_kittest::kittest::Queryable;
+
+    let mut harness = tree_harness(ViewType::Plot);
+    request_search_focus(&harness.ctx);
+    harness.run_steps(2);
+    let field = harness.get_by_role(egui::accesskit::Role::TextInput);
+    assert!(field.is_focused());
+}
+
+#[test]
+fn the_arrow_keys_move_the_focus_and_open_and_close_folders() {
+    use egui_kittest::kittest::Queryable;
+
+    let mut model = MemoryStore::default();
+    add_trace(&mut model, "motor/rpm");
+    add_trace(&mut model, "motor/temp");
+    let mut harness = pick_harness(model, ViewType::Plot.into());
+    harness.get_by_label_contains("motor").focus();
+    harness.run_steps(2);
+    harness.key_press(egui::Key::ArrowLeft);
+    harness.run_steps(2);
+    assert!(harness.query_by_label_contains("rpm").is_none());
+    harness.key_press(egui::Key::ArrowRight);
+    harness.run_steps(2);
+    assert!(harness.query_by_label_contains("rpm").is_some());
+    // Space checks the focused row
+    harness.key_press(egui::Key::Space);
+    harness.run_steps(2);
+    assert_eq!(harness.state().1, set(&["motor/rpm", "motor/temp"]));
+}
+
 #[test]
 fn trace_tree_branches_at_slashes() {
     let traces: Vec<Trace<'_>> = ["acc/x", "acc/y", "/cpu", "acc"]
@@ -163,14 +386,14 @@ fn searching_shows_and_selects_only_the_matching_traces() {
         .with_size(egui::vec2(300.0, 400.0))
         .build_ui_state(
             move |ui, (search, paths): &mut (String, BTreeSet<String>)| {
-                search_ui(ui, search, &mut false, true);
+                search_ui(ui, search, &mut false, &mut false, true);
                 show(
                     ui,
                     &model,
-                    search,
-                    false,
+                    filter(search, false),
                     Some(selection(paths, ViewType::Plot)),
                     &[],
+                    true,
                 );
             },
             (String::new(), BTreeSet::new()),
@@ -259,10 +482,10 @@ fn tree_frame_time() {
                 show(
                     ui,
                     &model,
-                    "",
-                    true,
+                    filter("", true),
                     Some(selection(paths, ViewType::Plot)),
                     &[],
+                    true,
                 );
                 ui.data_mut(|data| {
                     *data.get_temp_mut_or_default::<f64>(egui::Id::new("spent")) +=
@@ -309,14 +532,14 @@ fn tree_harness(view_type: ViewType) -> egui_kittest::Harness<'static, (String, 
         .with_size(egui::vec2(300.0, 400.0))
         .build_ui_state(
             move |ui, (search, paths): &mut (String, BTreeSet<String>)| {
-                search_ui(ui, search, &mut false, true);
+                search_ui(ui, search, &mut false, &mut false, true);
                 show(
                     ui,
                     &model,
-                    search,
-                    false,
+                    filter(search, false),
                     Some(selection(paths, view_type)),
                     &[],
+                    true,
                 );
             },
             (String::new(), BTreeSet::new()),
@@ -432,11 +655,18 @@ fn the_filter_shows_only_what_the_view_can_show() {
     let mut harness = Harness::builder()
         .with_size(egui::vec2(300.0, 400.0))
         .build_ui_state(
-            move |ui, (search, filter, view_type): &mut (String, bool, Option<ViewType>)| {
-                search_ui(ui, search, filter, view_type.is_some());
+            move |ui, (search, compatible, view_type): &mut (String, bool, Option<ViewType>)| {
+                search_ui(ui, search, compatible, &mut false, view_type.is_some());
                 let mut paths = BTreeSet::new();
                 let selection = view_type.map(|view_type| selection(&mut paths, view_type));
-                show(ui, &model, search, *filter, selection, &[]);
+                show(
+                    ui,
+                    &model,
+                    filter(search, *compatible),
+                    selection,
+                    &[],
+                    true,
+                );
             },
             (String::new(), false, Some(ViewType::Plot)),
         );
@@ -506,7 +736,7 @@ fn the_buttons_are_as_high_as_the_search_field_and_fit_beside_it() {
                     ui.style_mut()
                         .text_styles
                         .insert(egui::TextStyle::Body, egui::FontId::proportional(size));
-                    search_ui(ui, search, &mut false, true);
+                    search_ui(ui, search, &mut false, &mut false, true);
                 },
                 search.to_owned(),
             );
@@ -558,7 +788,7 @@ fn pick_harness(model: MemoryStore, picks: Picks) -> egui_kittest::Harness<'stat
         .with_size(egui::vec2(300.0, 400.0))
         .build_ui_state(
             move |ui, (model, paths, wildcards, search): &mut PickState| {
-                search_ui(ui, search, &mut false, true);
+                search_ui(ui, search, &mut false, &mut false, true);
                 let selection = ViewSelection {
                     paths,
                     wildcards,
@@ -570,7 +800,7 @@ fn pick_harness(model: MemoryStore, picks: Picks) -> egui_kittest::Harness<'stat
                     wildcards,
                     picks,
                 };
-                show(ui, model, search, false, Some(selection), &[]);
+                show(ui, model, filter(search, false), Some(selection), &[], true);
             },
             (model, BTreeSet::new(), BTreeSet::new(), String::new()),
         );
@@ -858,10 +1088,10 @@ fn the_tree_row_of_a_described_trace_has_its_description_on_hover() {
                 show(
                     ui,
                     &model,
-                    "",
-                    false,
+                    filter("", false),
                     Some(selection(paths, ViewType::Plot)),
                     &[],
+                    true,
                 );
             },
             BTreeSet::new(),

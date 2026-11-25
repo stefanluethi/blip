@@ -4,8 +4,8 @@ use crate::widgets::theme::{self, TokensExt};
 use crate::widgets::view::{Selectable, ViewType};
 use egui::{RichText, Ui};
 use egui_phosphor::regular::{
-    BRACKETS_CURLY, BRACKETS_SQUARE, FUNNEL, HASH, LIGHTNING, LIST_BULLETS, MAGNIFYING_GLASS,
-    TEXT_AA, X,
+    BRACKETS_CURLY, BRACKETS_SQUARE, CHECK_SQUARE, DOTS_THREE_VERTICAL, FUNNEL, HASH, LIGHTNING,
+    LIST_BULLETS, MAGNIFYING_GLASS, PLUS, TEXT_AA, X,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -251,13 +251,43 @@ struct Selection<'a> {
     /// The paths of the traces the view draws in the colours of the traces, in their
     /// order, see [`theme::trace_color`].
     colored: &'a [String],
+    /// Whether the checks can be changed, else they only show what is picked.
+    editable: bool,
+}
+
+impl Selection<'_> {
+    /// Whether the branch with `key` also picks what is added below it later, as it or
+    /// a branch above it is a wildcard.
+    fn is_wildcard(&self, key: &str) -> bool {
+        self.wildcards
+            .iter()
+            .any(|wildcard| wildcard == key || key_is_below(key, wildcard))
+    }
+}
+
+/// What checking `paths` does besides picking them, in a view that shows some traces
+/// apart from the others, see [`ViewType::shows_apart`].
+fn apart_hint(selection: &Selection<'_>, paths: &[String]) -> Option<&'static str> {
+    paths
+        .iter()
+        .any(|path| selection.apart.contains(path))
+        .then_some("Replaces the other traces of this view")
+}
+
+/// The path of the branch with `key`, as the paths of the traces below it start, e.g.
+/// "imu.acc" for "/imu/.acc".
+fn branch_path(key: &str) -> String {
+    key.trim_start_matches('/').replace("/.", ".")
 }
 
 /// Shows a checkbox labelled `label` for picking all `paths` of the node with `key`, and
 /// a faint `icon` at the right end of the row: indeterminate if only some are picked,
 /// and disabled if there are none. A checked trace the view draws in a colour fills its
-/// box with the colour, so that the tree also shows which line is which. Checking a `branch` also picks what is added below it later,
-/// unless only the traces matching a search are shown.
+/// box with the colour, so that the tree also shows which line is which. Checking a
+/// `branch` also picks what is added below it later, unless only the traces matching a
+/// search are shown; such a wildcard is marked at the end of the row. In views that show
+/// one trace, a radio button picks one in place of the others. A long label is cut off
+/// before the icon.
 fn show_checkbox(
     ui: &mut Ui,
     label: &str,
@@ -272,20 +302,39 @@ fn show_checkbox(
         .filter(|path| selection.paths.contains(*path))
         .count();
     let all = !paths.is_empty() && picked_count == paths.len();
-    let mut checked = all;
-    let checkbox = egui::Checkbox::new(&mut checked, label)
-        .indeterminate(picked_count > 0 && picked_count < paths.len());
-    let mut response = ui.add_enabled(!paths.is_empty(), checkbox);
-    if let [path] = paths
-        && all
-        && let Some(index) = selection.colored.iter().position(|colored| colored == path)
-    {
-        paint_colored_check(ui, &response, theme::trace_color(ui.visuals(), index));
-    }
-    let icon = type_icon_ui(ui, icon);
+    let marked = branch && selection.is_wildcard(key);
+    let radio = selection.picks.view_type.shows_one_trace() && paths.len() <= 1;
+    let enabled = selection.editable && !paths.is_empty();
+    let (mut response, icons) = with_icons(ui, icon, marked, |ui| {
+        let response = if radio {
+            ui.add_enabled(enabled, egui::RadioButton::new(all, label))
+        } else {
+            let mut checked = all;
+            let checkbox = egui::Checkbox::new(&mut checked, label)
+                .indeterminate(picked_count > 0 && picked_count < paths.len());
+            ui.add_enabled(enabled, checkbox)
+        };
+        if let [path] = paths
+            && all
+            && !radio
+            && let Some(index) = selection.colored.iter().position(|colored| colored == path)
+        {
+            paint_colored_check(ui, &response, theme::trace_color(ui.visuals(), index));
+        }
+        response
+    });
     let wildcard = branch && !selection.searching;
-    if wildcard {
-        response = response.on_hover_text("Checking it also picks what is added to it later");
+    if branch {
+        let state = if marked {
+            Some("Also shows traces added here later")
+        } else if wildcard && selection.editable {
+            Some("Check to also show traces added later")
+        } else {
+            None
+        };
+        let path = branch_path(key);
+        let hover = state.map_or_else(|| path.clone(), |state| format!("{path}\n{state}"));
+        response = response.on_hover_text(&hover).on_disabled_hover_text(hover);
     }
     if response.clicked() {
         if all {
@@ -320,9 +369,9 @@ fn show_checkbox(
             }
         }
     }
-    // the icon at the end of the row shows the hover text of the row too
-    match icon {
-        Some(icon) => response | icon,
+    // the icons at the end of the row show the hover text of the row too
+    match icons {
+        Some(icons) => response | icons,
         None => response,
     }
 }
@@ -338,21 +387,43 @@ fn paint_colored_check(ui: &Ui, checkbox: &egui::Response, color: egui::Color32)
         egui::pos2(small.center().x, small.bottom()),
         egui::pos2(small.right(), small.top()),
     ];
-    let mark = egui::Color32::from_rgb(0x12, 0x13, 0x18);
+    let mark = theme::on_trace_color(ui.visuals());
     painter.add(egui::Shape::line(check, egui::Stroke::new(1.5, mark)));
 }
 
-/// Shows the `icon` of the type of a row, if any, faint at the right end of the row, so
-/// that the names line up and read first.
-fn type_icon_ui(ui: &mut Ui, icon: Option<&str>) -> Option<egui::Response> {
-    let icon = icon?;
+/// The mark of a branch that also picks what is added below it later.
+const WILDCARD_MARK: &str = PLUS;
+
+/// Shows the faint `icon` of the type of a row, if any, and the mark of a `wildcard`, at
+/// the right end of the row, so that the names line up and read first, then what `add`
+/// adds in the room left, its text cut off with an ellipsis. Returns what `add` returns
+/// and the icons, if any.
+fn with_icons<R>(
+    ui: &mut Ui,
+    icon: Option<&str>,
+    wildcard: bool,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> (R, Option<egui::Response>) {
     let color = ui.tokens().text_faint;
     let layout = egui::Layout::right_to_left(egui::Align::Center);
-    let response = ui.with_layout(layout, |ui| {
+    ui.with_layout(layout, |ui| {
         ui.add_space(4.0);
-        ui.label(RichText::new(icon).color(color))
-    });
-    Some(response.inner)
+        let mut icons = icon.map(|icon| ui.label(RichText::new(icon).color(color)));
+        if wildcard {
+            let mark = ui.label(RichText::new(WILDCARD_MARK).color(color).small());
+            icons = Some(match icons {
+                Some(icons) => icons | mark,
+                None => mark,
+            });
+        }
+        let layout = egui::Layout::left_to_right(egui::Align::Center);
+        let inner = ui.with_layout(layout, |ui| {
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+            add(ui)
+        });
+        (inner.inner, icons)
+    })
+    .inner
 }
 
 /// The indices of the element at `flat_index` of an array of `shape`, in row-major
@@ -556,17 +627,119 @@ fn toggles_id() -> egui::Id {
     egui::Id::new("trace tree toggles")
 }
 
-/// Shows a button to show or hide what is below a row, whose state is under `id`.
-fn toggle_ui(ui: &mut Ui, id: egui::Id, default_open: bool) {
+/// Counts a change of the rows of the tree, so that they are made anew.
+fn count_toggle(ctx: &egui::Context) {
+    ctx.data_mut(|data| *data.get_temp_mut_or_default::<u64>(toggles_id()) += 1);
+}
+
+/// Id of a request to open or close all branches at and below a key, see
+/// [`SubtreeRequest`].
+fn subtree_request_id() -> egui::Id {
+    egui::Id::new("trace tree subtree request")
+}
+
+/// A request to open or close the branches at and below `key`, all of them with
+/// [`ROOT_KEY`], applied when the rows are made next.
+#[derive(Clone, Default)]
+struct SubtreeRequest {
+    key: String,
+    open: bool,
+}
+
+/// Asks to open or close all branches at and below `key` when the rows are made next.
+fn request_subtree(ctx: &egui::Context, key: &str, open: bool) {
+    let request = SubtreeRequest {
+        key: key.to_owned(),
+        open,
+    };
+    ctx.data_mut(|data| data.insert_temp(subtree_request_id(), request));
+    count_toggle(ctx);
+}
+
+/// Opens or closes the branches below `node`, with the key `prefix`, that `request`
+/// asks for, also those below closed ones.
+fn apply_subtree_request(
+    ui: &Ui,
+    node: &TraceTree<'_>,
+    prefix: &str,
+    searching: bool,
+    request: &SubtreeRequest,
+) {
+    for (segment, child) in &node.children {
+        if child.children.is_empty() {
+            continue;
+        }
+        let key = format!("{prefix}/{segment}");
+        if key == request.key || key_is_below(&key, &request.key) {
+            let id = ui.make_persistent_id(("trace_tree", &key, searching));
+            let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
+                ui.ctx(),
+                id,
+                true,
+            );
+            state.set_open(request.open);
+            state.store(ui.ctx());
+        }
+        apply_subtree_request(ui, child, &key, searching, request);
+    }
+}
+
+/// Shows a button to show or hide what is below a row, whose state is under `id`. With
+/// Alt, the branch `subtree` key opens or closes with all branches below it. Returns
+/// the state, to change it with the keys.
+fn toggle_ui(
+    ui: &mut Ui,
+    id: egui::Id,
+    default_open: bool,
+    subtree: Option<&str>,
+) -> egui::collapsing_header::CollapsingState {
     let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
         ui.ctx(),
         id,
         default_open,
     );
-    if state.show_toggle_button(ui, theme::paint_caret).clicked() {
-        ui.data_mut(|data| *data.get_temp_mut_or_default::<u64>(toggles_id()) += 1);
+    let was_open = state.is_open();
+    let response = state.show_toggle_button(ui, theme::paint_caret);
+    // named for screen readers, as egui leaves it without a name
+    let enabled = ui.is_enabled();
+    let name = if was_open { "Collapse" } else { "Expand" };
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, name));
+    if response.clicked() {
+        if let Some(key) = subtree.filter(|_| ui.input(|input| input.modifiers.alt)) {
+            request_subtree(ui.ctx(), key, !was_open);
+        } else {
+            count_toggle(ui.ctx());
+        }
+    }
+    if subtree.is_some() {
+        response.on_hover_text("Alt+click to open or close all below it");
     }
     state.store(ui.ctx());
+    state
+}
+
+/// Opens or closes the toggle `state` with the Right and Left keys while the row with
+/// `row` has the focus, which then stay with the row.
+fn arrow_keys(ui: &Ui, row: &egui::Response, state: &mut egui::collapsing_header::CollapsingState) {
+    if !row.has_focus() {
+        return;
+    }
+    let filter = egui::EventFilter {
+        horizontal_arrows: true,
+        ..Default::default()
+    };
+    ui.memory_mut(|memory| memory.set_focus_lock_filter(row.id, filter));
+    let (left, right) = ui.input(|input| {
+        (
+            input.key_pressed(egui::Key::ArrowLeft),
+            input.key_pressed(egui::Key::ArrowRight),
+        )
+    });
+    if (left && state.is_open()) || (right && !state.is_open()) {
+        state.set_open(right);
+        state.store(ui.ctx());
+        count_toggle(ui.ctx());
+    }
 }
 
 /// What a view showing an array as a whole does with it, see [`Selectable::Array`].
@@ -579,31 +752,35 @@ fn row_ui(ui: &mut Ui, store: &dyn Store, row: &Row, selection: &mut Selection<'
         let indent = ui.spacing().indent;
         ui.add_space(row.depth as f32 * indent);
         let toggle = match &row.kind {
-            RowKind::Branch { id, .. } => Some((*id, true)),
-            RowKind::Trace { elements, .. } => elements.map(|id| (id, false)),
+            RowKind::Branch { id, .. } => Some((*id, true, Some(key))),
+            RowKind::Trace { elements, .. } => elements.map(|id| (id, false, None)),
             _ => None,
         };
-        match toggle {
-            Some((id, default_open)) => {
+        let mut toggle = match toggle {
+            Some((id, default_open, subtree)) => {
                 // the toggle takes the indent without a gap, as in egui's headers
                 let item_spacing = ui.spacing().item_spacing;
                 ui.spacing_mut().item_spacing.x = 0.0;
-                toggle_ui(ui, id, default_open);
+                let state = toggle_ui(ui, id, default_open, subtree);
                 ui.spacing_mut().item_spacing = item_spacing;
+                Some(state)
             }
             // lined up with the checkboxes of the branches next to it
-            None => ui.add_space(indent),
-        }
+            None => {
+                ui.add_space(indent);
+                None
+            }
+        };
         let picks = selection.picks;
-        match &row.kind {
+        let response = match &row.kind {
             RowKind::Branch { paths, record, .. } => {
                 let icon = record.then_some(BRACKETS_CURLY);
                 if picks.view_type.shows_one_trace() {
                     // a branch cannot be selected as one trace
-                    ui.label(label);
-                    type_icon_ui(ui, icon);
+                    let (label, _) = with_icons(ui, icon, false, |ui| ui.label(label));
+                    label.on_hover_text(branch_path(key))
                 } else {
-                    show_checkbox(ui, label, icon, paths, key, true, selection);
+                    show_checkbox(ui, label, icon, paths, key, true, selection)
                 }
             }
             RowKind::Trace { path, .. } => {
@@ -626,15 +803,23 @@ fn row_ui(ui: &mut Ui, store: &dyn Store, row: &Row, selection: &mut Selection<'
                     }
                     _ => trace_paths(trace, picks.view_type),
                 };
+                if let Some(apart) = apart_hint(selection, &paths) {
+                    hover.push_str(&format!("\n{apart}"));
+                }
                 let icon = Some(type_icon(trace.samples));
                 show_checkbox(ui, label, icon, &paths, key, false, selection)
                     .on_hover_text(&hover)
-                    .on_disabled_hover_text(hover);
+                    .on_disabled_hover_text(hover)
             }
             RowKind::Whole(path) => {
                 let paths = [path.to_string()];
+                let mut hover = format!("{path}\n{WHOLE_ARRAY_HINT}");
+                if let Some(apart) = apart_hint(selection, &paths) {
+                    hover.push_str(&format!("\n{apart}"));
+                }
                 show_checkbox(ui, label, None, &paths, key, false, selection)
-                    .on_hover_text(format!("{path}\n{WHOLE_ARRAY_HINT}"));
+                    .on_hover_text(&hover)
+                    .on_disabled_hover_text(hover)
             }
             RowKind::Element { path, label_start } => {
                 let paths = std::slice::from_ref(path);
@@ -647,7 +832,7 @@ fn row_ui(ui: &mut Ui, store: &dyn Store, row: &Row, selection: &mut Selection<'
                     false,
                     selection,
                 )
-                .on_hover_text(path);
+                .on_hover_text(path)
             }
             RowKind::Record(path) => {
                 let paths = [path.to_string()];
@@ -660,7 +845,7 @@ fn row_ui(ui: &mut Ui, store: &dyn Store, row: &Row, selection: &mut Selection<'
                     false,
                     selection,
                 )
-                .on_hover_text(format!("{path}\nRecord"));
+                .on_hover_text(format!("{path}\nRecord"))
             }
             RowKind::Action { path, unannounced } => {
                 let paths = Vec::from_iter(action_path(path, picks.view_type));
@@ -673,7 +858,7 @@ fn row_ui(ui: &mut Ui, store: &dyn Store, row: &Row, selection: &mut Selection<'
                 }
                 show_checkbox(ui, label, Some(ACTION_ICON), &paths, key, false, selection)
                     .on_hover_text(&hover)
-                    .on_disabled_hover_text(hover);
+                    .on_disabled_hover_text(hover)
             }
             RowKind::Log(path) => {
                 let paths = Vec::from_iter(log_path(path, picks.view_type));
@@ -686,8 +871,11 @@ fn row_ui(ui: &mut Ui, store: &dyn Store, row: &Row, selection: &mut Selection<'
                 }
                 show_checkbox(ui, label, Some(LOG_ICON), &paths, key, false, selection)
                     .on_hover_text(&hover)
-                    .on_disabled_hover_text(hover);
+                    .on_disabled_hover_text(hover)
             }
+        };
+        if let Some(state) = &mut toggle {
+            arrow_keys(ui, &response, state);
         }
     });
 }
@@ -704,17 +892,36 @@ fn matches(path: &str, search: &str) -> bool {
         .all(|word| path.contains(word))
 }
 
-/// Shows a field to search the traces, actions and logs by `search`, with a button to clear
-/// it, and a toggle to show only those the selected view can show, `compatible_only`,
-/// disabled and shown off unless the view is `filterable`, i.e. it shows any.
-pub fn search_ui(ui: &mut Ui, search: &mut String, compatible_only: &mut bool, filterable: bool) {
+/// Id of the request to focus the search field, see [`request_search_focus`].
+fn search_focus_id() -> egui::Id {
+    egui::Id::new("trace search focus")
+}
+
+/// Asks to put the keyboard focus on the search field of the traces next time it is
+/// shown, e.g. for Ctrl+F.
+pub fn request_search_focus(ctx: &egui::Context) {
+    ctx.data_mut(|data| data.insert_temp(search_focus_id(), true));
+}
+
+/// Shows a field to search the traces, actions and logs by `search`, with a button to
+/// clear it, a toggle to show only those the selected view can show, `compatible_only`,
+/// and one to show only those checked for it, `checked_only`, both disabled and shown
+/// off unless the view is `filterable`, i.e. it shows any, and a menu to open or close
+/// all branches of the tree.
+pub fn search_ui(
+    ui: &mut Ui,
+    search: &mut String,
+    compatible_only: &mut bool,
+    checked_only: &mut bool,
+    filterable: bool,
+) {
     ui.horizontal(|ui| {
         // the buttons are squares as high as the field: the text, its margins and its
         // stroke, and room is left for them
         let margins = theme::FIELD_MARGIN.sum().y;
         let side = ui.text_style_height(&egui::TextStyle::Body) + margins + 2.0;
         let button_width = side + ui.spacing().item_spacing.x;
-        let buttons = if search.is_empty() { 1.0 } else { 2.0 };
+        let buttons = if search.is_empty() { 3.0 } else { 4.0 };
         // the id stays the same as the clear button comes and goes, to keep the focus
         let field = ui
             .add(
@@ -724,11 +931,14 @@ pub fn search_ui(ui: &mut Ui, search: &mut String, compatible_only: &mut bool, f
                     .desired_width(ui.available_width() - buttons * button_width),
             )
             .on_hover_text("Show only the traces, actions and logs whose path contains each word");
+        if ui.data_mut(|data| data.remove_temp::<bool>(search_focus_id())) == Some(true) {
+            field.request_focus();
+        }
         ui.spacing_mut().button_padding.x = 0.0;
         let square = egui::Vec2::splat(field.rect.height());
         if !search.is_empty()
             && ui
-                .add(egui::Button::new(X).min_size(square))
+                .add(theme::hover_frame(egui::Button::new(X).min_size(square)))
                 .on_hover_text("Clear the search")
                 .clicked()
         {
@@ -739,9 +949,8 @@ pub fn search_ui(ui: &mut Ui, search: &mut String, compatible_only: &mut bool, f
         } else {
             "Click to show only what the selected view can show"
         };
-        let selected = *compatible_only && filterable;
         let filter = theme::hover_frame(egui::Button::new(FUNNEL).min_size(square));
-        let filter = filter.selected(selected);
+        let filter = filter.selected(*compatible_only && filterable);
         if ui
             .add_enabled(filterable, filter)
             .on_hover_text(hint)
@@ -750,12 +959,41 @@ pub fn search_ui(ui: &mut Ui, search: &mut String, compatible_only: &mut bool, f
         {
             *compatible_only = !*compatible_only;
         }
+        let hint = if *checked_only {
+            "Showing only what is checked for the selected view, click to show all"
+        } else {
+            "Click to show only what is checked for the selected view"
+        };
+        let checked = theme::hover_frame(egui::Button::new(CHECK_SQUARE).min_size(square));
+        let checked = checked.selected(*checked_only && filterable);
+        if ui
+            .add_enabled(filterable, checked)
+            .on_hover_text(hint)
+            .on_disabled_hover_text("Select a view to show only what is checked for it")
+            .clicked()
+        {
+            *checked_only = !*checked_only;
+        }
+        let menu = theme::hover_frame(egui::Button::new(DOTS_THREE_VERTICAL).min_size(square));
+        let menu = menu.button(ui);
+        egui::containers::menu::MenuButton::from_button(menu)
+            .ui(ui, |ui| {
+                if ui.button("Expand all").clicked() {
+                    request_subtree(ui.ctx(), ROOT_KEY, true);
+                }
+                if ui.button("Collapse all").clicked() {
+                    request_subtree(ui.ctx(), ROOT_KEY, false);
+                }
+            })
+            .0
+            .on_hover_text("Open or close all folders of the tree");
     });
 }
 
 /// What the rows of the tree were made from: the paths of the store and the kinds of
-/// its traces, the search, the filter, what the view picks, the actions it shows that
-/// no outpost announces and the clicks on the toggles.
+/// its traces, the search, the filter, what the view picks, what is checked if only
+/// that is shown, the actions it shows that no outpost announces and the clicks on the
+/// toggles.
 #[derive(Clone, PartialEq)]
 struct RowsKey {
     paths: Version,
@@ -763,6 +1001,8 @@ struct RowsKey {
     search: String,
     filter: Option<Picks>,
     picks: Picks,
+    /// The checked paths, if only they are shown.
+    checked: Option<Vec<String>>,
     unannounced: Vec<String>,
     /// The shown logs of paths without records, see [`show`].
     unreceived_logs: Vec<String>,
@@ -777,6 +1017,82 @@ struct Rows {
     rows: Arc<Vec<Row>>,
     empty: Option<&'static str>,
     apart: Arc<BTreeSet<String>>,
+    /// What the view can pick in the store but the search or the filters leave out of
+    /// the tree, to count the checked ones among them.
+    left_out: Arc<BTreeSet<String>>,
+}
+
+impl<'a> TraceTree<'a> {
+    /// The tree of all traces, actions and logs of `store` that match `search`, as a
+    /// view picking `picks` picks them, with the actions and logs `key` adds.
+    fn of_store(store: &'a dyn Store, search: &str, key: &'a RowsKey) -> Self {
+        let mut tree = TraceTree::build(store.traces().filter(|trace| matches(trace.path, search)));
+        tree.add_actions(store.actions().paths().filter(|path| matches(path, search)));
+        tree.add_unannounced_actions(key.unannounced.iter().map(String::as_str));
+        tree.add_logs(
+            store
+                .logs(Window::NONE)
+                .data
+                .paths()
+                .filter(|path| matches(path, search)),
+        );
+        tree.add_logs(key.unreceived_logs.iter().map(String::as_str));
+        if key.picks.records {
+            tree.fold_records();
+        }
+        tree
+    }
+
+    /// Removes the traces, records, actions and logs none of the `checked` paths picks,
+    /// and the branches left without any.
+    fn retain_checked(&mut self, checked: &BTreeSet<String>) {
+        if self
+            .trace
+            .is_some_and(|trace| !has_trace_or_element(checked, trace.path))
+        {
+            self.trace = None;
+        }
+        let unchecked = |path: &Option<&str>| path.is_some_and(|path| !checked.contains(path));
+        if unchecked(&self.record) {
+            self.record = None;
+        }
+        if unchecked(&self.action) {
+            self.action = None;
+        }
+        if unchecked(&self.log) {
+            self.log = None;
+        }
+        self.children.retain(|_, child| {
+            child.retain_checked(checked);
+            child.trace.is_some()
+                || child.record.is_some()
+                || child.action.is_some()
+                || child.log.is_some()
+                || !child.children.is_empty()
+        });
+    }
+
+    /// All paths a view picking `picks` can check in the tree, also whole arrays.
+    fn all_picks(&self, picks: Picks) -> BTreeSet<String> {
+        fn add_whole_arrays(node: &TraceTree<'_>, picks: Picks, paths: &mut BTreeSet<String>) {
+            paths.extend(node.trace.and_then(|trace| whole_array_pick(trace, picks)));
+            for child in node.children.values() {
+                add_whole_arrays(child, picks, paths);
+            }
+        }
+        let mut paths: BTreeSet<String> = self.paths(picks).into_iter().collect();
+        add_whole_arrays(self, picks, &mut paths);
+        paths
+    }
+}
+
+/// Whether `checked` has the trace at `path` or one of its elements.
+fn has_trace_or_element(checked: &BTreeSet<String>, path: &str) -> bool {
+    use std::ops::Bound;
+    checked
+        .range::<str, _>((Bound::Included(path), Bound::Unbounded))
+        .take_while(|checked| checked.starts_with(path))
+        .any(|checked| checked.len() == path.len() || checked[path.len()..].starts_with('['))
 }
 
 /// The rows of the tree for `key`, made anew only when it changed since the last
@@ -789,24 +1105,22 @@ fn rows(ui: &Ui, store: &dyn Store, key: RowsKey) -> Rows {
         return rows;
     }
     let search = key.search.as_str();
-    let mut tree = TraceTree::build(store.traces().filter(|trace| matches(trace.path, search)));
-    tree.add_actions(store.actions().paths().filter(|path| matches(path, search)));
-    tree.add_unannounced_actions(key.unannounced.iter().map(String::as_str));
-    tree.add_logs(
-        store
-            .logs(Window::NONE)
-            .data
-            .paths()
-            .filter(|path| matches(path, search)),
-    );
-    tree.add_logs(key.unreceived_logs.iter().map(String::as_str));
-    if key.picks.records {
-        tree.fold_records();
-    }
+    let mut tree = TraceTree::of_store(store, search, &key);
     if let Some(picks) = key.filter {
         tree.retain_selectable(picks);
     }
+    let checked = (key.checked.as_ref()).map(|checked| checked.iter().cloned().collect());
+    if let Some(checked) = &checked {
+        tree.retain_checked(checked);
+    }
     let searching = !search.trim().is_empty();
+    let left_out = if searching || key.filter.is_some() || checked.is_some() {
+        let shown = tree.all_picks(key.picks);
+        let all = TraceTree::of_store(store, "", &key).all_picks(key.picks);
+        all.difference(&shown).cloned().collect()
+    } else {
+        BTreeSet::new()
+    };
     let empty = tree
         .children
         .is_empty()
@@ -817,10 +1131,19 @@ fn rows(ui: &Ui, store: &dyn Store, key: RowsKey) -> Rows {
             {
                 "No traces, actions or logs received"
             }
+            _ if checked.as_ref().is_some_and(BTreeSet::is_empty) => {
+                "Nothing is checked for the selected view"
+            }
+            _ if checked.is_some() && searching => "Nothing checked matches the search",
+            _ if checked.is_some() => "Nothing checked can be shown by the selected view",
             (Some(_), true) => "Nothing the selected view can show matches the search",
             (Some(_), false) => "The selected view can show none of the traces, actions and logs",
             (None, _) => "Nothing matches the search",
         });
+    let request = ui.data_mut(|data| data.remove_temp::<SubtreeRequest>(subtree_request_id()));
+    if let Some(request) = request {
+        apply_subtree_request(ui, &tree, "", searching, &request);
+    }
     let mut rows = vec![];
     tree_rows(ui, &tree, "", 0, (key.picks, searching), &mut rows);
     let apart = (store.traces())
@@ -832,25 +1155,52 @@ fn rows(ui: &Ui, store: &dyn Store, key: RowsKey) -> Rows {
         rows: Arc::new(rows),
         empty,
         apart: Arc::new(apart),
+        left_out: Arc::new(left_out),
     };
     ui.data_mut(|data| data.insert_temp(id, rows.clone()));
     rows
 }
 
-/// Shows the traces, the announced actions and the logs of `store` whose path matches
-/// `search`, and what the view shows of them that did not arrive, in a scroll area as a tree with checkboxes for what is picked for a view,
-/// disabled if there is no selection to edit, filled with the colours of the `colored`
-/// traces. If `compatible_only`, only what the view can show is in the tree, or all
-/// without a view. The rows are made anew only when what they
-/// show changed, and only the rows in sight are laid out.
+/// What the tree shows of the traces, actions and logs: those whose path matches
+/// `search`, and, with a view, only those it can show if `compatible_only`, and only
+/// those checked for it if `checked_only`.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct TreeFilter<'a> {
+    /// Words each shown path contains, ignoring case; all paths if empty.
+    pub search: &'a str,
+    /// Whether only what the selected view can show is shown.
+    pub compatible_only: bool,
+    /// Whether only what is checked for the selected view is shown.
+    pub checked_only: bool,
+}
+
+/// The hint of how many checked paths the search or the filters hide, if any.
+fn hidden_hint(count: usize) -> Option<String> {
+    match count {
+        0 => None,
+        1 => Some("1 checked trace is hidden by the search or the filter".to_owned()),
+        _ => Some(format!(
+            "{count} checked traces are hidden by the search or the filter"
+        )),
+    }
+}
+
+/// Shows the traces, the announced actions and the logs of `store` that `filter` lets
+/// through, and what the view shows of them that did not arrive, in a scroll area as a
+/// tree with checkboxes for what is picked for a view, filled with the colours of the
+/// `colored` traces. The checkboxes are disabled unless the `selection` is `editable`;
+/// the folders still open and close. Above the tree, a hint counts the checked paths
+/// the filter hides. The rows are made anew only when what they show changed, and
+/// only the rows in sight are laid out.
 pub fn show(
     ui: &mut Ui,
     store: &dyn Store,
-    search: &str,
-    compatible_only: bool,
+    filter: TreeFilter<'_>,
     selection: Option<ViewSelection<'_>>,
     colored: &[String],
+    editable: bool,
 ) {
+    let search = filter.search;
     let picks = selection.as_ref().map(|selection| selection.picks);
     // shown actions no outpost announces, copied apart from the selection edited below
     let unannounced: Vec<String> = match &selection {
@@ -875,22 +1225,35 @@ pub fn show(
             .collect(),
         _ => vec![],
     };
+    let checked = match &selection {
+        Some(selection) if filter.checked_only => Some(selection.paths.iter().cloned().collect()),
+        _ => None,
+    };
     let key = RowsKey {
         paths: store.paths_version(),
         kinds: store.kinds(),
         search: search.to_owned(),
-        filter: picks.filter(|_| compatible_only),
+        filter: picks.filter(|_| filter.compatible_only),
         picks: picks.unwrap_or(ViewType::Plot.into()),
+        checked,
         unannounced,
         unreceived_logs,
         toggles: ui.data(|data| data.get_temp::<u64>(toggles_id()).unwrap_or(0)),
     };
     let rows = rows(ui, store, key);
+    let hidden = selection.as_ref().map_or(0, |selection| {
+        (selection.paths.iter())
+            .filter(|path| rows.left_out.contains(*path))
+            .count()
+    });
+    if let Some(hint) = hidden_hint(hidden) {
+        theme::panel_hint(ui, &hint);
+    }
     if let Some(empty) = rows.empty {
         theme::panel_hint(ui, empty);
         return;
     }
-    let enabled = selection.is_some();
+    let editable = editable && selection.is_some();
     let (mut no_paths, mut no_wildcards) = (BTreeSet::new(), BTreeSet::new());
     let view = selection.unwrap_or(ViewSelection {
         paths: &mut no_paths,
@@ -904,18 +1267,17 @@ pub fn show(
         picks: view.picks,
         searching: !search.trim().is_empty(),
         colored,
+        editable,
     };
     let row_height = ui.spacing().interact_size.y;
-    ui.add_enabled_ui(enabled, |ui| {
-        egui::ScrollArea::vertical()
-            .id_salt("traces")
-            .auto_shrink([false, false])
-            .show_rows(ui, row_height, rows.rows.len(), |ui, shown| {
-                for row in &rows.rows[shown] {
-                    row_ui(ui, store, row, &mut selection);
-                }
-            });
-    });
+    egui::ScrollArea::vertical()
+        .id_salt("traces")
+        .auto_shrink([false, false])
+        .show_rows(ui, row_height, rows.rows.len(), |ui, shown| {
+            for row in &rows.rows[shown] {
+                row_ui(ui, store, row, &mut selection);
+            }
+        });
 }
 
 #[cfg(test)]
