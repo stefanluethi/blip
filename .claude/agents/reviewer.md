@@ -144,7 +144,9 @@ is met.
 Run what the change touches, and report each result. A change to proto, the recording
 format or the protocol reference touches every part: run all of them.
 
-- Rust: `./check.sh`
+- Rust: `./check.sh`, the full script: the developers ran only `./check.sh --fast`,
+  so the API docs, the packaging and the Trunk build run here for the first time. In
+  a re-check that is not the last pass, `./check.sh --fast`.
 - outpost: `cd outpost && uv run pytest`
 - sonde: `cmake -S sonde -B sonde/build -DCMAKE_BUILD_TYPE=Release -DSONDE_WERROR=ON && cmake --build sonde/build --parallel && ctest --test-dir sonde/build --output-on-failure`
 - docs: `cd doc && make html` (warnings are errors)

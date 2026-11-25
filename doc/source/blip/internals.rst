@@ -708,7 +708,10 @@ web, then with the widgets), a check that the store alone pulls in no GUI
 crate, the build of the example ``dashboard`` for the web, ``rustfmt``,
 ``clippy``, the tests, the API documentation of the crates with warnings as
 errors, ``cargo package --no-verify`` of both library crates, as they would be
-published, and a ``trunk build``. UI behaviour is
+published, and a ``trunk build``. ``check.sh --fast`` stops after the tests,
+for the checks while a change is in work. cargo calls ``rustc`` through
+``.cargo/rustc-wrapper.sh``, which uses ``sccache`` when it is installed, so the
+dependencies are compiled once for all checkouts and worktrees. UI behaviour is
 tested with ``egui_kittest`` harnesses next to the code, e.g. clicking the
 record button or dragging in the trace tree; connection tests run against a
 local ``tungstenite`` WebSocket server.

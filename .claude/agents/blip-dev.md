@@ -104,16 +104,21 @@ test checks is a finding in every review. Leave their status to the lead.
 
 While you work, run the tests you touch by name
 (`cargo test --release -p blip-kit --lib <filter>`), and the checks of the slice once
-at the end. Keep the exit code of a long check and read only its end:
-`./check.sh > "$log" 2>&1; echo "exit=$?"; tail -n 40 "$log"` (with `log=$(mktemp)`).
+at the end. Every build is a wait of a minute or more, and most of a developer's time
+goes there: collect your edits and build once, not after each one. Keep the exit code
+of a long check and read only its end:
+`./check.sh --fast > "$log" 2>&1; echo "exit=$?"; tail -n 40 "$log"` (with
+`log=$(mktemp)`).
 
 Run the checks your brief names and fix every failure. If it names none, or your slice
-is the last of the part, run `./check.sh` (cargo check native and WASM, the features of
-`blip-kit` and its example, rustfmt, clippy, tests, the API docs, packaging, Trunk
-build). A slice in the middle runs what it touched instead, e.g.
-`cargo test --release -p blip-kit --all-features` and
-`cargo clippy --release --workspace --all-targets --all-features -- -D warnings -W clippy::all`,
-since `./check.sh` builds everything and takes minutes. Either way the workspace builds
+is the last of the part, run `./check.sh --fast` once (cargo check native and WASM, the
+features of `blip-kit` and its example, rustfmt, clippy, tests). A slice in the middle
+runs what it touched instead, e.g. `cargo test --release -p blip-kit --all-features`.
+Do not run the full `./check.sh`: the API docs, the packaging and the Trunk build take
+minutes, and the reviewer runs them once for the whole change. If you changed a doc
+comment with a link in it, run
+`RUSTDOCFLAGS="-D warnings" cargo doc --quiet --release --no-deps --workspace --all-features`
+as well. Either way the workspace builds
 when you are done: no slice leaves callers broken for the next one. If the change shows in the UI, also say which screenshots in the docs
 may need `cd doc && make screenshots`.
 

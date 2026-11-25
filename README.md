@@ -130,6 +130,11 @@ uv run blip-outpost tcp 127.0.0.1 9000
 ./check.sh
 ```
 
+`./check.sh --fast` leaves out the API documentation, the packaging and the
+`trunk build`. With [sccache](https://github.com/mozilla/sccache) installed, cargo
+compiles the dependencies once for all checkouts (`.cargo/config.toml`); without it
+the builds work as before.
+
 ## License
 
 MIT, see [LICENSE](LICENSE).

@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Lead a feature or change in blip from idea to reviewed code. Small changes take a light path (one specialist, one Sonnet review). For the rest, clarify with the user, get design options from the designer for UI changes and from the architect for changes to an API or the structure, have the requirements engineer write the requirements, get them approved, have a technical spec written on Opus, hand the slices of work on Sonnet to the specialist agents (blip-dev, sonde-dev, outpost-dev, docs-writer) and loop with the reviewer and, for blip UI changes, the design-reviewer until requirements, code and look agree. Runs only when the user types /orchestrate.
+description: Lead a feature or change in blip from idea to reviewed code. Small changes take a light path (one specialist, one Sonnet review). For the rest, clarify with the user, get design options from the designer for UI changes and from the architect for changes to an API or the structure, have the requirements engineer write the requirements, get them approved, build a change of one part directly or, for a large one, have a technical spec written on Opus and hand the slices of work on Sonnet to the specialist agents (blip-dev, sonde-dev, outpost-dev, docs-writer) and loop with the reviewer and, for blip UI changes, the design-reviewer until requirements, code and look agree. Runs only when the user types /orchestrate.
 argument-hint: <change>
 disable-model-invocation: true
 ---
@@ -71,8 +71,11 @@ Then:
    code of existing requirements, name their IDs and skip this.
 2. **Build.** Spawn the part's specialist once on its default model. Its brief is the
    spec in short (the sections of step 5), and names the docs pages it updates as well:
-   the guide or reference page the change touches and the `changes.rst` entry. Skip the
-   designer, the spec file, the simplify pass and the `docs-writer`.
+   the guide or reference page the change touches and the `changes.rst` entry. It also
+   names the checks: the tests it touched by name and clippy for the crate, not
+   `./check.sh`, which the reviewer runs. Skip the designer, the spec file, the
+   simplify pass and the `docs-writer`. Do not make a worktree for it when no other
+   session works in the checkout: a new worktree builds everything once more.
 3. **Review.** Spawn `reviewer` on Sonnet (`model: "sonnet"`, `effort: "medium"`) as the
    last pass, so it runs the checks once. If the change touches the look of `blip/src` or `kit/src`,
    spawn `design-reviewer` in the same message.
@@ -148,12 +151,20 @@ Split the work by part and decide the order:
 - A proto change goes first (`blip-dev`), then the outpost and sonde follow it.
 - Parts that do not touch the same files may run in parallel: spawn them in one message.
   Two specialists never edit the same file at the same time.
+- Only one agent that compiles Rust runs at a time. Two `blip-dev` agents in one
+  checkout build each other's half-done edits and wait for each other's lock on
+  `target`: in a run with seven at once, each cargo call took four times as long.
+  A `blip-dev` may run beside `outpost-dev`, `sonde-dev` or a `docs-writer` that is
+  told not to run cargo.
 - The test pages in `doc/source/requirements/tests/` are shared: each developer only
   edits the `TEST_*` items of its own part.
 
 - Build on a branch, in a worktree of its own when other sessions work on blip
   (`git worktree list`, `git status`). A change built in the main checkout while
-  another lands on `main` ends in a merge that costs more than a slice.
+  another lands on `main` ends in a merge that costs more than a slice. A new
+  worktree starts with an empty `target`: with sccache (see `CLAUDE.md`) its first
+  build takes the dependencies from the cache, without it that build takes many
+  minutes, so warn the user when it is missing.
 
 Tell the user the plan in a few lines (who does what, in which order) before you start.
 
@@ -162,6 +173,19 @@ Tell the user the plan in a few lines (who does what, in which order) before you
 The requirements say what to build, not how. A spec settles the how, so the code can be
 written on Sonnet in small slices, and Opus spends its tokens once on the decisions
 instead of on every line.
+
+That pays only for a large change. Writing the spec of a change of three slices took
+Opus as long, and as many tokens, as the three slices took to build. So:
+
+- **One part, about 1500 lines of code or less** (three slices or fewer): no spec
+  file and no slices. Spawn the part's specialist once on its default model to build
+  it. The brief is the spec in short: the **Agreed** file, the requirement IDs and
+  `TEST_*` items, the chosen design or architecture, the user's decisions, the files
+  you found in step 1, what not to touch, the log file and the checks of the last
+  slice in step 6. If it stops at its turn limit, resume it once with SendMessage;
+  after that a fresh specialist goes on from the log. Then go on with Measure and
+  Size in step 6.
+- **More than that, or more than one part:** the spec below.
 
 1. For each part, spawn its specialist on its default model (Opus) to write the spec,
    not code, to `.claude/specs/<change>-<part>.md` and one file per slice (see
@@ -174,6 +198,12 @@ instead of on every line.
    change what they see or what loads from old files. Write an answer of a line or two
    into the spec yourself; for more, spawn a fresh specialist with the spec files and
    the answers.
+3. Do not let such a question hold the build. Ask it, and when the answer is not there
+   after a few minutes, start the slices it does not touch. If it only touches a later
+   slice and has a recommended option, the spec keeps that option, marked as assumed;
+   tell the user which slices are being built on it. An answer that differs goes to a
+   fix of that slice. A question that changes the first slice, or what loads from old
+   files, waits for the answer.
 
 Keep the spec short: it decides and names, it does not hold the code. No function
 bodies, only signatures and, where the logic is not plain, the steps in words. The
@@ -197,9 +227,9 @@ The spec has these sections:
   its builds and your turns around it): the requirement IDs, the files, the steps, and what done looks like.
   The workspace builds and its tests pass after every slice: a slice that changes a
   signature also changes its callers, or keeps the old one beside the new until the
-  slice that removes it. Per slice, the checks its agent runs (the tests and the
-  builds of the crates it touches); the last slice of a part runs the part's full
-  checks.
+  slice that removes it. Per slice, the checks its agent runs (the tests of the
+  crates it touches); the last slice of a part runs the part's checks
+  (`./check.sh --fast` for blip and proto).
 - **Context:** per slice, what its agent reads before it starts: the sections of the docs
   (`internals.rst`, `sonde/README.md`, by heading) and the code (file and function or line
   range). A slice agent reads these instead of whole files, so keep the list short.
@@ -213,24 +243,23 @@ The spec has these sections:
   one is not finished (`.claude/skills/lean-review/RULES.md`).
 - **Not to touch:** what stays as it is.
 
-Skip the file for a small change, one slice in a few files: then the brief is the spec,
-with the same sections in short.
-
 ## 6. Implement
 
 Spawn a fresh specialist per slice, in the spec's order, on Sonnet at medium effort (the
 Agent tool's `model: "sonnet"` and `effort: "medium"`): the spec has made the decisions,
 so the slice needs no deep reasoning. Slices of different parts that do not share files
-may run in parallel. Each brief has:
+may run in parallel, but never two that compile Rust (step 4). Each brief has:
 
 - the shared spec file and the file of its slice; the slices before it are done. Do
   not copy the spec into the brief;
 - the log file, `.claude/specs/<change>-log.md`: the agent appends its full report
   there and returns ten lines at most (built or not, the result of each check, where
   it left the spec, what is open);
-- the checks to run, from the spec: a slice in the middle runs the tests and builds of
-  what it touched, not `./check.sh`, which builds everything and takes minutes; the
-  last slice of a part runs the part's full checks;
+- the checks to run, from the spec: a slice in the middle runs the tests it touched
+  by name and the tests of the crate once at its end; the last slice of a part runs
+  `./check.sh --fast` once (the builds for native and the web, rustfmt, clippy and
+  the tests). No developer runs the full `./check.sh`: the API docs, the packaging
+  and the Trunk build take minutes and run once, with the coverage reviewer;
 - the requirement IDs it implements and the `TEST_*` items it must fill in;
 - what other parts are changing at the same time.
 
@@ -269,10 +298,12 @@ Sonnet at medium effort before the docs and the review, and have it run the
 `lean-review` skill with `fix` (it has the Skill tool): smaller code is cheaper for
 every agent that reads it later. Its brief: the base commit, the spec file with the
 budget, the files of the change, to keep the behaviour and the tests' assertions, to
-run the part's checks (`./check.sh` for blip and proto), and to report both `loc.sh`
+run the part's checks once at the end (`./check.sh --fast` for blip and proto), and to
+report both `loc.sh`
 tables and what it merged or removed. A verdict of **rethink** comes back to you: go to
 the spec's author with it, not to another slice. Skip this for smaller changes; the
-reviewer's Size check covers them.
+reviewer's Size check covers them. The `docs-writer` may run beside it when its
+brief says not to run cargo.
 
 ## 7. Document
 
@@ -314,7 +345,8 @@ since that round. Put the old id in the briefs of the next round.
    - `reviewer` on Sonnet at medium effort (`model: "sonnet"`, `effort: "medium"`)
      with the scope **coverage** (its sections 3 and 4): the coverage table, the
      traceability, the docs and the checks. This is looking up and running, not
-     judging, and only this one builds.
+     judging, and only this one builds: it runs the full `./check.sh`, the first
+     time in the change that the API docs, the packaging and the Trunk build run.
 
    If the change touches `blip/src` or `kit/src`, spawn `design-reviewer` in the same
    message, with the requirement IDs, the chosen design option and the views and panels
@@ -328,7 +360,7 @@ since that round. Put the old id in the briefs of the next round.
    change. Its brief lists the findings, the files and functions they point to, the
    user's decisions and the requirement IDs. Design findings go to `blip-dev`, missing
    screenshots to `blip-dev` (`screenshots.rs`) and then `docs-writer`. Run fixes for
-   different parts in parallel. Fixes the findings spell out run on Sonnet at medium
+   different parts in parallel, and the fixes of one part in one agent. Fixes the findings spell out run on Sonnet at medium
 effort (`model: "sonnet"`, `effort: "medium"`); a finding
    that needs a design decision goes to the specialist on its default model. Use
    SendMessage only for a short follow-up right after an agent's report, never to start
@@ -337,8 +369,8 @@ effort (`model: "sonnet"`, `effort: "medium"`); a finding
    `model: "sonnet"` and `effort: "medium"`).
    Brief them with the previous findings and the snapshot id to diff against. They
    check that those findings are fixed and that the fix broke nothing it touched, not
-   the whole change again. The design reviewer looks at only the screenshots of the
-   fixed findings.
+   the whole change again, and run `./check.sh --fast` for Rust. The design reviewer
+   looks at only the screenshots of the fixed findings.
 5. **Last pass.** The final round runs the full checks once: the `reviewer` runs every
    check the change touches, and the `design-reviewer` renders all screenshots to see
    that nothing else changed. If the previous round's checks passed and only small

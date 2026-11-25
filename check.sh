@@ -1,7 +1,25 @@
 #!/usr/bin/env bash
 # This scripts runs various CI-like checks in a convenient way.
 # Everything builds in release mode only, so no debug build lands in target/debug.
-set -eux
+#
+#   ./check.sh          all checks
+#   ./check.sh --fast   the builds, rustfmt, clippy and the tests; without the API
+#                       documentation, the packaging and the Trunk build
+set -eu
+
+fast=false
+case "${1:-}" in
+    "") ;;
+    --fast) fast=true ;;
+    *) echo "usage: $0 [--fast]" >&2; exit 2 ;;
+esac
+
+if ! command -v sccache >/dev/null 2>&1; then
+    echo "note: sccache is not installed, so every checkout compiles the dependencies" \
+        "again (cargo install sccache --locked)" >&2
+fi
+
+set -x
 
 cargo check --quiet --release --workspace --all-targets
 cargo check --quiet --release --workspace --all-features --lib --target wasm32-unknown-unknown
@@ -20,6 +38,9 @@ cargo fmt --all -- --check
 cargo clippy --quiet --release --workspace --all-targets --all-features --  -D warnings -W clippy::all
 cargo test --quiet --release --workspace --all-targets --all-features
 cargo test --quiet --release --workspace --doc
+if $fast; then
+    exit 0
+fi
 # the API documentation of the crates, without broken links
 RUSTDOCFLAGS="-D warnings" cargo doc --quiet --release --no-deps --workspace --all-features
 # the library crates as they would be published, not built again: needs the index of

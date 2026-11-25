@@ -1,0 +1,5 @@
+# Every rustc call goes through sccache when it is installed, so the dependencies are
+# compiled once for all checkouts and worktrees. Without sccache the wrapper calls
+# rustc directly.
+[build]
+rustc-wrapper = ".cargo/rustc-wrapper.sh"

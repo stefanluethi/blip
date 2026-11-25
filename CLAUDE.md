@@ -47,12 +47,21 @@ Bash commands that would build in debug. The project's `blip-lsp` plugin
 (`.claude/marketplace`) runs rust-analyzer in release mode, and clangd on the compile
 database that the sonde configure above writes to `sonde/build`.
 
+cargo calls rustc through `.cargo/rustc-wrapper.sh`, which uses
+[sccache](https://github.com/mozilla/sccache) when it is installed: the dependencies
+are then compiled once for all checkouts and worktrees, and a new worktree does not
+start with a build of many minutes. Before the first build of a session, run
+`command -v sccache`. If it prints nothing, warn the user that sccache is not
+installed, that builds work but every worktree compiles the dependencies again, and
+that `cargo install sccache --locked` installs it; then go on.
+
 ## Checks
 
 `./check.sh` runs the CI-style checks (all in release): cargo check for native and
 WASM, the features of `blip-kit` and its example, rustfmt, clippy, the tests, the API
 docs, the packaging of the library crates and a Trunk build. Run it before committing Rust
-changes.
+changes. `./check.sh --fast` stops after the tests: it leaves out the API docs, the
+packaging and the Trunk build, and is the check to run while a change is in work.
 
 - outpost: `cd outpost && uv run pytest`
 - docs: `cd doc && make html` (warnings are errors)
@@ -102,7 +111,7 @@ is committed; `/slim [part]` shrinks existing code in checked batches.
 `blip-dev`, `sonde-dev`, `outpost-dev`, `docs-writer`, `reviewer` and
 `design-reviewer`. `/orchestrate <change>` (`.claude/skills/orchestrate`) leads a change
 through them: clarify with the user, pick a design for UI changes and an architecture
-for changes to an API or the structure, write and approve the requirements, spec the code on Opus (`.claude/specs`), implement it in slices on Sonnet,
+for changes to an API or the structure, write and approve the requirements, for a large change spec the code on Opus (`.claude/specs`) and implement it in slices on Sonnet,
 document, then review until every requirement in scope is implemented, tested, traced
 and documented, and the UI looks right. A small change in one part takes a light path:
 one specialist and one review on Sonnet.
