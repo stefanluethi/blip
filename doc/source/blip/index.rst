@@ -73,7 +73,7 @@ Selection
 Layout
    The views arranged as a tree of groups: the groups at the top level are
    tabs, the groups below show their children as tabs, stacked vertically or
-   side by side. See :doc:`layout`.
+   side by side, to any depth. See :doc:`layout`.
 
 Preset
    A named layout with the connections, to switch between, e.g. one per

@@ -2,7 +2,9 @@ Layout and properties
 =====================
 
 The views are arranged in **tabs** in the center. A tab holds its views in
-**groups**, stacked vertically or side by side, or shown as tabs again. blip
+**groups**, stacked vertically or side by side, or shown as tabs again, to any
+depth. The tabs at the top lie on the canvas; a group of tabs further in is a
+card with its tabs in the title row. blip
 starts with an empty layout that shows the view types (see :doc:`/blip/views/index`);
 click one to add a view of that type in a new tab. The layout belongs to the
 active preset, see :doc:`/blip/presets`. **View › Clear layout** returns to
@@ -12,14 +14,23 @@ another preset with an empty layout.
 Adding views and tabs
 ---------------------
 
-Click **+** after the tabs to add a tab. Hover a tab for how to rename and move
-it. An empty tab shows the view types
-(see :doc:`/blip/views/index`); click one to add a view of that type.
+.. figure:: /screenshots/layout-nested-tabs.png
+   :target: ../_images/layout-nested-tabs.png
+   :class: screenshot
+   :alt: A tab with a group of tabs inside, drawn as a card with its tabs in the title row.
+
+Every tab bar, at the top and in a group of tabs, has a **+** after its tabs;
+click it to add an empty tab. Hover a tab for how to rename and move it. An
+empty tab shows the view types (see :doc:`/blip/views/index`); click one to add
+a view of that type. In a small empty tab the view types shrink to icon buttons,
+and in a smaller one to a menu button.
 
 To add a view next to another, click **⋯** at the right of the title of that
 view, or right-click the title (or its tab, if it is shown as a tab), and
 choose **Add right** or **Add below** and the view type. The new view goes
-there as if it was dragged to that side, see below.
+there as if it was dragged to that side, see below. After the view types the
+menu has **Empty group**, which adds a group of tabs with one empty tab. The
+menu of a group of tabs inside another has the same entries.
 
 **View › Add view** adds a view after the selected view, or into the open tab
 if the selected view is in another tab.
@@ -36,16 +47,24 @@ Arranging
 ---------
 
 Drag a view by its title, or a view or group shown as a tab by its tab, onto
-the side of another view:
+another view or a tab row. A highlight shows where it goes:
 
-* The **highlighted half** of that view shows the side the dragged one goes to.
-* Where the group of that view stacks its children across that side, the
-  dragged one moves next to it. Otherwise both form a new group, stacked across
-  that side; a group of just the two turns instead.
-* Dropping onto a tab moves before or after it, and onto an empty tab into
-  it. Hovering a tab while dragging opens it.
+* On a **side** of a view, the dragged one goes to that side. Where the side is
+  along the direction of the group of that view (above or below in a vertical
+  group, left or right in a horizontal one), the dragged one moves next to it.
+  Otherwise both form a new group, stacked along that side; a group of just
+  the two turns instead.
+* On the **middle** of a view, the view inset by a quarter on each side, both
+  form a new group of tabs. A vertical or horizontal group of just the two
+  turns into tabs instead.
+* On a **tab row**, a tab or the empty part of it, at any level, the dragged
+  one becomes a tab, before or after the tab it is dropped on, or at the end.
+  Dropping onto an empty tab moves into it. Hovering a tab while dragging
+  opens it.
 
-Moving the last view out of a tab removes the tab.
+Moving the last view out of a vertical or horizontal group, or of a group of
+tabs inside another, removes the group. A tab left empty by moving its view
+out goes as well; one emptied by a delete stays.
 
 Renaming and deleting
 ---------------------

@@ -21,6 +21,11 @@ fn harness_with(
     let tab = layout.container(layout.root()).unwrap().children_vec()[0];
     let views = layout.container(tab).unwrap().children_vec();
     layout.select(selected(tab, &views));
+    harness_of(layout, model)
+}
+
+/// A harness showing the properties panel of `layout`, with what is selected in it.
+fn harness_of(layout: Layout, model: MemoryStore) -> Harness<'static, Layout> {
     Harness::builder()
         .with_size(egui::vec2(300.0, 800.0))
         .build_ui_state(
@@ -261,4 +266,37 @@ fn a_long_name_is_cut_off_before_the_kind() {
     let chip = harness.get_by_label("Plot").rect();
     let name = harness.get_by_label_contains("A view with").rect();
     assert!(name.right() < chip.left(), "{name:?} {chip:?}");
+}
+
+#[test]
+fn nested_groups_are_arranged_and_named_in_the_properties() {
+    use crate::workbench::layout::tests::nested;
+
+    for depth in [2, 3] {
+        let mut n = nested();
+        let group = if depth == 2 { n.row } else { n.tabs3 };
+        n.layout.select(group);
+        let mut harness = harness_of(n.layout, MemoryStore::default());
+        harness.run();
+        harness.get_by_label("Vertical").click();
+        harness.run();
+        let layout = harness.state();
+        assert_eq!(
+            GroupKind::of(layout.container(group).unwrap()),
+            GroupKind::Vertical
+        );
+
+        // the name field comes first
+        let field = harness.get_all_by_role(egui::accesskit::Role::TextInput);
+        field.into_iter().next().unwrap().focus();
+        harness.run();
+        for _ in 0.."Group 2".len() {
+            harness.key_press(egui::Key::Backspace);
+            harness.run();
+        }
+        let field = harness.get_all_by_role(egui::accesskit::Role::TextInput);
+        field.into_iter().next().unwrap().type_text("Motor");
+        harness.run();
+        assert_eq!(harness.state().name(group), "Motor");
+    }
 }

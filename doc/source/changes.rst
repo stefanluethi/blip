@@ -19,6 +19,11 @@ blip
      median, mean, quartiles, whiskers and outliers, or both, upright or
      sideways; a distribution linked to a plot shows the plot's traces over
      its y range.
+   * Groups on every level of the layout: a view or tab dropped on a tab row
+     becomes a tab, on the middle of a view makes a tab group, on a side goes
+     there. Tab groups below the top are tabbed cards, every tab bar has a
+     **+**, the menu has **Empty group**, and the view types shrink to icons
+     or a menu in small empty tabs. Empty groups are removed.
    * Presets: layouts with their connections, to switch between, exported to
      and imported from JSON files.
    * One time range for all views: live, paused or playing, with a time cursor

@@ -4,6 +4,7 @@
 
 mod drag;
 mod file;
+mod picker;
 mod properties;
 
 pub use file::{Group, GroupKind};
@@ -14,6 +15,7 @@ use crate::widgets::view::{
     PlotInfo, Plots, View, ViewContext, ViewId, ViewKind, ViewType, Viewable,
 };
 use egui_tiles::{Container, ContainerKind, Tile, TileId, Tree};
+use picker::view_picker;
 use std::collections::{HashMap, HashSet};
 
 /// Where a view or group dragged in the center pane is dropped, relative to the view or
@@ -22,7 +24,10 @@ use std::collections::{HashMap, HashSet};
 pub enum Drop {
     Before,
     After,
-    /// Into the group dropped on, as its last child.
+    /// On a group, such as the empty part of a tab row: into the group as its last child
+    /// (a tab, if the group shows tabs). On a view, the middle of it: a new group of tabs
+    /// with the view and the dragged one in the place of the view, the dragged one after
+    /// it and open.
     Into,
     /// At a side of the view dropped on in the center pane: next to it in its group if
     /// the group stacks its children across that side, otherwise into a new group with
@@ -67,6 +72,10 @@ enum Action {
     AddView(TileId, Side, ViewType),
     /// Adds a view of a type into an empty group.
     AddViewInto(TileId, ViewType),
+    /// Adds a group of tabs with one empty tab at a side of a view or tab.
+    AddEmptyGroup(TileId, Side),
+    /// Adds an empty tab at the end of a group of tabs, the + of its tab bar.
+    AddTab(TileId),
     Rename(TileId),
     Delete(TileId),
 }
@@ -267,13 +276,18 @@ impl Layout {
 
     /// Adds a new tab at the end of the top level, returns its id.
     fn add_tab(&mut self) -> TileId {
+        self.add_tab_to(self.root())
+    }
+
+    /// Adds a new empty tab at the end of the group of tabs `group`, selects and opens it,
+    /// returns its id.
+    fn add_tab_to(&mut self, group: TileId) -> TileId {
         self.forget_undo();
         let name = self.unique_name("Tab");
         let tab = self.tree.tiles.insert_vertical_tile(vec![]);
         self.group_names.insert(tab, name);
-        let root = self.root();
         self.tree
-            .move_tile_to_container(tab, root, usize::MAX, true);
+            .move_tile_to_container(tab, group, usize::MAX, true);
         self.select(tab);
         tab
     }
@@ -334,8 +348,63 @@ impl Layout {
         // a new view can always be dropped next to a view in a group
         self.parent(target)?;
         let view = self.new_view(view_type);
-        self.drop_tile(view, target, Drop::Side(side));
+        self.place_beside(view, target, side);
         Some(view)
+    }
+
+    /// Adds a new group of tabs with one empty tab at `side` of `target` and selects and
+    /// opens the tab, as if it was dropped there. Returns the tab, or `None`, adding
+    /// nothing, if `target` is not in a group.
+    fn add_empty_group_beside(&mut self, target: TileId, side: Side) -> Option<TileId> {
+        self.parent(target)?;
+        self.forget_undo();
+        let group_name = self.unique_name("Group");
+        let group = self.tree.tiles.insert_tab_tile(vec![]);
+        self.group_names.insert(group, group_name);
+        let tab = self.add_tab_to(group);
+        self.place_beside(group, target, side);
+        self.select(tab);
+        Some(tab)
+    }
+
+    /// Puts the new tile `new` at `side` of `target` and selects it. At the side of a
+    /// view it is dropped there. At the side of a tab that is a group, the side is that
+    /// of the whole group: the tab keeps its id, name and place.
+    fn place_beside(&mut self, new: TileId, target: TileId, side: Side) {
+        let Some(container) = self.container(target) else {
+            self.drop_tile(new, target, Drop::Side(side));
+            return;
+        };
+        let along = GroupKind::of(container) == side.kind();
+        let small = container.kind() != ContainerKind::Tabs && container.num_children() <= 1;
+        // the group keeps its place, what is in it moves down, unless it takes the new
+        // tile along its own direction
+        if !along && !small {
+            self.wrap_content(target);
+        }
+        if !along {
+            self.set_group_kind(target, side.kind());
+        }
+        let index = if side.is_after() { usize::MAX } else { 0 };
+        self.tree.move_tile_to_container(new, target, index, true);
+        self.select(new);
+    }
+
+    /// Moves the content of the group `group` one level down: into a new group "Group n"
+    /// of the same kind, with its open tab and shares, which becomes the only child of
+    /// `group`. Returns the new group.
+    fn wrap_content(&mut self, group: TileId) -> TileId {
+        let name = self.unique_name("Group");
+        let Some(Tile::Container(content)) = self.tree.tiles.remove(group) else {
+            return group;
+        };
+        let kind = content.kind();
+        let inner = self.tree.tiles.insert_container(content);
+        self.group_names.insert(inner, name);
+        self.tree
+            .tiles
+            .insert(group, Tile::Container(Container::new(kind, vec![inner])));
+        inner
     }
 
     fn set_group_kind(&mut self, tile_id: TileId, kind: GroupKind) {
@@ -461,8 +530,8 @@ impl Layout {
         self.deleted.take()
     }
 
-    /// Removes a view or a group with everything in it. A tab left empty stays, to add
-    /// views to it again.
+    /// Removes a view or a group with everything in it, and the groups it leaves empty. A
+    /// tab left empty stays, at any depth, to add views to it again.
     fn remove(&mut self, tile_id: TileId) {
         let parent = self.parent(tile_id);
         self.remove_tile(tile_id);
@@ -502,14 +571,21 @@ impl Layout {
     }
 
     /// Removes `group` if a move or removal left it without children, and its parent if
-    /// that is left empty too, but not the top level, nor a tab if `keep_tab`.
+    /// that is left empty too, up the tree. Not the top level, and not, if `keep_tab`, a
+    /// tab that is not a group of tabs, at any depth. A group of tabs below the top
+    /// level that is left without tabs is removed either way.
     fn remove_if_empty(&mut self, group: TileId, keep_tab: bool) {
-        let is_tab = self.parent(group) == Some(self.root());
+        let parent = self.parent(group);
+        let is_tab = parent
+            .and_then(|parent| self.container(parent))
+            .is_some_and(|parent| parent.kind() == ContainerKind::Tabs)
+            && self
+                .container(group)
+                .is_some_and(|group| group.kind() != ContainerKind::Tabs);
         if group != self.root()
             && !(keep_tab && is_tab)
             && self.container(group).is_some_and(Container::is_empty)
         {
-            let parent = self.parent(group);
             self.remove_tile(group);
             if let Some(parent) = parent {
                 self.remove_if_empty(parent, keep_tab);
@@ -532,25 +608,35 @@ impl Layout {
         if !self.can_drop(dragged, target) {
             return;
         }
-        let Some(parent) = self.parent(target) else {
+        let into_group = drop == Drop::Into && self.container(target).is_some();
+        // only the drops next to or onto a view need the group of the target
+        let parent = self.parent(target);
+        if parent.is_none() && !into_group {
             return;
-        };
+        }
         self.forget_undo();
         let old_parent = self.parent(dragged);
-        match drop {
-            Drop::Before | Drop::After => self.move_next_to(dragged, target, drop == Drop::After),
-            Drop::Into => self
-                .tree
-                .move_tile_to_container(dragged, target, usize::MAX, true),
-            Drop::Side(side) if self.reorders(target, side) => {
+        match (drop, parent) {
+            (Drop::Into, _) if into_group => {
+                self.tree
+                    .move_tile_to_container(dragged, target, usize::MAX, true);
+            }
+            (_, None) => {}
+            (Drop::Before | Drop::After, Some(_)) => {
+                self.move_next_to(dragged, target, drop == Drop::After);
+            }
+            (Drop::Into, Some(_)) => self.stack_with(dragged, target),
+            (Drop::Side(side), Some(_)) if self.reorders(target, side) => {
                 self.move_next_to(dragged, target, side.is_after());
             }
-            Drop::Side(side) if self.are_only_children(dragged, target) => {
+            (Drop::Side(side), Some(parent)) if self.are_only_children(dragged, target) => {
                 // turn the group instead of nesting a new one in it
                 self.set_group_kind(parent, side.kind());
                 self.move_next_to(dragged, target, side.is_after());
             }
-            Drop::Side(side) => self.group_with(dragged, target, side.kind(), side.is_after()),
+            (Drop::Side(side), Some(_)) => {
+                self.group_with(dragged, target, side.kind(), side.is_after());
+            }
         }
         if let Some(old_parent) = old_parent {
             self.remove_if_empty(old_parent, false);
@@ -576,6 +662,20 @@ impl Layout {
                 .is_some_and(|parent| {
                     parent.kind() != ContainerKind::Tabs && parent.num_children() == 2
                 })
+    }
+
+    /// Puts `target`, a view, and `dragged` into a group of tabs in the place of `target`,
+    /// `dragged` after it. If they are the only children of a vertical or horizontal
+    /// group, that group turns into the tabs instead.
+    fn stack_with(&mut self, dragged: TileId, target: TileId) {
+        if self.are_only_children(dragged, target)
+            && let Some(parent) = self.parent(target)
+        {
+            self.set_group_kind(parent, GroupKind::Tabs);
+            self.move_next_to(dragged, target, true);
+        } else {
+            self.group_with(dragged, target, GroupKind::Tabs, true);
+        }
     }
 
     /// Moves `dragged` before or after `target` in the group of `target`.
@@ -714,18 +814,42 @@ impl Layout {
             .tree
             .tiles
             .iter()
-            .filter_map(|(_, tile)| match tile {
-                Tile::Container(Container::Tabs(tabs)) => Some(tabs),
+            .filter_map(|(&id, tile)| match tile {
+                Tile::Container(Container::Tabs(tabs)) => Some((id, tabs)),
                 _ => None,
             })
             .collect();
         let panes_in_tabs = tab_groups
             .iter()
+            .flat_map(|(_, tabs)| tabs.children.iter().copied())
+            .collect();
+        // the tabs of the groups of tabs below the top level, which are cards
+        let below_top: Vec<_> = tab_groups
+            .iter()
+            .filter(|(id, _)| *id != self.root())
+            .map(|(_, tabs)| *tabs)
+            .collect();
+        let tabs_in_cards = below_top
+            .iter()
             .flat_map(|tabs| tabs.children.iter().copied())
+            .collect();
+        // the open tabs of those groups that are a view or an empty group, which share
+        // one card with their tab row
+        let joined_cards = below_top
+            .iter()
+            .filter_map(|tabs| tabs.next_active(&self.tree.tiles))
+            .filter(|&active| match self.tree.tiles.get(active) {
+                Some(Tile::Pane(_)) => true,
+                Some(Tile::Container(container)) => container.is_empty(),
+                None => false,
+            })
             .collect();
         // egui_tiles takes a group out of the tree while showing its tabs, so which tabs
         // are open is looked up before
-        let open_tabs = tab_groups.iter().filter_map(|tabs| tabs.active).collect();
+        let open_tabs = tab_groups
+            .iter()
+            .filter_map(|(_, tabs)| tabs.next_active(&self.tree.tiles))
+            .collect();
         // a view or group dragged in the center
         let dragged = egui::DragAndDrop::payload::<TileId>(ui.ctx())
             .map(|dragged| *dragged)
@@ -745,25 +869,25 @@ impl Layout {
             root: self.root(),
             // the center pane is clipped to its edges, without the gap around the views
             center_x: ui.clip_rect().x_range(),
-            add_tab_clicked: false,
             group_names: &self.group_names,
             selected: &mut self.selected,
             panes_in_tabs,
+            tabs_in_cards,
+            joined_cards,
             open_tabs,
             renaming: &mut self.renaming,
             rename_ended: None,
-            tab_bar_bottoms: Vec::new(),
-            below_tab_bar: HashSet::new(),
             dragged,
             cards: Vec::new(),
             tab_buttons: Vec::new(),
+            tab_rows: Vec::new(),
             actions: Vec::new(),
         };
         self.tree.ui(&mut behavior, ui);
-        let add_tab_clicked = behavior.add_tab_clicked;
         let shown = drag::Shown {
             cards: std::mem::take(&mut behavior.cards),
             tab_buttons: std::mem::take(&mut behavior.tab_buttons),
+            tab_rows: std::mem::take(&mut behavior.tab_rows),
         };
         let rename_ended = behavior.rename_ended;
         let mut actions = std::mem::take(&mut behavior.actions);
@@ -777,9 +901,6 @@ impl Layout {
         }
         for action in actions {
             self.apply(action);
-        }
-        if add_tab_clicked {
-            self.add_tab();
         }
         if let Some(dragged) = dragged {
             self.center_drop_ui(ui, dragged, &shown);
@@ -810,6 +931,12 @@ impl Layout {
             Action::AddViewInto(group, view_type) => {
                 self.add_view_into(group, view_type);
             }
+            Action::AddEmptyGroup(target, side) => {
+                self.add_empty_group_beside(target, side);
+            }
+            Action::AddTab(group) => {
+                self.add_tab_to(group);
+            }
             Action::Rename(tile_id) => self.start_rename(tile_id),
             Action::Delete(tile_id) => self.delete(tile_id),
         }
@@ -826,100 +953,10 @@ fn tile_of(view: ViewId) -> TileId {
     TileId::from_u64(view.0)
 }
 
-/// Size of a button of [`view_picker`].
-const PICKER_BUTTON: egui::Vec2 = egui::vec2(96.0, 72.0);
-
-/// Shows the types of views centered in `rect` of an empty group `group`, as buttons
-/// with their icon above their name. Returns the type clicked.
-fn view_picker(ui: &mut egui::Ui, rect: egui::Rect, group: TileId) -> Option<ViewType> {
-    let mut ui = ui.new_child(
-        egui::UiBuilder::new()
-            .id_salt(("view_picker", group))
-            .max_rect(rect),
-    );
-    // a small group shows a part of the buttons, which neither paint nor take clicks
-    // outside it
-    ui.set_clip_rect(rect.intersect(ui.clip_rect()));
-    let tokens = ui.tokens();
-    let gap = theme::GAP;
-    let types = ViewType::all();
-    // as many columns as fit with a gap between and around them, n·(button + gap) + gap
-    // ≤ width, at most half of the types, so that they form two rows or more
-    let fit = ((rect.width() - gap) / (PICKER_BUTTON.x + gap)).floor() as usize;
-    let columns = fit.clamp(1, types.len().div_ceil(2));
-    let rows = types.len().div_ceil(columns);
-    let title_height = 28.0;
-    let size = egui::vec2(
-        columns as f32 * (PICKER_BUTTON.x + gap) - gap,
-        title_height + rows as f32 * (PICKER_BUTTON.y + gap) - gap,
-    );
-    let top_left = (rect.center() - size / 2.0).max(rect.left_top() + egui::vec2(gap, gap));
-
-    ui.painter().text(
-        top_left + egui::vec2(size.x / 2.0, 0.0),
-        egui::Align2::CENTER_TOP,
-        "Add a view",
-        egui::TextStyle::Body.resolve(ui.style()),
-        ui.visuals().weak_text_color(),
-    );
-    let mut clicked = None;
-    for (index, view_type) in types.into_iter().enumerate() {
-        let (row, column) = (index / columns, index % columns);
-        let min = top_left
-            + egui::vec2(
-                column as f32 * (PICKER_BUTTON.x + gap),
-                title_height + row as f32 * (PICKER_BUTTON.y + gap),
-            );
-        let button = egui::Rect::from_min_size(min, PICKER_BUTTON);
-        let response = ui
-            .interact(button, ui.id().with(index), egui::Sense::click())
-            .on_hover_cursor(egui::CursorIcon::PointingHand);
-        response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, view_type.name())
-        });
-        let stroke = if response.hovered() {
-            tokens.accent
-        } else {
-            tokens.border
-        };
-        let painter = ui.painter();
-        painter.rect(
-            button,
-            theme::CARD_RADIUS,
-            tokens.card,
-            egui::Stroke::new(1.0, stroke),
-            egui::StrokeKind::Inside,
-        );
-        let text_color = if response.hovered() {
-            ui.visuals().strong_text_color()
-        } else {
-            ui.visuals().text_color()
-        };
-        painter.text(
-            button.center() - egui::vec2(0.0, 10.0),
-            egui::Align2::CENTER_CENTER,
-            view_type.icon(),
-            egui::FontId::proportional(22.0),
-            text_color,
-        );
-        painter.text(
-            button.center() + egui::vec2(0.0, 18.0),
-            egui::Align2::CENTER_CENTER,
-            view_type.name(),
-            egui::TextStyle::Body.resolve(ui.style()),
-            text_color,
-        );
-        if response.clicked() {
-            clicked = Some(view_type);
-        }
-    }
-    clicked
-}
-
-/// The menu of a view or group, opened by a right click on its title or tab: views can
-/// be added at its sides, and it can be renamed or deleted.
-fn tile_menu(ui: &mut egui::Ui, tile_id: TileId, is_view: bool, actions: &mut Vec<Action>) {
-    if is_view {
+/// The menu of a view or group, opened by a right click on its title or tab: views and
+/// empty groups can be added at its sides if `can_add`, and it can be renamed or deleted.
+fn tile_menu(ui: &mut egui::Ui, tile_id: TileId, can_add: bool, actions: &mut Vec<Action>) {
+    if can_add {
         let sides = [
             (egui_phosphor::regular::COLUMNS, "Add right", Side::Right),
             (egui_phosphor::regular::ROWS, "Add below", Side::Bottom),
@@ -933,6 +970,11 @@ fn tile_menu(ui: &mut egui::Ui, tile_id: TileId, is_view: bool, actions: &mut Ve
                     {
                         actions.push(Action::AddView(tile_id, side, view_type));
                     }
+                }
+                ui.separator();
+                let group = format!("{} Empty group", GroupKind::Tabs.icon());
+                if ui.button(group).clicked() {
+                    actions.push(Action::AddEmptyGroup(tile_id, side));
                 }
             });
         }
@@ -955,33 +997,33 @@ fn tile_menu(ui: &mut egui::Ui, tile_id: TileId, is_view: bool, actions: &mut Ve
 /// Shows the views of the layout in the center pane.
 struct Behavior<'a, 'b> {
     context: &'a mut ViewContext<'b>,
-    /// The tab group at the top level, whose tab bar has a button to add a tab.
+    /// The tab group at the top level.
     root: TileId,
     /// The center pane from edge to edge, which the line under the top tab bar spans.
     center_x: egui::Rangef,
-    /// Set when the button to add a tab is clicked.
-    add_tab_clicked: bool,
     group_names: &'a HashMap<TileId, String>,
     selected: &'a mut Option<TileId>,
     /// Views shown as a tab, they get no title bar.
     panes_in_tabs: HashSet<TileId>,
+    /// The tabs of the groups of tabs below the top level, shown as cards.
+    tabs_in_cards: HashSet<TileId>,
+    /// The open tabs of those groups that are a view or an empty group, whose body lies in
+    /// the same card as the tab row.
+    joined_cards: HashSet<TileId>,
     /// The tabs shown in their group.
     open_tabs: HashSet<TileId>,
     /// The view or group renamed, see [`Layout::renaming`].
     renaming: &'a mut Option<Renaming>,
     /// Set when editing the title ends, whether to keep the name.
     rename_ended: Option<bool>,
-    /// The bottoms of the tab bars shown so far, which egui_tiles shows before the
-    /// tiles below them.
-    tab_bar_bottoms: Vec<f32>,
-    /// The views right below a tab bar, whose cards leave a gap to it.
-    below_tab_bar: HashSet<TileId>,
     /// The view or group being dragged, shown dimmed.
     dragged: Option<TileId>,
     /// The cards of the views shown, to drop on.
     cards: Vec<(TileId, egui::Rect)>,
     /// The tab buttons shown, to drop on.
     tab_buttons: Vec<(TileId, egui::Rect)>,
+    /// The empty parts of the tab rows, after the last tab, to drop on.
+    tab_rows: Vec<(TileId, egui::Rect)>,
     /// The changes chosen in the menus of the views and tabs.
     actions: Vec<Action>,
 }
@@ -1006,15 +1048,6 @@ const TAB_CLOSE_GAP: f32 = 4.0;
 
 /// The least width left in a title row for what the view adds to it, like a legend.
 const MIN_TITLE_EXTRA_WIDTH: f32 = 24.0;
-
-/// The card of a view in `rect`, leaving a gap to a tab bar right above it.
-fn card_rect(rect: egui::Rect, below_tab_bar: bool) -> egui::Rect {
-    if below_tab_bar {
-        rect.with_min_y(rect.top() + theme::GAP)
-    } else {
-        rect
-    }
-}
 
 impl Behavior<'_, '_> {
     /// Shows a field of at least `min_size` to edit the title of `tile_id` if it is
@@ -1046,26 +1079,25 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
         if ui.input(|i| i.pointer.primary_pressed()) && ui.rect_contains_pointer(ui.max_rect()) {
             *self.selected = Some(tile_id);
         }
-        let top = ui.max_rect().top();
-        let below_tab_bar = self
-            .tab_bar_bottoms
-            .iter()
-            .any(|bottom| (top - bottom).abs() < 1.0);
-        if below_tab_bar {
-            self.below_tab_bar.insert(tile_id);
-            ui.add_space(theme::GAP);
-        }
-        // each view is a card on the canvas
+        // a view in a tabbed card lies in the card of its group, which is painted with
+        // the tab row; the gap under the row, which every tab bar leaves, belongs to the
+        // card, so that the view is joined to the row
+        let in_card = self.tabs_in_cards.contains(&tile_id);
         let tokens = ui.tokens();
-        let card = card_rect(ui.max_rect(), below_tab_bar);
+        let mut card = ui.max_rect();
+        if in_card {
+            card.min.y -= theme::GAP;
+        }
         self.cards.push((tile_id, card));
-        ui.painter().rect(
-            card,
-            theme::CARD_RADIUS,
-            tokens.card,
-            egui::Stroke::new(1.0, tokens.border),
-            egui::StrokeKind::Inside,
-        );
+        if !in_card {
+            ui.painter().rect(
+                card,
+                theme::CARD_RADIUS,
+                tokens.card,
+                egui::Stroke::new(1.0, tokens.border),
+                egui::StrokeKind::Inside,
+            );
+        }
 
         let titled = !self.panes_in_tabs.contains(&tile_id);
         if titled {
@@ -1172,7 +1204,11 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
             bar.context_menu(|ui| tile_menu(ui, tile_id, true, &mut self.actions));
         }
 
-        let top = if titled { 4 } else { 10 };
+        let top = match (titled, in_card) {
+            (true, _) => 4,
+            (false, false) => 10,
+            (false, true) => 10 - theme::GAP as i8,
+        };
         egui::Frame::NONE
             .inner_margin(egui::Margin {
                 left: 10,
@@ -1223,6 +1259,8 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
         let margin = self.tab_title_spacing(ui.visuals());
         let width = margin + galley.size().x + TAB_CLOSE_GAP + TAB_CLOSE_SIZE + TAB_CLOSE_GAP;
         let (_, rect) = ui.allocate_space(egui::vec2(width, ui.available_height()));
+        // the row is at the top of the bar, the gap below it belongs to what is below
+        let rect = rect.with_max_y(rect.top() + TAB_BAR_HEIGHT);
         let response = ui.interact(rect, id, egui::Sense::click());
         response.widget_info(|| {
             egui::WidgetInfo::selected(
@@ -1234,6 +1272,17 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
         });
         if ui.is_rect_visible(rect) {
             let color = self.tab_text_color(ui.visuals(), tiles, tile_id, state);
+            if state.active && self.tabs_in_cards.contains(&tile_id) {
+                // the open tab of a card is raised, as a selected title bar
+                let radius = egui::CornerRadius {
+                    nw: theme::CARD_RADIUS,
+                    ne: theme::CARD_RADIUS,
+                    sw: 0,
+                    se: 0,
+                };
+                let hover = ui.visuals().tokens().hover;
+                ui.painter().rect_filled(rect, radius, hover);
+            }
             let title = rect.with_min_x(rect.left() + margin);
             let pos = egui::Align2::LEFT_CENTER
                 .align_size_within_rect(galley.size(), title)
@@ -1279,7 +1328,6 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
         tile_id: TileId,
         response: egui::Response,
     ) -> egui::Response {
-        self.tab_bar_bottoms.push(response.rect.bottom());
         self.tab_buttons.push((tile_id, response.interact_rect));
         // egui_tiles takes a drag of its tab button as a drag of its own, so the tab is
         // moved by a button of blip on top of it
@@ -1300,10 +1348,11 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
         } else if response.clicked() && self.open_tabs.contains(&tile_id) {
             *self.selected = Some(tile_id);
         }
-        let is_view = matches!(tiles.get(tile_id), Some(Tile::Pane(_)));
+        let can_add = matches!(tiles.get(tile_id), Some(Tile::Pane(_)))
+            || self.tabs_in_cards.contains(&tile_id);
         let response =
             response.on_hover_text("Double-click to rename, drag to move, right-click for more");
-        response.context_menu(|ui| tile_menu(ui, tile_id, is_view, &mut self.actions));
+        response.context_menu(|ui| tile_menu(ui, tile_id, can_add, &mut self.actions));
 
         if self
             .renaming
@@ -1331,13 +1380,16 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
         rect: egui::Rect,
     ) {
         if self.dragged == Some(tile_id) {
-            let rect = card_rect(rect, self.below_tab_bar.contains(&tile_id));
             let veil = style.visuals.tokens().canvas.gamma_multiply(0.6);
             painter.rect_filled(rect, theme::CARD_RADIUS, veil);
         }
         if *self.selected == Some(tile_id) {
             let stroke = egui::Stroke::new(1.0, style.visuals.tokens().text_faint);
-            let rect = card_rect(rect, self.below_tab_bar.contains(&tile_id));
+            let mut rect = rect;
+            if self.joined_cards.contains(&tile_id) {
+                // the frame spans the whole card, tab row included
+                rect.min.y -= TAB_BAR_HEIGHT + theme::GAP;
+            }
             painter.rect_stroke(rect, theme::CARD_RADIUS, stroke, egui::StrokeKind::Inside);
         }
     }
@@ -1360,26 +1412,38 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
     }
 
     fn tab_bar_height(&self, _style: &egui::Style) -> f32 {
-        TAB_BAR_HEIGHT
+        // the row, then a gap: the views below the top tabs lie a gap under them, and a
+        // tabbed card starts at its row, as high as the card of a view beside it
+        TAB_BAR_HEIGHT + theme::GAP
     }
 
     fn top_bar_right_ui(
         &mut self,
-        _tiles: &egui_tiles::Tiles<View>,
+        tiles: &egui_tiles::Tiles<View>,
         ui: &mut egui::Ui,
         tile_id: TileId,
-        _tabs: &egui_tiles::Tabs,
+        tabs: &egui_tiles::Tabs,
         _scroll_offset: &mut f32,
     ) {
+        let bar = ui.max_rect();
+        if tile_id != self.root {
+            // a tabbed card: the row and the body of the open tab, if it is a view or
+            // empty, in one card, else the row alone
+            let row = bar.with_max_y(bar.top() + TAB_BAR_HEIGHT);
+            // a group in the open tab lies in the same card, a gap under the row
+            let body = tabs.next_active(tiles).and_then(|_| tiles.rect(tile_id));
+            let joined = tabs
+                .next_active(tiles)
+                .is_some_and(|open| self.joined_cards.contains(&open));
+            paint_tabbed_card(ui.painter(), row, body, joined);
+            return;
+        }
         // the line under the tabs, painted before them so that the underline of the open
         // tab lies on it, under the top tabs from edge to edge of the center pane
-        let bar = ui.max_rect();
-        let x = if tile_id == self.root {
-            self.center_x
-        } else {
-            bar.x_range()
-        };
-        let line = egui::Rect::from_x_y_ranges(x, bar.bottom() - 1.0..=bar.bottom());
+        let line = egui::Rect::from_x_y_ranges(
+            self.center_x,
+            bar.top() + TAB_BAR_HEIGHT - 1.0..=bar.top() + TAB_BAR_HEIGHT,
+        );
         // egui_tiles clips the tab bar to the tiles, which leaves out the gap around them
         let mut painter = ui.painter().clone();
         painter.set_clip_rect(line);
@@ -1388,20 +1452,33 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
 
     fn tab_bar_trailing_ui(
         &mut self,
-        _tiles: &egui_tiles::Tiles<View>,
+        tiles: &egui_tiles::Tiles<View>,
         ui: &mut egui::Ui,
         tile_id: TileId,
         _tabs: &egui_tiles::Tabs,
     ) {
-        if tile_id != self.root {
-            return;
+        // the rest of the row after the last tab takes drops, nothing else
+        let top = tiles
+            .rect(tile_id)
+            .map_or(ui.max_rect().top(), |group| group.top());
+        let row = egui::Rect::from_x_y_ranges(
+            ui.cursor().min.x..=ui.clip_rect().right(),
+            top..=top + TAB_BAR_HEIGHT,
+        );
+        if row.width() > 0.0 {
+            self.tab_rows.push((tile_id, row));
         }
-        ui.add_space(4.0);
+        // the button is centred in the row, not in the bar with the gap below it
+        let layout = egui::Layout::left_to_right(egui::Align::Center);
         let add = ui
-            .add(theme::icon_button(egui_phosphor::regular::PLUS))
-            .on_hover_text("Add a tab");
+            .scope_builder(egui::UiBuilder::new().max_rect(row).layout(layout), |ui| {
+                ui.add_space(4.0);
+                ui.add(theme::icon_button(egui_phosphor::regular::PLUS))
+                    .on_hover_text("Add a tab")
+            })
+            .inner;
         if add.clicked() {
-            self.add_tab_clicked = true;
+            self.actions.push(Action::AddTab(tile_id));
         }
     }
 
@@ -1452,6 +1529,32 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
     fn simplification_options(&self) -> egui_tiles::SimplificationOptions {
         // the layout keeps the groups as the user made them
         egui_tiles::SimplificationOptions::OFF
+    }
+}
+
+/// The card of a tabbed card: `row` alone, or with `body`, the rect of the whole group,
+/// below it, then with a line under the row if the body is `joined` to it, else the open
+/// tab holds a group, which lies a gap under the row. Painted before the tabs.
+fn paint_tabbed_card(
+    painter: &egui::Painter,
+    row: egui::Rect,
+    body: Option<egui::Rect>,
+    joined: bool,
+) {
+    let tokens = painter.ctx().global_style().visuals.tokens();
+    let card = body.unwrap_or(row);
+    let mut painter = painter.clone();
+    painter.set_clip_rect(card);
+    painter.rect(
+        card,
+        theme::CARD_RADIUS,
+        tokens.card,
+        egui::Stroke::new(1.0, tokens.border),
+        egui::StrokeKind::Inside,
+    );
+    if joined {
+        let line = egui::Rect::from_x_y_ranges(row.x_range(), row.bottom() - 1.0..=row.bottom());
+        painter.rect_filled(line, 0.0, tokens.border);
     }
 }
 

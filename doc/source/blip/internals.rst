@@ -164,7 +164,8 @@ Structure
    * - ``workbench/layout``
      - The ``Layout``: an ``egui_tiles`` tree of views, the menus to add and
        delete them in the center, the properties panel (``properties.rs``), dragging in
-       the center (``drag.rs``) and the saved form (``file.rs``). Deleting a
+       the center (``drag.rs``), the view picker (``picker.rs``) and the saved form
+       (``file.rs``). Deleting a
        view, tab or group, and ``Layout::clear``, keep the layout before in a
        single undo step, see below.
    * - ``workbench/files.rs``, ``workbench/opening.rs``
@@ -453,8 +454,30 @@ The ``Layout`` wraps an ``egui_tiles::Tree<View>``: containers are the groups
 (tabs, vertical, horizontal; group names are kept beside the tree), panes are
 the views. blip draws the tree with its own ``Behavior`` (cards, tab bars,
 titles) and does its own drag and drop with the dragged ``TileId`` as payload;
-``drag.rs`` finds the side of the view under the pointer. Adding a view at a
-side from the menu of a view goes through the same drop.
+``drag.rs`` finds where the pointer is and what a drop does there. Groups nest
+to any depth.
+
+* A drop is a **side** of a view (where the group stacks along that side, the
+  dragged tile moves next to the view; otherwise both form a new group, or a
+  group of just the two turns), the **middle** of a view (the view inset by a
+  quarter, at least 40 by 40 px: a new group of tabs of both, or a vertical
+  or horizontal group of just the two turned into tabs), or a **tab row**
+  (a tab button or the empty part of the row, at every level including the
+  top: the tile becomes a tab there).
+* Adding a view at a side from the menu of a view goes through the same drop.
+  The menu of a view and of a nested tab group has **Add right** and **Add
+  below** with the view types and then **Empty group**, a group of tabs with
+  one empty tab. Every tab bar has a **+** that adds an empty tab.
+* ``picker.rs`` draws the view types of an empty tab. ``view_picker`` picks a
+  form from the room the tab has: buttons with a name, a row of icon buttons,
+  or one menu button.
+* A group of tabs below the top level is drawn as a **tabbed card**: the tabs
+  sit in the title row of one card, also for an empty tab. The tabs at the top
+  lie on the canvas.
+* ``remove_if_empty`` prunes after a move or a delete: a vertical or horizontal
+  group, and a group of tabs below the top, left without children is removed,
+  and its parent if that is left empty too. A tab that is emptied by a move is
+  removed; one emptied by a delete stays (``keep_tab``). The top level stays.
 
 A ``View`` has a name, a ``ViewKind`` with the state of its type (a variant for
 each built-in type, and ``Custom`` for a type an application registered), the number

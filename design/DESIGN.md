@@ -76,8 +76,14 @@ oscilloscope, not like a web app.
   the views; only the Logs view keeps its own search, filter and autoscroll.
 - Bottom: the one time range of all views, with the timeline. Top: the menu bar with
   the connections chip.
-- Views are added from an empty tab's picker, View › Add view or a view's ⋯ menu, and
-  arranged by dragging. There is no layout panel.
+- Views are added from an empty tab's picker, View › Add view or the ⋯ menu of a view or
+  of a nested tab group (Add right / Add below: the view types, then Empty group, a tab
+  group with one empty tab), and arranged by dragging. There is no layout panel.
+- Top tabs lie on the canvas; nested tabs form a tabbed card, their tabs in the card's
+  title row, also when a tab is empty. Every tab bar has a + after its tabs, which adds an
+  empty tab. A drop on a tab row adds a tab, on the middle of a view makes a tab group of
+  both, on a side places the dragged view there. The picker shrinks where there is little
+  room: buttons, then icons, then a menu button.
 - Plot legends sit in the view's title row (dot, name, value at the cursor, the shared
   unit once at the end). Stats are chips below the plot, coloured by their trace. A legend
   never hides traces: a corner legend is a picture, not a control. The title legend keeps

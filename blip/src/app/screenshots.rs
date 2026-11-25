@@ -644,7 +644,22 @@ fn screenshots_layouts() {
     ] {
         layout_shot(name, egui::vec2(1000.0, 380.0), &linked_distribution(show));
     }
+    // a plot beside a group of two views as tabs, which lie in one card with their tab row
+    layout_shot("layout-nested-tabs", egui::vec2(1000.0, 380.0), NESTED_TABS);
 }
+
+/// The saved form of a layout of two top tabs, the first holding the plot "Acceleration"
+/// beside the tab group "Motor" of two views.
+const NESTED_TABS: &str = r#"{"name": "", "kind": "Tabs", "active": 0, "children": [
+  {"Group": {"name": "Overview", "kind": "Horizontal", "shares": [1.0, 1.2], "children": [
+    {"View": {"name": "Acceleration", "kind": {"Plot": {"traces": ["imu.acc[0]", "imu.acc[1]", "imu.acc[2]"]}}}},
+    {"Group": {"name": "Motor", "kind": "Tabs", "active": 0, "children": [
+      {"View": {"name": "Motor speed", "kind": {"Plot": {"traces": ["motor.speed_rpm"], "interpolation": "Step"}}}},
+      {"View": {"name": "Motor state", "kind": {"States": {"traces": ["motor.enabled", "motor.state", "simulator/log_level"]}}}}
+    ]}}
+  ]}},
+  {"Group": {"name": "Sensors", "kind": "Vertical", "children": []}}
+]}"#;
 
 /// The saved form of a layout of the plot "Motor speed" and the sideways distribution
 /// "Speed spread" linked to it, showing `show`.
