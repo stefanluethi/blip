@@ -152,10 +152,19 @@ fn trail_lines(
 ) -> Vec<Vec<[f64; 2]>> {
     let step_len = points.len().div_ceil(steps.max(1)).max(1);
     let Some(period) = period.filter(|&period| period > 0.0) else {
-        // the lines overlap by one point so the steps join
+        // whether a line runs from the point at `index` to the next
+        let joined =
+            |index: usize| is_point(&points[index]) && points.get(index + 1).is_some_and(is_point);
+        // the lines overlap by one point where the steps join; a point that joins only
+        // the step before is not drawn again as a lone dot
         return (0..points.len())
             .step_by(step_len)
-            .map(|start| points[start..(start + step_len + 1).min(points.len())].to_vec())
+            .map(|start| {
+                let end = (start + step_len).min(points.len());
+                let first = start + usize::from(start > 0 && joined(start - 1) && !joined(start));
+                let last = end + usize::from(end < points.len() && joined(end - 1));
+                points[first..last].to_vec()
+            })
             .collect();
     };
     let mut lines: Vec<Vec<[f64; 2]>> = vec![vec![]];

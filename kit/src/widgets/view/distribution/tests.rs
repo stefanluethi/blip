@@ -1001,40 +1001,46 @@ fn hovering_a_bin_shows_its_range_and_the_shares_and_counts_of_the_traces() {
 
 #[test]
 fn the_wheel_zooms_and_a_drag_pans_the_values_without_binning_anew() {
-    let mut harness = pose_harness();
-    let state = harness.state();
-    let (range, cursor) = (state.time.range(), state.time.cursor());
-    let last = last_of(&state.distribution);
-    let (low, high) = last.values;
-    assert!(state.distribution.value_view.is_none());
+    for orientation in [Orientation::Upright, Orientation::Sideways] {
+        let mut harness = pose_harness();
+        harness.state_mut().distribution.orientation = orientation;
+        harness.run();
+        let state = harness.state();
+        let (range, cursor) = (state.time.range(), state.time.cursor());
+        let last = last_of(&state.distribution);
+        let (low, high) = last.values;
+        assert!(state.distribution.value_view.is_none());
 
-    super::super::scroll_wheel(&mut harness, egui::pos2(200.0, 150.0), 100.0);
-    let state = harness.state();
-    let (zoomed_low, zoomed_high) = state.distribution.value_view.unwrap();
-    assert!(zoomed_high - zoomed_low < (high - low) * 0.9);
-    assert_eq!(last_of(&state.distribution).bins, last.bins);
-    assert_eq!((state.time.range(), state.time.cursor()), (range, cursor));
-    // the counts axis fits the tallest bin in view
-    let top = state.distribution.share_top.unwrap();
-    assert!(top > 0.0 && top <= 100.0);
+        super::super::scroll_wheel(&mut harness, egui::pos2(200.0, 150.0), 100.0);
+        let state = harness.state();
+        let (zoomed_low, zoomed_high) = state.distribution.value_view.unwrap();
+        assert!(zoomed_high - zoomed_low < (high - low) * 0.9);
+        assert_eq!(last_of(&state.distribution).bins, last.bins);
+        assert_eq!((state.time.range(), state.time.cursor()), (range, cursor));
+        // the counts axis fits the tallest bin in view
+        let top = state.distribution.share_top.unwrap();
+        assert!(top > 0.0 && top <= 100.0);
 
-    drag(
-        &mut harness,
-        egui::pos2(150.0, 150.0),
-        egui::pos2(250.0, 140.0),
-    );
-    let state = harness.state();
-    let (panned_low, panned_high) = state.distribution.value_view.unwrap();
-    assert!(panned_low < zoomed_low);
-    assert!(((panned_high - panned_low) - (zoomed_high - zoomed_low)).abs() < 1.0e-6);
-    assert_eq!(last_of(&state.distribution).bins, last.bins);
-    assert_eq!((state.time.range(), state.time.cursor()), (range, cursor));
+        // towards the lower values, a little across them
+        let to = orientation.pick(egui::vec2(100.0, -10.0), egui::vec2(10.0, -100.0));
+        drag(
+            &mut harness,
+            egui::pos2(150.0, 150.0),
+            egui::pos2(150.0, 150.0) + to,
+        );
+        let state = harness.state();
+        let (panned_low, panned_high) = state.distribution.value_view.unwrap();
+        assert!(panned_low < zoomed_low);
+        assert!(((panned_high - panned_low) - (zoomed_high - zoomed_low)).abs() < 1.0e-6);
+        assert_eq!(last_of(&state.distribution).bins, last.bins);
+        assert_eq!((state.time.range(), state.time.cursor()), (range, cursor));
 
-    double_click(&mut harness, egui::pos2(200.0, 150.0));
-    let state = harness.state();
-    assert!(state.distribution.value_view.is_none());
-    assert_eq!(last_of(&state.distribution).values, (low, high));
-    assert_eq!((state.time.range(), state.time.cursor()), (range, cursor));
+        double_click(&mut harness, egui::pos2(200.0, 150.0));
+        let state = harness.state();
+        assert!(state.distribution.value_view.is_none());
+        assert_eq!(last_of(&state.distribution).values, (low, high));
+        assert_eq!((state.time.range(), state.time.cursor()), (range, cursor));
+    }
 }
 
 #[test]
@@ -1319,18 +1325,24 @@ fn infinite_samples_alone_show_their_counts_on_empty_axes() {
 }
 
 /// The boxes `distribution` shows of `model` in the window of `time`, following a
-/// plot of `plots`.
+/// plot of `plots`, in a frame of `ctx`, which keeps them from one call to the next.
 fn boxes_of(
-    distribution: &mut Distribution,
+    ctx: &egui::Context,
+    distribution: &Distribution,
     model: &MemoryStore,
     time: &TimeRange,
     plots: &Plots,
 ) -> Vec<Option<boxes::BoxStats>> {
     let counting = distribution.counting(model, time, plots, 1000.0);
-    counting.window.expect("a window");
-    (counting.shown.iter())
-        .map(|trace| BoxStats::of(values(&trace.series), distribution.whiskers))
-        .collect()
+    let window = counting.window.expect("a window");
+    let mut boxes = Vec::new();
+    let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let id = egui::Id::new("distribution");
+        boxes = distribution
+            .boxes(ui, id, model, window, &counting.shown)
+            .to_vec();
+    });
+    boxes
 }
 
 #[test]
@@ -1341,38 +1353,39 @@ fn boxes_count_each_sample_once_over_the_shown_window() {
         ..distribution_of(&["a"])
     };
     let mut time = live(&model);
-    let samples = |distribution: &mut Distribution, model: &MemoryStore, time: &TimeRange| {
-        let boxes = boxes_of(distribution, model, time, &NO_PLOTS);
+    let ctx = egui::Context::default();
+    let samples = |distribution: &Distribution, model: &MemoryStore, time: &TimeRange| {
+        let boxes = boxes_of(&ctx, distribution, model, time, &NO_PLOTS);
         let samples = boxes[0].as_ref().unwrap().samples as u64;
         assert_eq!(samples, samples_in_window(model, time, "a"));
         samples
     };
     // the last 20 s, live, without the nulls
-    assert_eq!(samples(&mut distribution, &model, &time), 21 - 3);
+    assert_eq!(samples(&distribution, &model, &time), 21 - 3);
     // anew as the window is panned and zoomed, and moves on while live
     time.pan_zoom(0.0, 40.0);
-    assert_eq!(samples(&mut distribution, &model, &time), 41 - 6);
+    assert_eq!(samples(&distribution, &model, &time), 41 - 6);
     time.pan_zoom(5.0, 15.0);
-    samples(&mut distribution, &model, &time);
+    samples(&distribution, &model, &time);
     time.go_live();
     time.pan_zoom(20.0, 40.0);
     append(&mut model, "a", (41.0, 1.0), &floats([1.0; 10]));
     time.update(&model, 0.0);
-    samples(&mut distribution, &model, &time);
+    samples(&distribution, &model, &time);
 
     // a sample that holds long counts once, as in the bars
     let model = long_hold();
     let time = live(&model);
-    let stats = boxes_of(&mut distribution, &model, &time, &NO_PLOTS)[0]
+    let stats = boxes_of(&ctx, &distribution, &model, &time, &NO_PLOTS)[0]
         .clone()
         .unwrap();
     assert_eq!((stats.samples, stats.mean, stats.median), (4, 5.0, 5.0));
 
     // the box does not depend on the range of the value axis
     distribution.range = Ends::fixed((100.0, 200.0));
-    let fixed = boxes_of(&mut distribution, &model, &time, &NO_PLOTS);
+    let fixed = boxes_of(&ctx, &distribution, &model, &time, &NO_PLOTS);
     distribution.link = Some(ViewId(7));
-    let linked = boxes_of(&mut distribution, &model, &time, &plots((3.0, 4.0)));
+    let linked = boxes_of(&ctx, &distribution, &model, &time, &plots((3.0, 4.0)));
     assert_eq!(fixed, [Some(stats.clone())]);
     assert_eq!(linked, [Some(stats)]);
 }
@@ -1523,9 +1536,11 @@ fn a_trace_without_samples_keeps_its_row() {
         let last = last_of(&harness.state().distribution);
         let rows = last.rows.unwrap();
         assert_eq!(rows.count, 2, "{show:?}");
-        let state = harness.state_mut();
+        let state = harness.state();
+        let ctx = egui::Context::default();
         let boxes = boxes_of(
-            &mut state.distribution,
+            &ctx,
+            &state.distribution,
             &state.model,
             &state.time,
             &NO_PLOTS,
@@ -1700,8 +1715,8 @@ fn hovering_a_row_lights_it_and_shows_the_box_of_the_trace() {
         // the trace and its values in its number format with its unit, right aligned
         tooltip_rects(&harness, &["x"]);
         let state = harness.state();
-        let mut distribution = state.distribution.clone();
-        let stats = boxes_of(&mut distribution, &state.model, &state.time, &NO_PLOTS)[0]
+        let (ctx, distribution) = (egui::Context::default(), &state.distribution);
+        let stats = boxes_of(&ctx, distribution, &state.model, &state.time, &NO_PLOTS)[0]
             .clone()
             .unwrap();
         let step = boxes::value_step(&stats);

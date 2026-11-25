@@ -583,6 +583,26 @@ impl Distribution {
         }
     }
 
+    /// The boxes of the traces `shown` of `store` in `window`, kept under `id` while
+    /// their samples, the window, the whiskers and the traces stay the same, as sorting
+    /// the samples is slower than counting them in bins.
+    fn boxes(
+        &self,
+        ui: &egui::Ui,
+        id: egui::Id,
+        store: &dyn Store,
+        window: (u64, u64),
+        shown: &[Shown<'_>],
+    ) -> Arc<[Option<BoxStats>]> {
+        let traces = egui::Id::new(&self.traces);
+        let key = (store.samples_version(), window, self.whiskers, traces);
+        super::cached(ui, id.with("boxes"), key, || {
+            (shown.iter())
+                .map(|trace| BoxStats::of(values(&trace.series), self.whiskers))
+                .collect()
+        })
+    }
+
     /// The union of the expected ranges of the shown traces, if fitted to them.
     fn declared(&self, store: &dyn Store) -> Option<(f64, f64)> {
         match self.fit {
@@ -986,17 +1006,7 @@ impl Viewable for Distribution {
         };
         let boxes = match (self.show, window) {
             (Show::Bars, _) | (_, None) => None,
-            // kept while their samples, the window, the whiskers and the traces stay the
-            // same, as sorting the samples is slower than counting them in bins
-            (_, Some(window)) => {
-                let traces = egui::Id::new(&self.traces);
-                let key = (store.samples_version(), window, self.whiskers, traces);
-                Some(super::cached(ui, id.with("boxes"), key, || {
-                    (shown.iter())
-                        .map(|trace| BoxStats::of(self::values(&trace.series), self.whiskers))
-                        .collect::<Arc<[_]>>()
-                }))
-            }
+            (_, Some(window)) => Some(self.boxes(ui, id, store, window, &shown)),
         };
 
         let paths = || self.traces.iter().map(String::as_str);

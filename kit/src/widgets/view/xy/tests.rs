@@ -308,6 +308,22 @@ fn a_gap_starts_the_pattern_and_a_pending_step_again() {
 }
 
 #[test]
+fn a_point_joined_to_one_step_is_not_drawn_again_as_a_dot() {
+    // joined only before the step at 2 starts, lone at 4, joined only after 6
+    let points = [0.0, 1.0, 2.0, f64::NAN, 4.0, f64::NAN, 6.0, 7.0].map(|x| [x, 0.0]);
+    let lines = trail_lines(&points, 4, None, &unit_transform());
+    // plot_lines draws a segment of one point as a dot
+    let dots: Vec<f64> = (lines.iter())
+        .flat_map(|line| line.split(|point| !is_point(point)))
+        .filter(|segment| segment.len() == 1)
+        .map(|segment| segment[0][0])
+        .collect();
+    assert_eq!(dots, [4.0]);
+    assert_eq!(lines[0], [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]]);
+    assert_eq!(lines[3], [[6.0, 0.0], [7.0, 0.0]]);
+}
+
+#[test]
 fn layouts_without_the_new_properties_fade_as_before() {
     let xy: Xy = serde_json::from_str(r#"{"traces": ["a", "b"]}"#).unwrap();
     assert_eq!(xy.fade, DEFAULT_FADE);
