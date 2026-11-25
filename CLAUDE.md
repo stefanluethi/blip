@@ -71,6 +71,31 @@ changes.
 - Commit messages: a short imperative subject in plain words, then a body that explains
   what changed and why.
 
+## Keep the code small
+
+Every line is read again by each agent that works near it. Before you write, search for
+what is already there; the full rules and the patterns are in
+`.claude/skills/lean-review/RULES.md`.
+
+- Build only what the requirement or the request asks for: no option, parameter or
+  helper for later.
+- One copy: before a new helper, widget part or test fixture, `grep` for it and look at
+  the sibling modules. Extend the existing code with a parameter rather than write its
+  sibling.
+- No abstraction with one user (trait, wrapper, builder, generic), outside the
+  library's documented extension points.
+- Check data where it enters; inside, no checks or fallbacks for what cannot happen.
+- A change removes what it makes obsolete, with its tests and docs. Nothing is kept
+  beside the new way.
+- Comments say why, not what. Doc comments on public items are a line or two.
+- One test per behaviour; variants are rows of a table-driven test, shared set-up is a
+  helper.
+- Shorter is not the goal where it is harder to read: no golfing.
+
+`.claude/skills/lean-review/loc.sh [ref]` counts the lines of code and of tests per part
+with tokei, against a ref if given. `/lean-review` checks a change for size before it
+is committed; `/slim [part]` shrinks existing code in checked batches.
+
 ## Agents
 
 `.claude/agents` holds the specialist agents: `designer`, `architect`, `requirements-engineer`,

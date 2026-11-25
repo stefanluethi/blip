@@ -207,6 +207,10 @@ The spec has these sections:
   and expected values worked out (by running the numbers), not guessed. Also the
   existing tests that change, each with the reason: the behaviour changed by a
   requirement, or only the signature it calls. No other test is changed or removed.
+- **Budget:** per slice, the expected net lines of code and of tests, and what the
+  slice removes. New code names what it reuses under Types and functions; a spec that
+  adds a helper, a type or a view part without having searched the sibling modules for
+  one is not finished (`.claude/skills/lean-review/RULES.md`).
 - **Not to touch:** what stays as it is.
 
 Skip the file for a small change, one slice in a few files: then the brief is the spec,
@@ -257,15 +261,18 @@ If the baseline itself has to change with an API, keep what it measures the same
 result more than about 10 % worse goes to the specialist on its default model before
 the review, with both numbers.
 
-**Simplify.** When a part's change adds more than about 200 lines of code, spawn a
-fresh specialist of that part on Sonnet at medium effort to simplify it before the
-docs and the review: smaller code is cheaper for every agent that reads it later. The
-`simplify` skill spreads its work over agents, which a specialist cannot start, so the
-brief asks for one pass instead: repeated code to merge, code the change left unused,
-and work done twice on a path that runs all the time. Its brief: the files of the
-change (`git diff --stat` against the first snapshot), keep the behaviour and the
-tests the same, run the part's checks (`./check.sh` for blip and proto), and report
-what it removed or merged. Skip this for smaller changes.
+**Size.** After the last slice of a part, run
+`.claude/skills/lean-review/loc.sh <commit the branch started from>` and compare with
+the budget of the spec. When the part's change adds more than about 200 lines of code,
+or is more than half again over its budget, spawn a fresh specialist of that part on
+Sonnet at medium effort before the docs and the review, and have it run the
+`lean-review` skill with `fix` (it has the Skill tool): smaller code is cheaper for
+every agent that reads it later. Its brief: the base commit, the spec file with the
+budget, the files of the change, to keep the behaviour and the tests' assertions, to
+run the part's checks (`./check.sh` for blip and proto), and to report both `loc.sh`
+tables and what it merged or removed. A verdict of **rethink** comes back to you: go to
+the spec's author with it, not to another slice. Skip this for smaller changes; the
+reviewer's Size check covers them.
 
 ## 7. Document
 
@@ -302,7 +309,8 @@ since that round. Put the old id in the briefs of the next round.
    reviewers in one message, each with the requirement IDs in scope, a summary of the
    change, the file with the **Agreed** points and the log file:
    - `reviewer` on its default model with the scope **correctness** (its sections 1
-     and 2) and, if you measured, the two baseline results. It runs no checks.
+     and 2), the commit the branch started from and the budget for its Size check
+     and, if you measured, the two baseline results. It runs no checks.
    - `reviewer` on Sonnet at medium effort (`model: "sonnet"`, `effort: "medium"`)
      with the scope **coverage** (its sections 3 and 4): the coverage table, the
      traceability, the docs and the checks. This is looking up and running, not
@@ -361,7 +369,8 @@ and do not spawn an agent you added in this one.
 
 Report to the user: what was built, per requirement ID, the **Agreed** points one by
 one (built, built in part, or not built, and why), the reviewer's coverage table,
-the design reviewer's verdict, the reviewer's check results, the baseline before and
+the design reviewer's verdict, the reviewer's check results, the `loc.sh` table
+against the budget, the baseline before and
 after if you measured, the polish and Info findings you collected, what nobody has
 looked at or run (a window, the browser, a target), and anything left open (e.g.
 diagrams that need the draw.io app). Do not commit unless the user asks. If they do, use a short imperative subject

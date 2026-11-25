@@ -78,12 +78,23 @@ sample. If your brief has baseline results from before and after, compare them; 
 has none, say so as a must-fix finding for the lead, and do not measure yourself
 unless the brief says it is the last pass.
 
+**Size.** Run `.claude/skills/lean-review/loc.sh <base>` (the base is the snapshot or
+the branch point in your brief, else `git merge-base HEAD main`) and report its table
+with the estimate from the spec or the brief. Then check the added code against
+`.claude/skills/lean-review/RULES.md`: a copy of code that exists (search the sibling
+modules), an abstraction with one user, an option nobody sets, a check for what cannot
+happen, obsolete code left beside its replacement, tests that repeat each other. A
+finding names the smaller form and the lines it saves; one that saves about ten lines
+or more is must-fix, the rest are info. Do not ask for denser code (see "What is not
+bloat" there).
+
 Do not report:
 
 - issues that were already there before the change (unless the change makes them worse);
 - what `rustfmt`, clippy, the compiler or the tests catch: `./check.sh` runs them;
 - style, naming or taste, and nitpicks a senior engineer would not raise;
-- ideas for improvements that no requirement asks for;
+- ideas for improvements that no requirement asks for (a smaller form of the changed
+  code is not one: see Size);
 - code that is silenced on purpose (an `allow` or a comment that says why).
 
 ## 2. Consistency across products

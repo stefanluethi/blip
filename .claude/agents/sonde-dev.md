@@ -38,6 +38,12 @@ the same for `doc/source/sonde/`.
 - The API stays close to `proto`: one call per `Message` variant, the same fields in
   the same order. The encoding must match what `proto` decodes.
 - Match the style of the code around you. Keep `sonde/README.md` in step with the design.
+- **Keep it small** (`.claude/skills/lean-review/RULES.md`). Before you write a helper,
+  a type or a test fixture, search for one that does the job (`grep`, the sibling
+  modules) and use or extend it. Nothing for later, no abstraction with one user, no
+  checks for what cannot happen, and remove what your change makes obsolete. Report the
+  net lines of code and of tests you added (`.claude/skills/lean-review/loc.sh HEAD`)
+  next to the estimate in your spec or brief, and the reason if you are far over.
 - Stay inside the files your brief names. If you must touch other parts, report it
   instead.
 - Existing tests are the proof that a change broke nothing. Change or remove one only

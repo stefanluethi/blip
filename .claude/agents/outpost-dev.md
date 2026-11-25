@@ -38,6 +38,12 @@ sections your spec or brief names, or the ones on what you change.
 - Read large files in parts: find the place with `grep -n`, then read that range
   (Read with offset and limit, or `sed -n`). Read a whole file only when you need all
   of it.
+- **Keep it small** (`.claude/skills/lean-review/RULES.md`). Before you write a helper,
+  a type or a test fixture, search for one that does the job (`grep`, the sibling
+  modules) and use or extend it. Nothing for later, no abstraction with one user, no
+  checks for what cannot happen, and remove what your change makes obsolete. Report the
+  net lines of code and of tests you added (`.claude/skills/lean-review/loc.sh HEAD`)
+  next to the estimate in your spec or brief, and the reason if you are far over.
 - Stay inside the files your brief names. If you must touch other parts, report it
   instead.
 - Existing tests are the proof that a change broke nothing. Change or remove one only

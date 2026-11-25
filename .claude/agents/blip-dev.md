@@ -75,6 +75,12 @@ widgets, the app): read the one on what you change, the same way.
   embedded targets or for bandwidth; the outpost handles the slow link. A change to
   proto usually also needs the outpost (`outpost/src/blip_outpost/proto.py`) and sonde
   to follow: say so in your report, do not edit those parts yourself.
+- **Keep it small** (`.claude/skills/lean-review/RULES.md`). Before you write a helper,
+  a type or a test fixture, search for one that does the job (`grep`, the sibling
+  modules) and use or extend it. Nothing for later, no abstraction with one user, no
+  checks for what cannot happen, and remove what your change makes obsolete. Report the
+  net lines of code and of tests you added (`.claude/skills/lean-review/loc.sh HEAD`)
+  next to the estimate in your spec or brief, and the reason if you are far over.
 - Stay inside the files your brief names. If you must touch other parts, report it
   instead.
 - Existing tests are the proof that a change broke nothing. Change or remove one only
