@@ -91,38 +91,57 @@ are filled in by the developer of the change.
 
 .. test:: Connections are sources of the session
    :id: TEST_LIB_CONN_SOURCES
-   :status: draft
+   :status: implemented
    :component: blip, blip-kit
    :verifies: REQ_LIB_CONN_SOURCES
 
-   ``TODO`` -- connections of the test to a WebSocket server of the test deliver
-   samples, a log record, a ``Hello`` and the result of an action. The test checks
-   that they reach the store, the recording and the invoker through the session
-   alone, as those of a source of the test do, that the connections poll and
-   split nothing themselves, and that one connection opening first starts afresh
-   and a later one does not.
+   ``kit/src/store/session`` unit tests (the session side):
+   ``an_update_tells_the_messages_and_a_fresh_start`` checks the messages
+   counted and the fresh start of ``Session::update``;
+   ``sources_of_the_same_name_are_told_apart`` checks the events with their ids.
+   ``kit/src/workbench/connections`` unit tests:
+   ``connections_are_sources_of_the_session`` connects to a WebSocket server of the
+   test that delivers samples, a log record, a ``Hello``, the actions and the result
+   of an invocation. It checks that the connections alone poll nothing, that after
+   ``Session::update`` the data reach the store, the recording (byte-identical to
+   that of the same frame given to an inbox), the ``Hello`` of the connection and
+   the invoker, and that the session makes no notice;
+   ``the_first_connection_to_open_is_passed_on_before_its_messages`` checks that one
+   connection opening first starts afresh and a later one does not.
 
 .. test:: Sources of the same name are told apart
    :id: TEST_LIB_SOURCE_SAME_NAME
-   :status: draft
+   :status: implemented
    :component: blip-kit
    :verifies: REQ_LIB_SOURCE_SAME_NAME
 
-   ``TODO`` -- two sources of the test with the same name, and two connections
-   with no name, are added to a session. The test checks that the data and the
-   status of each are its own, that a request goes to the source it is meant for,
-   that the notice of a failure names the source that failed, and that closing,
-   failing or removing one leaves the data and the status of the other as they
-   are.
+   ``kit/src/store/session`` unit tests:
+   ``sources_of_the_same_name_are_told_apart`` checks that two sources of one
+   name each keep their data, events and notices, and that closing, failing or removing
+   one leaves the other; ``the_notices_of_a_source_name_its_label`` checks the notices by
+   label; ``a_request_goes_to_the_source_that_announced_last`` checks which source of a
+   name gets a request. ``kit/src/workbench/connections`` unit tests:
+   ``two_connections_without_a_name_are_told_apart`` connects two connections with no
+   name and a third that is refused. It checks that each keeps its own ``Hello`` and
+   data, that the notice of the failure names the address of the connection that
+   failed, and that disconnecting one leaves the status and the source of the other
+   as they are.
 
 .. test:: The user sees no change by connections as sources
    :id: TEST_LIB_CONN_NO_CHANGE
-   :status: draft
+   :status: implemented
    :component: blip
    :verifies: REQ_LIB_CONN_NO_CHANGE
 
-   ``TODO`` -- the tests of the connections, of the ``Hello`` in the popup, of the
-   newer protocol and of the notices (:need:`TEST_BLIP_CONNECTIONS`,
-   :need:`TEST_BLIP_HELLO`, :need:`TEST_BLIP_HELLO_NEWER`) pass with only the way
-   they poll the connections adapted, not what they check; the screenshots of the
-   connections popup are compared with those before the change by hand.
+   The tests of the connections, of the ``Hello`` in the popup, of the newer
+   protocol and of the notices (:need:`TEST_BLIP_CONNECTIONS`,
+   :need:`TEST_BLIP_HELLO`, :need:`TEST_BLIP_HELLO_NEWER`) in
+   ``kit/src/workbench/connections`` unit tests pass with only the way they drive the
+   connections adapted (they pass the session, update it and let the connections
+   observe it), not what they check.
+   ``a_connection_that_cannot_connect_is_toasted_with_its_address`` in ``blip/src/app``
+   unit tests runs frames of the app and checks the toast of a connection that cannot
+   connect: its level and text with the address. All 64 screenshots rendered before
+   and after the change (``cargo test -p blip --release --features screenshots --
+   --ignored --test-threads 1 screenshots``, ``TZ=UTC``, into scratch directories) are
+   byte-identical (``diff -rq`` prints nothing).

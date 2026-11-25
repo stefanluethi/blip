@@ -230,10 +230,13 @@ fn screenshots_window() {
         .build_eframe(|cc| App::new(cc));
     let app = harness.state_mut();
     app.layout = demo_layout();
-    app.connections.set_saved(vec![connections::Connection {
-        name: "outpost".to_owned(),
-        address,
-    }]);
+    app.connections.set_saved(
+        vec![connections::Connection {
+            name: "outpost".to_owned(),
+            address,
+        }],
+        &mut app.state.session,
+    );
     harness.run_steps(2);
 
     // connect as the user does, from the list of the connection chip, then record
@@ -839,6 +842,7 @@ fn screenshots_connections() {
         },
     );
     let mut connections = connections::Connections::default();
+    let mut session = Session::default();
     connections.set_saved(
         [
             ("bench", bench),
@@ -851,21 +855,23 @@ fn screenshots_connections() {
             address,
         })
         .collect(),
+        &mut session,
     );
     let mut harness = Harness::builder()
         .with_size(egui::vec2(330.0, 260.0))
         .with_pixels_per_point(PIXELS_PER_POINT)
         .wgpu()
         .build_ui_state(
-            |ui, connections: &mut connections::Connections| {
+            |ui, (connections, session): &mut (connections::Connections, Session)| {
                 paint_background(ui, ui.tokens().canvas);
-                connections.receive(&mut Session::default(), 0.0);
+                session.update(0.0);
+                connections.observe(session);
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     ui.set_width(300.0);
-                    connections.ui(ui, false);
+                    connections.ui(ui, session);
                 });
             },
-            connections,
+            (connections, session),
         );
     theme::install(&harness.ctx);
     harness.run_steps(2);
@@ -873,7 +879,7 @@ fn screenshots_connections() {
     harness.run_steps(2);
     harness.get_by_label_contains("lab").click();
     harness.event(egui::Event::PointerGone);
-    step_until(&mut harness, "the Hellos", |connections| {
+    step_until(&mut harness, "the Hellos", |(connections, _)| {
         connections.newer().len() == 1 && connections.is_connected()
     });
     harness.run_steps(4);

@@ -84,8 +84,8 @@ What an application needs
 Without the workbench, the layout is yours: you decide which widgets there are
 and where they are. With the workbench the user arranges the views, and your own
 view types can be among them, see :doc:`widgets`. blip itself uses the
-workbench: its ``App`` holds the ``Connections`` of the workbench, which keep
-the ``WebSocket`` sources and show their list, and a ``Session``.
+workbench: its ``App`` holds the ``Connections`` of the workbench, which add
+the ``WebSocket`` sources to its ``Session`` and show their list.
 
 Web and native
 --------------

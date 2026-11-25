@@ -299,7 +299,7 @@ fn a_recording_is_opened_across_frames_and_can_be_cancelled() {
     // connecting while reading cancels it
     let mut app = App::default();
     app.open(file()).unwrap();
-    app.connections.connect_first(&ctx);
+    app.connections.connect_first(&ctx, &mut app.state.session);
     app.continue_opening(&ctx);
     assert!(app.opening.is_none());
     assert!(!app.state.session.store.has_samples());
@@ -361,10 +361,13 @@ fn switching_presets_keeps_the_layout_and_connections_of_each() {
     let ctx = Context::default();
     let mut app = App::default();
     app.layout.add_view(view::ViewType::Plot);
-    app.connections.set_saved(vec![connections::Connection {
-        name: "bench".to_owned(),
-        address: "ws://bench:3000/ws/outpost".to_owned(),
-    }]);
+    app.connections.set_saved(
+        vec![connections::Connection {
+            name: "bench".to_owned(),
+            address: "ws://bench:3000/ws/outpost".to_owned(),
+        }],
+        &mut app.state.session,
+    );
     app.apply_preset(presets::Action::New, &ctx);
     assert_eq!(tabs(&app), 0);
     assert_eq!(addresses(&app), ["ws://127.0.0.1:3000/ws/outpost"]);
@@ -470,4 +473,34 @@ fn a_reopened_recording_is_saved_as_it_was_opened() {
     .unwrap();
     assert!(app.state.session.store.has_samples());
     assert_eq!(app.state.session.recorder.to_file(), bytes);
+}
+
+#[test]
+fn a_connection_that_cannot_connect_is_toasted_with_its_address() {
+    let ctx = Context::default();
+    let mut app = App::default();
+    app.connections.set_saved(
+        vec![connections::Connection {
+            name: "x".to_owned(),
+            address: "ws://127.0.0.1:1/x".to_owned(),
+        }],
+        &mut app.state.session,
+    );
+    app.connections.connect_first(&ctx, &mut app.state.session);
+    let start = std::time::Instant::now();
+    while app.toasts.shown().is_empty() && start.elapsed().as_secs() < 5 {
+        eframe::App::logic(&mut app, &ctx, &mut Frame::_new_kittest());
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let shown = app.toasts.shown();
+    assert_eq!(shown.len(), 1);
+    assert_eq!(shown[0].0, toasts::Level::Error);
+    assert!(
+        shown[0]
+            .1
+            .starts_with("Cannot connect to ws://127.0.0.1:1/x: "),
+        "{shown:?}"
+    );
+    assert!(app.connections.is_idle());
+    assert!(app.state.session.open_sources().is_empty());
 }

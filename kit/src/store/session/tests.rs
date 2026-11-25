@@ -178,11 +178,190 @@ fn a_source_that_ends_is_dropped_with_a_notice() {
 }
 
 #[test]
+fn sources_of_the_same_name_are_told_apart() {
+    let (a, b, c) = (
+        Scripted::default(),
+        Scripted::default(),
+        Scripted::default(),
+    );
+    let mut session = Session::recording();
+    let id_a = session.add_source("t", a.clone());
+    let id_b = session.add_source("t", b.clone());
+    assert_ne!(id_a, id_b);
+    session.set_label(id_a, "ws://a");
+    session.set_label(id_b, "ws://b");
+    a.tell(Told::Opened);
+    a.tell(Told::Message(sample(1_000, "a", 1.0)));
+    b.tell(Told::Opened);
+    b.tell(Told::Message(sample(1_000, "b", 2.0)));
+    let update = session.update(0.0);
+    assert_eq!(
+        update,
+        Update {
+            messages: 2,
+            started_fresh: false
+        }
+    );
+    assert_eq!(session.store.traces.series("a").unwrap().len(), 1);
+    assert_eq!(session.store.traces.series("b").unwrap().len(), 1);
+    assert_eq!(
+        session.source_events(),
+        [(id_a, SourceEvent::Opened), (id_b, SourceEvent::Opened)]
+    );
+
+    b.tell(Told::Failed("unplugged".to_owned()));
+    a.tell(Told::Message(sample(2_000, "a", 3.0)));
+    session.update(0.1);
+    assert_eq!(
+        session.source_events(),
+        [(id_b, SourceEvent::Failed("unplugged".to_owned()))]
+    );
+    assert_eq!(
+        session.take_notices(),
+        [(
+            Level::Error,
+            "The connection to ws://b broke: unplugged".to_owned()
+        )]
+    );
+    assert!(*b.closed.borrow());
+    assert!(!*a.closed.borrow());
+    assert_eq!(session.open_sources(), HashSet::from(["t".to_owned()]));
+    assert_eq!(session.store.traces.series("a").unwrap().len(), 2);
+
+    session.add_source("t", c.clone());
+    c.tell(Told::Opened);
+    session.update(0.2);
+    session.remove_source(id_a);
+    assert!(*a.closed.borrow());
+    assert!(!*c.closed.borrow());
+    assert_eq!(session.open_sources(), HashSet::from(["t".to_owned()]));
+    assert!(session.take_notices().is_empty());
+    session.update(0.3);
+    assert!(session.source_events().is_empty());
+}
+
+#[test]
+fn the_notices_of_a_source_name_its_label() {
+    let (x, y, z) = (
+        Scripted::default(),
+        Scripted::default(),
+        Scripted::default(),
+    );
+    let mut session = Session::default();
+    let id_x = session.add_source("sim", x.clone());
+    session.set_label(id_x, "ws://x");
+    let id_y = session.add_source("sim", y.clone());
+    session.set_label(id_y, "ws://y");
+    session.add_source("sim", z.clone());
+    x.tell(Told::Failed("refused".to_owned()));
+    y.tell(Told::Opened);
+    y.tell(Told::Closed);
+    z.tell(Told::Opened);
+    z.tell(Told::Failed("gone".to_owned()));
+    session.update(0.0);
+    assert_eq!(
+        session.take_notices(),
+        [
+            (Level::Error, "Cannot connect to ws://x: refused".to_owned()),
+            (Level::Error, "ws://y closed the connection".to_owned()),
+            (Level::Error, "The connection to sim broke: gone".to_owned()),
+        ]
+    );
+    session.set_label(id_x, "ws://other");
+    session.remove_source(id_x);
+    assert!(session.take_notices().is_empty());
+}
+
+#[test]
+fn an_update_tells_the_messages_and_a_fresh_start() {
+    let (first, second) = (Scripted::default(), Scripted::default());
+    let mut session = Session::default();
+    session.add_source("one", first.clone());
+    session.add_source("two", second.clone());
+    first.tell(Told::Opened);
+    first.tell(Told::Message(sample(1_000, "a", 1.0)));
+    first.tell(Told::Message(sample(2_000, "a", 2.0)));
+    assert_eq!(
+        session.update(0.0),
+        Update {
+            messages: 2,
+            started_fresh: true
+        }
+    );
+    first.tell(Told::Message(sample(3_000, "a", 3.0)));
+    assert_eq!(
+        session.update(0.1),
+        Update {
+            messages: 1,
+            started_fresh: false
+        }
+    );
+    second.tell(Told::Opened);
+    assert!(!session.update(0.2).started_fresh);
+    let mut frame = serde_cbor_2::to_vec(&sample(4_000, "a", 4.0)).unwrap();
+    frame.extend(serde_cbor_2::to_vec(&sample(5_000, "a", 5.0)).unwrap());
+    second.tell(Told::Frame(frame));
+    assert_eq!(session.update(0.3).messages, 2);
+}
+
+#[test]
+fn a_request_goes_to_the_source_that_announced_last() {
+    use crate::store::actions::ActionId;
+    let (a, b, c, d) = (
+        Scripted::default(),
+        Scripted::default(),
+        Scripted::default(),
+        Scripted::default(),
+    );
+    let mut session = Session::recording();
+    session.add_source("t", a.clone());
+    session.add_source("t", b.clone());
+    a.tell(Told::Opened);
+    b.tell(Told::Opened);
+    a.tell(Told::Message(announce("reset")));
+    session.update(0.0);
+    let reset = ActionId::new("t", "reset");
+    session
+        .invoker
+        .invoke(&reset, None, Default::default(), 0.0);
+    session.send_invocations();
+    assert_eq!((a.sent.borrow().len(), b.sent.borrow().len()), (1, 0));
+
+    b.tell(Told::Message(announce("reset")));
+    session.update(0.1);
+    session
+        .invoker
+        .invoke(&reset, None, Default::default(), 0.1);
+    session.send_invocations();
+    assert_eq!((a.sent.borrow().len(), b.sent.borrow().len()), (1, 1));
+
+    b.tell(Told::Failed("gone".to_owned()));
+    session.update(0.2);
+    session
+        .invoker
+        .invoke(&reset, None, Default::default(), 0.2);
+    session.send_invocations();
+    assert_eq!(a.sent.borrow().len(), 2);
+
+    session.add_source("u", c.clone());
+    session.add_source("u", d.clone());
+    c.tell(Told::Opened);
+    d.tell(Told::Opened);
+    session.update(0.3);
+    session.inbox("u", 0.3).message(&announce("go"));
+    session
+        .invoker
+        .invoke(&ActionId::new("u", "go"), None, Default::default(), 0.3);
+    session.send_invocations();
+    assert_eq!((c.sent.borrow().len(), d.sent.borrow().len()), (1, 0));
+}
+
+#[test]
 fn removing_a_source_closes_it() {
     let source = Scripted::default();
     let mut session = Session::default();
-    session.add_source("sim", source.clone());
-    session.remove_source("sim");
+    let id = session.add_source("sim", source.clone());
+    session.remove_source(id);
     assert!(*source.closed.borrow());
 }
 

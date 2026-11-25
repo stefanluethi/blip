@@ -222,7 +222,8 @@ impl App {
     fn show_preset(&mut self) {
         let preset = self.presets.active();
         self.layout = layout::Layout::from_saved(preset.layout.clone());
-        self.connections.set_saved(preset.connections.clone());
+        self.connections
+            .set_saved(preset.connections.clone(), &mut self.state.session);
     }
 
     /// Applies a change of the presets asked for in their menu or a dialog. Those that
@@ -351,7 +352,7 @@ impl App {
             .show(ui.ctx(), |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     ui.set_width(CONNECTIONS_WIDTH);
-                    self.connections.ui(ui, self.state.session.recording);
+                    self.connections.ui(ui, &mut self.state.session);
                 });
             });
         let pressed = ui.input(|input| {
@@ -401,12 +402,14 @@ impl App {
         ui.push_id(self.traces_generation, |ui| self.traces_ui(ui));
     }
 
-    /// Receives from the connections at the time `now`. The first connection to open
-    /// starts afresh with no data, unless recording.
+    /// Does the session's work of the frame at the time `now`: receives from the
+    /// connections, which then show what they told, and updates the invoker. The first
+    /// connection to open starts afresh with no data, unless recording.
     fn receive(&mut self, now: f64) {
-        let polled = self.connections.receive(&mut self.state.session, now);
-        self.rate.update(now, polled.messages);
-        if polled.started_fresh {
+        let update = self.state.session.update(now);
+        self.connections.observe(&self.state.session);
+        self.rate.update(now, update.messages);
+        if update.started_fresh {
             self.reset_traces_panel();
         }
     }
@@ -427,7 +430,7 @@ impl App {
     fn open(&mut self, file: files::File) -> Result<(), String> {
         if model::recording::is_recording(&file.bytes) {
             self.opening = Some(opening::Opening::new(file.name, file.bytes)?);
-            self.connections.disconnect_all();
+            self.connections.disconnect_all(&mut self.state.session);
             self.state.set_recording(false, false);
         } else if presets::is_presets(&file.bytes) {
             let presets = presets::read(&file.name, &file.bytes)?;
@@ -490,12 +493,10 @@ impl App {
         Ok(())
     }
 
-    /// Sends the invocations of the views to the connections of the outposts chosen
-    /// for their actions, unless the outpost no longer announces the action.
+    /// Sends the invocations the views queued to their sources, unless the source no
+    /// longer announces the action.
     fn send_invocations(&mut self) {
-        for (source, request) in self.state.session.take_requests() {
-            self.connections.send(&source, &request);
-        }
+        self.state.session.send_invocations();
     }
 
     /// The tree of the traces and actions, to choose those of the selected view.
@@ -558,11 +559,6 @@ impl eframe::App for App {
                 toasts::Level::Error => self.toasts.error(text),
                 toasts::Level::Warning => self.toasts.warning(text),
             }
-        }
-        let connected = self.connections.open_names();
-        self.state.session.update_invoker(connected, now);
-        for error in self.connections.take_errors() {
-            self.toasts.error(error);
         }
         for warning in self.connections.take_warnings() {
             self.toasts.warning(warning);

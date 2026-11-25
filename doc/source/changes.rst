@@ -49,6 +49,14 @@ blip
      input and holds the ``Recorder`` that writes the recording file. The CBOR
      reader and the parser are private. The rate at which the store takes in
      samples and the frame time of a plot are as before.
+   * Internal: the connections of blip are sources of the session, so every
+     message reaches the store by one path, the inbox of the session. The
+     ``Connections`` add a ``WebSocket`` per address to the session and read
+     what happened from it. A connection error is now one of the session's
+     notices, in the order it happened; the texts are as before. A request to a
+     name with several open sources, e.g. two connections without a name that
+     both announce actions, goes to the one that announced its actions last;
+     before, to the first.
    * Saved recordings are written again from what blip received: numbers in
      their shortest form, a block of samples as a block, the old names
      ``Value`` and ``ValueMetadata`` as ``Sample`` and ``TraceMetadata``. Messages
@@ -207,6 +215,17 @@ Upgrading
      ``store::growing`` and ``store::sorted`` are no longer public. What a view
      needs of ``sorted`` are the methods ``index_at``, ``closest_index`` and
      ``within`` of ``Series`` and ``Trace``.
-   * In the workbench, ``Connections::receive(&mut session, now)`` polls the
-     sockets itself and returns a ``Polled``; ``Received`` is gone, and
-     ``Opening::finish(&mut session)`` puts the opened recording in the session.
+   * ``Session::add_source(name, source)`` returns a ``SourceId`` and no longer
+     replaces a source of the same name. ``remove_source`` takes the id, not
+     the name. ``update(now)`` returns an ``Update`` (``messages``,
+     ``started_fresh``). New are ``set_label(id, label)``, which the notices
+     use, and ``source_events()``, what the sources told in the last update.
+     ``poll_source`` and ``Polled`` are private; add the source to the session
+     and call ``update``. ``Received`` is gone.
+   * In the workbench, ``Connections::receive``, ``send`` and ``take_errors``
+     are gone: the session polls the sockets and sends the requests, and the
+     errors are in ``Session::take_notices``. Call
+     ``Connections::observe(&session)`` after each ``Session::update``.
+     ``ui``, ``set_saved``, ``disconnect_all`` and ``connect_first`` take the
+     session. ``Opening::finish(&mut session)`` puts the opened recording in
+     the session.

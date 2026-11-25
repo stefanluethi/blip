@@ -76,12 +76,12 @@ Structure
    :class: diagram
    :alt: The App holds the State (time range and session), the
          connections, the files, the toasts and the layout with its views; the
-         connections exchange binary frames with outposts; all use the blip-proto
+         sources of the session exchange binary frames with outposts; all use the blip-proto
          crate.
 
    Modules of blip and its library. The session holds the store, the invoker
-   and the sources, the connections hold the WebSocket sources; the table
-   below lists the modules.
+   and the sources, among them the WebSocket sources; the connections add them
+   to the session and show their status; the table below lists the modules.
 
 .. list-table::
    :header-rows: 1
@@ -96,7 +96,8 @@ Structure
      - ``App``: the panels of the window, the menu, opening and saving files,
        persistence. ``State``: the time range and the ``Session``, with the
        rules of the session (a recording starts only while connected and
-       clears the data; the first connection to open starts afresh).
+       clears the data; the first connection to open starts afresh). The frame
+       calls ``Session::update`` and then ``Connections::observe``.
    * - ``store``
      - What was received. ``store.rs`` is the ``MemoryStore``, which takes
        typed input and keeps it, and the ``Level`` of the notices for the user.
@@ -146,11 +147,12 @@ Structure
        dialogs to rename, delete, export and import them, the versioned
        ``PresetsFile`` format and the ``Storage`` trait they are kept in.
    * - ``workbench/connections.rs``
-     - The list of connections, opened from the status chip in the menu bar,
-       and one ``WebSocket`` source per open address. Polls the sources
-       through the session (``Session::poll_source``), which reads their frames;
-       keeps the ``Hello`` of each from the events of the poll to show it;
-       sends requests.
+     - The list of connections, opened from the status chip in the menu bar.
+       Adds one ``WebSocket`` source per open address to the session, with the
+       address as its label, and removes it when the user disconnects. Shows
+       the status and the ``Hello`` of each from the events of the last update
+       (``Session::source_events``) and keeps the warning of a newer protocol.
+       It polls and sends nothing: the session does.
    * - ``workbench/layout``
      - The ``Layout``: an ``egui_tiles`` tree of views, the menus to add and
        delete them in the center, the properties panel (``properties.rs``), dragging in
@@ -184,37 +186,39 @@ draws as often as data arrives, not more.
 .. figure:: /diagrams/blip-frame.svg
    :target: ../_images/blip-frame.svg
    :class: diagram
-   :alt: logic(): poll the connections through the session, parse the frames, route
-         what arrives to the recorder, the store and the invoker, update the
-         invoker, open files. ui(): menu, update the time range, bottom, left and right
-         panels, the views, then send the invocations.
+   :alt: logic(): update the session, which polls its sources, parses the
+         frames, routes what arrives to the recorder, the store and the invoker
+         and updates the invoker; the connections observe the update; the
+         toasts; open files. ui(): menu, update the time range, bottom, left and
+         right panels, the views, then send the invocations.
 
    What happens in a frame.
 
-* ``logic`` polls the connections: ``Connections::receive`` gives the session
-  each socket to poll (``Session::poll_source``), which hands it an inbox. The
-  session routes each message the inbox reads, see *Receiving*: to the
-  recorder, the store (while recording, or only the latest value of a sample
-  otherwise) and, for answers to invocations, the invoker. The first
-  connection to open starts afresh, unless recording.
-  ``Session::update_invoker`` then tells the invoker which connections are
-  open.
+* ``logic`` calls ``Session::update``. It sends the invocations queued since
+  the last frame, polls each source, which gets an inbox, and then tells the
+  invoker which sources are open. The session routes each message the inbox
+  reads, see *Receiving*: to the recorder, the store (while recording, or only
+  the latest value of a sample otherwise) and, for answers to invocations, the
+  invoker. The first connection to open starts afresh, unless recording.
+  ``update`` returns an ``Update``: how many messages arrived, for the rate,
+  and whether the session started afresh, on which blip resets the traces
+  panel. ``Connections::observe`` then reads what the sources told in the
+  update (``Session::source_events``) to show the status and the ``Hello`` of
+  each connection. The errors of connections come out with the notices of the
+  session, which ``logic`` turns into toasts.
 * ``ui`` first updates the time range from the store (the span of the data;
   playing moves the window on), then draws the panels and the views, which
   read the store and may change the time range and queue invocations.
-  ``send_invocations`` then takes the requests of the session
-  (``Session::take_requests``) and sends them through the connections.
+  ``Session::send_invocations`` then sends the requests to their sources.
 * ``raw_input_hook`` takes mouse wheel events before egui smooths them, so the
   wheel zooms the plot or timeline under the pointer without the rest of a
   notch scrolling what the pointer moves on to (``view::zoom_with_wheel`` and
   ``time::take_wheel``).
 
-An application without the workbench has the same frame with the session
-polling its sources itself, see :doc:`/library/app`: ``Session::update``, then
-``TimeRange::update``, then the widgets, then ``Session::send_invocations``.
-blip holds its ``WebSocket`` sources in the ``Connections`` of the workbench
-instead, which add the list and the user's choices of connections, so it
-polls them through the session.
+An application without the workbench has the same frame, see
+:doc:`/library/app`: ``Session::update``, then ``TimeRange::update``, then the
+widgets, then ``Session::send_invocations``. blip adds ``Connections::observe``
+after ``update``.
 
 What a frame costs follows what is shown, not how much data there is:
 
@@ -246,8 +250,8 @@ Receiving
 What happens to a message on its way into the store:
 
 * **Sources and the inbox.** A source is a ``Source`` (see
-  :doc:`/library/sources`), in blip one connection, named in the connections.
-  When polled it gets an ``Inbox`` and hands over what it has: a frame
+  :doc:`/library/sources`), in blip one connection, named in the connections;
+  the session holds it. When polled it gets an ``Inbox`` and hands over what it has: a frame
   (``Inbox::frame``), e.g. one binary WebSocket message holding one ``Message``
   or several as a CBOR sequence (RFC 8742), e.g. a batch of sonde passed
   through by the outpost, or typed data (``sample``, ``samples``, ``log``,
@@ -277,8 +281,8 @@ What happens to a message on its way into the store:
   not be read; ``App::logic`` turns them into toasts, also those of an opened
   recording. A block counts once for the rate of a readback.
 * **Hello.** The parser reads the ``Hello`` of a frame like any message; the
-  inbox also reports it as an event of the poll, so ``connections.rs`` can show
-  it. The store keeps it as a description of its source and takes the clock from
+  inbox also reports it as an event of the source, so ``Connections::observe``
+  can read it from ``Session::source_events`` and show it. The store keeps it as a description of its source and takes the clock from
   it (``Input::Clock``).
 * **Kinds.** Integers are stored as ``i64``, as ``u64`` once one is above
   ``i64::MAX``, and the column switches to ``f64`` with the first float.
@@ -590,8 +594,11 @@ choices follow it, but never infers success from it.
 * ``invoke`` queues an ``Invoke`` request with a new id for an action of a
   source; ``invoke_dragging`` and ``finish_dragging`` throttle a dragged
   slider to one request per 100 ms and send the final value.
-* ``App::send_invocations`` takes the queue and sends each request to its
-  source, unless the source no longer announces the action.
+* ``App::send_invocations`` calls ``Session::send_invocations``, which takes
+  the queue and sends each request to its source, unless the source no longer
+  announces the action. Sources may share a name, e.g. two connections without
+  one; a request to a name goes to the open source of that name that announced
+  its actions last, the set the user sees, else to the first open one.
 * ``receive`` matches an ``ActionResult`` to its pending invocation;
   ``update`` marks invocations unanswered after five seconds and knows which
   sources are connected.

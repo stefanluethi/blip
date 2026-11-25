@@ -13,10 +13,32 @@ use std::collections::HashSet;
 
 /// A source of a session with the name its messages are kept under.
 struct Attached {
+    id: SourceId,
     name: String,
+    /// What the notices call the source, the name until [`Session::set_label`].
+    label: String,
     source: Box<dyn Source>,
     /// Whether the source told that it is open.
     open: bool,
+    /// When the source last announced its actions, by the session's count of
+    /// announcements; `None` if it did not.
+    announced: Option<u64>,
+}
+
+/// Which source of a session it is, given by [`Session::add_source`]: to remove the source,
+/// label it, and tell its events apart from those of another source, also one of the same
+/// name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SourceId(u64);
+
+/// What the sources handed over in an update of the session, see [`Session::update`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Update {
+    /// How many messages the sources handed over, e.g. to show a rate.
+    pub messages: usize,
+    /// Whether a source opened while none was open, so the session started afresh with no
+    /// data (unless recording), e.g. to reset what shows the old data.
+    pub started_fresh: bool,
 }
 
 /// The store, the recorder of what arrives, the invoker and the sources, and the rules
@@ -37,19 +59,27 @@ pub struct Session<S = MemoryStore> {
     sources: Vec<Attached>,
     /// What went wrong with the sources since [`Self::take_notices`].
     notices: Vec<(Level, String)>,
+    /// The last id given to a source.
+    next_id: u64,
+    /// How many times a source announced its actions.
+    announcements: u64,
+    /// What the sources told about themselves in the last update.
+    events: Vec<(SourceId, SourceEvent)>,
     /// What reads the messages, kept to read the next without allocating.
     parser: Parser,
 }
 
 /// What happened while the session polled a source, apart from the messages.
 #[derive(Debug, Default, PartialEq)]
-pub struct Polled {
+pub(crate) struct Polled {
     /// What the source told about itself, in order.
-    pub events: Vec<SourceEvent>,
+    pub(crate) events: Vec<SourceEvent>,
     /// How many messages the source handed over.
-    pub messages: usize,
+    pub(crate) messages: usize,
     /// Whether the source opened first and so started afresh, with no data.
-    pub started_fresh: bool,
+    pub(crate) started_fresh: bool,
+    /// Whether the source announced its actions.
+    pub(crate) announced: bool,
 }
 
 /// What a source told about itself while polled.
@@ -150,6 +180,9 @@ impl<S: Ingest + Store> Session<S> {
             recording: false,
             sources: Vec::new(),
             notices: Vec::new(),
+            next_id: 0,
+            announcements: 0,
+            events: Vec::new(),
             parser: Parser::default(),
         }
     }
@@ -172,26 +205,38 @@ impl<S: Ingest + Store> Session<S> {
         notify(&mut self.notices, level, text);
     }
 
-    /// Adds `source`, whose messages are kept under `name` and whose actions are
-    /// invoked by that name. Replaces the source of the same name.
-    pub fn add_source(&mut self, name: &str, source: impl Source + 'static) {
-        self.remove_source(name);
+    /// Adds `source`, whose messages are kept under `name` and whose actions are invoked by
+    /// that name. Sources may share a name, e.g. two connections without one; the id tells
+    /// them apart. Its notices call it by `name` until [`Self::set_label`].
+    pub fn add_source(&mut self, name: &str, source: impl Source + 'static) -> SourceId {
+        self.next_id += 1;
+        let id = SourceId(self.next_id);
         self.sources.push(Attached {
+            id,
             name: name.to_owned(),
+            label: name.to_owned(),
             source: Box::new(source),
             open: false,
+            announced: None,
         });
+        id
     }
 
-    /// Closes and removes the source named `name`, if there is one.
-    pub fn remove_source(&mut self, name: &str) {
-        self.sources.retain_mut(|attached| {
-            if attached.name != name {
-                return true;
-            }
-            attached.source.close();
-            false
-        });
+    /// Closes and removes the source `id`, if the session holds it. Nothing is told about it:
+    /// no event, no notice.
+    pub fn remove_source(&mut self, id: SourceId) {
+        if let Some(index) = self.sources.iter().position(|attached| attached.id == id) {
+            self.sources.remove(index).source.close();
+        }
+    }
+
+    /// Calls the source `id` `label` in the notices to the user, e.g. the address of a
+    /// connection: "Cannot connect to {label}: ...", "The connection to {label} broke: ...",
+    /// "{label} closed the connection".
+    pub fn set_label(&mut self, id: SourceId, label: &str) {
+        if let Some(attached) = self.sources.iter_mut().find(|attached| attached.id == id) {
+            label.clone_into(&mut attached.label);
+        }
     }
 
     /// The names of the open sources of the session.
@@ -207,12 +252,23 @@ impl<S: Ingest + Store> Session<S> {
     /// seconds: sends the invocations queued since the last frame, receives from the
     /// sources and updates the invoker. Call it once a frame before the widgets, and
     /// [`Self::send_invocations`] after them to send what they queued without waiting
-    /// for the next frame.
-    pub fn update(&mut self, now: f64) {
+    /// for the next frame. Returns how many messages arrived and whether the session
+    /// started afresh; what the sources told about themselves is in
+    /// [`Self::source_events`].
+    pub fn update(&mut self, now: f64) -> Update {
         self.send_invocations();
-        self.poll_sources(now);
+        let update = self.poll_sources(now);
         let connected = self.open_sources();
         self.update_invoker(connected, now);
+        update
+    }
+
+    /// What the sources told about themselves in the last [`Self::update`], in order, each
+    /// with its id: opened, their `Hello`, closed or failed. A source that closed or failed
+    /// is no longer in the session. Empty before the first update; [`Self::inbox`] adds
+    /// nothing.
+    pub fn source_events(&self) -> &[(SourceId, SourceEvent)] {
+        &self.events
     }
 
     /// The inbox of `source`, to hand over its messages at the time `now` in seconds
@@ -231,9 +287,8 @@ impl<S: Ingest + Store> Session<S> {
     /// Polls `source`, named `name`, until it has nothing more or ends, and hands what it
     /// gave to the store through an inbox at the time `now`. The messages are counted and
     /// what the source told about itself is in the events; `fresh_when_opened` tells
-    /// whether its opening starts afresh, i.e. no other source is open. The caller acts on
-    /// the events, e.g. ends the source.
-    pub fn poll_source(
+    /// whether its opening starts afresh, i.e. no other source is open.
+    pub(crate) fn poll_source(
         &mut self,
         name: &str,
         source: &mut dyn Source,
@@ -246,43 +301,57 @@ impl<S: Ingest + Store> Session<S> {
     }
 
     /// Receives what the sources of the session have, and drops those that ended.
-    fn poll_sources(&mut self, now: f64) {
+    fn poll_sources(&mut self, now: f64) -> Update {
+        self.events.clear();
+        let mut update = Update::default();
         let mut sources = std::mem::take(&mut self.sources);
         let mut open = sources.iter().filter(|attached| attached.open).count();
         sources.retain_mut(|attached| {
             let polled = self.poll_source(&attached.name, &mut *attached.source, now, open == 0);
+            update.messages += polled.messages;
+            update.started_fresh |= polled.started_fresh;
+            if polled.announced {
+                self.announcements += 1;
+                attached.announced = Some(self.announcements);
+            }
+            let mut keep = true;
             for event in polled.events {
-                match event {
+                match &event {
                     SourceEvent::Opened => {
                         open += usize::from(!attached.open);
                         attached.open = true;
                     }
                     SourceEvent::Hello(_) => {}
                     SourceEvent::Closed => {
-                        let text = format!("{} closed the connection", attached.name);
+                        let text = format!("{} closed the connection", attached.label);
                         self.notices.push((Level::Error, text));
                         open -= usize::from(attached.open);
                         attached.source.close();
-                        return false;
+                        keep = false;
                     }
                     SourceEvent::Failed(error) => {
                         let text = if attached.open {
-                            format!("The connection to {} broke: {error}", attached.name)
+                            format!("The connection to {} broke: {error}", attached.label)
                         } else {
-                            format!("Cannot connect to {}: {error}", attached.name)
+                            format!("Cannot connect to {}: {error}", attached.label)
                         };
                         self.notices.push((Level::Error, text));
                         open -= usize::from(attached.open);
                         attached.source.close();
-                        return false;
+                        keep = false;
                     }
                 }
+                self.events.push((attached.id, event));
+                if !keep {
+                    break;
+                }
             }
-            true
+            keep
         });
         // sources added while receiving, by none of the calls above, would be lost
         sources.append(&mut self.sources);
         self.sources = sources;
+        update
     }
 
     /// Tells the invoker which sources are `connected` and whether the session is
@@ -314,13 +383,24 @@ impl<S: Ingest + Store> Session<S> {
         requests
     }
 
+    /// The index of the source a request to `name` goes to: of the open sources of that
+    /// name, the one that announced its actions last, the actions the store holds; else the
+    /// first of them.
+    fn addressee(&self, name: &str) -> Option<usize> {
+        let named = |attached: &&Attached| attached.open && attached.name == name;
+        let last = (self.sources.iter().enumerate())
+            .filter(|(_, attached)| named(attached))
+            .filter_map(|(index, attached)| Some((attached.announced?, index)))
+            .max()
+            .map(|(_, index)| index);
+        last.or_else(|| self.sources.iter().position(|attached| named(&attached)))
+    }
+
     /// Sends the requests the invoker queued to the sources of the session.
     pub fn send_invocations(&mut self) {
         for (name, request) in self.take_requests() {
-            let source =
-                (self.sources.iter_mut()).find(|attached| attached.open && attached.name == name);
-            match source {
-                Some(attached) => attached.source.send(&request),
+            match self.addressee(&name) {
+                Some(index) => self.sources[index].source.send(&request),
                 None => log::warn!("dropping a request to {name:?}, which is not connected"),
             }
         }

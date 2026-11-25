@@ -22,13 +22,14 @@ use blip_kit::widgets::time::TimeRange;
 use blip_kit::widgets::view::{self, plot::Plot, ViewContext, Viewable as _};
 
 let mut session = Session::recording();
-session.add_source("target", my_source); // anything that implements `Source`: it hands bytes
-                                          // in the blip protocol or typed values to an `Inbox`
+let id = session.add_source("target", my_source); // anything that implements `Source`: it hands
+                                                  // bytes in the blip protocol or typed values
+                                                  // to an `Inbox`; `id` removes it again
 let mut time = TimeRange::default();
 let mut plot: Plot = view::showing(["motor/rpm"]);
 
 // each frame
-session.update(now);
+let update = session.update(now); // the messages that arrived, whether it started afresh
 time.update(&session.store, now);
 plot.view(ui, &mut ViewContext::new(&session.store, &mut time, &mut session.invoker));
 session.send_invocations();

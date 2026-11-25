@@ -83,17 +83,19 @@ natively and in the browser. It needs the ``websocket`` feature, on by default.
 .. code-block:: rust
 
    let socket = WebSocket::connect("ws://127.0.0.1:3000/ws/outpost", move || ctx.request_repaint())?;
-   session.add_source("outpost", socket);
+   let id = session.add_source("outpost", socket);
 
 The second argument is called from another thread whenever an event arrived,
 to wake the application up. A ``WebSocket`` is opening until it calls
 ``inbox.opened()``. In ``poll`` it hands each binary message to
 ``inbox.frame``, as received; it splits and reads nothing.
 
-In blip, the ``Connections`` of the workbench hold the ``WebSocket`` sources,
-show their list from the status chip and poll them through the session with
-``Connections::receive(&mut session, now)``. An application without the
-workbench adds its sources to the session itself.
+In blip, the ``Connections`` of the workbench show the list of addresses from
+the status chip and add a ``WebSocket`` to the session for each open one, with
+the address as its label. After each ``Session::update`` they read what
+happened with ``Connections::observe(&session)``, from the ``source_events`` of
+the session. An application without the workbench adds its sources to the
+session itself.
 
 Writing a source
 ----------------
@@ -220,14 +222,25 @@ does what happens each frame apart from the GUI.
        application. ``recording()`` keeps the samples from the start, for an
        application without a record button.
    * - ``add_source(name, source)``
-     - Adds a source. Its messages are kept under ``name`` and its actions are
-       invoked by it. A source of the same name is replaced.
-   * - ``remove_source(name)``
-     - Closes and removes the source.
+     - Adds a source and returns its ``SourceId``. Its messages are kept under
+       ``name`` and its actions are invoked by it. Sources may share a name,
+       e.g. two connections without one; nothing is replaced, the id tells
+       them apart.
+   * - ``remove_source(id)``
+     - Closes and removes the source. It tells nothing: no event, no notice.
+   * - ``set_label(id, label)``
+     - What the notices call the source instead of its name, e.g. the address
+       of a connection: *The connection to ws://host:3000 broke*.
    * - ``update(now)``
      - Once a frame, before the widgets: sends what is queued, receives from
        the sources and updates the invoker. ``now`` is in seconds, as egui
-       counts it.
+       counts it. Returns an ``Update``: ``messages``, how many arrived, e.g.
+       for a rate, and ``started_fresh``, whether a source opened while none
+       was open and the session dropped the data (unless recording).
+   * - ``source_events()``
+     - What the sources told in the last ``update``, in order, each with its
+       ``SourceId``: opened, ``Hello``, closed, failed. A source that closed or
+       failed is no longer in the session.
    * - ``send_invocations()``
      - After the widgets: sends what they queued.
    * - ``take_notices()``
@@ -235,12 +248,6 @@ does what happens each frame apart from the GUI.
        not be read and sources that closed or failed.
    * - ``inbox(source, now)``
      - An inbox to hand over messages without a source to poll, see above.
-   * - ``poll_source(name, source, now, fresh_when_opened)``
-     - Polls one source through an inbox and returns a ``Polled``: the
-       ``SourceEvent`` s (opened, hello, closed, failed), the number of messages
-       and whether the source opened first and started afresh. For an
-       application that keeps its sources itself, as blip does through its
-       ``Connections``.
    * - ``first_opened()``
      - Tells that a source opened while no other was open. Starts afresh unless
        recording. ``update`` calls it itself.
@@ -251,8 +258,12 @@ does what happens each frame apart from the GUI.
        recorder, e.g. with those of an opened recording.
    * - ``take_requests()``, ``update_invoker(connected, now)``
      - What ``send_invocations`` and ``update`` do, in parts, for an
-       application that sends the requests itself, as blip does through its
-       ``Connections``.
+       application that sends the requests itself.
+
+An invocation names the source it is for, not its id. When several open sources
+share that name, the request goes to the one that announced its actions last,
+the actions the store holds and the user sees; if none did, to the first open
+one.
 
 Recording
 ---------

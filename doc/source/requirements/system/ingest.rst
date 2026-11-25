@@ -97,7 +97,7 @@ Connections as sources
 
 .. req:: Connections are sources of the session
    :id: REQ_LIB_CONN_SOURCES
-   :status: approved
+   :status: implemented
    :component: blip, blip-kit
    :priority: medium
    :satisfies: STK_OWN_UI, STK_OWN_DATA
@@ -113,7 +113,7 @@ Connections as sources
 
 .. req:: Sources of the same name
    :id: REQ_LIB_SOURCE_SAME_NAME
-   :status: approved
+   :status: implemented
    :component: blip-kit
    :priority: medium
    :satisfies: STK_OWN_DATA, STK_LIVE_OBSERVE
@@ -127,7 +127,7 @@ Connections as sources
 
 .. req:: No change for the user by connections as sources
    :id: REQ_LIB_CONN_NO_CHANGE
-   :status: approved
+   :status: implemented
    :component: blip
    :priority: high
    :satisfies: STK_LIVE_OBSERVE

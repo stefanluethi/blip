@@ -50,6 +50,7 @@ pub struct Inbox<'a> {
     router: Router<'a>,
     parser: &'a mut Parser,
     events: Vec<SourceEvent>,
+    announced: bool,
     messages: usize,
     fresh_when_opened: bool,
     started_fresh: bool,
@@ -70,6 +71,7 @@ impl<'a> Inbox<'a> {
             router,
             parser,
             events: Vec::new(),
+            announced: false,
             messages: 0,
             fresh_when_opened,
             started_fresh: false,
@@ -81,6 +83,7 @@ impl<'a> Inbox<'a> {
     pub(crate) fn finish(self) -> Polled {
         Polled {
             events: self.events,
+            announced: self.announced,
             messages: self.messages,
             started_fresh: self.started_fresh,
         }
@@ -101,13 +104,16 @@ impl<'a> Inbox<'a> {
             router,
             parser,
             events,
+            announced,
             ..
         } = self;
         let (source, now) = (*source, *now);
-        // a hello is also an event of the source
+        // a hello is also an event of the source, and actions are noted for the session
         let say = move |said: Said<'_>| {
-            if let Said::Hello(hello) = said {
-                events.push(SourceEvent::Hello(hello.clone()));
+            match &said {
+                Said::Hello(hello) => events.push(SourceEvent::Hello((*hello).clone())),
+                Said::Actions(_) => *announced = true,
+                _ => {}
             }
             router.said(source, now, said);
         };

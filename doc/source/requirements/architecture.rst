@@ -6,7 +6,7 @@ satisfies. How each is built is described on the internals page of its part.
 
 .. arch:: blip frontend
    :id: ARCH_BLIP
-   :status: draft
+   :status: implemented
    :component: blip
    :satisfies: REQ_VIS_PLOT, REQ_VIS_LOG, REQ_VIS_LOG_DEFAULT, REQ_VIS_LOG_PICK, REQ_VIS_LOG_PATH_FILTER, REQ_VIS_STATES, REQ_VIS_TABLE, REQ_VIS_XY, REQ_VIS_HEATMAP, REQ_VIS_HIST, REQ_VIS_HIST_BINS, REQ_VIS_HIST_COUNTS, REQ_VIS_HIST_MARKERS, REQ_VIS_HIST_ORIENT, REQ_VIS_HIST_LINK, REQ_VIS_HIST_HOVER, REQ_VIS_HIST_EMPTY, REQ_VIS_HIST_SAVED, REQ_VIS_DIST_SHOW, REQ_VIS_DIST_BOX, REQ_VIS_DIST_WHISKERS, REQ_VIS_DIST_STATS, REQ_VIS_DIST_BOX_HOVER, REQ_VIS_DIST_BOX_EMPTY, REQ_VIS_DIST_PROPS, REQ_VIS_CURSOR, REQ_VIS_TOOLTIP, REQ_CONN_WS, REQ_PLAT_WEB, REQ_PLAT_NATIVE, REQ_PERSIST_STATE, REQ_PRESETS, REQ_CTRL_ACTION, REQ_CTRL_FEEDBACK, REQ_CTRL_VIEW, REQ_CTRL_SAFE, REQ_PROTO_TIME, REQ_PROTO_LOG_NOW, REQ_PROTO_LEVELS, REQ_PROTO_NAMES, REQ_PROTO_METADATA, REQ_PROTO_SAMPLES_APPLY, REQ_CONN_HELLO, REQ_CONN_HELLO_SHOW, REQ_CONN_NEWER, REQ_CONN_TIMELINE, REQ_FILE_VERSION, REQ_META_LABELS, REQ_META_PROPS, REQ_META_TOOLTIP, REQ_META_HOVER, REQ_META_FIT_PLOT, REQ_META_FIT_XY, REQ_META_HEATMAP, REQ_META_SAVED, REQ_LIB_CRATES, REQ_LIB_REFERENCE, REQ_LIB_NO_CHANGE, REQ_LIB_COMPAT, REQ_LIB_PLATFORMS, REQ_LIB_INGEST_NO_CHANGE, REQ_LIB_CONN_SOURCES, REQ_LIB_CONN_NO_CHANGE
 
@@ -22,10 +22,11 @@ satisfies. How each is built is described on the internals page of its part.
      their menu and dialogs and their versioned saved form, kept and in
      files.
    * ``workbench/connections.rs`` -- the WebSocket connections and their panel.
-     It polls each ``WebSocket`` source through the session
-     (``Session::poll_source``), which reads its frames, and shows the status
-     and the ``Hello`` of each from the events of the poll, with the warning of
-     a newer protocol. The sockets are not yet sources the session holds.
+     It adds a ``WebSocket`` source per open address to the session, labelled
+     with the address, and shows the status and the ``Hello`` of each from the
+     events of the last update (``Session::source_events``), with the warning
+     of a newer protocol. The session polls the sources and sends their
+     requests; a connection error is one of its notices.
    * ``store`` -- the data model: ``traces`` with the samples and the
      metadata of each, the clock of each source from its ``Hello`` and the
      time base, ``logs``, the announced ``actions`` with the ``Invoker``, which
@@ -58,7 +59,7 @@ satisfies. How each is built is described on the internals page of its part.
 
 .. arch:: blip-kit core
    :id: ARCH_KIT_CORE
-   :status: draft
+   :status: implemented
    :component: blip-kit
    :satisfies: REQ_LIB_CRATES, REQ_LIB_FEATURES, REQ_LIB_NO_GUI, REQ_LIB_PLATFORMS, REQ_LIB_COMPAT, REQ_LIB_SOURCE, REQ_LIB_SOURCE_OWN, REQ_LIB_SESSION, REQ_LIB_STORE, REQ_LIB_STORE_ONLY, REQ_LIB_STORE_MEMORY, REQ_LIB_STORE_INFLUX, REQ_LIB_ACTIONS, REQ_LIB_PUBLISH, REQ_LIB_INGEST_TYPED, REQ_LIB_INGEST_SAME, REQ_LIB_INGEST_LATEST, REQ_LIB_INGEST_PRIVATE, REQ_LIB_INGEST_NO_CHANGE, REQ_LIB_CONN_SOURCES, REQ_LIB_SOURCE_SAME_NAME
 
@@ -90,10 +91,10 @@ satisfies. How each is built is described on the internals page of its part.
    * ``session`` -- ``Session<S: Ingest + Store>``: routes what the sources
      said, parsed or typed, by one function to the store, the recorder, the
      invoker and the notices; hands the bytes of a message it cannot read to the
-     recorder outside the entry of the store; holds the sources it polls itself
-     by name; polls a source it does not hold (``poll_source``), as blip does
-     for its connections; and reports the events of a poll (opened, ``Hello``,
-     closed, failed).
+     recorder outside the entry of the store; holds its sources, each with an
+     id and a label (several may share a name), polls them and sends their
+     requests; and reports the events of the last update (opened, ``Hello``,
+     closed, failed) with the id of the source.
    * ``cbor``, ``protocol``, ``flatten`` and ``growing`` are private, and
      ``sorted`` is private to the crate; the lookups of a view of an
      application are methods of the ``Series`` and ``Trace`` types
