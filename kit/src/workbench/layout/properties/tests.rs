@@ -202,3 +202,63 @@ fn groups_are_renamed_while_typing_but_not_to_blank_names() {
     }
     assert_eq!(harness.state().name(tab), &name[..1]);
 }
+
+#[test]
+fn a_blank_name_shows_the_name_kept_and_comes_back_on_leaving_the_field() {
+    let mut harness = harness(|_, views| views[0]);
+    harness.run();
+    let plot = harness.state().selected.unwrap();
+    // the name field comes first
+    let name_field = |harness: &Harness<'_, Layout>| {
+        let mut fields = harness.get_all_by_role(egui::accesskit::Role::TextInput);
+        fields.next().unwrap().value()
+    };
+    let field = harness.get_all_by_role(egui::accesskit::Role::TextInput);
+    field.into_iter().next().unwrap().focus();
+    harness.run();
+    // the view is renamed while typing, down to "P"
+    for _ in 0.."Plot 1".len() {
+        harness.key_press(egui::Key::Backspace);
+        harness.run();
+    }
+    assert_eq!(name_field(&harness).as_deref(), Some(""));
+    // the view keeps its last name, which egui shows as the hint of the field but does
+    // not tell screen readers
+    assert_eq!(harness.state().view(plot).unwrap().name, "P");
+    harness.key_press(egui::Key::Escape);
+    harness.run();
+    assert_eq!(name_field(&harness).as_deref(), Some("P"));
+}
+
+#[test]
+fn groups_are_arranged_by_a_choice_of_three() {
+    let mut harness = harness(|tab, _| tab);
+    harness.run();
+    let tab = harness.state().selected.unwrap();
+    harness.get_by_label("Horizontal").click();
+    harness.run();
+    let layout = harness.state();
+    assert_eq!(
+        GroupKind::of(layout.container(tab).unwrap()),
+        GroupKind::Horizontal
+    );
+    harness.get_by_label("Tabs").click();
+    harness.run();
+    let layout = harness.state();
+    assert_eq!(
+        GroupKind::of(layout.container(tab).unwrap()),
+        GroupKind::Tabs
+    );
+}
+
+#[test]
+fn a_long_name_is_cut_off_before_the_kind() {
+    let long = "A view with a name far too long for the properties panel";
+    let mut harness = harness(|_, views| views[0]);
+    let plot = harness.state().selected.unwrap();
+    harness.state_mut().set_name(plot, long.to_owned());
+    harness.run();
+    let chip = harness.get_by_label("Plot").rect();
+    let name = harness.get_by_label_contains("A view with").rect();
+    assert!(name.right() < chip.left(), "{name:?} {chip:?}");
+}

@@ -68,8 +68,22 @@ enum Action {
     /// Adds a view of a type into an empty group.
     AddViewInto(TileId, ViewType),
     Rename(TileId),
-    Remove(TileId),
+    Delete(TileId),
 }
+
+/// The layout from before the last delete, to undo it.
+struct Undo {
+    tree: Tree<View>,
+    group_names: HashMap<TileId, String>,
+    /// The view or group selected after undoing: the one deleted, or the one selected
+    /// before the layout was cleared.
+    selected: Option<TileId>,
+    /// Tells this delete apart from the others, see [`Layout::undo_number`].
+    number: u64,
+}
+
+/// What [`Layout::take_deleted`] names after [`Layout::clear`].
+const ALL_VIEWS: &str = "all views";
 
 /// Shows a field of at least `min_size` to edit `name`, which ends with Enter or a click
 /// elsewhere, or with Escape to cancel. Returns whether to keep the name once it ended.
@@ -91,6 +105,13 @@ pub struct Layout {
     /// The view or group whose name is edited in the properties panel and the text of
     /// the field, which may be blank while the name is not.
     properties_name: Option<(TileId, String)>,
+    /// The layout from before the last delete, until it is undone or the layout changes
+    /// otherwise.
+    undo: Option<Undo>,
+    /// The name of what was deleted last, until the app takes it.
+    deleted: Option<String>,
+    /// The number of the last delete kept to undo.
+    deletes: u64,
 }
 
 /// An empty layout without tabs, which shows the view types to add the first view.
@@ -121,6 +142,9 @@ impl Layout {
             selected: None,
             renaming: None,
             properties_name: None,
+            undo: None,
+            deleted: None,
+            deletes: 0,
         }
     }
 
@@ -178,6 +202,7 @@ impl Layout {
     }
 
     fn set_name(&mut self, tile_id: TileId, name: String) {
+        self.forget_undo();
         match self.tree.tiles.get_mut(tile_id) {
             Some(Tile::Pane(view)) => view.name = name,
             Some(Tile::Container(_)) => {
@@ -242,6 +267,7 @@ impl Layout {
 
     /// Adds a new tab at the end of the top level, returns its id.
     fn add_tab(&mut self) -> TileId {
+        self.forget_undo();
         let name = self.unique_name("Tab");
         let tab = self.tree.tiles.insert_vertical_tile(vec![]);
         self.group_names.insert(tab, name);
@@ -254,6 +280,7 @@ impl Layout {
 
     /// A new view of `view_type`, not yet in the layout.
     fn new_view(&mut self, view_type: ViewType) -> TileId {
+        self.forget_undo();
         let name = self.unique_name(view_type.name());
         self.tree.tiles.insert_pane(View::new(view_type, name))
     }
@@ -312,9 +339,126 @@ impl Layout {
     }
 
     fn set_group_kind(&mut self, tile_id: TileId, kind: GroupKind) {
+        self.forget_undo();
         if let Some(container) = self.container_mut(tile_id) {
             container.set_kind(kind.container_kind());
         }
+    }
+
+    /// Keeps the layout as it is to undo a delete, selecting `selected` after the undo.
+    fn keep_undo(&mut self, selected: Option<TileId>) {
+        self.deletes += 1;
+        self.undo = Some(Undo {
+            tree: self.tree.clone(),
+            group_names: self.group_names.clone(),
+            selected,
+            number: self.deletes,
+        });
+    }
+
+    /// Forgets the layout kept to undo a delete, as a change after the delete would be
+    /// lost by undoing it.
+    fn forget_undo(&mut self) {
+        self.undo = None;
+    }
+
+    /// Deletes a view or a group with everything in it, so that it can be undone, see
+    /// [`Self::undo_delete`].
+    fn delete(&mut self, tile_id: TileId) {
+        if tile_id == self.root() || self.tree.tiles.get(tile_id).is_none() {
+            return;
+        }
+        self.keep_undo(Some(tile_id));
+        self.deleted = Some(self.name(tile_id).to_owned());
+        self.remove(tile_id);
+    }
+
+    /// Deletes the selected view or group with everything in it, e.g. for the Delete
+    /// key, if it shows in the tab shown. It can be undone with [`Self::undo_delete`].
+    pub fn delete_selected(&mut self) {
+        if let Some(selected) = self.selected
+            && self.tree.active_tiles().contains(&selected)
+        {
+            self.delete(selected);
+        }
+    }
+
+    /// Starts renaming the selected view or group in a field on its title or tab, e.g.
+    /// for F2, and shows the tabs it is in.
+    pub fn rename_selected(&mut self) {
+        if let Some(selected) = self
+            .selected
+            .filter(|&selected| self.tree.tiles.get(selected).is_some())
+        {
+            self.select(selected);
+            self.start_rename(selected);
+        }
+    }
+
+    /// Deletes all views and tabs, leaving the empty layout that offers the view types
+    /// to start again. It can be undone with [`Self::undo_delete`].
+    pub fn clear(&mut self) {
+        if self.container(self.root()).is_none_or(Container::is_empty) {
+            return;
+        }
+        let old = std::mem::take(self);
+        self.deletes = old.deletes + 1;
+        self.undo = Some(Undo {
+            tree: old.tree,
+            group_names: old.group_names,
+            selected: old.selected,
+            number: self.deletes,
+        });
+        self.deleted = Some(ALL_VIEWS.to_owned());
+    }
+
+    /// Whether a delete can be undone with [`Self::undo_delete`]: something was deleted
+    /// and the layout has not changed since, other than by the views themselves.
+    pub fn can_undo_delete(&self) -> bool {
+        self.undo.is_some()
+    }
+
+    /// The number of the delete that [`Self::undo_delete`] undoes, if one can be undone:
+    /// each delete has its own, e.g. to tell which of the toasts offering to undo a
+    /// delete still can.
+    pub fn undo_number(&self) -> Option<u64> {
+        self.undo.as_ref().map(|undo| undo.number)
+    }
+
+    /// Brings back the layout from before the last delete of a view or group, or before
+    /// [`Self::clear`], and selects what was deleted. The views that were not deleted
+    /// keep what changed in them since, e.g. their traces. Does nothing if
+    /// [`Self::can_undo_delete`] is false.
+    pub fn undo_delete(&mut self) {
+        let Some(mut undo) = self.undo.take() else {
+            return;
+        };
+        let kept: Vec<TileId> = undo.tree.tiles.tile_ids().collect();
+        for tile_id in kept {
+            if let Some(Tile::Pane(mut view)) = self.tree.tiles.remove(tile_id)
+                && let Some(Tile::Pane(before)) = undo.tree.tiles.get_mut(tile_id)
+            {
+                // the links the delete dropped come back with the views
+                view.relink_as(before);
+                *before = view;
+            }
+        }
+        self.tree = undo.tree;
+        self.group_names = undo.group_names;
+        self.renaming = None;
+        self.properties_name = None;
+        self.deleted = None;
+        self.selected = None;
+        if let Some(selected) = undo.selected {
+            self.select(selected);
+        }
+    }
+
+    /// The name of the view or group deleted since the last call, or "all views" after
+    /// [`Self::clear`], for the app to tell the user, e.g. "Deleted Plot 1", and to
+    /// offer [`Self::undo_delete`].
+    pub fn take_deleted(&mut self) -> Option<String> {
+        self.deleted.take()
     }
 
     /// Removes a view or a group with everything in it. A tab left empty stays, to add
@@ -391,6 +535,7 @@ impl Layout {
         let Some(parent) = self.parent(target) else {
             return;
         };
+        self.forget_undo();
         let old_parent = self.parent(dragged);
         match drop {
             Drop::Before | Drop::After => self.move_next_to(dragged, target, drop == Drop::After),
@@ -666,7 +811,7 @@ impl Layout {
                 self.add_view_into(group, view_type);
             }
             Action::Rename(tile_id) => self.start_rename(tile_id),
-            Action::Remove(tile_id) => self.remove(tile_id),
+            Action::Delete(tile_id) => self.delete(tile_id),
         }
     }
 }
@@ -803,7 +948,7 @@ fn tile_menu(ui: &mut egui::Ui, tile_id: TileId, is_view: bool, actions: &mut Ve
         .button(format!("{} Delete", egui_phosphor::regular::TRASH))
         .clicked()
     {
-        actions.push(Action::Remove(tile_id));
+        actions.push(Action::Delete(tile_id));
     }
 }
 
@@ -852,6 +997,12 @@ const MENU_BUTTON_SIZE: f32 = 22.0;
 
 /// Width of the dots of the menu button, which line up with the content of the view.
 const MENU_DOTS_WIDTH: f32 = 12.0;
+
+/// Size of the button that deletes a tab, at the right end of the tab.
+const TAB_CLOSE_SIZE: f32 = 20.0;
+
+/// Space between the title of a tab and the button that deletes it, and after it.
+const TAB_CLOSE_GAP: f32 = 4.0;
 
 /// The least width left in a title row for what the view adds to it, like a legend.
 const MIN_TITLE_EXTRA_WIDTH: f32 = 24.0;
@@ -1056,6 +1207,72 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
         }
     }
 
+    fn tab_ui(
+        &mut self,
+        tiles: &mut egui_tiles::Tiles<View>,
+        ui: &mut egui::Ui,
+        id: egui::Id,
+        tile_id: TileId,
+        state: &egui_tiles::TabState,
+    ) -> egui::Response {
+        // like the tab of egui_tiles, with room after the title for the button that
+        // deletes the tab, so that the tab keeps its width when the button shows
+        let text = self.tab_title_for_tile(tiles, tile_id);
+        let font_id = egui::TextStyle::Button.resolve(ui.style());
+        let galley = text.into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, font_id);
+        let margin = self.tab_title_spacing(ui.visuals());
+        let width = margin + galley.size().x + TAB_CLOSE_GAP + TAB_CLOSE_SIZE + TAB_CLOSE_GAP;
+        let (_, rect) = ui.allocate_space(egui::vec2(width, ui.available_height()));
+        let response = ui.interact(rect, id, egui::Sense::click());
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::Button,
+                ui.is_enabled(),
+                state.active,
+                galley.text(),
+            )
+        });
+        if ui.is_rect_visible(rect) {
+            let color = self.tab_text_color(ui.visuals(), tiles, tile_id, state);
+            let title = rect.with_min_x(rect.left() + margin);
+            let pos = egui::Align2::LEFT_CENTER
+                .align_size_within_rect(galley.size(), title)
+                .min;
+            ui.painter().galley(pos, galley, color);
+        }
+        let response = self.on_tab_button(tiles, tile_id, response);
+
+        // the button that deletes the tab shows while the pointer is on the tab, after the
+        // button that drags the tab, so that it takes the clicks on it
+        let renamed = (self.renaming.as_ref()).is_some_and(|renaming| renaming.tile_id == tile_id);
+        if !renamed && ui.rect_contains_pointer(rect) {
+            let close = egui::Align2::RIGHT_CENTER.align_size_within_rect(
+                egui::Vec2::splat(TAB_CLOSE_SIZE),
+                rect.shrink2(egui::vec2(TAB_CLOSE_GAP, 0.0)),
+            );
+            let layout = egui::Layout::centered_and_justified(egui::Direction::LeftToRight);
+            let mut ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .id_salt(("close tab", tile_id))
+                    .max_rect(close)
+                    .layout(layout),
+            );
+            let what = if matches!(tiles.get(tile_id), Some(Tile::Pane(_))) {
+                "Delete this view"
+            } else {
+                "Delete this tab and its views"
+            };
+            ui.spacing_mut().button_padding = egui::vec2(2.0, 2.0);
+            let button = ui
+                .add(theme::icon_button(egui_phosphor::regular::X))
+                .on_hover_text(what);
+            if button.clicked() {
+                self.actions.push(Action::Delete(tile_id));
+            }
+        }
+        response
+    }
+
     fn on_tab_button(
         &mut self,
         tiles: &mut egui_tiles::Tiles<View>,
@@ -1075,13 +1292,17 @@ impl egui_tiles::Behavior<View> for Behavior<'_, '_> {
         }
 
         // a click on an inactive tab opens it and keeps the selection, a click on the open
-        // tab selects and renames it
-        if response.clicked() && self.open_tabs.contains(&tile_id) {
+        // tab selects it, a double click renames it
+        if response.double_clicked() {
             let name = self.tab_title_for_tile(tiles, tile_id).text().to_owned();
             *self.renaming = Some(Renaming { tile_id, name });
             *self.selected = Some(tile_id);
+        } else if response.clicked() && self.open_tabs.contains(&tile_id) {
+            *self.selected = Some(tile_id);
         }
         let is_view = matches!(tiles.get(tile_id), Some(Tile::Pane(_)));
+        let response =
+            response.on_hover_text("Double-click to rename, drag to move, right-click for more");
         response.context_menu(|ui| tile_menu(ui, tile_id, is_view, &mut self.actions));
 
         if self

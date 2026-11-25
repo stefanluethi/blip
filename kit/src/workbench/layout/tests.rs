@@ -151,16 +151,20 @@ fn a_group_cannot_be_dropped_into_itself() {
 }
 
 #[test]
-fn clicking_the_open_tab_renames_it() {
+fn double_clicking_a_tab_renames_it_and_a_click_only_selects_it() {
     let mut layout = Layout::with_plot_and_logs();
     let main = children(&layout, layout.root())[0];
     layout.add_tab();
     let renaming = Rc::new(RefCell::new(None));
     let renamed = renaming.clone();
+    let selection = Rc::new(RefCell::new(None));
+    let selected = selection.clone();
     let model = MemoryStore::default();
     let mut time = TimeRange::default();
     let mut invoker = crate::store::actions::Invoker::default();
-    let mut harness = Harness::builder().build_ui(move |ui| {
+    // a step for each event of a click, short enough for two clicks to make a double
+    // click
+    let mut harness = Harness::builder().with_step_dt(0.04).build_ui(move |ui| {
         let mut context = ViewContext {
             store: &model,
             time: &mut time,
@@ -171,12 +175,25 @@ fn clicking_the_open_tab_renames_it() {
         };
         layout.ui(ui, &mut context);
         *renamed.borrow_mut() = layout.renaming.as_ref().map(|renaming| renaming.tile_id);
+        *selected.borrow_mut() = layout.selected;
     });
+    // a second, so that the next click is a click of its own
+    let wait = |harness: &mut Harness<'_>| {
+        for _ in 0..25 {
+            harness.step();
+        }
+    };
     harness.run();
 
+    // the first click opens the tab, the second selects it
     harness.get_by_label("Tab 1").click();
-    harness.run();
+    wait(&mut harness);
     assert_eq!(*renaming.borrow(), None);
+    harness.get_by_label("Tab 1").click();
+    wait(&mut harness);
+    assert_eq!(*renaming.borrow(), None);
+    assert_eq!(*selection.borrow(), Some(main));
+    harness.get_by_label("Tab 1").click();
     harness.get_by_label("Tab 1").click();
     harness.run();
     assert_eq!(*renaming.borrow(), Some(main));
@@ -634,4 +651,210 @@ fn links_between_views_survive_saving_and_loading() {
     assert_eq!(loaded.view(plot).unwrap().name, "Plot 2");
     assert_eq!(distribution(&mut loaded, shown).link, Some(view_id(plot)));
     assert_eq!(serde_json::to_string(&loaded.to_saved()).unwrap(), json);
+}
+
+#[test]
+fn a_deleted_view_comes_back_by_undo_with_its_links() {
+    let (mut layout, tab, plot, logs) = default_layout();
+    let shown = layout.add_view_into(tab, ViewType::Distribution);
+    distribution(&mut layout, shown).link = Some(view_id(plot));
+    assert!(!layout.can_undo_delete());
+
+    layout.select(plot);
+    layout.delete_selected();
+    assert_eq!(children(&layout, tab), [logs, shown]);
+    assert_eq!(distribution(&mut layout, shown).link, None);
+    assert!(layout.can_undo_delete());
+    // the app is told once
+    assert_eq!(layout.take_deleted().as_deref(), Some("Plot 1"));
+    assert_eq!(layout.take_deleted(), None);
+
+    layout.undo_delete();
+    assert_eq!(children(&layout, tab), [plot, logs, shown]);
+    assert_eq!(distribution(&mut layout, shown).link, Some(view_id(plot)));
+    assert_eq!(layout.selected, Some(plot));
+    assert!(!layout.can_undo_delete());
+}
+
+#[test]
+fn a_deleted_tab_comes_back_by_undo_and_opens() {
+    let (mut layout, tab, plot, logs) = default_layout();
+    let second = layout.add_tab();
+    layout.add_view_into(second, ViewType::Table);
+    layout.delete(tab);
+    assert_eq!(layout.take_deleted().as_deref(), Some("Tab 1"));
+    assert_eq!(children(&layout, layout.root()), [second]);
+
+    layout.undo_delete();
+    assert_eq!(children(&layout, layout.root()), [tab, second]);
+    assert_eq!(children(&layout, tab), [plot, logs]);
+    assert_eq!(layout.selected, Some(tab));
+    assert!(layout.tree.active_tiles().contains(&plot));
+}
+
+#[test]
+fn undo_brings_back_the_layout_before_the_last_delete() {
+    let (mut layout, tab, plot, logs) = default_layout();
+    layout.delete(plot);
+    layout.delete(logs);
+    layout.undo_delete();
+    assert_eq!(children(&layout, tab), [logs]);
+    assert!(!layout.can_undo_delete());
+}
+
+#[test]
+fn changing_the_layout_after_a_delete_forgets_the_undo() {
+    let changes: [fn(&mut Layout, TileId); 4] = [
+        |layout, _| layout.add_view(ViewType::Table),
+        |layout, _| {
+            layout.add_tab();
+        },
+        |layout, tab| layout.set_group_kind(tab, GroupKind::Horizontal),
+        |layout, tab| layout.set_name(tab, "Main".to_owned()),
+    ];
+    for change in changes {
+        let (mut layout, tab, plot, _) = default_layout();
+        layout.delete(plot);
+        change(&mut layout, tab);
+        assert!(!layout.can_undo_delete());
+        layout.undo_delete();
+        assert!(layout.view(plot).is_none());
+    }
+}
+
+#[test]
+fn clearing_the_layout_can_be_undone() {
+    let (mut layout, tab, plot, logs) = default_layout();
+    layout.select(logs);
+    layout.clear();
+    assert!(children(&layout, layout.root()).is_empty());
+    assert_eq!(layout.selected, None);
+    assert_eq!(layout.take_deleted().as_deref(), Some("all views"));
+
+    layout.undo_delete();
+    assert_eq!(children(&layout, layout.root()), [tab]);
+    assert_eq!(children(&layout, tab), [plot, logs]);
+    assert_eq!(layout.selected, Some(logs));
+}
+
+#[test]
+fn clearing_an_empty_layout_keeps_the_undo_of_the_last_delete() {
+    let (mut layout, tab, _, _) = default_layout();
+    layout.delete(tab);
+    layout.take_deleted();
+    layout.clear();
+    assert_eq!(layout.take_deleted(), None);
+    layout.undo_delete();
+    assert_eq!(children(&layout, layout.root()), [tab]);
+}
+
+#[test]
+fn deleting_without_a_selection_does_nothing() {
+    let (mut layout, tab, plot, logs) = default_layout();
+    layout.selected = None;
+    layout.delete_selected();
+    assert_eq!(children(&layout, tab), [plot, logs]);
+    assert!(!layout.can_undo_delete());
+    assert_eq!(layout.take_deleted(), None);
+}
+
+#[test]
+fn renaming_the_selected_view_opens_its_tab() {
+    let (mut layout, _, plot, _) = default_layout();
+    let second = layout.add_tab();
+    layout.add_view_into(second, ViewType::Table);
+    layout.selected = Some(plot);
+    layout.rename_selected();
+    assert_eq!(
+        layout.renaming.as_ref().map(|renaming| renaming.tile_id),
+        Some(plot)
+    );
+    assert!(layout.tree.active_tiles().contains(&plot));
+}
+
+#[test]
+fn the_cross_on_a_hovered_tab_deletes_it() {
+    let (mut layout, tab, _, _) = default_layout();
+    let second = layout.add_tab();
+    let layout = Rc::new(RefCell::new(layout));
+    let mut harness = center_harness(layout.clone());
+    harness.run();
+    // only the tab under the pointer shows it
+    assert!(harness.query_by_label(egui_phosphor::regular::X).is_none());
+    harness.get_by_label("Tab 1").hover();
+    harness.run();
+    harness.get_by_label(egui_phosphor::regular::X).click();
+    harness.run();
+
+    let mut layout = layout.borrow_mut();
+    assert_eq!(children(&layout, layout.root()), [second]);
+    assert_eq!(layout.take_deleted().as_deref(), Some("Tab 1"));
+    layout.undo_delete();
+    assert_eq!(children(&layout, layout.root()), [tab, second]);
+}
+
+#[test]
+fn a_tab_tells_how_to_rename_and_move_it() {
+    let (layout, _, _, _) = default_layout();
+    let layout = Rc::new(RefCell::new(layout));
+    let mut harness = center_harness(layout);
+    harness.run();
+    harness.get_by_label("Tab 1").hover();
+    harness.run();
+    harness.get_by_label("Double-click to rename, drag to move, right-click for more");
+}
+
+#[test]
+fn a_view_shown_as_a_tab_has_the_menu_of_a_view() {
+    let (mut layout, tab, plot, logs) = default_layout();
+    layout.set_group_kind(tab, GroupKind::Tabs);
+    let layout = Rc::new(RefCell::new(layout));
+    let mut harness = center_harness(layout.clone());
+    harness.run();
+    harness.get_by_label("Plot 1").click_secondary();
+    harness.run();
+    harness.get_by_label_contains("Add below").hover();
+    harness.run();
+    harness.get_by_label_contains("Table").click();
+    harness.run();
+
+    let layout = layout.borrow();
+    let group = children(&layout, tab)[0];
+    assert_eq!(children(&layout, tab), [group, logs]);
+    assert_eq!(children(&layout, group)[0], plot);
+}
+
+#[test]
+fn each_delete_has_its_own_undo_number() {
+    let mut layout = Layout::with_plot_and_logs();
+    assert_eq!(layout.undo_number(), None);
+    layout.select_view_showing_traces();
+    layout.delete(layout.selected.unwrap());
+    let first = layout.undo_number().unwrap();
+    layout.clear();
+    let second = layout.undo_number().unwrap();
+    assert_ne!(first, second);
+    layout.undo_delete();
+    assert_eq!(layout.undo_number(), None);
+}
+
+#[test]
+fn undoing_a_delete_keeps_the_changes_of_the_other_views() {
+    let mut layout = Layout::with_plot_and_logs();
+    layout.select_view_showing_traces();
+    let plot = layout.selected.unwrap();
+    // the log view is deleted, then the plot is renamed
+    let logs = (layout.tree.tiles.iter())
+        .find_map(|(&id, tile)| {
+            matches!(tile, Tile::Pane(view) if view.view_type() == ViewType::Logs).then_some(id)
+        })
+        .unwrap();
+    layout.delete(logs);
+    let Some(Tile::Pane(view)) = layout.tree.tiles.get_mut(plot) else {
+        panic!("the plot stays");
+    };
+    view.name = "Speed".to_owned();
+    layout.undo_delete();
+    assert!(layout.tree.tiles.get(logs).is_some());
+    assert_eq!(layout.name(plot), "Speed");
 }

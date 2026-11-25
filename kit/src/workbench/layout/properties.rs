@@ -36,16 +36,11 @@ impl Layout {
             self.name_ui(ui, tile_id);
             ui.end_row();
             property_label(ui, "Arrange");
-            let label = |kind: GroupKind| format!("{} {}", kind.icon(), kind.name());
-            egui::ComboBox::from_id_salt("group_kind")
-                .selected_text(label(current))
-                .show_ui(ui, |ui| {
-                    for kind in GroupKind::ALL {
-                        if ui.selectable_label(current == kind, label(kind)).clicked() {
-                            self.set_group_kind(tile_id, kind);
-                        }
-                    }
-                });
+            let options = GroupKind::ALL.map(|kind| (kind, kind.name()));
+            let mut kind = current;
+            if theme::segmented(ui, &mut kind, &options) {
+                self.set_group_kind(tile_id, kind);
+            }
             ui.end_row();
         });
     }
@@ -66,13 +61,15 @@ impl Layout {
     }
 
     /// Shows a field to rename `tile_id`, renaming it while typing unless the name is
-    /// blank.
+    /// blank. A blank field shows the name kept as its hint, and shows it again once the
+    /// field loses the focus.
     fn name_ui(&mut self, ui: &mut egui::Ui, tile_id: TileId) {
         let mut name = match &self.properties_name {
             Some((id, name)) if *id == tile_id => name.clone(),
             _ => self.name(tile_id).to_owned(),
         };
-        let field = theme::wide_field(&mut name);
+        let kept = self.name(tile_id).to_owned();
+        let field = theme::wide_field(&mut name).hint_text(kept);
         let response = ui.add(field);
         if response.changed() && !name.trim().is_empty() {
             self.set_name(tile_id, name.trim().to_owned());
@@ -82,33 +79,33 @@ impl Layout {
 }
 
 /// The name of the selected view or group with its `icon`, and its `kind` in a chip on
-/// the right.
+/// the right. A long name is cut off before the chip.
 fn title_row(ui: &mut egui::Ui, icon: &str, name: &str, kind: &str) {
     // both ends are centered in one row as high as the controls
     let size = egui::vec2(ui.available_width(), theme::CONTROL_HEIGHT);
     let (row, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-    let mut end = |align: egui::Align| {
-        let layout = match align {
-            egui::Align::Max => egui::Layout::right_to_left(egui::Align::Center),
-            _ => egui::Layout::left_to_right(egui::Align::Center),
-        };
-        ui.new_child(egui::UiBuilder::new().max_rect(row).layout(layout))
+    let end = |ui: &mut egui::Ui, rect: egui::Rect, layout: egui::Layout| {
+        ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(layout))
     };
-    let mut left = end(egui::Align::Min);
-    let accent = left.tokens().accent;
-    left.label(egui::RichText::new(icon).size(15.0).color(accent));
-    left.label(egui::RichText::new(name).size(14.0).strong());
-    let mut right = end(egui::Align::Max);
-    let visuals = right.visuals();
-    egui::Frame::NONE
-        .fill(visuals.faint_bg_color)
-        .stroke(visuals.widgets.noninteractive.bg_stroke)
+    // the chip first, so that the name takes the room it leaves; a tinted patch without
+    // the stroke of a button, as it cannot be clicked
+    let mut right = end(ui, row, egui::Layout::right_to_left(egui::Align::Center));
+    let chip = egui::Frame::NONE
+        .fill(right.visuals().faint_bg_color)
         .corner_radius(theme::CONTROL_RADIUS)
         .inner_margin(egui::Margin::symmetric(6, 1))
         .show(&mut right, |ui| {
             let color = ui.visuals().weak_text_color();
-            ui.label(egui::RichText::new(kind).size(11.0).color(color));
-        });
+            ui.label(egui::RichText::new(kind).small().color(color));
+        })
+        .response
+        .rect;
+    let rest = row.with_max_x((chip.left() - theme::GAP).max(row.left()));
+    let mut left = end(ui, rest, egui::Layout::left_to_right(egui::Align::Center));
+    left.set_clip_rect(rest.intersect(left.clip_rect()));
+    let accent = left.tokens().accent;
+    left.label(egui::RichText::new(icon).color(accent));
+    left.add(egui::Label::new(egui::RichText::new(name).strong()).truncate());
 }
 
 #[cfg(test)]
