@@ -31,7 +31,7 @@ named_enum! {
         Tree => "Tree",
         /// As a list of their paths.
         Paths => "Paths",
-        /// As a list of their names, see [`short_names`].
+        /// As a list of their names, see `short_names`.
         Names => "Names",
     }
 }
@@ -501,7 +501,12 @@ impl Table {
 
     /// Shows the field columns of the records layout to show, hide and reorder them by
     /// drag and drop, with the display format of each in `formats`.
-    pub fn columns_ui(&mut self, ui: &mut egui::Ui, store: &dyn Store, formats: &mut Formats) {
+    pub(crate) fn columns_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        store: &dyn Store,
+        formats: &mut Formats,
+    ) {
         let records = records(store, &self.traces, Window::NONE);
         let columns = self.columns(&records);
         if columns.is_empty() {

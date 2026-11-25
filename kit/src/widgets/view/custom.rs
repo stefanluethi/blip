@@ -156,7 +156,7 @@ impl CustomView {
         }
     }
 
-    pub fn custom_type(&self) -> &'static CustomType {
+    pub(crate) fn custom_type(&self) -> &'static CustomType {
         self.custom_type
     }
 

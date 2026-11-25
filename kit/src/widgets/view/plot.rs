@@ -66,7 +66,7 @@ impl ShowPoints {
     }
 
     /// Adds a row to the grid of a properties section to choose when points are marked.
-    pub fn choice_row(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn choice_row(&mut self, ui: &mut egui::Ui) {
         super::choice_row(ui, "Points", self, &ShowPoints::CHOICES);
     }
 }
@@ -95,7 +95,7 @@ impl LineStyle {
     /// How egui_plot draws a line through `points` on a plot with `transform`, `None`
     /// if there is no line. A line too long on screen for its pattern to be drawn
     /// quickly is solid instead, as its dashes or dots would be too dense to see anyway.
-    pub fn plot_style(
+    pub(crate) fn plot_style(
         self,
         points: &[[f64; 2]],
         transform: &egui_plot::PlotTransform,
@@ -121,7 +121,7 @@ impl LineStyle {
     /// The length on screen after which the pattern of a line in this style repeats,
     /// `None` without a pattern. egui draws a dash, then a gap of the dash length
     /// times the golden ratio minus one.
-    pub fn pattern_period(self) -> Option<f32> {
+    pub(crate) fn pattern_period(self) -> Option<f32> {
         match self {
             LineStyle::Dashed => Some(DASH_LENGTH * GOLDEN_RATIO),
             LineStyle::Dotted => Some(DOT_SPACING),
@@ -131,7 +131,7 @@ impl LineStyle {
 
     /// Whether the points of a line of this style are marked when `points` says so for
     /// `count` points on a plot `width` points wide, always if there is no line.
-    pub fn marks_points(self, points: ShowPoints, count: usize, width: f32) -> bool {
+    pub(crate) fn marks_points(self, points: ShowPoints, count: usize, width: f32) -> bool {
         self == LineStyle::None || points.shown(count, width)
     }
 }

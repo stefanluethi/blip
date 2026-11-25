@@ -39,7 +39,7 @@ impl TimeAxis {
     }
 }
 
-pub struct TimePlotResponse {
+pub(crate) struct TimePlotResponse {
     /// The time in seconds hovered in this plot.
     pub hovered: Option<f64>,
     /// The y coordinate hovered in this plot.
@@ -62,7 +62,7 @@ impl TimePlotResponse {
 }
 
 /// A plot with the time on the x axis that can only be panned and zoomed along it, to
-/// show with [`show`] under the same `id`, its grid in the colors of `visuals`.
+/// show with `show` under the same `id`, its grid in the colors of `visuals`.
 pub fn plot<'a>(id: egui::Id, time: &TimeRange, visuals: &egui::Visuals) -> egui_plot::Plot<'a> {
     let origin = time.origin();
     let base = time.base();
@@ -185,7 +185,7 @@ pub(crate) fn time_decimals(seconds_per_point: f64) -> usize {
 /// A drag pans once it went far enough to tell its direction: the time if it went
 /// more horizontally, else, with `pan_zoom_y`, the y axis. With `pan_zoom_y` the wheel
 /// with Alt zooms the y axis too, for `build` to keep in [`TimePlotResponse::bounds`].
-pub fn show<'a>(
+pub(crate) fn show<'a>(
     id: egui::Id,
     plot: egui_plot::Plot<'a>,
     ui: &mut egui::Ui,
@@ -261,7 +261,7 @@ pub fn show<'a>(
 /// Indices of the timestamps within `range_x`, plus one neighbour on each side so the
 /// line continues to the plot edges, all in nanoseconds. All indices if `range_x` is
 /// `None`.
-pub fn visible_range(timestamps: &[u64], range_x: Option<(u64, u64)>) -> Range<usize> {
+pub(crate) fn visible_range(timestamps: &[u64], range_x: Option<(u64, u64)>) -> Range<usize> {
     let Some(range_x) = range_x else {
         return 0..timestamps.len();
     };

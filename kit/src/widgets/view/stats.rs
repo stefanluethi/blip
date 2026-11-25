@@ -36,7 +36,7 @@ named_enum! {
 
 impl Stat {
     /// The name in the measurements below the plot.
-    pub fn short_name(self) -> &'static str {
+    pub(crate) fn short_name(self) -> &'static str {
         match self {
             Stat::Frequency => "Freq",
             stat => stat.name(),
@@ -44,7 +44,7 @@ impl Stat {
     }
 
     /// Whether it is measured from the full cycles of a trace.
-    pub fn is_cyclic(self) -> bool {
+    pub(crate) fn is_cyclic(self) -> bool {
         matches!(self, Stat::Frequency | Stat::Period | Stat::Duty)
     }
 
@@ -138,7 +138,7 @@ pub struct Measurement {
 
 /// The traces a plot shows: their paths, names in the legend and indices, which pick
 /// their colours.
-pub type ShownTraces<'a> = [(&'a str, &'a str, usize)];
+pub(crate) type ShownTraces<'a> = [(&'a str, &'a str, usize)];
 
 impl Measurement {
     /// A measurement to add after `measurements`: of the trace of the last one if it is
@@ -242,7 +242,7 @@ pub fn properties_ui(ui: &mut egui::Ui, measurements: &mut Vec<Measurement>, pat
 
 /// Whether the curve of `series` in a plot with `interpolation` runs straight between
 /// samples, see [`Stats::of_series`].
-pub fn is_linear(series: &Series<'_>, interpolation: super::plot::Interpolation) -> bool {
+pub(crate) fn is_linear(series: &Series<'_>, interpolation: super::plot::Interpolation) -> bool {
     interpolation == super::plot::Interpolation::Linear && series.kind != NumberKind::Bool
 }
 
@@ -250,7 +250,7 @@ pub fn is_linear(series: &Series<'_>, interpolation: super::plot::Interpolation)
 /// nanoseconds, side by side and wrapping, each in the colour of its trace. Those of
 /// traces not shown are left out. `linear` tells for a series whether its curve runs
 /// straight between samples.
-pub fn measurements_ui(
+pub(crate) fn measurements_ui(
     ui: &mut egui::Ui,
     measurements: &[Measurement],
     shown: &ShownTraces<'_>,
@@ -395,7 +395,11 @@ impl Stats {
     /// mid level, between samples if `edges` is `Some(true)`, i.e. the curve is linear,
     /// else at the sample after; none and no cycles if it is `None`. `None` without
     /// values.
-    pub fn of_series(series: &Series<'_>, window: (u64, u64), edges: Option<bool>) -> Option<Self> {
+    pub(crate) fn of_series(
+        series: &Series<'_>,
+        window: (u64, u64),
+        edges: Option<bool>,
+    ) -> Option<Self> {
         let series = series.slice(visible_range(series.timestamps, Some(window)));
         Self::of(
             series.timestamps,

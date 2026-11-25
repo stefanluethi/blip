@@ -101,7 +101,7 @@ impl Value {
     }
 
     /// Faint if `faint`, else as it is.
-    pub fn faint_if(self, faint: bool) -> Self {
+    pub(crate) fn faint_if(self, faint: bool) -> Self {
         match faint {
             true => Self::faint(self.text),
             false => self,
@@ -219,7 +219,7 @@ impl Tooltip {
     }
 
     /// The text of the footer wrapped at `width`, at most `FOOTER_ROWS` rows.
-    pub fn footer_job(&self, ui: &egui::Ui, width: f32) -> Option<egui::text::LayoutJob> {
+    pub(crate) fn footer_job(&self, ui: &egui::Ui, width: f32) -> Option<egui::text::LayoutJob> {
         let footer = self.footer.as_ref()?;
         let font = egui::TextStyle::Body.resolve(ui.style());
         let format = |color| egui::TextFormat::simple(font.clone(), color);

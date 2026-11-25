@@ -51,7 +51,7 @@ impl<'a> ViewContext<'a> {
     }
 
     /// The same context with the formats of another view.
-    pub fn with_formats<'b>(&'b mut self, formats: &'b Formats) -> ViewContext<'b> {
+    pub(crate) fn with_formats<'b>(&'b mut self, formats: &'b Formats) -> ViewContext<'b> {
         ViewContext {
             store: self.store,
             time: &mut *self.time,
@@ -72,7 +72,7 @@ pub struct PerPath<T>(BTreeMap<String, T>);
 pub type Formats = PerPath<DisplayFormat>;
 
 /// The formats of a view whose traces all have the default format.
-pub static NO_FORMATS: Formats = PerPath(BTreeMap::new());
+pub(crate) static NO_FORMATS: Formats = PerPath(BTreeMap::new());
 
 impl<T: Copy + Default + PartialEq> PerPath<T> {
     pub fn of(&self, path: &str) -> T {
@@ -93,7 +93,7 @@ impl<T: Copy + Default + PartialEq> PerPath<T> {
 
     /// Forgets the values of the traces that are not among `shown`, so layouts do not
     /// keep them and traces shown again start with the default.
-    pub fn retain_shown(&mut self, shown: &BTreeSet<String>) {
+    pub(crate) fn retain_shown(&mut self, shown: &BTreeSet<String>) {
         self.0.retain(|path, _| shown.contains(path));
     }
 }
@@ -101,7 +101,7 @@ impl<T: Copy + Default + PartialEq> PerPath<T> {
 impl PerPath<DisplayFormat> {
     /// The format of the trace at `key`: the one chosen, else Labels if `labelled`, else
     /// Default.
-    pub fn format_of(&self, key: &str, labelled: bool) -> DisplayFormat {
+    pub(crate) fn format_of(&self, key: &str, labelled: bool) -> DisplayFormat {
         self.0.get(key).copied().unwrap_or(if labelled {
             DisplayFormat::Labels
         } else {
@@ -110,7 +110,7 @@ impl PerPath<DisplayFormat> {
     }
 
     /// Chooses `format` for `key`, kept only when it is not the default of
-    /// [`Self::format_of`].
+    /// `Self::format_of`.
     pub fn choose(&mut self, key: &str, format: DisplayFormat, labelled: bool) {
         let default = if labelled {
             DisplayFormat::Labels
@@ -305,22 +305,22 @@ macro_rules! views {
             }
 
             /// See [`ViewInfo::WRITES_VALUES`].
-            pub fn writes_values(self) -> bool {
+            pub(crate) fn writes_values(self) -> bool {
                 match self { $(Self::$kind => <$view>::WRITES_VALUES,)* Self::Custom(custom) => custom.writes_values }
             }
 
             /// See [`ViewInfo::SHOWS_ONE_TRACE`].
-            pub fn shows_one_trace(self) -> bool {
+            pub(crate) fn shows_one_trace(self) -> bool {
                 match self { $(Self::$kind => <$view>::SHOWS_ONE_TRACE,)* Self::Custom(custom) => custom.shows_one_trace }
             }
 
             /// See [`ViewInfo::SHOWS_ACTIONS`].
-            pub fn shows_actions(self) -> bool {
+            pub(crate) fn shows_actions(self) -> bool {
                 match self { $(Self::$kind => <$view>::SHOWS_ACTIONS,)* Self::Custom(custom) => custom.shows_actions }
             }
 
             /// See [`ViewInfo::SHOWS_LOGS`].
-            pub fn shows_logs(self) -> bool {
+            pub(crate) fn shows_logs(self) -> bool {
                 match self { $(Self::$kind => <$view>::SHOWS_LOGS,)* Self::Custom(custom) => custom.shows_logs }
             }
 
@@ -333,7 +333,7 @@ macro_rules! views {
             }
 
             /// See [`ViewInfo::shows_apart`].
-            pub fn shows_apart(self, trace: Trace<'_>) -> bool {
+            pub(crate) fn shows_apart(self, trace: Trace<'_>) -> bool {
                 match self {
                     $(Self::$kind => <$view>::shows_apart(trace),)*
                     Self::Custom(custom) => (custom.shows_apart)(trace),
@@ -387,7 +387,7 @@ fn wheel_zoom_id() -> egui::Id {
 
 /// Lets the mouse wheel zoom the plot of `response` without holding Ctrl, when the
 /// app passes its input through [`zoom_with_wheel`].
-pub fn zoom_on_wheel(response: &egui::Response) {
+pub(crate) fn zoom_on_wheel(response: &egui::Response) {
     if response.contains_pointer() && response.enabled() {
         response
             .ctx
@@ -396,7 +396,7 @@ pub fn zoom_on_wheel(response: &egui::Response) {
 }
 
 /// Turns the vertical mouse wheel events of `raw_input` without modifiers into zooming,
-/// as with Ctrl, if a plot passed to [`zoom_on_wheel`] contained the pointer in the last
+/// as with Ctrl, if a plot passed to `zoom_on_wheel` contained the pointer in the last
 /// pass. The plot then zooms along its zoomable axes, and the smoothed rest of the
 /// scroll stays a zoom instead of scrolling what the pointer moves on to. With Alt, the
 /// wheel zooms along the y axis only, as with Ctrl and Alt.
@@ -420,7 +420,7 @@ pub fn zoom_with_wheel(ctx: &egui::Context, raw_input: &mut egui::RawInput) {
 
 /// A text colour readable on `background`: the darkest or the lightest surface of the
 /// themes.
-pub fn text_color_on(background: egui::Color32) -> egui::Color32 {
+pub(crate) fn text_color_on(background: egui::Color32) -> egui::Color32 {
     let luminance = 0.299 * f32::from(background.r())
         + 0.587 * f32::from(background.g())
         + 0.114 * f32::from(background.b());
@@ -433,7 +433,9 @@ pub fn text_color_on(background: egui::Color32) -> egui::Color32 {
 
 /// Each path with its short name and its index, which picks its color. Colors follow the
 /// order of the selection, so they do not change as traces arrive.
-pub fn indexed_names(paths: &BTreeSet<String>) -> impl Iterator<Item = (&str, &str, usize)> + '_ {
+pub(crate) fn indexed_names(
+    paths: &BTreeSet<String>,
+) -> impl Iterator<Item = (&str, &str, usize)> + '_ {
     let names = short_names(paths.iter().map(String::as_str));
     paths
         .iter()
@@ -449,14 +451,14 @@ pub const CHECK_TRACES: &str = "Check the traces to show in the tree on the left
 pub const LEGEND_DOT_SIZE: f32 = 8.0;
 
 /// Shows a dot in `color` as in the legends.
-pub fn legend_dot(ui: &mut egui::Ui, color: egui::Color32) {
+pub(crate) fn legend_dot(ui: &mut egui::Ui, color: egui::Color32) {
     let (dot, _) = ui.allocate_exact_size(egui::Vec2::splat(LEGEND_DOT_SIZE), egui::Sense::hover());
     ui.painter()
         .circle_filled(dot.center(), LEGEND_DOT_SIZE / 2.0, color);
 }
 
 /// The size of `text` in `style` on one line.
-pub fn text_size(ui: &egui::Ui, text: &str, style: egui::TextStyle) -> egui::Vec2 {
+pub(crate) fn text_size(ui: &egui::Ui, text: &str, style: egui::TextStyle) -> egui::Vec2 {
     let font = style.resolve(ui.style());
     (ui.painter())
         .layout_no_wrap(text.to_owned(), font, egui::Color32::PLACEHOLDER)
@@ -496,7 +498,7 @@ where
 
 /// The widest `needed` since `slot` last changed, kept under `id`. Keeps a value in place
 /// while it changes, until a new slot (e.g. another range or format) starts it anew.
-pub fn sticky_width(ctx: &egui::Context, id: egui::Id, slot: String, needed: f32) -> f32 {
+pub(crate) fn sticky_width(ctx: &egui::Context, id: egui::Id, slot: String, needed: f32) -> f32 {
     ctx.data_mut(|data| {
         let (last_slot, width) = data.get_temp_mut_or_default::<(String, f32)>(id);
         if *last_slot != slot {
@@ -511,7 +513,7 @@ pub fn sticky_width(ctx: &egui::Context, id: egui::Id, slot: String, needed: f32
 /// Names of the traces at `paths` for legends and axes: the last level of each path,
 /// after its last "/" or, for a record field, its last ".". Paths whose last levels are
 /// the same keep as many levels as needed to tell them apart.
-pub fn short_names<'a>(paths: impl IntoIterator<Item = &'a str>) -> Vec<&'a str> {
+pub(crate) fn short_names<'a>(paths: impl IntoIterator<Item = &'a str>) -> Vec<&'a str> {
     let paths: Vec<&str> = paths.into_iter().collect();
     let name = |path: &'a str, levels: usize| -> &'a str {
         let start = path
@@ -549,7 +551,7 @@ pub const PROPERTY_LABEL_WIDTH: f32 = 84.0;
 
 /// Shows a section of properties titled `title` that can be collapsed, below a line,
 /// with the label and the value of each property added by `add` in a row of a grid.
-pub fn properties_section(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) {
+pub(crate) fn properties_section(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) {
     ui.add_space(6.0);
     let line = ui.visuals().widgets.noninteractive.bg_stroke;
     ui.painter()
@@ -570,13 +572,13 @@ pub fn properties_section(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut 
 }
 
 /// The label of a property in the first column of the grid of a properties section.
-pub fn property_label(ui: &mut egui::Ui, text: &str) -> egui::Response {
+pub(crate) fn property_label(ui: &mut egui::Ui, text: &str) -> egui::Response {
     let color = ui.visuals().weak_text_color();
     ui.label(egui::RichText::new(text).color(color))
 }
 
 /// Puts `item` in `set` if `member`, else takes it out.
-pub fn set_member<T, Q>(set: &mut BTreeSet<T>, item: &Q, member: bool)
+pub(crate) fn set_member<T, Q>(set: &mut BTreeSet<T>, item: &Q, member: bool)
 where
     T: Ord + std::borrow::Borrow<Q>,
     Q: Ord + ToOwned<Owned = T> + ?Sized,
@@ -592,7 +594,7 @@ where
 
 /// Adds a row labelled `label` to the grid of a properties section with a checkbox for
 /// `value` that shows `hint` on hover.
-pub fn checkbox_row(ui: &mut egui::Ui, label: &str, value: &mut bool, hint: &str) {
+pub(crate) fn checkbox_row(ui: &mut egui::Ui, label: &str, value: &mut bool, hint: &str) {
     property_label(ui, label);
     ui.checkbox(value, "").on_hover_text(hint);
     ui.end_row();
@@ -600,7 +602,7 @@ pub fn checkbox_row(ui: &mut egui::Ui, label: &str, value: &mut bool, hint: &str
 
 /// Adds a row per path of `paths` to the grid of a properties section: the short name
 /// of the path (the path on hover), then what `add` shows for it.
-pub fn path_rows<P: AsRef<str>>(
+pub(crate) fn path_rows<P: AsRef<str>>(
     ui: &mut egui::Ui,
     paths: &[P],
     mut add: impl FnMut(&mut egui::Ui, &P),
@@ -615,7 +617,7 @@ pub fn path_rows<P: AsRef<str>>(
 
 /// Shows a combo box to choose `value` among `options` by their names, with `hint` of
 /// each option on hover.
-pub fn choice_combo<T: PartialEq + Copy>(
+pub(crate) fn choice_combo<T: PartialEq + Copy>(
     ui: &mut egui::Ui,
     id_salt: impl std::hash::Hash + std::fmt::Debug,
     width: Option<f32>,
@@ -646,7 +648,7 @@ pub fn choice_combo<T: PartialEq + Copy>(
 
 /// Adds a row labelled `label` to the grid of a properties section to choose one of
 /// `options` by their names.
-pub fn choice_row<T: PartialEq + Copy>(
+pub(crate) fn choice_row<T: PartialEq + Copy>(
     ui: &mut egui::Ui,
     label: &str,
     value: &mut T,
@@ -779,7 +781,7 @@ pub fn union(a: Option<(f64, f64)>, b: Option<(f64, f64)>) -> Option<(f64, f64)>
 
 /// Adds the row "Fit to" to the grid of a properties section, only while `declared`,
 /// that is while a shown trace declares a range.
-pub fn fit_row(ui: &mut egui::Ui, fit: &mut Fit, declared: bool) {
+pub(crate) fn fit_row(ui: &mut egui::Ui, fit: &mut Fit, declared: bool) {
     if declared {
         choice_row(ui, "Fit to", fit, &Fit::CHOICES);
     }
@@ -835,7 +837,7 @@ impl Ends {
     }
 
     /// Whether neither end is set.
-    pub fn is_auto(self) -> bool {
+    pub(crate) fn is_auto(self) -> bool {
         self.min.is_none() && self.max.is_none()
     }
 
@@ -1143,7 +1145,7 @@ fn number_kind(store: &dyn Store, path: &str) -> Option<NumberKind> {
 }
 
 /// The unit of the traces at `paths` if they all have the same.
-pub fn common_unit<'a, 'b>(
+pub(crate) fn common_unit<'a, 'b>(
     store: &'a dyn Store,
     paths: impl IntoIterator<Item = &'b str>,
 ) -> Option<&'a str> {
@@ -1153,7 +1155,7 @@ pub fn common_unit<'a, 'b>(
 }
 
 /// `value` followed by `unit` if there is one.
-pub fn with_unit(value: String, unit: Option<&str>) -> String {
+pub(crate) fn with_unit(value: String, unit: Option<&str>) -> String {
     match unit {
         Some(unit) => format!("{value} {unit}"),
         None => value,

@@ -416,7 +416,7 @@ impl Distribution {
     /// `samples` per trace, binned all if `fixed`, else as they are. Automatic bins are
     /// at least `min_width` wide, and those of `integers` at least 1 and, if of a whole
     /// width, with no integer on an edge.
-    pub fn make_bins(
+    pub(crate) fn make_bins(
         &self,
         (low, high): (f64, f64),
         fixed: bool,
@@ -782,7 +782,7 @@ impl Counted {
 /// The share at the top of the bars after `previous` with `tallest` the share of the
 /// tallest bin in view: it grows at once and shrinks only once the tallest bin is below
 /// `SHRINK_BELOW` of it.
-pub fn fit_top(previous: Option<f64>, tallest: f64) -> f64 {
+pub(crate) fn fit_top(previous: Option<f64>, tallest: f64) -> f64 {
     match previous {
         Some(top) if tallest <= top && tallest >= top * SHRINK_BELOW => top,
         _ => tallest,
@@ -793,7 +793,7 @@ pub fn fit_top(previous: Option<f64>, tallest: f64) -> f64 {
 /// where the bars start and where the tallest reaches, and the top of the axis beyond
 /// them, with the room for the marker strip.
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub struct CountAxis {
+pub(crate) struct CountAxis {
     pub scale: CountScale,
     /// Where the bars start.
     pub floor: f64,
@@ -868,12 +868,12 @@ impl CountAxis {
 }
 
 /// The share in percent of the power of ten `decade`, e.g. "0.01 %", "1 %", "100 %".
-pub fn decade_label(decade: i32) -> String {
+pub(crate) fn decade_label(decade: i32) -> String {
     format!("{} %", format_significant(10f64.powi(decade), 1))
 }
 
 /// A share in percent, as in the tooltip, e.g. "12.5 %".
-pub fn write_share(share: f64) -> String {
+pub(crate) fn write_share(share: f64) -> String {
     format!("{} %", format_significant(share, SHARE_DIGITS))
 }
 
@@ -891,7 +891,7 @@ fn decimals(step: f64) -> usize {
 
 /// `value` on the value axis or at the edge of a bin, multiples of `step` apart, in
 /// `format`.
-pub fn write_value(value: f64, step: f64, format: DisplayFormat) -> String {
+pub(crate) fn write_value(value: f64, step: f64, format: DisplayFormat) -> String {
     match format {
         DisplayFormat::Default => Number::Float(value).format_fixed(decimals(step)),
         format => Number::Float(value).format(Some(SHOWN_DIGITS), format),

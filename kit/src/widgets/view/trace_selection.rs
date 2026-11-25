@@ -53,7 +53,7 @@ pub struct ViewSelection<'a> {
 /// Trace, action and log paths split into a tree at each "/", and trace paths also at
 /// each "." between the fields of a record.
 #[derive(Default)]
-pub struct TraceTree<'a> {
+pub(crate) struct TraceTree<'a> {
     /// The trace if one ends at this node.
     pub trace: Option<Trace<'a>>,
     /// The path of the record if one ends at this node, i.e. its fields are below it.
@@ -81,7 +81,7 @@ impl<'a> TraceTree<'a> {
     }
 
     /// Adds the actions at `paths`, which branch at each "/" only.
-    pub fn add_actions(&mut self, paths: impl Iterator<Item = &'a str>) {
+    pub(crate) fn add_actions(&mut self, paths: impl Iterator<Item = &'a str>) {
         for path in paths {
             self.node_mut(segments(path)).action = Some(path);
         }
@@ -89,7 +89,7 @@ impl<'a> TraceTree<'a> {
 
     /// Adds the actions at `paths` that a view shows but no outpost announces, so they
     /// can be unchecked.
-    pub fn add_unannounced_actions(&mut self, paths: impl Iterator<Item = &'a str>) {
+    pub(crate) fn add_unannounced_actions(&mut self, paths: impl Iterator<Item = &'a str>) {
         for path in paths {
             let node = self.node_mut(segments(path));
             node.action = Some(path);
@@ -98,7 +98,7 @@ impl<'a> TraceTree<'a> {
     }
 
     /// Adds the log records at `paths`, which branch at each "/" only.
-    pub fn add_logs(&mut self, paths: impl Iterator<Item = &'a str>) {
+    pub(crate) fn add_logs(&mut self, paths: impl Iterator<Item = &'a str>) {
         for path in paths {
             self.node_mut(segments(path)).log = Some(path);
         }
@@ -132,7 +132,7 @@ impl<'a> TraceTree<'a> {
 
     /// Removes the traces, records, actions and logs of which a view picking `picks` can
     /// show nothing, and the branches left without any.
-    pub fn retain_selectable(&mut self, picks: Picks) {
+    pub(crate) fn retain_selectable(&mut self, picks: Picks) {
         if self.trace.is_some_and(|trace| {
             trace_picks(trace, picks).is_empty() && whole_array_pick(trace, picks).is_none()
         }) {
@@ -153,7 +153,7 @@ impl<'a> TraceTree<'a> {
         });
     }
 
-    pub fn is_record(&self) -> bool {
+    pub(crate) fn is_record(&self) -> bool {
         self.record.is_some() || self.children.keys().any(|segment| segment.starts_with('.'))
     }
 
@@ -193,7 +193,7 @@ fn trace_segments(trace: Trace<'_>) -> impl Iterator<Item = &str> {
 }
 
 /// The path of the record `trace` is a field of, e.g. "imu" for "imu.acc.z".
-pub fn record_path(trace: Trace<'_>) -> Option<&str> {
+pub(crate) fn record_path(trace: Trace<'_>) -> Option<&str> {
     trace.fields_start.map(|start| &trace.path[..start])
 }
 
@@ -205,7 +205,7 @@ fn key_is_below(key: &str, branch: &str) -> bool {
 
 /// Adds the paths a view picking `selection.picks` can show below its wildcards, so
 /// that what is added to a branch later is picked as well.
-pub fn expand_wildcards(store: &dyn Store, selection: ViewSelection<'_>) {
+pub(crate) fn expand_wildcards(store: &dyn Store, selection: ViewSelection<'_>) {
     if selection.wildcards.is_empty() {
         return;
     }
@@ -220,7 +220,7 @@ pub fn expand_wildcards(store: &dyn Store, selection: ViewSelection<'_>) {
 }
 
 /// The icon of the type of `samples`.
-pub fn type_icon(samples: &Samples) -> &'static str {
+pub(crate) fn type_icon(samples: &Samples) -> &'static str {
     match samples {
         Samples::Empty(_) | Samples::Numbers { .. } => HASH,
         Samples::Strings(_) => TEXT_AA,
@@ -429,7 +429,7 @@ fn element_indices(shape: &[usize], mut flat_index: usize) -> Vec<usize> {
 
 /// The paths of `trace` that a view of `view_type` can show along with other traces,
 /// and so are picked with a branch: its own, those of its elements, or none.
-pub fn trace_paths(trace: Trace<'_>, view_type: ViewType) -> Vec<String> {
+pub(crate) fn trace_paths(trace: Trace<'_>, view_type: ViewType) -> Vec<String> {
     match (view_type.selectable(trace), &trace.samples) {
         (
             Selectable::Elements | Selectable::Array { elements: true },

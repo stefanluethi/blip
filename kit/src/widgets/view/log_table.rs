@@ -161,7 +161,7 @@ impl LogTable {
     }
 
     /// Whether the filter shows `entry`, an entry of a shown path.
-    pub fn matches(&self, entry: &LogEntry) -> bool {
+    pub(crate) fn matches(&self, entry: &LogEntry) -> bool {
         if self.filter.hidden_levels.contains(&entry.level) {
             return false;
         }
