@@ -106,28 +106,45 @@ impl Files {
     }
 }
 
-/// Lets the user save `bytes` as a file of `kind` named `name` by default. Returns
-/// whether it was saved, not if the user cancelled.
+/// The label of a button or menu item `text` that saves with [`save`]: natively with
+/// an ellipsis, as a dialog asks where to save, on the web without, as it downloads at
+/// once.
+pub fn save_label(text: &str) -> String {
+    if cfg!(target_arch = "wasm32") {
+        text.to_owned()
+    } else {
+        format!("{text}…")
+    }
+}
+
+/// Lets the user save `bytes` as a file of `kind` named `name` by default. Returns the
+/// name of the file it was saved as, to tell the user, or `None` if the user
+/// cancelled.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn save(kind: Kind, name: &str, bytes: &[u8]) -> Result<bool, String> {
+pub fn save(kind: Kind, name: &str, bytes: &[u8]) -> Result<Option<String>, String> {
     let Some(path) = rfd::FileDialog::new()
         .add_filter(kind.name(), &[kind.extension()])
         .set_file_name(name)
         .save_file()
     else {
-        return Ok(false);
+        return Ok(None);
     };
     std::fs::write(&path, bytes)
-        .map(|()| true)
-        .map_err(|error| format!("{} cannot be written: {error}", path.display()))
+        .map_err(|error| format!("{} cannot be written: {error}", path.display()))?;
+    let saved = path.file_name().map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    Ok(Some(saved))
 }
 
-/// Lets the user save `bytes` as a file of `kind` named `name` by default. Returns
-/// whether it was saved, as far as the browser tells: once it is downloaded.
+/// Lets the user save `bytes` as a file of `kind` named `name` by default. Returns the
+/// name of the file it was saved as, to tell the user, as far as the browser tells:
+/// once it is downloaded.
 #[cfg(target_arch = "wasm32")]
-pub fn save(_kind: Kind, name: &str, bytes: &[u8]) -> Result<bool, String> {
+pub fn save(_kind: Kind, name: &str, bytes: &[u8]) -> Result<Option<String>, String> {
     web::download(name, bytes)
-        .map(|()| true)
+        .map(|()| Some(name.to_owned()))
         .map_err(|error| format!("The download failed: {error:?}"))
 }
 

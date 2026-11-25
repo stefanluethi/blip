@@ -789,7 +789,8 @@ fn screenshots_panels() {
         .build_ui(move |ui| {
             paint_background(ui, ui.tokens().canvas);
             ui.horizontal_centered(|ui| {
-                status_chip(ui, &open, &newer, Some(RATE));
+                let status = connections::Status::Open { problem: true };
+                status_chip(ui, &open, &newer, status, Some(RATE), Shown::default());
             });
         });
     theme::install(&harness.ctx);

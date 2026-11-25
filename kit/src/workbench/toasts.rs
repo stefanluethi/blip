@@ -1,9 +1,10 @@
 //! Toasts: short notices stacked in a corner, e.g. why connecting failed or a file
-//! could not be opened, shown until they expire or the user closes them. Below them, a
-//! task under way, like opening a recording, shows how far it got.
+//! could not be opened, shown until they expire or the user closes them, errors until
+//! they are closed. A toast may offer an action, like "Undo". Below them, a task under
+//! way, like opening a recording, shows how far it got.
 
-use crate::widgets::theme::TokensExt;
-use egui_phosphor::regular::{WARNING, WARNING_CIRCLE, X};
+use crate::widgets::theme::{self, TokensExt};
+use egui_phosphor::regular::{INFO, WARNING, WARNING_CIRCLE, X};
 
 /// How long a toast is shown in seconds, longer while the pointer rests on it.
 const DURATION: f64 = 8.0;
@@ -14,7 +15,25 @@ const WIDTH: f32 = 320.0;
 /// The space between the toasts and the corner they are shown in.
 const MARGIN: f32 = 8.0;
 
-pub use crate::store::Level;
+/// How a toast looks and how long it stays.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Level {
+    /// Tells what happened, e.g. that a file was saved. Neutral, it expires.
+    Info,
+    /// Something did not work out completely. It expires.
+    Warning,
+    /// Something failed. It stays until the user closes it.
+    Error,
+}
+
+impl From<crate::store::Level> for Level {
+    fn from(level: crate::store::Level) -> Self {
+        match level {
+            crate::store::Level::Warning => Level::Warning,
+            crate::store::Level::Error => Level::Error,
+        }
+    }
+}
 
 /// A task under way shown below the toasts, e.g. opening a recording.
 pub struct Progress {
@@ -28,6 +47,8 @@ pub struct Progress {
 pub struct Toasts {
     toasts: Vec<Toast>,
     next_id: u64,
+    /// The values of the actions clicked since [`Self::take_actions`].
+    clicked: Vec<u64>,
 }
 
 struct Toast {
@@ -35,30 +56,75 @@ struct Toast {
     id: u64,
     level: Level,
     text: String,
+    /// The label of the button of its action and the value it gives back.
+    action: Option<(String, u64)>,
     /// How often the text was added while the toast was shown.
     count: usize,
-    /// When the toast expires, in seconds as egui counts them, `None` until it is shown.
+    /// When the toast expires, in seconds as egui counts them, `None` until it is shown
+    /// and for an error, which stays until it is closed.
     expires: Option<f64>,
 }
 
+/// What the user did with a toast in a frame.
+enum Clicked {
+    Nothing,
+    Close,
+    Action,
+}
+
 impl Toasts {
-    /// Shows `text` as an error.
+    /// Shows `text` as an error, until the user closes it.
     pub fn error(&mut self, text: impl Into<String>) {
-        self.add(Level::Error, text.into());
+        self.add(Level::Error, text.into(), None);
     }
 
     /// Shows `text` as a warning.
     pub fn warning(&mut self, text: impl Into<String>) {
-        self.add(Level::Warning, text.into());
+        self.add(Level::Warning, text.into(), None);
+    }
+
+    /// Shows `text` as a neutral notice, e.g. "Saved a.blip".
+    pub fn info(&mut self, text: impl Into<String>) {
+        self.add(Level::Info, text.into(), None);
+    }
+
+    /// Shows `text` at `level`, e.g. a notice of the store.
+    pub fn notice(&mut self, level: impl Into<Level>, text: impl Into<String>) {
+        self.add(level.into(), text.into(), None);
+    }
+
+    /// Shows `text` at `level` with a button `label`, e.g. "Undo". A click on it closes
+    /// the toast and gives `value` back from [`Self::take_actions`], to tell the actions
+    /// of the caller apart.
+    pub fn with_action(
+        &mut self,
+        level: Level,
+        text: impl Into<String>,
+        label: impl Into<String>,
+        value: u64,
+    ) {
+        self.add(level, text.into(), Some((label.into(), value)));
+    }
+
+    /// Closes the toasts whose action gives `value`, e.g. an offer to undo that no
+    /// longer can.
+    pub fn dismiss(&mut self, value: u64) {
+        (self.toasts).retain(|toast| toast.action.as_ref().is_none_or(|(_, v)| *v != value));
+    }
+
+    /// The values of the actions whose buttons were clicked since the last call, in
+    /// the order they were clicked.
+    pub fn take_actions(&mut self) -> Vec<u64> {
+        std::mem::take(&mut self.clicked)
     }
 
     /// Adds a toast, or counts the toast shown with the same text and shows it for
-    /// longer, so a repeated error does not pile up.
-    fn add(&mut self, level: Level, text: String) {
-        let shown = self
-            .toasts
-            .iter_mut()
-            .find(|toast| toast.level == level && toast.text == text);
+    /// longer, so a repeated error does not pile up. A toast with an action is not
+    /// counted, as each has its own.
+    fn add(&mut self, level: Level, text: String, action: Option<(String, u64)>) {
+        let shown = self.toasts.iter_mut().find(|toast| {
+            toast.level == level && toast.text == text && toast.action.is_none() && action.is_none()
+        });
         if let Some(toast) = shown {
             toast.count += 1;
             toast.expires = None;
@@ -68,6 +134,7 @@ impl Toasts {
             id: self.next_id,
             level,
             text,
+            action,
             count: 1,
             expires: None,
         });
@@ -78,17 +145,22 @@ impl Toasts {
     }
 
     /// Starts the time of the toasts shown from `now` on and drops those expired.
+    /// Errors do not expire.
     fn expire(&mut self, now: f64) {
         for toast in &mut self.toasts {
-            toast.expires.get_or_insert(now + DURATION);
+            if toast.level != Level::Error {
+                toast.expires.get_or_insert(now + DURATION);
+            }
         }
-        self.toasts
-            .retain(|toast| toast.expires.is_some_and(|expires| expires > now));
+        self.toasts.retain(|toast| {
+            toast.level == Level::Error || toast.expires.is_some_and(|expires| expires > now)
+        });
     }
 
     /// Shows the toasts stacked in the bottom right corner of `rect`, newest at the
-    /// bottom, each with a button to close it, and `progress` below them, with a
-    /// button to cancel it. Returns whether that was clicked.
+    /// bottom, each with a button to close it and the button of its action, and
+    /// `progress` below them, with a button to cancel it. Returns whether that was
+    /// clicked. The clicked actions are kept for [`Self::take_actions`].
     pub fn ui(
         &mut self,
         ctx: &egui::Context,
@@ -111,10 +183,17 @@ impl Toasts {
                 ui.set_width(width);
                 for toast in &mut self.toasts {
                     let response = ui.push_id(toast.id, |ui| toast_ui(ui, toast));
-                    if response.inner {
-                        closed.push(toast.id);
+                    match response.inner {
+                        Clicked::Nothing => {}
+                        Clicked::Close => closed.push(toast.id),
+                        Clicked::Action => {
+                            closed.push(toast.id);
+                            if let Some((_, value)) = &toast.action {
+                                self.clicked.push(*value);
+                            }
+                        }
                     }
-                    if ui.rect_contains_pointer(response.response.rect) {
+                    if toast.expires.is_some() && ui.rect_contains_pointer(response.response.rect) {
                         toast.expires = Some(now + DURATION);
                     }
                 }
@@ -144,10 +223,23 @@ impl Toasts {
     }
 }
 
-/// Shows `toast` with the icon of its level, its text and a close button. Returns
-/// whether the button was clicked.
-fn toast_ui(ui: &mut egui::Ui, toast: &Toast) -> bool {
+/// A button with only `icon`, as high as the controls, to close or cancel.
+fn close_button(ui: &mut egui::Ui, hint: &str) -> bool {
+    let square = egui::Vec2::splat(theme::CONTROL_HEIGHT);
+    let button = theme::icon_button(X).button(ui).min_size(square);
+    ui.add(button).on_hover_text(hint).clicked()
+}
+
+/// The room above a line of text that puts it in the middle of a control beside it.
+fn control_pad(ui: &egui::Ui) -> f32 {
+    ((theme::CONTROL_HEIGHT - ui.text_style_height(&egui::TextStyle::Body)) / 2.0).max(0.0)
+}
+
+/// Shows `toast` with the icon of its level, its text, the button of its action and a
+/// close button. Returns which was clicked.
+fn toast_ui(ui: &mut egui::Ui, toast: &Toast) -> Clicked {
     let (icon, color) = match toast.level {
+        Level::Info => (INFO, ui.visuals().weak_text_color()),
         Level::Warning => (WARNING, ui.visuals().warn_fg_color),
         Level::Error => (WARNING_CIRCLE, ui.visuals().error_fg_color),
     };
@@ -159,14 +251,28 @@ fn toast_ui(ui: &mut egui::Ui, toast: &Toast) -> bool {
     egui::Frame::popup(ui.style())
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
+            let pad = control_pad(ui);
             ui.horizontal_top(|ui| {
-                ui.label(egui::RichText::new(icon).color(color));
+                ui.vertical(|ui| {
+                    ui.add_space(pad);
+                    ui.label(egui::RichText::new(icon).color(color));
+                });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                    let closed = ui.small_button(X).on_hover_text("Close").clicked();
+                    let closed = close_button(ui, "Close");
+                    let height = egui::vec2(0.0, theme::CONTROL_HEIGHT);
+                    let action = (toast.action.as_ref()).is_some_and(|(label, _)| {
+                        let button = egui::Button::new(label.as_str()).min_size(height);
+                        ui.add(button).clicked()
+                    });
                     ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                        ui.add_space(pad);
                         ui.add(egui::Label::new(text).wrap());
                     });
-                    closed
+                    match (closed, action) {
+                        (true, _) => Clicked::Close,
+                        (false, true) => Clicked::Action,
+                        (false, false) => Clicked::Nothing,
+                    }
                 })
                 .inner
             })
@@ -181,15 +287,23 @@ fn progress_ui(ui: &mut egui::Ui, progress: &Progress) -> bool {
     egui::Frame::popup(ui.style())
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
+            let pad = control_pad(ui);
             let cancelled = ui
                 .horizontal_top(|ui| {
                     let size = ui.text_style_height(&egui::TextStyle::Body);
-                    ui.add(egui::Spinner::new().size(size));
+                    ui.vertical(|ui| {
+                        ui.add_space(pad);
+                        ui.add(egui::Spinner::new().size(size));
+                    });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                        let cancelled = ui.small_button(X).on_hover_text("Cancel").clicked();
+                        let cancelled = close_button(ui, "Cancel");
                         let percent = (progress.fraction * 100.0).floor();
-                        ui.weak(format!("{percent:.0} %"));
+                        ui.vertical(|ui| {
+                            ui.add_space(pad);
+                            ui.weak(format!("{percent:.0} %"));
+                        });
                         ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                            ui.add_space(pad);
                             ui.add(egui::Label::new(progress.text.as_str()).wrap());
                         });
                         cancelled
@@ -218,68 +332,4 @@ fn bar_ui(ui: &mut egui::Ui, fraction: f32) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use egui_kittest::Harness;
-    use egui_kittest::kittest::Queryable;
-
-    #[test]
-    fn toasts_expire_after_they_are_shown() {
-        let mut toasts = Toasts::default();
-        toasts.error("refused");
-        toasts.expire(100.0);
-        assert_eq!(toasts.toasts.len(), 1);
-        toasts.warning("cut off");
-        toasts.expire(100.0 + DURATION / 2.0);
-        assert_eq!(toasts.toasts.len(), 2);
-        toasts.expire(100.0 + DURATION);
-        assert_eq!(toasts.toasts.len(), 1);
-        assert_eq!(toasts.toasts[0].text, "cut off");
-    }
-
-    #[test]
-    fn a_repeated_toast_is_counted_and_shown_for_longer() {
-        let mut toasts = Toasts::default();
-        toasts.error("refused");
-        toasts.expire(0.0);
-        toasts.error("refused");
-        toasts.warning("refused");
-        toasts.expire(DURATION / 2.0);
-        toasts.expire(DURATION);
-        assert_eq!(toasts.toasts.len(), 2);
-        assert_eq!(toasts.toasts[0].count, 2);
-
-        for n in 0..MAX_TOASTS + 2 {
-            toasts.error(n.to_string());
-        }
-        assert_eq!(toasts.toasts.len(), MAX_TOASTS);
-        assert_eq!(toasts.toasts[0].text, "2");
-    }
-
-    #[test]
-    fn a_toast_is_shown_until_it_is_closed() {
-        let mut harness = Harness::builder()
-            .with_size(egui::vec2(400.0, 300.0))
-            .build_ui_state(
-                |ui, toasts: &mut Toasts| {
-                    toasts.ui(ui.ctx(), ui.max_rect(), None);
-                },
-                Toasts::default(),
-            );
-        harness.state_mut().error("ws://a cannot be connected");
-        harness.run();
-        assert!(
-            harness
-                .query_by_label_contains("cannot be connected")
-                .is_some()
-        );
-        harness.get_by_label(X).click();
-        harness.run();
-        assert!(harness.state().toasts.is_empty());
-        assert!(
-            harness
-                .query_by_label_contains("cannot be connected")
-                .is_none()
-        );
-    }
-}
+mod tests;

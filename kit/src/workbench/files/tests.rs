@@ -8,3 +8,13 @@ fn read_names_the_file_it_cannot_read() {
     assert_eq!(file.name, "a.blip");
     assert_eq!(file.bytes, [1]);
 }
+
+#[test]
+fn a_save_label_has_an_ellipsis_only_where_a_dialog_follows() {
+    let label = save_label("Save recording");
+    if cfg!(target_arch = "wasm32") {
+        assert_eq!(label, "Save recording");
+    } else {
+        assert_eq!(label, "Save recording…");
+    }
+}

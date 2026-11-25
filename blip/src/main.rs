@@ -7,8 +7,8 @@ fn main() -> eframe::Result {
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([400.0, 300.0])
-            .with_min_inner_size([300.0, 220.0])
+            .with_inner_size([1280.0, 800.0])
+            .with_min_inner_size([800.0, 500.0])
             .with_icon(
                 // NOTE: Adding an icon is optional
                 eframe::icon_data::from_png_bytes(&include_bytes!("../assets/icon-256.png")[..])
@@ -50,10 +50,13 @@ fn main() {
                 Box::new(|cc| Ok(Box::new(blip::App::new(cc)))),
             )
             .await;
-        if start_result.is_ok()
-            && let Err(e) = save_when_hidden(&runner, &window, &document)
-        {
-            log::warn!("Failed to save the app state when the page is left: {e:?}");
+        if start_result.is_ok() {
+            if let Err(e) = save_when_hidden(&runner, &window, &document) {
+                log::warn!("Failed to save the app state when the page is left: {e:?}");
+            }
+            if let Err(e) = guard_unsaved(&runner, &window) {
+                log::warn!("Failed to guard an unsaved recording when the page is left: {e:?}");
+            }
         }
 
         // Remove the loading text and spinner:
@@ -63,14 +66,37 @@ fn main() {
                     loading_text.remove();
                 }
                 Err(e) => {
-                    loading_text.set_inner_html(
-                        "<p> The app has crashed. See the developer console for details. </p>",
-                    );
+                    let text = if format!("{e:?}").contains("WebGL") {
+                        "blip needs WebGL, which this browser does not offer."
+                    } else {
+                        "The app has crashed. See the developer console for details."
+                    };
+                    loading_text.set_inner_html(&format!("<p> {text} </p>"));
                     panic!("Failed to start eframe: {e:?}");
                 }
             }
         }
     });
+}
+
+/// Asks the browser to confirm leaving or reloading the page while the recording is
+/// unsaved, as that drops it.
+#[cfg(target_arch = "wasm32")]
+fn guard_unsaved(
+    runner: &eframe::WebRunner,
+    window: &web_sys::Window,
+) -> Result<(), eframe::wasm_bindgen::JsValue> {
+    runner.add_event_listener(
+        window,
+        "beforeunload",
+        |event: web_sys::BeforeUnloadEvent, app| {
+            if app.app_mut::<blip::App>().is_unsaved() {
+                event.prevent_default();
+                // older browsers ask only when a return value is set
+                event.set_return_value("");
+            }
+        },
+    )
 }
 
 /// Saves the app state whenever the page is hidden or left, e.g. on a reload or when the

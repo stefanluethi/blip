@@ -40,8 +40,10 @@ env_logger = "0.11.8"
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2.129"
 wasm-bindgen-futures = "0.4"
-# to access the DOM (to hide the loading text, to save when the page is hidden)
+# to access the DOM (to hide the loading text, to save when the page is hidden, to ask
+# before an unsaved recording is left)
 web-sys = { version = "0.3", features = [
+    "BeforeUnloadEvent",
     "Blob",
     "BlobPropertyBag",
     "Document",
