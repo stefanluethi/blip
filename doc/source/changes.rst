@@ -182,6 +182,9 @@ blip
      view, the heatmap and the distribution; ``trace_selection::search_ui``
      and ``show`` take a ``TreeFilter``, and ``request_search_focus`` focuses
      the search.
+   * A plot whose **Min** is above its **Max** shows the fitted y range. XY
+     and array views show a lone point between gaps as a dot, also with
+     markers off.
 
 blip-kit
    * The library blip is built on, to build your own tracing UI in egui, in
@@ -202,6 +205,12 @@ blip-kit
      the connections, the toasts and the file dialogs, which is what blip is.
    * The example ``dashboard`` is a whole application in code, with a simulated
      target in the application itself.
+   * The public API of ``widgets::view`` is what an application builds on: 56
+     helpers of the properties panel, the trace tree and the bin and stat
+     code are ``pub(crate)``, and ``optional_number_row``, ``Custom::viewable``
+     and ``viewable_ref`` (a ``&dyn Custom`` upcasts to ``&dyn Viewable``) and
+     the other items only the views used are gone. ``range_rows`` returns
+     ``()``.
    * Not yet: a loading state in the widgets, publication on crates.io, a store
      in a database.
 

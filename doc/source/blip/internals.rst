@@ -258,7 +258,7 @@ What a frame costs follows what is shown, not how much data there is:
   uploads its image only when it changes.
 * A distribution counts the samples of the shown range again in each frame, in
   one pass over the samples found by binary search. The box statistics
-  (``distribution/boxes.rs``) are cached: they are computed again only when
+  (``distribution/boxes.rs``) are kept by ``view::cached``: they are computed again only when
   the samples version, the shown window, the whiskers or the traces change,
   not on every frame.
 
