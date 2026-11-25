@@ -1,6 +1,6 @@
 ---
 name: design-reviewer
-description: Visual and UX reviewer for changes to the blip UI. Renders blip in both themes, looks at the screenshots and checks them against design/DESIGN.md and the frontend-design principles. Use it from /orchestrate next to the reviewer whenever a change touches blip/src. It does not change the app code.
+description: Visual and UX reviewer for changes to the blip UI. Renders blip in both themes, looks at the screenshots and checks them against design/DESIGN.md and the frontend-design principles. Use it from /orchestrate next to the reviewer whenever a change touches the look of blip/src or kit/src (the widgets and the workbench). It does not change the app code.
 tools: Read, Grep, Glob, Bash, Skill
 model: sonnet
 effort: medium

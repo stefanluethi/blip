@@ -73,11 +73,11 @@ changes.
 
 ## Agents
 
-`.claude/agents` holds the specialist agents: `designer`, `requirements-engineer`,
+`.claude/agents` holds the specialist agents: `designer`, `architect`, `requirements-engineer`,
 `blip-dev`, `sonde-dev`, `outpost-dev`, `docs-writer`, `reviewer` and
 `design-reviewer`. `/orchestrate <change>` (`.claude/skills/orchestrate`) leads a change
-through them: clarify with the user, pick a design for UI changes, write and approve the
-requirements, spec the code on Opus (`.claude/specs`), implement it in slices on Sonnet,
+through them: clarify with the user, pick a design for UI changes and an architecture
+for changes to an API or the structure, write and approve the requirements, spec the code on Opus (`.claude/specs`), implement it in slices on Sonnet,
 document, then review until every requirement in scope is implemented, tested, traced
 and documented, and the UI looks right. A small change in one part takes a light path:
 one specialist and one review on Sonnet.

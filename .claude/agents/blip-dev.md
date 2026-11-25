@@ -16,7 +16,8 @@ in your brief in `doc/source/requirements` (find each with
 `grep -rn REQ_ID doc/source/requirements`). Of `doc/source/blip/internals.rst`, read only
 the sections your spec or brief names, or the ones on the modules you change: list the
 headings with `grep -n -B1 '^[=~-]\{4,\}$' doc/source/blip/internals.rst` and read those
-ranges.
+ranges. The library has its own pages in `doc/source/library` (stores, sources,
+widgets, the app): read the one on what you change, the same way.
 
 ## Rules
 
@@ -31,6 +32,19 @@ ranges.
 - The code must build for both native and `wasm32-unknown-unknown`. No blocking calls,
   threads or file system access in code that runs on the web without a `cfg` for it.
 - `unsafe` is denied in the workspace. Clippy runs with `-D warnings -W clippy::all`.
+- **The library is an API.** `blip-kit` and `blip-proto` are published crates, so what
+  is `pub` in them is a promise. A new item is `pub(crate)` or private unless an
+  application needs it; do not make an internal public to reach it from a test or
+  another module. Every public item you add or change gets a doc comment that says
+  what it is for, as its user reads it. Keep the layers of `CLAUDE.md`: `store` uses no
+  GUI crate, the widgets read data only through `&dyn Store`. When a signature changes,
+  change every user of it in the same slice: `kit/`, `blip/`, `kit/examples`,
+  `kit/tests` and the code samples in `doc/source/library` (report the pages, the
+  `docs-writer` edits them).
+- **Paths that run all the time** (taking in samples, the queries of the widgets,
+  drawing a plot) do not allocate or copy per sample. If you change one, run the
+  baseline before and after on the same machine and report both results:
+  `cargo test --release -p blip-kit --test baseline -- --ignored --nocapture`.
 - Match the style of the code around you: module layout, naming, comments in plain
   short sentences.
 - UI follows `design/DESIGN.md`: colours from `ui.tokens()` and the
@@ -55,6 +69,10 @@ ranges.
   to follow: say so in your report, do not edit those parts yourself.
 - Stay inside the files your brief names. If you must touch other parts, report it
   instead.
+- Existing tests are the proof that a change broke nothing. Change or remove one only
+  when the behaviour it checks changed by a requirement in your brief, or when the
+  signature it calls changed; then keep what it checks. Never loosen a test to make it
+  pass. List each test you changed or removed in your report, with the reason.
 
 ## Tests
 
@@ -69,9 +87,17 @@ checks. Leave their status to the lead.
 
 ## Done
 
-Run `./check.sh` (cargo check native and WASM, rustfmt, clippy, tests, Trunk build) and
-fix every failure. If the change shows in the UI, also say which screenshots in the docs
+Run the checks your brief names and fix every failure. If it names none, or your slice
+is the last of the part, run `./check.sh` (cargo check native and WASM, the features of
+`blip-kit` and its example, rustfmt, clippy, tests, the API docs, packaging, Trunk
+build). A slice in the middle runs what it touched instead, e.g.
+`cargo test --release -p blip-kit --all-features` and
+`cargo clippy --release --workspace --all-targets --all-features -- -D warnings -W clippy::all`,
+since `./check.sh` builds everything and takes minutes. Either way the workspace builds
+when you are done: no slice leaves callers broken for the next one. If the change shows in the UI, also say which screenshots in the docs
 may need `cd doc && make screenshots`.
 
 Report: what you changed per requirement ID, the tests you added, the files touched,
-the `./check.sh` result, and anything left open or needed from another part.
+the checks you ran and their results, the tests you changed or removed and why, and
+anything left open or needed from another part. Say plainly what you did not do or
+could not check; the lead cannot see it otherwise.

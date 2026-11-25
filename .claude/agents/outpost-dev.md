@@ -35,6 +35,10 @@ sections your spec or brief names, or the ones on what you change.
   of it.
 - Stay inside the files your brief names. If you must touch other parts, report it
   instead.
+- Existing tests are the proof that a change broke nothing. Change or remove one only
+  when the behaviour it checks changed by a requirement in your brief, or when the
+  signature it calls changed; then keep what it checks. Never loosen a test to make it
+  pass. List each test you changed or removed in your report, with the reason.
 
 ## Tests
 

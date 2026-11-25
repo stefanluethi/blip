@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Lead a feature or change in blip from idea to reviewed code. Small changes take a light path (one specialist, one Sonnet review). For the rest, clarify with the user, get design options from the designer for UI changes, have the requirements engineer write the requirements, get them approved, have a technical spec written on Opus, hand the slices of work on Sonnet to the specialist agents (blip-dev, sonde-dev, outpost-dev, docs-writer) and loop with the reviewer and, for blip UI changes, the design-reviewer until requirements, code and look agree. Runs only when the user types /orchestrate.
+description: Lead a feature or change in blip from idea to reviewed code. Small changes take a light path (one specialist, one Sonnet review). For the rest, clarify with the user, get design options from the designer for UI changes and from the architect for changes to an API or the structure, have the requirements engineer write the requirements, get them approved, have a technical spec written on Opus, hand the slices of work on Sonnet to the specialist agents (blip-dev, sonde-dev, outpost-dev, docs-writer) and loop with the reviewer and, for blip UI changes, the design-reviewer until requirements, code and look agree. Runs only when the user types /orchestrate.
 argument-hint: <change>
 disable-model-invocation: true
 ---
@@ -17,7 +17,9 @@ The change to build: $ARGUMENTS
 ## 1. Understand
 
 1. Read what the change touches: the code, the docs pages, and the requirements in
-   `doc/source/requirements`. Check your memory for design decisions about this area.
+   `doc/source/requirements`. Check your memory for design decisions about this area,
+   and the repository's list of open points (`OPEN_POINTS.md`), if there is one, for
+   what an earlier change left open here.
 2. Ask the user until these are clear, with AskUserQuestion, a few questions at a time,
    each with a recommended option:
    - what should happen, from the user's view, and why;
@@ -25,7 +27,13 @@ The change to build: $ARGUMENTS
    - how we know it works: the acceptance criteria;
    - what is out of scope.
    Do not ask what you can find in the code or docs.
-3. Sum up the agreed change in a few lines and get the user's OK.
+3. Sum up the agreed change in a few lines and get the user's OK. On the full path,
+   write it to `.claude/specs/<change>.md` under **Agreed**, as numbered points: what
+   happens, the acceptance criteria, what is out of scope. Add the user's later
+   decisions (the chosen design, answers to open points) to it as they come. Every
+   brief names this file, the reviewer checks the change against its points, and your
+   final report goes through them one by one. What was agreed and is not in a
+   requirement gets lost otherwise.
 4. Pick the path (see "Light path" below) and tell the user which one and why, in the
    same message as the summary. The user can ask for the full path.
 
@@ -38,6 +46,8 @@ does not get the whole team. Take the light path when all of these hold:
   code or less;
 - no new view, panel or control, and no design choice to make with the user;
 - no change to the protocol, the recording format or a saved file format;
+- no change to the public API of `blip-kit` or `blip-proto`, and no code that moves
+  between modules or layers;
 - at most a few requirements are added or changed.
 
 Then:
@@ -58,9 +68,13 @@ If the change turns out larger while you work (the specialist reports work in an
 part, or the diff grows past the limits above), tell the user and go on with the full
 path from the step you are at.
 
-## 2. Design (when the user will see the change)
+## 2. Design
 
-Skip this step if the change does not alter the blip UI.
+A change may need one of the two, both or none.
+
+### The look (when the user will see the change)
+
+Skip this if the change does not alter the blip UI.
 
 1. Spawn `designer` with the agreed summary, the views and panels it touches, and the
    user's decisions. Ask for a visual study in `design/` if the user wants one or the
@@ -70,6 +84,26 @@ Skip this step if the change does not alter the blip UI.
    to the same designer with SendMessage.
 3. The chosen option goes into the brief of the requirements engineer and of `blip-dev`.
    If it sets a new design rule, add it to `design/DESIGN.md`.
+
+### The architecture (when the structure changes)
+
+Do this when the change alters the public API of `blip-kit` or `blip-proto`, moves a
+boundary between modules or layers, or changes the protocol or a file format. Skip it
+when the change only fills in behind the interfaces that exist.
+
+1. Spawn `architect` with the agreed summary, the modules it touches, what the user
+   said about the direction, and the file to write:
+   `.claude/specs/<change>-architecture.md`. If the user has chosen the direction
+   already, say so: the options are then the ways to build it.
+2. Show the user the options (name, the signatures, the consequences for speed, kept
+   files and the other parts) and the architect's recommendation, and let them choose
+   with AskUserQuestion. Send follow-up questions to the same architect with
+   SendMessage.
+3. Add the chosen option to **Agreed**. It goes into the brief of the requirements
+   engineer, who writes what an application or a user sees of it and updates the
+   `ARCH_*` elements, and it is the start of the specs in step 5: they build the
+   chosen structure and do not choose it again. If it sets a rule for the structure
+   (what a layer may use), add it to `CLAUDE.md`.
 
 ## 3. Requirements
 
@@ -81,7 +115,8 @@ Skip this step if the change does not alter the blip UI.
    approve them. When approved, set the `:status:` of the new and changed `REQ_*` and
    `STK_*` items to `approved`.
 
-Do not start implementation before the requirements are approved.
+Do not start implementation before the requirements are approved. The approval is the
+user's: do not take silence, or their OK to the summary, for it.
 
 ## 4. Plan the work
 
@@ -121,11 +156,18 @@ The spec has these sections:
   do; existing functions to reuse, named by file and function.
 - **Slices:** in order, each one buildable and checked on its own, about 300 lines of
   code at most: the requirement IDs, the files, the steps, and what done looks like.
+  The workspace builds and its tests pass after every slice: a slice that changes a
+  signature also changes its callers, or keeps the old one beside the new until the
+  slice that removes it. Per slice, the checks its agent runs (the tests and the
+  builds of the crates it touches); the last slice of a part runs the part's full
+  checks.
 - **Context:** per slice, what its agent reads before it starts: the sections of the docs
   (`internals.rst`, `sonde/README.md`, by heading) and the code (file and function or line
   range). A slice agent reads these instead of whole files, so keep the list short.
 - **Tests:** per slice, the test names, the `TEST_*` item each fills, and the inputs
-  and expected values worked out (by running the numbers), not guessed.
+  and expected values worked out (by running the numbers), not guessed. Also the
+  existing tests that change, each with the reason: the behaviour changed by a
+  requirement, or only the signature it calls. No other test is changed or removed.
 - **Not to touch:** what stays as it is.
 
 Skip the file for a small change, one slice in a few files: then the brief is the spec,
@@ -140,6 +182,9 @@ may run in parallel. Each brief has:
 
 - the spec file and the slice to build, and the slice's **Context** list; the slices
   before it are done;
+- the checks to run, from the spec: a slice in the middle runs the tests and builds of
+  what it touched, not `./check.sh`, which builds everything and takes minutes; the
+  last slice of a part runs the part's full checks;
 - the requirement IDs it implements and the `TEST_*` items it must fill in;
 - what other parts are changing at the same time.
 
@@ -154,6 +199,19 @@ slices that follow smaller. Do not lift the limit.
 Read each report. If a specialist reports work needed in another part, add it to the
 plan. Look at the diff yourself; a report is not proof.
 
+**Measure.** If the change touches a path that runs all the time (how the store takes
+in samples, the queries of the widgets, the drawing of a plot), run the baseline
+yourself before the first slice and after the last, on the same machine with nothing
+else building, and keep both results for the reviewer and the report:
+
+```bash
+cargo test --release -p blip-kit --test baseline -- --ignored --nocapture
+```
+
+If the baseline itself has to change with an API, keep what it measures the same. A
+result more than about 10 % worse goes to the specialist on its default model before
+the review, with both numbers.
+
 **Simplify.** When a part's change adds more than about 200 lines of code, spawn a
 fresh specialist of that part to run the `simplify` skill on it before the docs and the
 review: smaller code is cheaper for every agent that reads it later. Its brief: the
@@ -165,7 +223,13 @@ smaller changes.
 
 Spawn `docs-writer` with the requirement IDs, a summary of what was built, and the pages
 likely affected. It updates the guides, internals, reference, `ARCH_*` items and
-`changes.rst`, and regenerates diagrams and screenshots if needed.
+`changes.rst`, and regenerates diagrams and screenshots if needed. For a change of the
+structure, name the diagrams in `doc/source/diagrams` that show the modules that moved
+and the pages of `doc/source/library` that show the changed signatures.
+
+The docs follow the code to the end: if a fix round in step 8 changes an interface or
+behaviour that the docs describe, the `docs-writer` runs again in that round with the
+fix's findings, before the re-check.
 
 ## 8. Review
 
@@ -184,8 +248,9 @@ It prints a tree id; note it, since shell variables do not last between commands
 Later, run the same command again and `git diff <old id> <new id>` shows what changed
 since that round. Put the old id in the briefs of the next round.
 
-1. **First round.** Spawn `reviewer` with the requirement IDs in scope and a summary of
-   the change. If the change touches `blip/src` or `kit/src`, spawn `design-reviewer` in the same
+1. **First round.** Spawn `reviewer` with the requirement IDs in scope, a summary of
+   the change, the file with the **Agreed** points and, if you measured, the two
+   baseline results. If the change touches `blip/src` or `kit/src`, spawn `design-reviewer` in the same
    message, with the requirement IDs, the chosen design option and the views and panels
    that changed. The design reviewer renders its screenshots into a scratch directory,
    so the two do not get in each other's way. (The specialists have no Agent tool, so
@@ -216,7 +281,8 @@ effort (`model: "sonnet"`, `effort: "medium"`); a finding
    on.
 
 When the reviewer passes and the design reviewer says it looks good, set the `:status:`
-of the requirements and test cases in scope to `implemented`. Leave `verified` to the
+of the requirements and test cases in scope to `implemented`. A `STK_*` item becomes
+`implemented` only when every requirement that satisfies it is. Leave `verified` to the
 user.
 
 ## 9. Finish
@@ -233,10 +299,14 @@ and where it goes: the agent file of the specialist that made it (`.claude/agent
 user the exact text and add it only when they agree. The agents have no memory of their
 own, so these files are where their lessons live.
 
-Report to the user: what was built, per requirement ID, the reviewer's coverage table,
-the design reviewer's verdict, the reviewer's check results, the polish and Info
-findings you collected, and anything left open (e.g. diagrams that need the draw.io
-app). Do not commit unless the user asks. If they do, use a short imperative subject
+Report to the user: what was built, per requirement ID, the **Agreed** points one by
+one (built, built in part, or not built, and why), the reviewer's coverage table,
+the design reviewer's verdict, the reviewer's check results, the baseline before and
+after if you measured, the polish and Info findings you collected, what nobody has
+looked at or run (a window, the browser, a target), and anything left open (e.g.
+diagrams that need the draw.io app). Do not commit unless the user asks. If they do, use a short imperative subject
 and a body that explains what changed and why, as `CLAUDE.md` says. The specs in
 `.claude/specs` are working files: once the code and docs describe the change, delete
-them unless the user wants to keep them.
+them unless the user wants to keep them. If the repository has a list of open points
+(`OPEN_POINTS.md`), tell the user which of its points the change closed and which it
+adds, and change the file only when they agree.

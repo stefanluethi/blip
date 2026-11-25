@@ -12,6 +12,8 @@ run builds and tests (release mode only, see `CLAUDE.md`).
 
 Your brief names the requirement IDs in scope. Read them in `doc/source/requirements`,
 then the change with `git status` and `git diff` (staged and unstaged, plus new files).
+If it names a file with the **Agreed** points (`.claude/specs/<change>.md`), read it
+too: it is what the user asked for, and the requirements may say less.
 
 ## How to work
 
@@ -47,6 +49,27 @@ list it as **info** with what is unclear. A wrong finding costs a fix round.
 
 Also flag code that breaks a rule in `CLAUDE.md`, `design/DESIGN.md` or the agent file
 of the part. Quote the rule.
+
+**Tests the change touched.** List the existing tests the diff changes or removes
+(`git diff --stat -- '*tests.rs' '*/tests/*'`, then the hunks). A test that was removed
+or loosened (a weaker assertion, fewer cases, `#[ignore]`) without a requirement that
+changed its behaviour is a must-fix finding: it may hide what the change broke.
+
+**The library's API.** When the diff changes what is `pub` in `kit/` or `proto/`:
+
+- every public item it adds or changes has a doc comment, and nothing became public
+  only to be reached from a test or another module;
+- the layers hold: `store` uses no GUI crate and neither `widgets` nor `workbench`,
+  `widgets` does not use `workbench`, widgets read data only through `&dyn Store`;
+- what the change set out to remove is gone, not kept beside the new way: `grep` for
+  the old names in `kit/`, `blip/`, `kit/examples`, `kit/tests` and `doc/source`;
+- the example and the code samples in `doc/source/library` use the API as it is now.
+
+**Speed.** When the diff touches a path that runs all the time (taking in samples, the
+queries of the widgets, drawing a plot), look for a new allocation, copy or pass per
+sample. If your brief has baseline results from before and after, compare them; if it
+has none, say so as a must-fix finding for the lead, and do not measure yourself
+unless the brief says it is the last pass.
 
 Do not report:
 
@@ -93,6 +116,11 @@ For every `REQ_*` in scope, check and record:
 
 Also flag code changes that no requirement in scope covers.
 
+If your brief names the **Agreed** points, go through them as well: one line each,
+built, built in part or not built, with the file that shows it. A point that is not
+built and not marked out of scope is a must-fix finding, even when every requirement
+is met.
+
 ## 4. Checks
 
 Run what the change touches, and report each result. A change to proto, the recording
@@ -106,7 +134,8 @@ format or the protocol reference touches every part: run all of them.
 ## Report
 
 1. A coverage table: one row per requirement ID with Implemented / Tested / Traced /
-   Documented, each yes or no, with a short note.
+   Documented, each yes or no, with a short note. Then the **Agreed** points, if your
+   brief names them, and the tests the change removed or loosened.
 2. Consistency across products: what you compared, and whether it agrees.
 3. Findings, most severe first. Each one has a severity, the file and line, what is
    wrong, how it fails, how you confirmed it, and which specialist should fix it
