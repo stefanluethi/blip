@@ -3,10 +3,10 @@
 //! be shown at the cursor time as a line over its indices.
 
 use super::Selectable;
-use super::plot::{LineStyles, ShowPoints};
+use super::plot::{LineStyles, ShowPoints, line_width_row};
 use super::plotting::{
-    index_formatter, index_spacer, index_under, index_x_axis, plot_array, range_moved,
-    sample_at_cursor,
+    base_plot, hovered_point, index_formatter, index_spacer, index_under, index_x_axis, plot_array,
+    range_moved, sample_at_cursor, with_margin,
 };
 use super::time_axis;
 use super::tooltip::{Header, Label, Row, Tooltip, TraceName, Value};
@@ -29,8 +29,6 @@ const MAX_COLUMNS: usize = 2048;
 const MIN_LABELLED_CELL_WIDTH: f64 = 40.0;
 /// The room the axes of a grid take before its first frame is shown, in points.
 const GRID_AXES: egui::Vec2 = egui::vec2(50.0, 30.0);
-/// The margin of the y axis at the cursor time fitted to the values, of their span.
-const Y_MARGIN_FRACTION: f64 = 0.05;
 
 /// The viridis colour map at equal steps from low to high values.
 const COLOR_MAP: [Color32; 9] = [
@@ -299,14 +297,7 @@ impl Heatmap {
     fn fitted_y(&self) -> Option<(f64, f64)> {
         match (self.fit, self.expected) {
             (Fit::Expected, Some(expected)) => super::union(Some(expected), self.fitted_range),
-            _ => self.fitted_range.map(|(low, high)| {
-                let margin = if high > low {
-                    (high - low) * Y_MARGIN_FRACTION
-                } else {
-                    0.5
-                };
-                (low - margin, high + margin)
-            }),
+            _ => self.fitted_range.map(with_margin),
         }
     }
 
@@ -432,15 +423,12 @@ impl Heatmap {
             .data(|data| data.get_temp::<egui::Vec2>(frame_id))
             .unwrap_or(size - GRID_AXES);
         let [x, y] = grid_bounds(frame, (rows, columns));
-        let plot = egui_plot::Plot::new(id)
-            .grid_color(theme::grid_color(ui.visuals()))
+        let plot = base_plot(id, ui.visuals())
             .width(size.x)
             .height(size.y)
             // the grid fits the frame until panned or zoomed, and again on a double click
             .default_x_bounds(x.0, x.1)
             .default_y_bounds(y.0, y.1)
-            .show_x(false)
-            .show_y(false)
             .show_grid(false)
             .allow_boxed_zoom(false)
             .custom_x_axes(vec![index_x_axis("column")])
@@ -469,11 +457,7 @@ impl Heatmap {
                 }
             }
 
-            let pointer = plot_ui
-                .response()
-                .hovered()
-                .then(|| plot_ui.pointer_coordinate())
-                .flatten()?;
+            let pointer = hovered_point(plot_ui)?;
             let row = index_under(-pointer.y, rows)?;
             let column = index_under(pointer.x, columns)?;
             Some((row, column, numbers[row * columns + column]))
@@ -510,11 +494,7 @@ impl Heatmap {
         let color = theme::trace_color(ui.visuals(), 0);
         let style = (self.line_styles.of(trace.path), self.line_width);
 
-        let plot = egui_plot::Plot::new(ui.id().with("line"))
-            .grid_color(theme::grid_color(ui.visuals()))
-            // the value at the pointer is shown in a tooltip
-            .show_x(false)
-            .show_y(false)
+        let plot = base_plot(ui.id().with("line"), ui.visuals())
             .custom_x_axes(vec![index_x_axis("index")])
             .x_grid_spacer(index_spacer)
             .allow_boxed_zoom(false);
@@ -524,11 +504,7 @@ impl Heatmap {
                 plot_ui.set_plot_bounds_y(min..=max);
             }
             plot_array(trace.path, &values, color, style, points, plot_ui);
-            let pointer = plot_ui
-                .response()
-                .hovered()
-                .then(|| plot_ui.pointer_coordinate())
-                .flatten()?;
+            let pointer = hovered_point(plot_ui)?;
             index_under(pointer.x, numbers.len())
         });
         super::zoom_on_wheel(&response.response);
@@ -687,13 +663,7 @@ impl Viewable for Heatmap {
         }
         super::properties_section(ui, "Lines", |ui| {
             self.points.choice_row(ui);
-            super::property_label(ui, "Width");
-            ui.add(
-                egui::DragValue::new(&mut self.line_width)
-                    .range(0.5..=6.0)
-                    .speed(0.1),
-            );
-            ui.end_row();
+            line_width_row(ui, &mut self.line_width);
         });
         let paths: Vec<&str> = self.traces.iter().map(String::as_str).collect();
         self.line_styles.properties_ui(ui, &paths);

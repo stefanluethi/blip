@@ -2,10 +2,11 @@
 //! positions as paths.
 
 use super::Selectable;
-use super::plot::{LegendPlacement, LineStyle, LineStyles, ShowPoints};
+use super::plot::{LegendPlacement, LineStyle, LineStyles, ShowPoints, line_width_row};
 use super::plotting::{
-    TitleEntry, corner_legend, index_spacer, index_under, index_x_axis, is_point, nearest_point,
-    plot_array, plot_lines, plot_points, sample_at_cursor, title_legend, to_screen,
+    TitleEntry, base_plot, corner_legend, hovered_point, index_spacer, index_under, index_x_axis,
+    is_point, nearest_point, plot_array, plot_lines, plot_points, sample_at_cursor, title_legend,
+    to_screen,
 };
 use super::tooltip::{Header, Label, Row, Tooltip, TraceName, Value};
 use super::trace_selection::MAX_LISTED_ELEMENTS;
@@ -94,16 +95,6 @@ impl Default for Xy {
             line_styles: LineStyles::default(),
         }
     }
-}
-
-/// The range an axis with `ends` is set to over `fitted`, the range it fits, `None` to
-/// fit: while neither end is set or they are not in order.
-fn pinned(ends: Ends, fitted: Option<(f64, f64)>) -> Option<(f64, f64)> {
-    let wrong = ends.problems(fitted).iter().any(Option::is_some);
-    if ends.is_auto() || wrong {
-        return None;
-    }
-    ends.over(fitted)
 }
 
 /// The points of `y` against `x` for the samples of `y` in `indices`, each paired with
@@ -539,11 +530,7 @@ impl Xy {
             label => label.to_owned(),
         };
         let id = ui.id().with("xy");
-        let mut plot = egui_plot::Plot::new(id)
-            .grid_color(theme::grid_color(ui.visuals()))
-            // the values at the pointer are shown in a tooltip
-            .show_x(false)
-            .show_y(false)
+        let mut plot = base_plot(id, ui.visuals())
             .custom_x_axes(vec![x_axis])
             .y_axis_label(y_label);
         if self.equal_axes {
@@ -563,24 +550,15 @@ impl Xy {
         // the plot fits the values, or the ends set, until panned or zoomed, and again
         // after a double click
         let [x, y] = fitted;
-        match pinned(self.x_range, x) {
+        match self.x_range.pinned(x) {
             Some((low, high)) => plot = plot.default_x_bounds(low, high),
             None => plot = include_ranges(plot, [x, None]),
         }
-        match pinned(self.y_range, y) {
+        match self.y_range.pinned(y) {
             Some((low, high)) => plot = plot.default_y_bounds(low, high),
             None => plot = include_ranges(plot, [None, y]),
         }
         plot
-    }
-
-    /// The legend of the plot in a corner, if it goes there: the title row's goes to the
-    /// top right of a view without one.
-    fn corner(&self, titled: bool) -> Option<egui_plot::Corner> {
-        match self.legend {
-            LegendPlacement::Title if !titled => Some(egui_plot::Corner::RightTop),
-            placement => placement.corner(),
-        }
     }
 
     /// The curves or the arrays, each a path its name and the index that picks its
@@ -775,9 +753,7 @@ impl Xy {
         });
         super::zoom_on_wheel(&response.response);
         if let Some(corner) = corner {
-            let entries: Vec<(&str, egui::Color32)> = (names.iter().enumerate())
-                .map(|(index, &name)| (name, theme::trace_color(ui.visuals(), index)))
-                .collect();
+            let entries = names.iter().enumerate().map(|(index, &name)| (name, index));
             corner_legend(ui, *response.transform.frame(), corner, entries);
         }
         if let Some(Hovered { line, point }) = response.inner {
@@ -820,18 +796,15 @@ impl Xy {
                 let style = (self.line_styles.of(path), self.line_width);
                 plot_array(name, &values, color, style, self.points, plot_ui);
             }
-            let pointer = plot_ui
-                .response()
-                .hovered()
-                .then(|| plot_ui.pointer_coordinate())
-                .flatten()?;
+            let pointer = hovered_point(plot_ui)?;
             index_under(pointer.x, longest?)
         });
         super::zoom_on_wheel(&response.response);
         if let Some(corner) = corner {
-            let entries: Vec<(&str, egui::Color32)> = (arrays.iter().enumerate())
-                .map(|(index, (_, name, _))| (*name, theme::trace_color(ui.visuals(), index)))
-                .collect();
+            let entries = arrays
+                .iter()
+                .enumerate()
+                .map(|(index, (_, name, _))| (*name, index));
             corner_legend(ui, *response.transform.frame(), corner, entries);
         }
         if let Some(index) = response.inner {
@@ -925,7 +898,7 @@ impl Viewable for Xy {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         self.line_styles.retain_shown(&self.traces);
         self.assign_axes(context.store);
-        let corner = self.corner(context.titled);
+        let corner = self.legend.corner(context.titled);
         let arrays: Vec<String> = (self.array_paths(context.store).into_iter())
             .map(str::to_owned)
             .collect();
@@ -1019,13 +992,7 @@ impl Viewable for Xy {
         });
         super::properties_section(ui, "Lines", |ui| {
             self.points.choice_row(ui);
-            super::property_label(ui, "Width");
-            ui.add(
-                egui::DragValue::new(&mut self.line_width)
-                    .range(0.5..=6.0)
-                    .speed(0.1),
-            );
-            ui.end_row();
+            line_width_row(ui, &mut self.line_width);
             super::property_label(ui, "Fade");
             let mut percent = self.fade * 100.0;
             let response = ui
@@ -1045,20 +1012,7 @@ impl Viewable for Xy {
             }
             ui.end_row();
         });
-        super::properties_section(ui, "Legend", |ui| {
-            super::property_label(ui, "Placement");
-            super::choice_combo(
-                ui,
-                "xy_legend",
-                None,
-                &mut self.legend,
-                LegendPlacement::ALL
-                    .into_iter()
-                    .map(|placement| (placement, placement.name())),
-                None,
-            );
-            ui.end_row();
-        });
+        self.legend.properties_ui(ui);
         let styled: Vec<String> = if arrays.is_empty() {
             self.against.keys().cloned().collect()
         } else {

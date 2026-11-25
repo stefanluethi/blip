@@ -47,17 +47,6 @@ fn downsample_keeps_gaps() {
     assert!(points.iter().any(|p| p[1] == 6.0));
 }
 
-#[test]
-fn y_bounds_fit_the_ends_that_are_not_set() {
-    let fitted = Some((-1.0, 5.0));
-    assert_eq!(y_bounds(None, None, fitted), fitted);
-    assert_eq!(y_bounds(Some(0.0), None, fitted), Some((0.0, 5.0)));
-    assert_eq!(y_bounds(None, Some(2.0), fitted), Some((-1.0, 2.0)));
-    assert_eq!(y_bounds(Some(0.0), Some(1.0), None), Some((0.0, 1.0)));
-    assert_eq!(y_bounds(Some(0.0), None, None), None);
-    assert_eq!(y_bounds(Some(6.0), None, fitted), None);
-}
-
 struct State {
     plot: Plot,
     model: MemoryStore,

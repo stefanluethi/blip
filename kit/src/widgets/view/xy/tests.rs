@@ -655,24 +655,20 @@ fn xy_plots_saved_before_the_new_properties_load_to_the_same_picture() {
 #[test]
 fn an_axis_is_set_only_by_ends_in_order() {
     let fitted = Some((0.0, 10.0));
-    assert_eq!(pinned(Ends::default(), fitted), None);
+    assert_eq!(Ends::default().pinned(fitted), None);
     let min = Ends {
         min: Some(2.0),
         max: None,
     };
-    assert_eq!(pinned(min, fitted), Some((2.0, 10.0)));
-    assert_eq!(pinned(Ends::fixed((5.0, 1.0)), fitted), None);
-    assert_eq!(pinned(min, None), None);
+    assert_eq!(min.pinned(fitted), Some((2.0, 10.0)));
+    assert_eq!(Ends::fixed((5.0, 1.0)).pinned(fitted), None);
+    assert_eq!(min.pinned(None), None);
 }
 
 #[test]
 fn the_legend_goes_to_a_corner_without_a_title_row() {
-    let xy = Xy::default();
-    assert_eq!(xy.corner(true), None);
-    assert_eq!(xy.corner(false), Some(egui_plot::Corner::RightTop));
-    let hidden = Xy {
-        legend: LegendPlacement::Hidden,
-        ..Xy::default()
-    };
-    assert_eq!(hidden.corner(false), None);
+    assert_eq!(LegendPlacement::Title.corner(true), None);
+    let corner = LegendPlacement::Title.corner(false);
+    assert_eq!(corner, Some(egui_plot::Corner::RightTop));
+    assert_eq!(LegendPlacement::Hidden.corner(false), None);
 }

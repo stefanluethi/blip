@@ -210,7 +210,7 @@ pub fn properties_ui(ui: &mut egui::Ui, measurements: &mut Vec<Measurement>, pat
                     ("stat", index),
                     Some(100.0),
                     &mut measurement.stat,
-                    Stat::ALL.into_iter().map(|stat| (stat, stat.name())),
+                    Stat::CHOICES,
                     Some(Stat::hint),
                 )
                 .on_hover_text(measurement.stat.hint());

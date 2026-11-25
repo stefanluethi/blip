@@ -15,7 +15,7 @@ Tests of the requirements in :doc:`/requirements/system/plot`.
    number stays in the field and leaves the end as it was;
    ``ends_out_of_order_blame_the_ends_set`` that ends set the wrong way round
    are blamed with the reason ("Min must be below Max, 4").
-   ``kit/src/widgets/view/plot/tests.rs::y_bounds_fit_the_ends_that_are_not_set``
+   ``kit/src/widgets/view/tests.rs::ends_over_fit_the_ends_that_are_not_set``
    and ``the_hints_of_min_and_max_are_the_ends_of_the_axis`` -- Plot fits the end
    not set and shows the ends in use as hints.
    ``kit/src/widgets/view/xy/tests.rs::an_axis_is_set_only_by_ends_in_order`` --

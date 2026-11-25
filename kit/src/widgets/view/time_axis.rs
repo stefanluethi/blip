@@ -1,7 +1,6 @@
 //! Plots with the shared time range on the x axis.
 
 use crate::store::sorted::within;
-use crate::widgets::theme;
 use crate::widgets::time::{self, TimeBase, TimeRange, timestamp_at};
 use std::cmp::min;
 use std::ops::Range;
@@ -67,11 +66,7 @@ impl TimePlotResponse {
 pub fn plot<'a>(id: egui::Id, time: &TimeRange, visuals: &egui::Visuals) -> egui_plot::Plot<'a> {
     let origin = time.origin();
     let base = time.base();
-    egui_plot::Plot::new(id)
-        .grid_color(theme::grid_color(visuals))
-        // the values at the pointer are shown in a tooltip
-        .show_x(false)
-        .show_y(false)
+    super::plotting::base_plot(id, visuals)
         .allow_drag([true, false])
         .allow_zoom([true, false])
         .allow_scroll([true, false])
@@ -217,11 +212,7 @@ pub fn show<'a>(
             plot_ui.set_plot_bounds_x(start..=end);
         }
         build(plot_ui, axis);
-        plot_ui
-            .response()
-            .hovered()
-            .then(|| plot_ui.pointer_coordinate())
-            .flatten()
+        super::plotting::hovered_point(plot_ui)
     });
     let transform = response.transform;
     super::zoom_on_wheel(&response.response);

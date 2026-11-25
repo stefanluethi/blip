@@ -10,6 +10,29 @@ use crate::widgets::time::TimeRange;
 /// Radius of the marks of the points.
 pub(super) const POINT_RADIUS: f32 = 2.0;
 
+/// The room around the values an axis fits on each side, as a part of their range, as
+/// egui_plot fits the y axis of a plot.
+pub(super) const Y_MARGIN: f64 = 0.05;
+
+/// `(low, high)` with [`Y_MARGIN`] on each side, or 0.5 around a single value.
+pub(super) fn with_margin((low, high): (f64, f64)) -> (f64, f64) {
+    let margin = if high > low {
+        (high - low) * Y_MARGIN
+    } else {
+        0.5
+    };
+    (low - margin, high + margin)
+}
+
+/// A plot under `id` with its grid in the colours of `visuals`, without the coordinates
+/// at the pointer, as the views show the values there in a tooltip.
+pub(super) fn base_plot<'a>(id: egui::Id, visuals: &egui::Visuals) -> egui_plot::Plot<'a> {
+    egui_plot::Plot::new(id)
+        .grid_color(crate::widgets::theme::grid_color(visuals))
+        .show_x(false)
+        .show_y(false)
+}
+
 /// Whether neither coordinate of `point` is NaN, which marks a gap.
 pub(super) fn is_point(point: &[f64; 2]) -> bool {
     !point[0].is_nan() && !point[1].is_nan()
@@ -92,6 +115,15 @@ pub(super) fn index_under(position: f64, len: usize) -> Option<usize> {
     (index >= 0.0 && index < len as f64).then_some(index as usize)
 }
 
+/// The point of the plot under the pointer, if the pointer is over it.
+pub(super) fn hovered_point(plot_ui: &egui_plot::PlotUi<'_>) -> Option<egui_plot::PlotPoint> {
+    plot_ui
+        .response()
+        .hovered()
+        .then(|| plot_ui.pointer_coordinate())
+        .flatten()
+}
+
 /// The index of the point of `points` nearest to `pointer` on the screen of a plot with
 /// `transform`, with its squared distance, if within `radius` points. Gaps are skipped;
 /// of equally near points the first.
@@ -171,25 +203,28 @@ pub(super) fn range_moved(expected: (f64, f64), shown: (f64, f64)) -> bool {
 /// The room around a corner legend and inside it, in points.
 const LEGEND_MARGIN: egui::Vec2 = egui::vec2(8.0, 4.0);
 
-/// Draws a legend in `corner` of the plot `frame`: a row per entry of `entries`, a dot
-/// in its colour and its name, on a card patch. It does not react to the pointer, so
+/// Draws a legend in `corner` of the plot `frame`: a row per entry of `entries`, the
+/// name of a trace and its index, with a dot in its colour, on a card patch. It does not react to the pointer, so
 /// clicks reach the plot and no trace is hidden from it.
 pub(super) fn corner_legend<'a>(
     ui: &egui::Ui,
     frame: egui::Rect,
     corner: egui_plot::Corner,
-    entries: impl IntoIterator<Item = (&'a str, egui::Color32)>,
+    entries: impl IntoIterator<Item = (&'a str, usize)>,
 ) {
     let tokens = crate::widgets::theme::tokens(ui.visuals());
     let font = egui::TextStyle::Body.resolve(ui.style());
     let weak = ui.visuals().weak_text_color();
     let rows: Vec<(std::sync::Arc<egui::Galley>, egui::Color32)> = entries
         .into_iter()
-        .map(|(name, color)| {
+        .map(|(name, index)| {
             let galley = ui
                 .painter()
                 .layout_no_wrap(name.to_owned(), font.clone(), weak);
-            (galley, color)
+            (
+                galley,
+                crate::widgets::theme::trace_color(ui.visuals(), index),
+            )
         })
         .collect();
     if rows.is_empty() {

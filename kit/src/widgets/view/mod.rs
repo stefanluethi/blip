@@ -817,6 +817,16 @@ impl Ends {
         if min < max { Some((min, max)) } else { fitted }
     }
 
+    /// The range an axis with these ends is set to over `fitted`, the range it fits,
+    /// `None` to fit: while neither end is set or they are not in order.
+    pub(crate) fn pinned(self, fitted: Option<(f64, f64)>) -> Option<(f64, f64)> {
+        let wrong = self.problems(fitted).iter().any(Option::is_some);
+        if self.is_auto() || wrong {
+            return None;
+        }
+        self.over(fitted)
+    }
+
     /// What is wrong with the Min and the Max over `fitted`: the ends that are set
     /// while the low end is not below the high one, with the reason.
     pub(crate) fn problems(self, fitted: Option<(f64, f64)>) -> [Option<String>; 2] {

@@ -441,6 +441,19 @@ fn an_end_is_a_finite_number_or_nothing() {
 }
 
 #[test]
+fn ends_over_fit_the_ends_that_are_not_set() {
+    let fitted = Some((-1.0, 5.0));
+    let over = |min, max, fitted| Ends { min, max }.over(fitted);
+    assert_eq!(over(None, None, fitted), fitted);
+    assert_eq!(over(Some(0.0), None, fitted), Some((0.0, 5.0)));
+    assert_eq!(over(None, Some(2.0), fitted), Some((-1.0, 2.0)));
+    assert_eq!(over(Some(0.0), Some(1.0), None), Some((0.0, 1.0)));
+    assert_eq!(over(Some(0.0), None, None), None);
+    // ends out of order fit the values instead
+    assert_eq!(over(Some(6.0), None, fitted), fitted);
+}
+
+#[test]
 fn ends_out_of_order_blame_the_ends_set() {
     let fitted = Some((0.0, 10.0));
     let problems = |min, max, fitted| Ends { min, max }.problems(fitted);

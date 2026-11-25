@@ -1396,7 +1396,7 @@ fn the_value_axis_of_a_sideways_histogram_is_on_the_side_chosen() {
         let (left, right) = (frame.left(), 400.0 - frame.right());
         assert_eq!(left > right, on_left, "{side:?} {frame:?}");
         assert!(
-            left.max(right) >= VALUE_AXIS_THICKNESS,
+            left.max(right) >= TIME_Y_AXIS_THICKNESS,
             "{side:?} {frame:?}"
         );
     }

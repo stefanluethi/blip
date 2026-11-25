@@ -3,7 +3,10 @@
 //! in their colours, as boxes, a box plot of each trace in a row of its own, or both.
 
 use super::Selectable;
-use super::plotting::{TitleEntry, corner_legend, title_legend};
+use super::plotting::{
+    TIME_Y_AXIS_THICKNESS, TitleEntry, Y_MARGIN, base_plot, corner_legend, title_legend,
+    with_margin,
+};
 use super::tooltip::{Header, Label, Row, Tone, Tooltip, TraceName, Value};
 use super::{
     Ends, Fit, Formats, Plots, PropertiesContext, ViewContext, ViewId, Viewable, text_size,
@@ -29,9 +32,6 @@ const WIDTH_HYSTERESIS: f64 = 0.2;
 const MIN_BIN_POINTS: f64 = 4.0;
 /// More bins than this are made wider, so that a tiny width does not stall blip.
 const MAX_BINS: usize = 4096;
-/// The room on the value axis on each side of the binned values, as a part of their
-/// range, as egui_plot fits the y axis of a plot.
-const VALUE_MARGIN: f64 = 0.05;
 /// The value axis around a single value, in bin widths on each side.
 const SINGLE_VALUE_ROOM: f64 = 2.5;
 /// Where the logarithmic counts axis starts: at least this many decades below the share
@@ -63,9 +63,6 @@ const OVERLAY_INSET: f32 = 6.0;
 const NAME_MARGIN: f32 = 4.0;
 /// The height of the counts of the samples outside the bins.
 const TEXT_ROW: f32 = 18.0;
-/// The least width of the value axis of a sideways distribution, as of the y axis of a
-/// plot, so that both line up.
-const VALUE_AXIS_THICKNESS: f32 = 50.0;
 
 /// The hint of a distribution without samples in the shown window.
 const NO_SAMPLES: &str = "No samples in the shown window";
@@ -523,7 +520,7 @@ impl Distribution {
         // automatic bins are at least a few points wide on the fitted value axis
         let view_span = match fixed {
             Some(_) => high - low,
-            None => (high - low) * (1.0 + 2.0 * VALUE_MARGIN),
+            None => (high - low) * (1.0 + 2.0 * Y_MARGIN),
         };
         let min_width = MIN_BIN_POINTS * view_span / f64::from(length.max(1.0));
         let integers = shown
@@ -602,13 +599,9 @@ impl Distribution {
     fn own_range(&self, store: &dyn Store, data: Option<(f64, f64)>) -> Option<(f64, f64)> {
         let declared = self.declared(store);
         let fitted = super::union(declared, data);
-        let wrong = self.range.problems(fitted).iter().any(Option::is_some);
-        let fixed = match (self.range.is_auto() || wrong, declared) {
-            (true, None) => None,
-            (true, Some(_)) => fitted,
-            (false, _) => self.range.over(fitted),
-        };
-        fixed.filter(|(low, high)| low < high)
+        (self.range.pinned(fitted))
+            .or(declared.and(fitted))
+            .filter(|(low, high)| low < high)
     }
 
     /// The point at `value` and `count` on the axes of the plot.
@@ -976,7 +969,7 @@ impl Viewable for Distribution {
         // the size of the plot without its axes in the last frame
         let frame = ui
             .data(|data| data.get_temp::<egui::Vec2>(frame_id))
-            .unwrap_or_else(|| ui.available_size() - egui::vec2(VALUE_AXIS_THICKNESS, 24.0))
+            .unwrap_or_else(|| ui.available_size() - egui::vec2(TIME_Y_AXIS_THICKNESS, 24.0))
             .max(egui::Vec2::splat(1.0));
         let [value_length, count_length] = self.orientation.xy(frame.x, frame.y);
 
@@ -1128,14 +1121,7 @@ impl Viewable for Distribution {
         // without a title row, the legend of the title row goes to a corner; the names
         // of the rows of the boxes need none
         if !context.titled && self.show != Show::Boxes {
-            let entries: Vec<(&str, egui::Color32)> = (shown.iter())
-                .map(|trace| {
-                    (
-                        trace.name.as_str(),
-                        theme::trace_color(ui.visuals(), trace.index),
-                    )
-                })
-                .collect();
+            let entries = shown.iter().map(|trace| (trace.name.as_str(), trace.index));
             corner_legend(ui, frame, egui_plot::Corner::RightTop, entries);
         }
         if self.traces.is_empty() {
@@ -1312,10 +1298,7 @@ fn followed_range_rows(ui: &mut egui::Ui, followed: Option<(f64, f64)>) {
     let ends = [followed.map(|(min, _)| min), followed.map(|(_, max)| max)];
     for (label, end) in ["Min", "Max"].into_iter().zip(ends) {
         super::property_label(ui, label);
-        let hint = end.map_or_else(
-            || "auto".to_owned(),
-            |end| format_significant(end, SHOWN_DIGITS),
-        );
+        let hint = super::end_hint(end);
         let mut text = String::new();
         ui.add_enabled(false, theme::wide_field(&mut text).hint_text(hint))
             .on_disabled_hover_text(SET_BY_PLOT);
@@ -1444,11 +1427,7 @@ impl Distribution {
             move |mark: egui_plot::GridMark, _: &std::ops::RangeInclusive<f64>| {
                 write_value(mark.value, mark.step_size, format)
             };
-        let plot = egui_plot::Plot::new(id)
-            .grid_color(theme::grid_color(visuals))
-            // the shares and counts of the bin under the pointer are shown in a tooltip
-            .show_x(false)
-            .show_y(false)
+        let plot = base_plot(id, visuals)
             .allow_boxed_zoom(false)
             .allow_double_click_reset(false)
             .allow_drag(movable)
@@ -1468,7 +1447,7 @@ impl Distribution {
                     AxisSide::Left => egui_plot::HPlacement::Left,
                     AxisSide::Right => egui_plot::HPlacement::Right,
                 })
-                .min_thickness(VALUE_AXIS_THICKNESS),
+                .min_thickness(TIME_Y_AXIS_THICKNESS),
         };
         let value_axis = label(value_axis.formatter(value_formatter));
         let across_axis = match self.orientation {
@@ -1796,10 +1775,7 @@ fn fitted_values(
             let room = SINGLE_VALUE_ROOM * counted.bins.width;
             (low - room, high + room)
         }
-        (_, Some((low, high)), None) => {
-            let margin = (high - low) * VALUE_MARGIN;
-            (low - margin, high + margin)
-        }
+        (_, Some(data), None) => with_margin(data),
         _ => (0.0, 1.0),
     }
 }

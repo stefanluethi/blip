@@ -3,7 +3,7 @@ use super::plotting::{TitleEntry, is_point, title_legend, to_screen};
 use super::stats::{self, Measurement};
 use super::time_axis::{self, TimeAxis, visible_range};
 use super::tooltip::{Header, Label, Row, Tooltip, TraceName, Value};
-use super::{Fit, Formats, PropertiesContext, ViewContext, Viewable, with_unit};
+use super::{Ends, Fit, Formats, PropertiesContext, ViewContext, Viewable, with_unit};
 use crate::store::numbers::{
     DisplayFormat, NumberKind, SHOWN_DIGITS, fixed_decimals, widest_fixed,
 };
@@ -13,8 +13,6 @@ use crate::store::{Store, Window, traces::Series};
 use crate::widgets::theme;
 use crate::widgets::time::{TimeBase, seconds_since};
 use std::collections::BTreeSet;
-
-const Y_MARGIN_FRACTION: f64 = 0.05;
 
 /// The room between a plot and its stats in points.
 const STATS_GAP: f32 = 6.0;
@@ -71,6 +69,13 @@ impl ShowPoints {
     pub fn choice_row(&mut self, ui: &mut egui::Ui) {
         super::choice_row(ui, "Points", self, &ShowPoints::CHOICES);
     }
+}
+
+/// Adds the row Width to the grid of a properties section for the `width` of lines.
+pub(super) fn line_width_row(ui: &mut egui::Ui, width: &mut f32) {
+    super::property_label(ui, "Width");
+    ui.add(egui::DragValue::new(width).range(0.5..=6.0).speed(0.1));
+    ui.end_row();
 }
 
 named_enum! {
@@ -160,9 +165,7 @@ impl super::PerPath<LineStyle> {
                     ("line style", path),
                     Some(90.0),
                     &mut style,
-                    LineStyle::ALL
-                        .into_iter()
-                        .map(|style| (style, style.name())),
+                    LineStyle::CHOICES,
                     None,
                 );
                 self.set(path, style);
@@ -187,15 +190,26 @@ named_enum! {
 }
 
 impl LegendPlacement {
-    /// The corner of the plot the legend goes to, if it goes to one.
-    pub(super) fn corner(self) -> Option<egui_plot::Corner> {
+    /// The corner of the plot the legend goes to, if any; that of the title row goes to
+    /// the top right while the view is not `titled`.
+    pub(super) fn corner(self, titled: bool) -> Option<egui_plot::Corner> {
         match self {
-            LegendPlacement::Hidden | LegendPlacement::Title => None,
+            LegendPlacement::Hidden => None,
+            LegendPlacement::Title if titled => None,
             LegendPlacement::TopLeft => Some(egui_plot::Corner::LeftTop),
-            LegendPlacement::TopRight => Some(egui_plot::Corner::RightTop),
+            LegendPlacement::Title | LegendPlacement::TopRight => Some(egui_plot::Corner::RightTop),
             LegendPlacement::BottomLeft => Some(egui_plot::Corner::LeftBottom),
             LegendPlacement::BottomRight => Some(egui_plot::Corner::RightBottom),
         }
+    }
+
+    /// Adds the section Legend to the properties of a view, to choose the placement.
+    pub(super) fn properties_ui(&mut self, ui: &mut egui::Ui) {
+        super::properties_section(ui, "Legend", |ui| {
+            super::property_label(ui, "Placement");
+            super::choice_combo(ui, "legend", None, self, LegendPlacement::CHOICES, None);
+            ui.end_row();
+        });
     }
 }
 
@@ -330,17 +344,11 @@ impl Plot {
             .filter(|&(path, _, _)| include(path))
             .filter_map(|(path, _, _)| store.series(path, Window::NONE).data?.range)
             .reduce(|(low_a, high_a), (low_b, high_b)| (low_a.min(low_b), high_a.max(high_b)));
-        range.map(|(low, high)| {
-            if !margin {
-                return (low, high);
-            }
-            let margin = if high > low {
-                (high - low) * Y_MARGIN_FRACTION
-            } else {
-                0.5
-            };
-            (low - margin, high + margin)
-        })
+        if margin {
+            range.map(super::plotting::with_margin)
+        } else {
+            range
+        }
     }
 
     /// The union of the expected ranges of the shown traces.
@@ -370,8 +378,11 @@ impl Plot {
     /// and `y_max` with the ends not set fitted to all values of the shown traces.
     /// `None` if neither is known.
     pub fn shown_y(&self, store: &dyn Store) -> Option<(f64, f64)> {
-        self.y_view
-            .or_else(|| y_bounds(self.y_min, self.y_max, self.range_y(store)))
+        let ends = Ends {
+            min: self.y_min,
+            max: self.y_max,
+        };
+        self.y_view.or_else(|| ends.over(self.range_y(store)))
     }
 
     /// The tooltip with the values of the shown traces at `t` nanoseconds, a faint dash
@@ -510,11 +521,7 @@ impl Plot {
             y_axis = y_axis.label(label);
         }
         let plot = time_axis::plot(id, time, ui.visuals()).custom_y_axes(vec![y_axis]);
-        // without a title row, the legend of the title row goes to a corner
-        let legend = match self.legend {
-            LegendPlacement::Title if !context.titled => LegendPlacement::TopRight,
-            legend => legend,
-        };
+        let corner = self.legend.corner(context.titled);
 
         let visuals = ui.visuals().clone();
         let shown_y = self.shown_y(store);
@@ -547,9 +554,8 @@ impl Plot {
             }
         }
 
-        if let Some(corner) = legend.corner() {
-            let entries = (super::indexed_names(&self.traces))
-                .map(|(_, name, index)| (name, theme::trace_color(&visuals, index)));
+        if let Some(corner) = corner {
+            let entries = super::indexed_names(&self.traces).map(|(_, name, index)| (name, index));
             super::plotting::corner_legend(ui, response.frame, corner, entries);
         }
         if self.traces.is_empty() {
@@ -586,14 +592,6 @@ fn nearest_curve(values: &[f64], y: f64, points_per_value: f64) -> Option<usize>
         .filter(|&(_, distance)| distance <= NEAR_CURVE)
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(index, _)| index)
-}
-
-/// The range of the y axis from `min` and `max` where they are set and from the ends of
-/// `fitted` where not, or `None` if an end is unknown or the ends are not in order.
-fn y_bounds(min: Option<f64>, max: Option<f64>, fitted: Option<(f64, f64)>) -> Option<(f64, f64)> {
-    let min = min.or(fitted.map(|(low, _)| low))?;
-    let max = max.or(fitted.map(|(_, high)| high))?;
-    (min < max).then_some((min, max))
 }
 
 /// Reduces `series` to about two points per one of `buckets` buckets of equally many
@@ -811,13 +809,7 @@ impl Viewable for Plot {
                 &mut self.interpolation,
                 &Interpolation::CHOICES,
             );
-            super::property_label(ui, "Width");
-            ui.add(
-                egui::DragValue::new(&mut self.line_width)
-                    .range(0.5..=6.0)
-                    .speed(0.1),
-            );
-            ui.end_row();
+            line_width_row(ui, &mut self.line_width);
             self.points.choice_row(ui);
             super::choice_row(
                 ui,
@@ -826,20 +818,7 @@ impl Viewable for Plot {
                 &[(false, "Gap"), (true, "Connect")],
             );
         });
-        super::properties_section(ui, "Legend", |ui| {
-            super::property_label(ui, "Placement");
-            super::choice_combo(
-                ui,
-                "plot_legend",
-                None,
-                &mut self.legend,
-                LegendPlacement::ALL
-                    .into_iter()
-                    .map(|placement| (placement, placement.name())),
-                None,
-            );
-            ui.end_row();
-        });
+        self.legend.properties_ui(ui);
         let paths: Vec<&str> = self.traces.iter().map(String::as_str).collect();
         self.line_styles.properties_ui(ui, &paths);
         stats::properties_ui(ui, &mut self.stats, &paths);
