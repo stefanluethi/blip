@@ -11,7 +11,7 @@ use crate::store::traces::{Samples, Trace};
 use crate::store::{Store, Window};
 use crate::widgets::theme;
 use egui_extras::Column;
-use egui_phosphor::regular::{BRACKETS_CURLY, CARET_DOWN, CARET_RIGHT, DOTS_SIX_VERTICAL};
+use egui_phosphor::regular::{BRACKETS_CURLY, DOTS_SIX_VERTICAL};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
@@ -216,8 +216,16 @@ impl Table {
         ui.add_space(row.depth as f32 * INDENT);
         if row.is_branch {
             let collapsed = self.collapsed.contains(&row.key);
-            let caret = if collapsed { CARET_RIGHT } else { CARET_DOWN };
-            if ui.add(egui::Button::new(caret).frame(false)).clicked() {
+            // the caret of the tree in the traces panel
+            let size = egui::vec2(ui.spacing().icon_width, ui.spacing().interact_size.y);
+            let (_, response) = ui.allocate_exact_size(size, egui::Sense::click());
+            let openness = if collapsed { 0.0 } else { 1.0 };
+            theme::paint_caret(ui, openness, &response);
+            let name = if collapsed { "Expand" } else { "Collapse" };
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), name)
+            });
+            if response.clicked() {
                 super::set_member(&mut self.collapsed, &row.key, !collapsed);
             }
         } else {
@@ -351,15 +359,17 @@ impl Table {
             .zip(&labels)
             .map(|(column, labels)| formats.format_of(&column_format_key(column), labels.is_some()))
             .collect();
-        // the `index`th sample of `trace` in the format of its column and with its unit
-        let write = |trace: Trace<'_>, column: usize, index: usize, max_len: usize| {
-            let value = trace.samples.format(
-                index,
-                max_len,
-                Some(SHOWN_DIGITS),
-                formats[column],
-                labels[column],
-            );
+        // the `index`th sample of `trace` in the format of its column and with its unit,
+        // to `digits` significant digits if given
+        let write = |trace: Trace<'_>,
+                     column: usize,
+                     index: usize,
+                     max_len: usize,
+                     digits: Option<usize>| {
+            let value =
+                trace
+                    .samples
+                    .format(index, max_len, digits, formats[column], labels[column]);
             with_unit_of(store, trace, index, value)
         };
         // the sample of each field current at t, with its value written as text
@@ -375,7 +385,13 @@ impl Table {
                         Some((
                             *trace,
                             index,
-                            write(*trace, column, index, MAX_SHOWN_ELEMENTS),
+                            write(
+                                *trace,
+                                column,
+                                index,
+                                MAX_SHOWN_ELEMENTS,
+                                Some(SHOWN_DIGITS),
+                            ),
                         ))
                     })
                     .collect()
@@ -403,7 +419,9 @@ impl Table {
 
         egui::ScrollArea::horizontal().show(ui, |ui| {
             let lines = theme::TableLines::new(ui, true);
-            let mut table = theme::table(ui).resizable(true);
+            // a right click on a cell opens its menu, not one of the text
+            ui.style_mut().interaction.selectable_labels = false;
+            let mut table = theme::table(ui).resizable(true).sense(egui::Sense::click());
             if columns.is_empty() {
                 table = table.column(Column::remainder().at_least(80.0).clip(true));
             } else {
@@ -435,20 +453,45 @@ impl Table {
                     let lines = lines.in_body(body.ui_mut()).across(body.widths(), spacing);
                     body.heterogeneous_rows(heights.into_iter(), |mut table_row| {
                         let index = table_row.index();
-                        table_row.col(|ui| {
+                        // a value in full, with all its digits
+                        let full = |column: usize, (trace, sample, _): &Cell<'_>| {
+                            write(*trace, column, *sample, MAX_TOOLTIP_ELEMENTS, None)
+                        };
+                        let copy_row = |ui: &mut egui::Ui| {
+                            if ui.button("Copy row").clicked() {
+                                let values =
+                                    cells[index].iter().enumerate().map(|(column, cell)| {
+                                        cell.as_ref()
+                                            .map_or_else(String::new, |cell| full(column, cell))
+                                    });
+                                let text = std::iter::once(labels[index].to_owned())
+                                    .chain(values)
+                                    .collect::<Vec<_>>()
+                                    .join("\t");
+                                ui.ctx().copy_text(text);
+                            }
+                        };
+                        let (_, name) = table_row.col(|ui| {
                             lines.above(ui, index);
                             ui.add(egui::Label::new(labels[index]).truncate())
                                 .on_hover_text(records[index].path);
                         });
+                        name.context_menu(copy_row);
                         for (column, cell) in cells[index].iter().enumerate() {
-                            table_row.col(|ui| {
-                                if let Some((trace, sample, value)) = cell {
+                            let (_, response) = table_row.col(|ui| {
+                                if let Some(cell @ (trace, _, value)) = cell {
                                     value_label(ui, *trace, value).on_hover_ui(|ui| {
-                                        let value =
-                                            write(*trace, column, *sample, MAX_TOOLTIP_ELEMENTS);
-                                        value_label(ui, *trace, &value);
+                                        value_label(ui, *trace, &full(column, cell));
                                     });
                                 }
+                            });
+                            response.context_menu(|ui| {
+                                if let Some(cell) = cell
+                                    && ui.button("Copy value").clicked()
+                                {
+                                    ui.ctx().copy_text(full(column, cell));
+                                }
+                                copy_row(ui);
                             });
                         }
                     });
@@ -576,8 +619,11 @@ impl Table {
             .collect();
 
         let lines = theme::TableLines::new(ui, true);
+        // a right click on a cell opens its menu, not one of the text
+        ui.style_mut().interaction.selectable_labels = false;
         let mut table = theme::table(ui)
             .resizable(true)
+            .sense(egui::Sense::click())
             .column(Column::initial(200.0).at_least(80.0).clip(true));
         // the value takes the room that is left, before the columns of the application
         table = if custom.is_empty() {
@@ -609,18 +655,38 @@ impl Table {
                     let index = table_row.index();
                     let row = &table_rows[index];
                     let sample = &samples[index];
-                    table_row.col(|ui| {
+                    // the value in full, with all its digits
+                    let full = |(trace, index, _): &(Trace<'_>, usize, String)| {
+                        write(*trace, *index, MAX_TOOLTIP_ELEMENTS, None)
+                    };
+                    let copy_row = |ui: &mut egui::Ui| {
+                        if ui.button("Copy row").clicked() {
+                            let text = match sample {
+                                Some(sample) => format!("{}\t{}", row.label, full(sample)),
+                                None => row.label.to_owned(),
+                            };
+                            ui.ctx().copy_text(text);
+                        }
+                    };
+                    let (_, name) = table_row.col(|ui| {
                         lines.above(ui, index);
                         self.name_ui(ui, store, row);
                     });
-                    table_row.col(|ui| {
-                        if let Some((trace, index, value)) = sample {
+                    name.context_menu(copy_row);
+                    let (_, cell) = table_row.col(|ui| {
+                        if let Some(sample @ (trace, _, value)) = sample {
                             value_label(ui, *trace, value).on_hover_ui(|ui| {
-                                let value =
-                                    write(*trace, *index, MAX_TOOLTIP_ELEMENTS, Some(SHOWN_DIGITS));
-                                value_label(ui, *trace, &value);
+                                value_label(ui, *trace, &full(sample));
                             });
                         }
+                    });
+                    cell.context_menu(|ui| {
+                        if let Some(sample) = sample
+                            && ui.button("Copy value").clicked()
+                        {
+                            ui.ctx().copy_text(full(sample));
+                        }
+                        copy_row(ui);
                     });
                     for column in &custom {
                         table_row.col(|ui| {
@@ -675,8 +741,8 @@ impl Viewable for Table {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         if self.traces.is_empty() {
             let text = match self.layout {
-                TableLayout::Traces => "Select the traces to show in the traces panel",
-                TableLayout::Records => "Select the records to show in the traces panel",
+                TableLayout::Traces => super::CHECK_TRACES,
+                TableLayout::Records => "Check the records to show in the tree on the left",
             };
             theme::hint(ui, text);
             return;
@@ -701,7 +767,7 @@ impl Viewable for Table {
                 super::choice_row(ui, "Traces", &mut self.rows, &TableRows::CHOICES);
                 super::checkbox_row(
                     ui,
-                    "Empty",
+                    "Show empty traces",
                     &mut self.show_empty,
                     "Show traces without a value at the cursor time",
                 );

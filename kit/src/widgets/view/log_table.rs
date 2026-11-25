@@ -77,6 +77,18 @@ pub struct LogTable {
     /// The time range shown in the last frame, to scroll to it when it moves.
     #[serde(skip)]
     last_range: Option<(f64, f64)>,
+    /// The timestamp of the cursor put somewhere in the last frame, to scroll to it
+    /// when it moves.
+    #[serde(skip)]
+    last_cursor: Option<u64>,
+    /// Whether the newest entry was followed in the last frame, to jump to it when
+    /// following starts.
+    #[serde(skip)]
+    following: bool,
+    /// Whether the user scrolled up from the newest entry, which stops following it
+    /// until back at the bottom.
+    #[serde(skip)]
+    scrolled_away: bool,
     /// The entries the filter shows, in the order of their times, see
     /// [`LogTable::update_shown`].
     #[serde(skip)]
@@ -85,6 +97,11 @@ pub struct LogTable {
     #[serde(skip)]
     shown_for: Option<Box<ShownFor>>,
 }
+
+/// The hint of a log view with no logs checked.
+const CHECK_LOGS: &str = "Check the logs to show in the tree on the left";
+/// The hint of a log view whose checked logs show no entries.
+const NO_ENTRIES: &str = "No entries in this time range";
 
 /// An entry the filter shows: the index of its path in [`ShownFor::paths`] and its
 /// index in the entries of that path.
@@ -261,14 +278,21 @@ impl LogTable {
     }
 
     /// Shows the entries, the ones outside the shown time range greyed out, with the
-    /// filters in the header of the table.
-    pub fn ui(&mut self, ui: &mut egui::Ui, logs: &Logs, time: &TimeRange) {
+    /// filters in the header of the table. A click on an entry puts the cursor of
+    /// `time` at it, and the entry at the cursor is marked.
+    pub fn ui(&mut self, ui: &mut egui::Ui, logs: &Logs, time: &mut TimeRange) {
+        if self.paths.is_empty() {
+            theme::hint(ui, CHECK_LOGS);
+            return;
+        }
         let slots = self.update_shown(logs);
         let total = slots.iter().map(|path| path.entries.len()).sum();
 
-        let footer_height = 20.0;
+        let footer_height = theme::CONTROL_HEIGHT;
         // the table shrinks to nothing before the footer is pushed out of a small view
         let table_height = (ui.available_height() - footer_height).max(0.0);
+        // the time of the entry clicked in this frame
+        let mut clicked = None;
 
         ui.allocate_ui_with_layout(
             egui::vec2(ui.available_width(), table_height),
@@ -278,6 +302,9 @@ impl LogTable {
                 ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
                 let row_height = theme::table_row_height(ui, &egui::TextStyle::Monospace, 1);
                 let lines = theme::TableLines::new(ui, true);
+                // the height of the body under the header, and between its rows
+                let spacing = ui.spacing().item_spacing.y;
+                let body_room = ui.available_height() - header_height - spacing;
 
                 // the paths are written relative to the folder they share
                 let folder = common_folder_len(self.shown_paths().iter().map(|shown| &*shown.path));
@@ -289,6 +316,7 @@ impl LogTable {
                     .min_scrolled_height(0.0)
                     // the footer stays at the bottom, also with few entries
                     .auto_shrink([false, false])
+                    .sense(egui::Sense::click())
                     .column(Column::auto().resizable(false)) // Timestamp
                     .column(Column::auto().resizable(false)) // Log Level
                     .column(Column::auto().resizable(false)) // Path
@@ -299,31 +327,58 @@ impl LogTable {
                 let in_range = |entry: &LogEntry| {
                     timestamps.is_none_or(|(start, end)| (start..=end).contains(&entry.time))
                 };
-                // the newest entry, also of the range while playing, is followed
-                // without an animation: one that starts again with each new entry
-                // never catches up with it
-                let following = self.filter.auto_scroll && time.is_playing();
-                if time.is_live() {
-                    if following && !self.shown.is_empty() {
+                // the newest entry at or before the cursor the user put somewhere
+                let cursor = time.cursor_timestamp().filter(|_| time.cursor_is_set());
+                let at_cursor = cursor.and_then(|cursor| {
+                    upper_bound_by(&self.shown, cursor, |&shown| entry(&slots, shown).time)
+                        .checked_sub(1)
+                });
+                let live = time.is_live();
+                // live, the newest entry is followed until the user scrolls up, and
+                // again once back at the bottom or with the button of the footer
+                let following = self.filter.auto_scroll && live && !self.scrolled_away;
+                let mut jumped = false;
+                if following {
+                    builder = builder.stick_to_bottom(true);
+                    // whole rows only, so that no half row shows under the header
+                    if let Some(body) =
+                        whole_rows_height(body_room, row_height, spacing, self.shown.len())
+                    {
+                        builder = builder.max_scroll_height(body);
+                    }
+                    if !self.following && !self.shown.is_empty() {
+                        // without an animation, which the user could scroll against
                         builder = builder
                             .animate_scrolling(false)
                             .scroll_to_row(self.shown.len() - 1, Some(egui::Align::Max));
+                        jumped = true;
                     }
-                } else if let Some((_, end)) = timestamps
-                    // while playing, the range moves each frame
-                    && (following || !time.is_playing() && range != self.last_range)
+                } else if let Some(row) = at_cursor
+                    // the cursor was put somewhere else, e.g. on a plot
+                    .filter(|_| cursor != self.last_cursor && !time.is_playing())
                 {
-                    // scroll to the newest entry in the moved range
+                    builder = builder.scroll_to_row(row, Some(egui::Align::Center));
+                } else if let Some((_, end)) = timestamps.filter(|_| !live)
+                    && self.filter.auto_scroll
+                    // while playing, the range moves each frame
+                    && (time.is_playing() || range != self.last_range)
+                {
+                    // scroll to the newest entry in the moved range, without an
+                    // animation while playing: one that starts again with each frame
+                    // never catches up with it
                     let last_in_range =
                         upper_bound_by(&self.shown, end, |&shown| entry(&slots, shown).time)
                             .saturating_sub(1);
                     builder = builder
-                        .animate_scrolling(!following)
+                        .animate_scrolling(!time.is_playing())
                         .scroll_to_row(last_in_range, Some(egui::Align::Max));
                 }
+                self.following = following;
                 self.last_range = range;
+                self.last_cursor = cursor;
 
-                builder
+                let base = time.base();
+                let output = builder
                     .header(header_height, |mut header| {
                         header.col(|ui| {
                             header_title(ui, "Time");
@@ -347,6 +402,9 @@ impl LogTable {
                             let path = &paths[shown_entries[index].path as usize].path;
                             let entry = entry(&slots, shown_entries[index]);
                             let shown = in_range(entry);
+                            if at_cursor == Some(index) {
+                                row.set_hovered(true);
+                            }
                             // the message stands out, the time and the path less,
                             // and all of an entry outside the time range stays faint
                             let text = |text: &str, ui: &egui::Ui, role: Role| {
@@ -357,35 +415,72 @@ impl LogTable {
                                     Role::Path => ui.visuals().weak_text_color(),
                                     Role::Message => ui.visuals().text_color(),
                                 };
-                                egui::RichText::new(text).monospace().color(color)
+                                let text = egui::RichText::new(text).monospace().color(color);
+                                // a click on the text clicks the row
+                                egui::Label::new(text).selectable(false)
+                            };
+                            let time = if columns.date {
+                                base.format_dated(entry.time, 3)
+                            } else {
+                                base.format(entry.time, 3)
                             };
                             row.col(|ui| {
                                 lines.above(ui, index);
-                                let base = time.base();
-                                let time = if columns.date {
-                                    base.format_dated(entry.time, 3)
-                                } else {
-                                    base.format(entry.time, 3)
-                                };
-                                ui.label(text(&time, ui, Role::Time));
+                                ui.add(text(&time, ui, Role::Time));
                             });
                             row.col(|ui| {
                                 level_badge(ui, entry.level, shown);
                             });
                             row.col(|ui| {
-                                let label = ui.label(text(&path[folder..], ui, Role::Path));
+                                let label = ui.add(text(&path[folder..], ui, Role::Path));
                                 if folder > 0 {
                                     label.on_hover_text(&**path);
                                 }
                             });
                             row.col(|ui| {
-                                ui.label(text(&entry.message, ui, Role::Message));
+                                // cut to one line, the whole message shows on hover
+                                ui.add(text(&entry.message, ui, Role::Message).truncate());
+                            });
+                            let response = row.response();
+                            if response.clicked() {
+                                clicked = Some(entry.time);
+                            }
+                            response.context_menu(|ui| {
+                                if ui.button("Copy message").clicked() {
+                                    ui.ctx().copy_text(entry.message.clone());
+                                }
+                                if ui.button("Copy row").clicked() {
+                                    let level = entry.level.as_str();
+                                    let message = &entry.message;
+                                    let row = format!("{time}\t{level}\t{path}\t{message}");
+                                    ui.ctx().copy_text(row);
+                                }
                             });
                         });
                     });
+                if self.shown.is_empty() {
+                    theme::hint_over(ui, output.inner_rect, NO_ENTRIES);
+                }
+
+                // whether the user scrolled up from the newest entry while following
+                // it, or back down
+                if live && self.filter.auto_scroll {
+                    if !jumped {
+                        let bottom = output.content_size.y - output.inner_rect.height();
+                        self.scrolled_away = output.state.offset.y + 0.5 < bottom;
+                    }
+                } else {
+                    self.scrolled_away = false;
+                }
             },
         );
 
+        if let Some(at) = clicked {
+            time.go_to(time.seconds(at));
+            // the clicked entry stays where it is, also if the range moves to it
+            self.last_range = time.range();
+            self.last_cursor = time.cursor_timestamp();
+        }
         self.footer_ui(ui, self.shown.len(), total);
     }
 
@@ -393,20 +488,20 @@ impl LogTable {
     /// filters while they hide any.
     fn footer_ui(&mut self, ui: &mut egui::Ui, shown: usize, total: usize) {
         ui.horizontal(|ui| {
-            // smaller than the other buttons, to leave the room to the entries
-            let icon = egui::RichText::new(regular::ARROW_LINE_DOWN).size(12.0);
-            let auto_scroll = theme::hover_frame(
-                egui::Button::new(icon)
-                    .small()
-                    .min_size(egui::vec2(18.0, 18.0))
-                    .selected(self.filter.auto_scroll),
-            );
+            ui.set_min_height(theme::CONTROL_HEIGHT);
+            let following = self.filter.auto_scroll && !self.scrolled_away;
+            let auto_scroll = theme::icon_button(regular::ARROW_LINE_DOWN).selected(following);
             if ui
                 .add(auto_scroll)
                 .on_hover_text("Follow the newest entries")
                 .clicked()
             {
-                self.filter.auto_scroll = !self.filter.auto_scroll;
+                if self.scrolled_away {
+                    // back to the newest entry
+                    self.scrolled_away = false;
+                } else {
+                    self.filter.auto_scroll = !self.filter.auto_scroll;
+                }
             }
 
             let count = if shown == total {
@@ -460,7 +555,7 @@ impl LogTable {
         let hidden = &mut self.filter.hidden_paths;
         filter_header(ui, "Path", !hidden.is_empty(), |ui| {
             if listed.is_empty() {
-                theme::panel_hint(ui, "No records yet");
+                theme::panel_hint(ui, "No entries yet");
                 return;
             }
             egui::ScrollArea::vertical()
@@ -590,6 +685,15 @@ fn merge<T: Copy>(known: Vec<T>, new: Vec<T>, time: impl Fn(&T) -> u64) -> Vec<T
     merged
 }
 
+/// The height of the body of a table that shows whole rows of `count` rows, each
+/// `row_height` high and `spacing` apart, in `room`: `None` while all rows fit, or
+/// while not even one does.
+fn whole_rows_height(room: f32, row_height: f32, spacing: f32, count: usize) -> Option<f32> {
+    let pitch = row_height + spacing;
+    let fitting = ((room + spacing) / pitch).floor();
+    (fitting >= 1.0 && fitting < count as f32).then_some(fitting * pitch - spacing)
+}
+
 /// The byte length, with the trailing `/`, of the longest folder that all of `paths`
 /// are in: the longest run of whole segments that is a prefix of the parents of all.
 /// 0 if there is none.
@@ -672,7 +776,7 @@ fn level_badge(ui: &mut egui::Ui, level: LogLevel, shown: bool) {
     let color = theme::level_color(ui.visuals(), level).gamma_multiply(fade);
     let name = ui
         .painter()
-        .layout_no_wrap(level.as_str().to_owned(), BADGE_FONT, color);
+        .layout_no_wrap(level.as_str().to_owned(), badge_font(ui), color);
     let (rect, response) = ui.allocate_exact_size(badge_size(ui), egui::Sense::hover());
     let painter = ui.painter();
     painter.rect_filled(rect, theme::CONTROL_RADIUS, color.gamma_multiply(0.15));
@@ -681,16 +785,20 @@ fn level_badge(ui: &mut egui::Ui, level: LogLevel, shown: bool) {
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, level.as_str()));
 }
 
-/// The font of the names in the level badges.
-const BADGE_FONT: egui::FontId = egui::FontId::monospace(10.5);
+/// The font of the names in the level badges: monospace in the small size.
+fn badge_font(ui: &egui::Ui) -> egui::FontId {
+    egui::FontId::monospace(egui::TextStyle::Small.resolve(ui.style()).size)
+}
 
 /// The size of the level badges: as wide as the longest name, and just higher than the
 /// text.
 fn badge_size(ui: &egui::Ui) -> egui::Vec2 {
-    let widest =
-        ui.painter()
-            .layout_no_wrap("DEBUG".to_owned(), BADGE_FONT, egui::Color32::PLACEHOLDER);
-    egui::vec2(widest.size().x + 10.0, BADGE_FONT.size + 4.0)
+    let font = badge_font(ui);
+    let size = font.size;
+    let widest = ui
+        .painter()
+        .layout_no_wrap("DEBUG".to_owned(), font, egui::Color32::PLACEHOLDER);
+    egui::vec2(widest.size().x + 10.0, size + 4.0)
 }
 
 /// What a text of a log entry is, which sets its color.

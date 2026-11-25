@@ -209,7 +209,9 @@ fn several_parameters_are_sent_with_the_send_button() {
     harness.get_by_role(egui::accesskit::Role::CheckBox).click();
     harness.run_steps(2);
     assert!(sent(&mut harness).is_empty());
-    harness.get_by_label("Send").click();
+    harness
+        .get_by_label(&format!("{PAPER_PLANE_RIGHT} Send"))
+        .click();
     harness.run_steps(2);
     let args = Data::Record(vec![
         ("mode".to_owned(), Data::from("fast")),
@@ -230,7 +232,11 @@ fn several_parameters_chosen_to_be_sent_on_change_are_sent_at_most_every_interva
     );
     harness.state_mut().view.on_change.insert("move".to_owned());
     harness.run();
-    assert!(harness.query_by_label("Send").is_none());
+    assert!(
+        harness
+            .query_by_label(&format!("{PAPER_PLANE_RIGHT} Send"))
+            .is_none()
+    );
     let args = |mode: &str, far: bool| {
         Data::Record(vec![
             ("mode".to_owned(), Data::from(mode)),
@@ -272,7 +278,7 @@ fn confirmed_actions_keep_their_send_button() {
     let mut harness = harness(vec![confirmed]);
     harness.state_mut().view.on_change.insert("move".to_owned());
     harness.run();
-    harness.get_by_label("Send…");
+    harness.get_by_label(&format!("{PAPER_PLANE_RIGHT} Send…"));
 }
 
 fn reboot() -> ActionDescriptor {
@@ -351,13 +357,17 @@ fn confirmed_forms_send_their_values_and_lapse_when_changed() {
         ..action("move", vec![named("far", ParamKind::Bool)])
     };
     let mut harness = harness(vec![move_to]);
-    harness.get_by_label("Send…").click();
+    harness
+        .get_by_label(&format!("{PAPER_PLANE_RIGHT} Send…"))
+        .click();
     harness.run_steps(2);
     harness.get_by_label("Send move");
     harness.get_by_role(egui::accesskit::Role::CheckBox).click();
     harness.run_steps(2);
     assert!(harness.query_by_label("Send move").is_none());
-    harness.get_by_label("Send…").click();
+    harness
+        .get_by_label(&format!("{PAPER_PLANE_RIGHT} Send…"))
+        .click();
     harness.run_steps(2);
     harness.get_by_label("Send move").click();
     harness.run_steps(2);
@@ -447,12 +457,12 @@ fn chosen_actions_show_also_when_not_announced() {
     harness.run_steps(2);
     assert!(harness.query_by_label("a").is_none());
     harness.get_by_label("b");
-    harness.get_by_label("not announced by any outpost");
+    harness.get_by_label("Not announced by any outpost");
     // an action the chosen outpost does not announce
     harness.state_mut().view.outpost = Some("robby".to_owned());
     harness.run_steps(2);
     assert_eq!(
-        harness.get_all_by_label("not announced by robby").count(),
+        harness.get_all_by_label("Not announced by robby").count(),
         2
     );
 }
@@ -562,7 +572,7 @@ fn the_announced_readback_shows_and_starts_the_inputs_unless_off() {
     harness.get_by_role(egui::accesskit::Role::CheckBox).click();
     harness.run_steps(2);
     assert!(!checked(&harness));
-    harness.get_by_label("reads on");
+    harness.get_by_label("Reads on");
 
     // the readback turned off
     harness.state_mut().invoker.inputs.clear();
@@ -897,7 +907,9 @@ fn forms_keep_their_inputs_when_rejected() {
     )]);
     enter_text(&mut harness, "pump stalled");
     harness.get_by_label("warn").click();
-    harness.get_by_label("Send").click();
+    harness
+        .get_by_label(&format!("{PAPER_PLANE_RIGHT} Send"))
+        .click();
     harness.run_steps(2);
     answer(&mut harness, 0, Err("busy"));
     assert_eq!(field_text(&harness), "pump stalled");
@@ -923,7 +935,9 @@ fn changed_inputs_of_a_form_are_marked_until_sent() {
     harness.get_by_role(egui::accesskit::Role::CheckBox).click();
     harness.run_steps(2);
     assert_eq!(harness.query_all_by_label("Changed").count(), 2);
-    harness.get_by_label("Send").click();
+    harness
+        .get_by_label(&format!("{PAPER_PLANE_RIGHT} Send"))
+        .click();
     harness.run_steps(2);
     assert_eq!(sent(&mut harness).len(), 1);
     assert!(harness.query_by_label("Changed").is_none());
@@ -1101,4 +1115,74 @@ fn typed_numbers_are_sent_on_enter_only() {
         .map(|(_, args)| value(args))
         .collect();
     assert_eq!(sent, [Data::Float(125.0)]);
+}
+
+#[test]
+fn typed_numbers_left_without_enter_stay_unsent_drafts() {
+    let register = ParamKind::Int {
+        min: None,
+        max: None,
+    };
+    let ratio = ParamKind::Float {
+        min: None,
+        max: None,
+        step: None,
+    };
+    for (kind, role, value) in [
+        (register, egui::accesskit::Role::TextInput, Data::Uint(12)),
+        (ratio, egui::accesskit::Role::SpinButton, Data::Float(12.0)),
+    ] {
+        let mut harness = harness(vec![action("poke", vec![named("v", kind)])]);
+        harness.get_by_role(role).click();
+        harness.run_steps(2);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.get_by_role(role).type_text("12");
+        harness.run_steps(2);
+        // clicking elsewhere leaves the field without sending
+        harness.get_by_label("poke").click();
+        harness.run_steps(2);
+        assert!(!harness.get_by_role(role).is_focused());
+        assert!(sent(&mut harness).is_empty());
+        harness.get_by_label("Changed");
+        harness.get_by_label("Enter to send");
+        harness.run_steps(4);
+        assert!(sent(&mut harness).is_empty());
+        // Enter in the field sends the draft
+        harness.get_by_role(role).click();
+        harness.run_steps(2);
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(2);
+        let args = Data::Record(vec![("v".to_owned(), value)]);
+        assert_eq!(sent(&mut harness), [("poke".to_owned(), args)]);
+        assert!(harness.query_by_label("Changed").is_none());
+        assert!(harness.query_by_label("Enter to send").is_none());
+        // Enter without a draft sends nothing again
+        harness.get_by_role(role).click();
+        harness.run_steps(2);
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(2);
+        assert!(sent(&mut harness).is_empty());
+    }
+}
+
+#[test]
+fn a_pending_run_cannot_be_sent_again() {
+    let mut harness = harness(vec![action("reset", vec![])]);
+    let run = format!("{PLAY} Run");
+    // a double click runs it once
+    harness.get_by_label(&run).click();
+    harness.run_steps(1);
+    harness.get_by_label(&run).click();
+    harness.run_steps(2);
+    assert_eq!(sent(&mut harness).len(), 1);
+    assert!(harness.get_by_label(&run).accesskit_node().is_disabled());
+    harness.get_by_label(&run).click();
+    harness.run_steps(2);
+    assert!(sent(&mut harness).is_empty());
+    // once answered it runs again
+    answer(&mut harness, 0, Ok(()));
+    assert!(!harness.get_by_label(&run).accesskit_node().is_disabled());
+    harness.get_by_label(&run).click();
+    harness.run_steps(2);
+    assert_eq!(sent(&mut harness).len(), 1);
 }

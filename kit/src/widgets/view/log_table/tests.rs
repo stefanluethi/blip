@@ -177,10 +177,10 @@ fn the_path_is_always_shown_relative_to_the_folder() {
             paths: paths_of(paths),
             ..LogTable::default()
         };
-        let time = TimeRange::default();
+        let mut time = TimeRange::default();
         Harness::builder()
             .with_size(egui::vec2(600.0, 300.0))
-            .build_ui(move |ui| table.ui(ui, &logs, &time))
+            .build_ui(move |ui| table.ui(ui, &logs, &mut time))
     };
     let header = format!("Path {}", regular::CARET_DOWN);
     let several = harness(&["log/default", "log/imu", "log/motor/left"]);
@@ -228,11 +228,11 @@ fn the_path_filter_checks_paths_and_all_or_none() {
         paths: paths_of(&["log/default", "log/imu", "log/motor/left"]),
         ..LogTable::default()
     };
-    let time = TimeRange::default();
+    let mut time = TimeRange::default();
     let mut harness = Harness::builder()
         .with_size(egui::vec2(600.0, 300.0))
         .build_ui_state(
-            |ui, (table, logs): &mut (LogTable, Logs)| table.ui(ui, logs, &time),
+            |ui, (table, logs): &mut (LogTable, Logs)| table.ui(ui, logs, &mut time),
             (table, logs),
         );
     harness
@@ -285,11 +285,11 @@ fn autoscroll_button_stays_visible_in_a_small_view() {
         logs.push("", create_entry(LogLevel::Info, "message"));
     }
     let mut table = table();
-    let time = TimeRange::default();
+    let mut time = TimeRange::default();
     let size = egui::vec2(400.0, 120.0);
     let harness = Harness::builder()
         .with_size(size)
-        .build_ui(move |ui| table.ui(ui, &logs, &time));
+        .build_ui(move |ui| table.ui(ui, &logs, &mut time));
     let button = harness.get_by_label(regular::ARROW_LINE_DOWN);
     assert!(button.rect().bottom() <= size.y);
 }
@@ -298,7 +298,7 @@ fn autoscroll_button_stays_visible_in_a_small_view() {
 fn autoscroll_keeps_up_with_new_entries() {
     let mut logs = Logs::default();
     let mut table = table();
-    let time = TimeRange::default();
+    let mut time = TimeRange::default();
     let newest = std::rc::Rc::new(std::cell::Cell::new(0));
     let shared = newest.clone();
     let mut frame = 0;
@@ -315,7 +315,7 @@ fn autoscroll_keeps_up_with_new_entries() {
                 logs.push("", create_entry(LogLevel::Info, &message));
                 shared.set(frame / 7);
             }
-            table.ui(ui, &logs, &time);
+            table.ui(ui, &logs, &mut time);
         });
     for step in 0..300 {
         harness.input_mut().time = Some(f64::from(step) / 60.0);
@@ -331,10 +331,10 @@ fn autoscroll_keeps_up_with_new_entries() {
 fn the_header_holds_the_filters() {
     let logs = Logs::default();
     let mut table = table();
-    let time = TimeRange::default();
+    let mut time = TimeRange::default();
     let mut harness = Harness::builder()
         .with_size(egui::vec2(600.0, 300.0))
-        .build_ui(move |ui| table.ui(ui, &logs, &time));
+        .build_ui(move |ui| table.ui(ui, &logs, &mut time));
     harness
         .get_by_label(&format!("Level {}", regular::CARET_DOWN))
         .click();
@@ -380,7 +380,7 @@ fn the_columns_follow_the_properties() {
         time.update(&model, 0.0);
         Harness::builder()
             .with_size(egui::vec2(600.0, 300.0))
-            .build_ui(move |ui| table.ui(ui, &logs, &time))
+            .build_ui(move |ui| table.ui(ui, &logs, &mut time))
     };
     let date = TimeBase::Unix.format_dated(1_700_000_000_000_000_000, 3);
     let shown = harness(LogColumns::default());
@@ -483,4 +483,197 @@ fn test_regex_filter() {
     assert!(matches!(table.compiled_regex.as_deref(), Some(Err(_))));
     assert!(table.matches(&entry3));
     assert!(!table.matches(&entry1));
+}
+
+/// A table, a store with an entry "message {i}" a second for 100 seconds, and the
+/// time range over them.
+type Timed = (LogTable, crate::store::MemoryStore, TimeRange);
+
+/// A harness showing the entries of [`Timed`], live.
+fn timed_harness(auto_scroll: bool) -> Harness<'static, Timed> {
+    let mut model = crate::store::MemoryStore::default();
+    for second in 0..100u64 {
+        let record = proto::Message::Log(proto::LogRecord {
+            timestamp: second * 1_000_000_000,
+            path: String::new(),
+            level: proto::level::INFO,
+            message: format!("message {second}"),
+        });
+        model.receive("", &serde_cbor_2::to_vec(&record).unwrap());
+    }
+    let mut table = table();
+    table.filter.auto_scroll = auto_scroll;
+    let mut time = TimeRange::default();
+    time.update(&model, 0.0);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(600.0, 300.0))
+        .build_ui_state(
+            |ui, (table, model, time): &mut Timed| {
+                table.ui(ui, crate::store::Store::logs(model, Window::ALL).data, time);
+            },
+            (table, model, time),
+        );
+    harness.run();
+    harness
+}
+
+/// Whether the entry with `message` shows in the table.
+fn shows(harness: &Harness<'_, Timed>, message: &str) -> bool {
+    harness.query_by_label(message).is_some()
+}
+
+/// Scrolls the wheel over the table by `points`, up if positive.
+fn wheel(harness: &mut Harness<'_, Timed>, points: f32) {
+    harness.get_by_label("Time").hover();
+    let center = harness.get_by_label("Time").rect().center() + egui::vec2(0.0, 120.0);
+    harness.hover_at(center);
+    harness.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, points),
+        phase: egui::TouchPhase::Move,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.run_steps(30);
+}
+
+/// Adds the entry "message {second}" at `second` and shows it.
+fn push(harness: &mut Harness<'_, Timed>, second: u64) {
+    let record = proto::Message::Log(proto::LogRecord {
+        timestamp: second * 1_000_000_000,
+        path: String::new(),
+        level: proto::level::INFO,
+        message: format!("message {second}"),
+    });
+    let (_, model, time) = harness.state_mut();
+    model.receive("", &serde_cbor_2::to_vec(&record).unwrap());
+    time.update(model, 0.0);
+    harness.run_steps(4);
+}
+
+/// Whether the button of the footer shows that the table follows the newest entry.
+fn follows(harness: &Harness<'_, Timed>) -> bool {
+    let table = &harness.state().0;
+    table.filter.auto_scroll && !table.scrolled_away
+}
+
+#[test]
+fn scrolling_up_stops_following_until_back_at_the_bottom() {
+    let mut harness = timed_harness(true);
+    assert!(shows(&harness, "message 99"));
+    assert!(follows(&harness));
+    // the wheel scrolls up while live, which stops following
+    wheel(&mut harness, 600.0);
+    assert!(!shows(&harness, "message 99"));
+    assert!(!follows(&harness));
+    // also when new entries arrive
+    push(&mut harness, 100);
+    assert!(!shows(&harness, "message 100"));
+    // the button of the footer goes back to the newest entry and follows it
+    harness.get_by_label(regular::ARROW_LINE_DOWN).click();
+    harness.run_steps(4);
+    assert!(shows(&harness, "message 100"));
+    assert!(follows(&harness));
+    push(&mut harness, 101);
+    assert!(shows(&harness, "message 101"));
+    // as does scrolling back to the bottom
+    wheel(&mut harness, 600.0);
+    assert!(!shows(&harness, "message 101"));
+    wheel(&mut harness, -10_000.0);
+    assert!(shows(&harness, "message 101"));
+    assert!(follows(&harness));
+    push(&mut harness, 102);
+    assert!(shows(&harness, "message 102"));
+}
+
+#[test]
+fn a_moved_range_scrolls_only_while_following() {
+    let mut harness = timed_harness(true);
+    // live, the table starts at the newest entry
+    assert!(shows(&harness, "message 99"));
+    harness.state_mut().0.filter.auto_scroll = false;
+    // panning pauses: without autoscroll the table stays where it is
+    harness.state_mut().2.pan_zoom(20.0, 40.0);
+    harness.run_steps(4);
+    assert!(!harness.state().2.is_live());
+    assert!(shows(&harness, "message 99"));
+    assert!(!shows(&harness, "message 40"));
+    // with it, the newest entry of the range shows
+    harness.state_mut().0.filter.auto_scroll = true;
+    harness.state_mut().2.pan_zoom(30.0, 50.0);
+    harness.run_steps(4);
+    assert!(shows(&harness, "message 50"));
+    assert!(!shows(&harness, "message 99"));
+}
+
+#[test]
+fn a_click_on_an_entry_puts_the_cursor_there() {
+    let mut harness = timed_harness(true);
+    harness.get_by_label("message 95").click();
+    harness.run_steps(4);
+    let time = &harness.state().2;
+    assert!(!time.is_playing());
+    assert_eq!(time.cursor_timestamp(), Some(95_000_000_000));
+    // the clicked entry stays where it is
+    assert!(shows(&harness, "message 95"));
+    assert!(shows(&harness, "message 99"));
+}
+
+#[test]
+fn the_entry_at_a_cursor_put_elsewhere_scrolls_into_view() {
+    let mut harness = timed_harness(true);
+    assert!(!shows(&harness, "message 10"));
+    // e.g. on a plot
+    harness.state_mut().2.go_to(10.5);
+    harness.run_steps(4);
+    assert!(shows(&harness, "message 10"));
+    // it stays there, also without autoscroll
+    harness.state_mut().0.filter.auto_scroll = false;
+    harness.state_mut().2.go_to(60.0);
+    harness.run_steps(4);
+    assert!(shows(&harness, "message 60"));
+    assert!(!shows(&harness, "message 10"));
+}
+
+#[test]
+fn logs_without_entries_or_checked_logs_show_a_hint() {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(600.0, 300.0))
+        .build_ui_state(
+            |ui, table: &mut LogTable| {
+                let mut time = TimeRange::default();
+                table.ui(ui, &Logs::default(), &mut time);
+            },
+            LogTable::default(),
+        );
+    harness.run();
+    harness.get_by_label(CHECK_LOGS);
+    harness.state_mut().paths = paths_of(&[DEFAULT_PATH]);
+    harness.run();
+    harness.get_by_label(NO_ENTRIES);
+    harness.get_by_label("0 entries");
+}
+
+#[test]
+fn long_messages_are_cut_to_one_line() {
+    let mut logs = Logs::default();
+    let long = format!("first line\n{}", "and more ".repeat(100));
+    logs.push("", create_entry(LogLevel::Info, &long));
+    let mut table = table();
+    let mut time = TimeRange::default();
+    let harness = Harness::builder()
+        .with_size(egui::vec2(600.0, 300.0))
+        .build_ui(move |ui| table.ui(ui, &logs, &mut time));
+    let label = harness.get_by_label_contains("first line");
+    let row_height = harness.get_by_label("INFO").rect().height();
+    assert!(label.rect().height() <= row_height + 4.0);
+    assert!(label.rect().right() <= 600.0);
+}
+
+#[test]
+fn a_followed_log_shows_whole_rows_only() {
+    // rows 20 high and 2 apart: 4 rows fit in 90, leaving 2 under them
+    assert_eq!(whole_rows_height(90.0, 20.0, 2.0, 10), Some(86.0));
+    // all rows fit, or not even one: the body keeps its height
+    assert_eq!(whole_rows_height(90.0, 20.0, 2.0, 4), None);
+    assert_eq!(whole_rows_height(10.0, 20.0, 2.0, 10), None);
 }

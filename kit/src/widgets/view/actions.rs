@@ -24,7 +24,9 @@ use crate::store::numbers::{DisplayFormat, Number, SHOWN_DIGITS};
 use crate::store::traces::Samples;
 use crate::widgets::theme::{self, TokensExt};
 use egui::RichText;
-use egui_phosphor::regular::{CHECK_CIRCLE, CLOCK_COUNTDOWN, PLAY, WARNING_CIRCLE};
+use egui_phosphor::regular::{
+    CHECK_CIRCLE, CLOCK_COUNTDOWN, PAPER_PLANE_RIGHT, PLAY, WARNING_CIRCLE,
+};
 use proto::{ActionDescriptor, Data, Param, ParamKind};
 use std::collections::{BTreeSet, HashSet};
 
@@ -103,6 +105,11 @@ enum Change {
     Held,
     /// A number is typed into the field but not entered yet, send nothing.
     Typing,
+    /// A typed number was left without Enter: it stays as a draft, send nothing.
+    Drafted,
+    /// Enter was pressed in a number field without changing its number: send it if it
+    /// is a draft not sent yet.
+    Entered,
     /// The input is dragged, send at most every [`DRAG_INTERVAL`](crate::store::actions::DRAG_INTERVAL).
     Dragging,
     /// The input was released after dragging, send its value unless sent already.
@@ -368,7 +375,13 @@ fn input_ui(
                 needle,
             );
             *value = Data::Float(number);
-            change_of(&response, number != before)
+            let changed = number != before;
+            if field || min.is_none() || max.is_none() {
+                let entered = ui.input(|input| input.key_pressed(egui::Key::Enter));
+                field_change(&response, changed, entered)
+            } else {
+                change_of(&response, changed)
+            }
         }
         ParamKind::String => {
             let mut text = match value {
@@ -404,6 +417,21 @@ fn change_of(response: &egui::Response, changed: bool) -> Change {
         Change::Dragging
     } else {
         Change::Done
+    }
+}
+
+/// How a number field whose number `changed` changed, Enter `entered` or not this
+/// frame: a typed number counts once entered, one left by moving the focus away stays
+/// a draft to send later with Enter. Dragging the field counts as for a slider.
+fn field_change(response: &egui::Response, changed: bool, entered: bool) -> Change {
+    if !response.lost_focus() {
+        return change_of(response, changed);
+    }
+    match (entered, changed) {
+        (true, true) => Change::Done,
+        (true, false) => Change::Entered,
+        (false, true) => Change::Drafted,
+        (false, false) => Change::None,
     }
 }
 
@@ -505,7 +533,7 @@ fn needle_ui(
 
 /// Shows a field to type an integer for `value`, exact also beyond the integers a
 /// float holds. The typed number applies on Enter or when leaving the field, clamped
-/// to `bounds`; text that is no integer is dropped.
+/// to `bounds`, but only Enter sends it; text that is no integer is dropped.
 fn integer_field(
     ui: &mut egui::Ui,
     id: egui::Id,
@@ -535,16 +563,20 @@ fn integer_field(
         return if typed { Change::Typing } else { Change::None };
     }
     ui.data_mut(|data| data.remove::<String>(id));
-    let entered = response.lost_focus() && !ui.input(|input| input.key_pressed(egui::Key::Escape));
-    let Some(number) = text.trim().parse::<i128>().ok().filter(|_| entered) else {
+    let left = response.lost_focus() && !ui.input(|input| input.key_pressed(egui::Key::Escape));
+    let Some(number) = text.trim().parse::<i128>().ok().filter(|_| left) else {
         return Change::None;
     };
+    let entered = ui.input(|input| input.key_pressed(egui::Key::Enter));
     let number = integer(clamp_integer(number, min, max));
-    if number == *value {
-        return Change::None;
-    }
+    let changed = number != *value;
     *value = number;
-    Change::Done
+    match (entered, changed) {
+        (true, true) => Change::Done,
+        (true, false) => Change::Entered,
+        (false, true) => Change::Drafted,
+        (false, false) => Change::None,
+    }
 }
 
 /// The decimals that show multiples of `step`.
@@ -590,7 +622,7 @@ fn outcome_ui(ui: &mut egui::Ui, invoker: &Invoker, action: &ActionId, held: boo
             .on_hover_text("Waiting for the target");
         }
         Some(Outcome::Accepted(_)) => {
-            ui.colored_label(ui.visuals().widgets.active.fg_stroke.color, CHECK_CIRCLE)
+            ui.colored_label(ui.tokens().ok, CHECK_CIRCLE)
                 .on_hover_text("Carried out");
         }
         Some(Outcome::Rejected(reason)) => {
@@ -914,10 +946,10 @@ impl Actions {
         {
             readback = readback.filter(|_| value != values[0]).map(|(path, _)| {
                 let text = match value {
-                    Data::Bool(true) => "reads on".to_owned(),
-                    Data::Bool(false) => "reads off".to_owned(),
-                    Data::String(text) => format!("reads {text}"),
-                    other => format!("reads {other:?}"),
+                    Data::Bool(true) => "Reads on".to_owned(),
+                    Data::Bool(false) => "Reads off".to_owned(),
+                    Data::String(text) => format!("Reads {text}"),
+                    other => format!("Reads {other:?}"),
                 };
                 (path, text)
             });
@@ -965,6 +997,21 @@ impl Actions {
             }
             Some((armed.inner == Armed::Confirmed, armed.response))
         };
+        // a number field sends a draft left in it with Enter, unchanged
+        let entered = |changed: Change, draft: bool| match changed {
+            Change::Entered if draft => Change::Done,
+            Change::Entered => Change::None,
+            changed => changed,
+        };
+        // a number typed into a field or left in it as a draft stays marked until sent
+        // or changed back
+        let still_typing = |changed: Change, before: bool, unsent: bool| match changed {
+            Change::Typing | Change::Drafted => true,
+            Change::None | Change::Held => before && unsent,
+            _ => false,
+        };
+        // Run again only once the target answered, so a double click runs it once
+        let pending = matches!(invoker.outcome(id, now), Some(Outcome::Pending));
         let mut change = Change::None;
         // at the top of a row taller than a control, e.g. while selected to confirm
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
@@ -985,7 +1032,11 @@ impl Actions {
                     response
                 } else {
                     let ellipsis = if action.confirm { "…" } else { "" };
-                    let button = ui.button(format!("{PLAY} Run{ellipsis}"));
+                    let button = egui::Button::new(format!("{PLAY} Run{ellipsis}"));
+                    let mut button = ui.add_enabled(!pending, button);
+                    if pending && disabled.is_none() {
+                        button = button.on_disabled_hover_text("Waiting for the target to answer");
+                    }
                     if button.clicked() {
                         if action.confirm {
                             armed_at = Some(now);
@@ -1006,8 +1057,9 @@ impl Actions {
                             live: invoker.is_connected(id),
                         });
                     let param = &action.params[0];
-                    change = input_ui(ui, &action.path, param, &mut values[0], field, needle);
-                    typing_now[0] = change == Change::Typing;
+                    let changed = input_ui(ui, &action.path, param, &mut values[0], field, needle);
+                    change = entered(changed, typing_before[0]);
+                    typing_now[0] = still_typing(change, typing_before[0], unsent[0]);
                     if entering {
                         ui.weak("Enter to send");
                     }
@@ -1048,7 +1100,7 @@ impl Actions {
                 let label = ui.horizontal(|ui| {
                     ui.add_space(RULE_INDENT);
                     ui.weak(&param.name);
-                    if marks_unsent && (unsent[index] || typing_before[index]) {
+                    if (marks_unsent && unsent[index]) || typing_before[index] {
                         unsent_dot(ui);
                     }
                 });
@@ -1057,7 +1109,8 @@ impl Actions {
                     let changed = ui
                         .horizontal(|ui| input_ui(ui, &action.path, param, value, field, None))
                         .inner;
-                    *typing = changed == Change::Typing;
+                    let changed = entered(changed, typing_before[index]);
+                    *typing = still_typing(changed, typing_before[index], unsent[index]);
                     if on_change && changed != Change::None {
                         change = changed;
                     }
@@ -1079,10 +1132,10 @@ impl Actions {
                             change = Change::Done;
                         }
                     } else if action.confirm {
-                        if ui.button("Send…").clicked() {
+                        if ui.button(format!("{PAPER_PLANE_RIGHT} Send…")).clicked() {
                             armed_at = Some(now);
                         }
-                    } else if ui.button("Send").clicked() {
+                    } else if ui.button(format!("{PAPER_PLANE_RIGHT} Send")).clicked() {
                         change = Change::Done;
                     }
                 });
@@ -1155,7 +1208,12 @@ impl Actions {
                 .inputs
                 .insert((id.clone(), param.name.clone()), value.clone());
         }
-        if disabled.is_some() || matches!(change, Change::None | Change::Held | Change::Typing) {
+        if disabled.is_some()
+            || matches!(
+                change,
+                Change::None | Change::Held | Change::Typing | Change::Drafted | Change::Entered
+            )
+        {
             return;
         }
         let names = || action.params.iter().map(|param| param.name.clone());
@@ -1184,8 +1242,8 @@ impl Actions {
             ui.weak(name).on_hover_text(row.path);
         });
         match row.outpost {
-            Some(outpost) => ui.weak(format!("not announced by {}", outpost_name(outpost))),
-            None => ui.weak("not announced by any outpost"),
+            Some(outpost) => ui.weak(format!("Not announced by {}", outpost_name(outpost))),
+            None => ui.weak("Not announced by any outpost"),
         };
         ui.end_row();
     }
