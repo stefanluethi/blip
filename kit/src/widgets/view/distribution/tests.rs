@@ -761,11 +761,8 @@ fn upright_values_run_along_x_and_sideways_along_y() {
     assert_eq!(distribution.orientation, Orientation::Upright);
     assert_eq!(distribution.axis_side, AxisSide::Left);
     assert_eq!(distribution.point(1.0, 5.0), [1.0, 5.0]);
-    assert_eq!(distribution.movable(false), [true, false]);
     distribution.orientation = Orientation::Sideways;
     assert_eq!(distribution.point(1.0, 5.0), [5.0, 1.0]);
-    assert_eq!(distribution.movable(false), [false, true]);
-    assert_eq!(distribution.movable(true), [false, false]);
 }
 
 /// The plots of a layout with the plot 7, "Motor speed", showing `y_range`.

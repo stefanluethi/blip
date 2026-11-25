@@ -141,18 +141,8 @@ impl<'a> TraceTree<'a> {
         if !picks.records {
             self.record = None;
         }
-        if self
-            .action
-            .is_some_and(|path| action_path(path, picks.view_type).is_none())
-        {
-            self.action = None;
-        }
-        if self
-            .log
-            .is_some_and(|path| log_path(path, picks.view_type).is_none())
-        {
-            self.log = None;
-        }
+        self.action = self.action.filter(|_| picks.view_type.shows_actions());
+        self.log = self.log.filter(|_| picks.view_type.shows_logs());
         self.children.retain(|_, child| {
             child.retain_selectable(picks);
             child.trace.is_some()

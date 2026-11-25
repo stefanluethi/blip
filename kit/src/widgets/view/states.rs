@@ -102,7 +102,7 @@ impl<'a> StateSamples<'a> {
             Self::Numbers(series, DisplayFormat::Labels, Some(labels)) => {
                 let number = series.number(index);
                 match number.label(labels) {
-                    Some(label) if is_level_name(label) => label.to_owned(),
+                    Some(label) if level_named(label).is_some() => label.to_owned(),
                     _ => number.to_string(),
                 }
             }
@@ -226,10 +226,6 @@ fn level_named(name: &str) -> Option<LogLevel> {
     LogLevel::ALL
         .into_iter()
         .find(|level| level.as_str().eq_ignore_ascii_case(name))
-}
-
-fn is_level_name(name: &str) -> bool {
-    level_named(name).is_some()
 }
 
 /// The color of a band with the value `label`, a color of the trace palette, or `None`
@@ -377,22 +373,33 @@ impl States {
             None => tooltip,
         }
     }
+}
 
-    /// Shows the values of the shown traces current at `t` seconds, written with
-    /// `decimals` decimals of the seconds.
-    fn tooltip_ui(
-        &self,
-        ui: &mut egui::Ui,
-        (store, formats): (&dyn Store, &Formats),
-        (t, row): (f64, Option<usize>),
-        (axis, decimals): (time_axis::TimeAxis, usize),
-    ) {
-        let t = axis.timestamp(t);
-        self.tooltip(store, formats, t, (axis.base, decimals), row)
-            .ui(ui);
+impl super::ViewInfo for States {
+    const NAME: &'static str = "States";
+    const ICON: &'static str = egui_phosphor::regular::CHART_BAR_HORIZONTAL;
+
+    fn selectable(trace: Trace<'_>) -> Selectable {
+        match trace.samples {
+            Samples::Numbers(numbers)
+            | Samples::Arrays {
+                elements: numbers, ..
+            } if numbers.kind() == Some(NumberKind::Float) => {
+                Selectable::No("States show strings, bools and integers".into())
+            }
+            Samples::Arrays { shape, .. } => super::elements(shape.as_slice()),
+            _ => Selectable::Trace,
+        }
+    }
+}
+
+impl Viewable for States {
+    fn selection(&mut self) -> Option<(&mut BTreeSet<String>, bool)> {
+        let records = false;
+        Some((&mut self.traces, records))
     }
 
-    fn show_states(&self, context: &mut ViewContext<'_>, ui: &mut egui::Ui) {
+    fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         let (store, formats, time) = (context.store, context.formats, &mut *context.time);
         // long names are cut off, so that the axis is as wide as that of other plots
         let font = egui::TextStyle::Body.resolve(ui.style());
@@ -458,41 +465,14 @@ impl States {
         if let Some(t) = response.hovered
             && !self.traces.is_empty()
         {
-            let axis = (response.axis, response.time_decimals());
+            let decimals = response.time_decimals();
             let row = response.hovered_y.and_then(|y| row_at(y, rows));
             response.response.on_hover_ui_at_pointer(|ui| {
-                self.tooltip_ui(ui, (store, formats), (t, row), axis);
+                let t = response.axis.timestamp(t);
+                self.tooltip(store, formats, t, (response.axis.base, decimals), row)
+                    .ui(ui);
             });
         }
-    }
-}
-
-impl super::ViewInfo for States {
-    const NAME: &'static str = "States";
-    const ICON: &'static str = egui_phosphor::regular::CHART_BAR_HORIZONTAL;
-
-    fn selectable(trace: Trace<'_>) -> Selectable {
-        match trace.samples {
-            Samples::Numbers(numbers)
-            | Samples::Arrays {
-                elements: numbers, ..
-            } if numbers.kind() == Some(NumberKind::Float) => {
-                Selectable::No("States show strings, bools and integers".into())
-            }
-            Samples::Arrays { shape, .. } => super::elements(shape.as_slice()),
-            _ => Selectable::Trace,
-        }
-    }
-}
-
-impl Viewable for States {
-    fn selection(&mut self) -> Option<(&mut BTreeSet<String>, bool)> {
-        let records = false;
-        Some((&mut self.traces, records))
-    }
-
-    fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
-        self.show_states(context, ui);
     }
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, _context: &PropertiesContext<'_>) {

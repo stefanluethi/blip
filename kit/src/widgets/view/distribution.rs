@@ -488,16 +488,10 @@ impl Distribution {
             .filter(|(low, high)| low < high)
     }
 
-    /// The shown paths with their names in the legend and their indices, which pick
-    /// their colors.
-    fn selected_path_iter(&self) -> impl Iterator<Item = (&str, &str, usize)> {
-        super::indexed_names(&self.traces)
-    }
-
     /// The shown traces that were received, with their samples in `window`, in
     /// nanoseconds, or all of them without one.
     fn shown_traces<'a>(&self, store: &'a dyn Store, window: Option<(u64, u64)>) -> Vec<Shown<'a>> {
-        self.selected_path_iter()
+        super::indexed_names(&self.traces)
             .filter_map(|(path, name, index)| {
                 let series = store.series(path, Window::of(window)).data?;
                 let series = match window {
@@ -603,12 +597,6 @@ impl Distribution {
         }
     }
 
-    /// The range the ends of the range not set fit: the values of `data`, grown by the
-    /// expected ranges if fitted to them.
-    fn fitted_ends(&self, store: &dyn Store, data: Option<(f64, f64)>) -> Option<(f64, f64)> {
-        super::union(self.declared(store), data)
-    }
-
     /// The range binned unless following a plot, of the values of `data`, `None` to bin
     /// all values as they are. Ends that are not in order are left out.
     fn own_range(&self, store: &dyn Store, data: Option<(f64, f64)>) -> Option<(f64, f64)> {
@@ -621,11 +609,6 @@ impl Distribution {
             (false, _) => self.range.over(fitted),
         };
         fixed.filter(|(low, high)| low < high)
-    }
-
-    /// Whether the plot can be panned and zoomed along the axes, x and y.
-    fn movable(&self, following: bool) -> [bool; 2] {
-        self.orientation.xy(!following, false)
     }
 
     /// The point at `value` and `count` on the axes of the plot.
@@ -965,7 +948,7 @@ impl super::ViewInfo for Distribution {
 impl Viewable for Distribution {
     fn title_ui(&self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         let unit = super::common_unit(context.store, self.traces.iter().map(String::as_str));
-        let entries: Vec<TitleEntry<'_>> = (self.selected_path_iter())
+        let entries: Vec<TitleEntry<'_>> = (super::indexed_names(&self.traces))
             .map(|(path, name, index)| TitleEntry {
                 path,
                 name,
@@ -987,7 +970,211 @@ impl Viewable for Distribution {
     }
 
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
-        self.show(ui, context);
+        let (store, formats) = (context.store, context.formats);
+        let id = ui.id().with("distribution");
+        let frame_id = id.with("frame");
+        // the size of the plot without its axes in the last frame
+        let frame = ui
+            .data(|data| data.get_temp::<egui::Vec2>(frame_id))
+            .unwrap_or_else(|| ui.available_size() - egui::vec2(VALUE_AXIS_THICKNESS, 24.0))
+            .max(egui::Vec2::splat(1.0));
+        let [value_length, count_length] = self.orientation.xy(frame.x, frame.y);
+
+        let Counting {
+            window,
+            shown,
+            data,
+            following,
+            followed,
+            fixed,
+            counted,
+            outside,
+        } = self.counting(store, context.time, context.plots, value_length);
+        let fitted = fitted_values(counted.as_ref(), data, fixed);
+        // what the ends of the own range fit, for the properties
+        let fitted_ends = match following {
+            true => data,
+            false => super::union(self.declared(store), data),
+        };
+        let values = match following {
+            true => followed.unwrap_or(fitted),
+            false => self.value_view.unwrap_or(fitted),
+        };
+        let boxes = match (self.show, window) {
+            (Show::Bars, _) | (_, None) => None,
+            (_, Some(window)) => Some(boxes::boxes(
+                &mut self.boxes,
+                (store.samples_version(), window),
+                self.whiskers,
+                &self.traces,
+                &shown,
+            )),
+        };
+
+        let paths = || self.traces.iter().map(String::as_str);
+        let unit = super::common_unit(store, paths());
+        let format = common_format(formats, paths());
+        let room = self.room(ui, shown.len(), outside);
+        let (across, names) = match self.show {
+            Show::Boxes => {
+                let names = self.row_names(ui, &shown, frame);
+                (Across::Names(names.clone()), names)
+            }
+            Show::Bars | Show::Both => {
+                let tallest = counted.as_ref().map(|counted| counted.tallest_in(values));
+                self.share_top = tallest.map(|tallest| fit_top(self.share_top, tallest));
+                let one = counted.as_ref().map_or(100.0, Counted::one_sample);
+                let axis = CountAxis::new(
+                    self.counts,
+                    self.share_top.unwrap_or(100.0),
+                    one,
+                    count_length,
+                    room.length(),
+                );
+                (Across::Counts(axis), vec![])
+            }
+        };
+
+        let plot = self.plot(id, ui.visuals(), &across, (unit, format), following);
+        let visuals = ui.visuals().clone();
+        let this = &*self;
+        let response = plot.show(ui, |plot_ui| {
+            let (low, high) = values;
+            let across_range = match &across {
+                Across::Counts(axis) => axis.floor..=axis.axis_top,
+                Across::Names(names) => 0.0..=names.len().max(1) as f64,
+            };
+            let [x, y] = this.orientation.xy(low..=high, across_range);
+            plot_ui.set_plot_bounds_x(x);
+            plot_ui.set_plot_bounds_y(y);
+            let pos = plot_ui.response().hover_pos();
+            let frame = *plot_ui.transform().frame();
+            let row = this.rows(frame, shown.len());
+            if let Some(row) = row.zip(pos).and_then(|(rows, pos)| rows.at(pos)) {
+                return Some(Hovered::Row(row));
+            }
+            let (Across::Counts(axis), Some(counted)) = (&across, &counted) else {
+                return None;
+            };
+            let hovered = pos.and_then(|pos| {
+                let part = this.orientation.pick(
+                    (pos.x - frame.left()) / frame.width(),
+                    (frame.bottom() - pos.y) / frame.height(),
+                );
+                counted.bins.at(low + f64::from(part) * (high - low))
+            });
+            this.plot_bars(plot_ui, &visuals, (&shown, counted), *axis, hovered);
+            hovered.map(Hovered::Bin)
+        });
+
+        let transform = response.transform;
+        let shown_frame = transform.frame().size();
+        if shown_frame != frame {
+            ui.data_mut(|data| data.insert_temp(frame_id, shown_frame));
+            ui.ctx().request_repaint();
+        }
+        if !following {
+            super::zoom_on_wheel(&response.response);
+            self.keep_value_view(&response, values);
+        }
+        self.hovered = response.inner;
+        let frame = *transform.frame();
+        let rows = self.rows(frame, shown.len());
+        self.last = counted.as_ref().map(|counted| {
+            Box::new(Last {
+                data: fitted_ends.unwrap_or(fitted),
+                values,
+                bins: counted.bins,
+                frame,
+                rows,
+                names,
+            })
+        });
+
+        let overlay = Overlay {
+            painter: ui.painter().with_clip_rect(frame),
+            transform,
+            room,
+        };
+        if self.show != Show::Boxes {
+            self.paint_outside(ui, &overlay, outside);
+        }
+        let any_box = boxes
+            .as_ref()
+            .is_some_and(|boxes| boxes.iter().any(Option::is_some));
+        if let (Some(rows), Some(boxes)) = (&rows, &boxes) {
+            if let Some(Hovered::Row(row)) = self.hovered {
+                let hover = ui.tokens().hover;
+                overlay.painter.rect_filled(rows.rect(row), 0.0, hover);
+            }
+            let traces = (shown.as_slice(), &boxes[..]);
+            boxes::paint(&overlay.painter, ui.visuals(), rows, &transform, traces);
+            if any_box || self.show == Show::Both {
+                let style = match self.show {
+                    Show::Both => egui::TextStyle::Small,
+                    _ => egui::TextStyle::Body,
+                };
+                boxes::paint_notes(ui, &overlay.painter, rows, values, boxes, style);
+            }
+        }
+        let empty = match self.show {
+            Show::Boxes => !any_box,
+            // the counts of the infinite samples say there are some
+            Show::Bars | Show::Both => counted.is_none() && outside == (0, 0),
+        };
+        if let Some(counted) = &counted {
+            self.paint_markers(ui, &overlay, &shown, counted);
+        }
+        // without a title row, the legend of the title row goes to a corner; the names
+        // of the rows of the boxes need none
+        if !context.titled && self.show != Show::Boxes {
+            let entries: Vec<(&str, egui::Color32)> = (shown.iter())
+                .map(|trace| {
+                    (
+                        trace.name.as_str(),
+                        theme::trace_color(ui.visuals(), trace.index),
+                    )
+                })
+                .collect();
+            corner_legend(ui, frame, egui_plot::Corner::RightTop, entries);
+        }
+        if self.traces.is_empty() {
+            theme::hint_over(ui, frame, super::CHECK_TRACES);
+        } else if empty {
+            theme::hint_over(ui, frame, NO_SAMPLES);
+        }
+        match self.hovered {
+            Some(Hovered::Bin(index)) => {
+                let Some(counted) = &counted else { return };
+                let bin = Bin {
+                    index,
+                    counted,
+                    unit,
+                    format,
+                };
+                response
+                    .response
+                    .on_hover_ui_at_pointer(|ui| bin.tooltip_ui(ui, &shown, store));
+            }
+            Some(Hovered::Row(row)) => {
+                let (Some(trace), Some(boxes)) = (shown.get(row), &boxes) else {
+                    return;
+                };
+                let tip = boxes::Tip {
+                    trace: trace.trace_name(),
+                    stats: boxes.get(row).and_then(Option::as_ref),
+                    whiskers: self.whiskers,
+                    orientation: self.orientation,
+                    format: formats.of(&trace.path),
+                    unit: store.unit(&trace.path),
+                    description: store.description(&trace.path),
+                };
+                response
+                    .response
+                    .on_hover_ui_at_pointer(|ui| tip.tooltip().ui(ui));
+            }
+            None => {}
+        }
     }
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, context: &PropertiesContext<'_>) {
@@ -1215,213 +1402,6 @@ impl Distribution {
         }
     }
 
-    /// Shows the distribution of the checked traces over the shown window.
-    fn show(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
-        let (store, formats) = (context.store, context.formats);
-        let id = ui.id().with("distribution");
-        let frame_id = id.with("frame");
-        // the size of the plot without its axes in the last frame
-        let frame = ui
-            .data(|data| data.get_temp::<egui::Vec2>(frame_id))
-            .unwrap_or_else(|| ui.available_size() - egui::vec2(VALUE_AXIS_THICKNESS, 24.0))
-            .max(egui::Vec2::splat(1.0));
-        let [value_length, count_length] = self.orientation.xy(frame.x, frame.y);
-
-        let Counting {
-            window,
-            shown,
-            data,
-            following,
-            followed,
-            fixed,
-            counted,
-            outside,
-        } = self.counting(store, context.time, context.plots, value_length);
-        let fitted = fitted_values(counted.as_ref(), data, fixed);
-        // what the ends of the own range fit, for the properties
-        let fitted_ends = match following {
-            true => data,
-            false => self.fitted_ends(store, data),
-        };
-        let values = match following {
-            true => followed.unwrap_or(fitted),
-            false => self.value_view.unwrap_or(fitted),
-        };
-        let boxes = match (self.show, window) {
-            (Show::Bars, _) | (_, None) => None,
-            (_, Some(window)) => Some(boxes::boxes(
-                &mut self.boxes,
-                (store.samples_version(), window),
-                self.whiskers,
-                &self.traces,
-                &shown,
-            )),
-        };
-
-        let paths = || self.traces.iter().map(String::as_str);
-        let unit = super::common_unit(store, paths());
-        let format = common_format(formats, paths());
-        let room = self.room(ui, shown.len(), outside);
-        let (across, names) = match self.show {
-            Show::Boxes => {
-                let names = self.row_names(ui, &shown, frame);
-                (Across::Names(names.clone()), names)
-            }
-            Show::Bars | Show::Both => {
-                let tallest = counted.as_ref().map(|counted| counted.tallest_in(values));
-                self.share_top = tallest.map(|tallest| fit_top(self.share_top, tallest));
-                let one = counted.as_ref().map_or(100.0, Counted::one_sample);
-                let axis = CountAxis::new(
-                    self.counts,
-                    self.share_top.unwrap_or(100.0),
-                    one,
-                    count_length,
-                    room.length(),
-                );
-                (Across::Counts(axis), vec![])
-            }
-        };
-
-        let plot = self.plot(id, ui.visuals(), &across, (unit, format), following);
-        let visuals = ui.visuals().clone();
-        let this = &*self;
-        let response = plot.show(ui, |plot_ui| {
-            let (low, high) = values;
-            let across_range = match &across {
-                Across::Counts(axis) => axis.floor..=axis.axis_top,
-                Across::Names(names) => 0.0..=names.len().max(1) as f64,
-            };
-            let [x, y] = this.orientation.xy(low..=high, across_range);
-            plot_ui.set_plot_bounds_x(x);
-            plot_ui.set_plot_bounds_y(y);
-            let pos = plot_ui.response().hover_pos();
-            let frame = *plot_ui.transform().frame();
-            let row = this.rows(frame, shown.len());
-            if let Some(row) = row.zip(pos).and_then(|(rows, pos)| rows.at(pos)) {
-                return Some(Hovered::Row(row));
-            }
-            let (Across::Counts(axis), Some(counted)) = (&across, &counted) else {
-                return None;
-            };
-            let hovered = pos.and_then(|pos| {
-                let part = this.orientation.pick(
-                    (pos.x - frame.left()) / frame.width(),
-                    (frame.bottom() - pos.y) / frame.height(),
-                );
-                counted.bins.at(low + f64::from(part) * (high - low))
-            });
-            this.plot_bars(plot_ui, &visuals, (&shown, counted), *axis, hovered);
-            hovered.map(Hovered::Bin)
-        });
-
-        let transform = response.transform;
-        let shown_frame = transform.frame().size();
-        if shown_frame != frame {
-            ui.data_mut(|data| data.insert_temp(frame_id, shown_frame));
-            ui.ctx().request_repaint();
-        }
-        if !following {
-            super::zoom_on_wheel(&response.response);
-            self.keep_value_view(&response, values);
-        }
-        self.hovered = response.inner;
-        let frame = *transform.frame();
-        let rows = self.rows(frame, shown.len());
-        self.last = counted.as_ref().map(|counted| {
-            Box::new(Last {
-                data: fitted_ends.unwrap_or(fitted),
-                values,
-                bins: counted.bins,
-                frame,
-                rows,
-                names,
-            })
-        });
-
-        let overlay = Overlay {
-            painter: ui.painter().with_clip_rect(frame),
-            transform,
-            room,
-        };
-        if self.show != Show::Boxes {
-            self.paint_outside(ui, &overlay, outside);
-        }
-        let any_box = boxes
-            .as_ref()
-            .is_some_and(|boxes| boxes.iter().any(Option::is_some));
-        if let (Some(rows), Some(boxes)) = (&rows, &boxes) {
-            if let Some(Hovered::Row(row)) = self.hovered {
-                let hover = ui.tokens().hover;
-                overlay.painter.rect_filled(rows.rect(row), 0.0, hover);
-            }
-            let traces = (shown.as_slice(), &boxes[..]);
-            boxes::paint(&overlay.painter, ui.visuals(), rows, &transform, traces);
-            if any_box || self.show == Show::Both {
-                let style = match self.show {
-                    Show::Both => egui::TextStyle::Small,
-                    _ => egui::TextStyle::Body,
-                };
-                boxes::paint_notes(ui, &overlay.painter, rows, values, boxes, style);
-            }
-        }
-        let empty = match self.show {
-            Show::Boxes => !any_box,
-            // the counts of the infinite samples say there are some
-            Show::Bars | Show::Both => counted.is_none() && outside == (0, 0),
-        };
-        if let Some(counted) = &counted {
-            self.paint_markers(ui, &overlay, &shown, counted);
-        }
-        // without a title row, the legend of the title row goes to a corner; the names
-        // of the rows of the boxes need none
-        if !context.titled && self.show != Show::Boxes {
-            let entries: Vec<(&str, egui::Color32)> = (shown.iter())
-                .map(|trace| {
-                    (
-                        trace.name.as_str(),
-                        theme::trace_color(ui.visuals(), trace.index),
-                    )
-                })
-                .collect();
-            corner_legend(ui, frame, egui_plot::Corner::RightTop, entries);
-        }
-        if self.traces.is_empty() {
-            theme::hint_over(ui, frame, super::CHECK_TRACES);
-        } else if empty {
-            theme::hint_over(ui, frame, NO_SAMPLES);
-        }
-        match self.hovered {
-            Some(Hovered::Bin(index)) => {
-                let Some(counted) = &counted else { return };
-                let bin = Bin {
-                    index,
-                    counted,
-                    unit,
-                    format,
-                };
-                response
-                    .response
-                    .on_hover_ui_at_pointer(|ui| bin.tooltip_ui(ui, &shown, store));
-            }
-            Some(Hovered::Row(row)) => {
-                let (Some(trace), Some(boxes)) = (shown.get(row), &boxes) else {
-                    return;
-                };
-                let tip = boxes::Tip {
-                    trace: trace.trace_name(),
-                    stats: boxes.get(row).and_then(Option::as_ref),
-                    whiskers: self.whiskers,
-                    orientation: self.orientation,
-                    format: formats.of(&trace.path),
-                    unit: store.unit(&trace.path),
-                    description: store.description(&trace.path),
-                };
-                response.response.on_hover_ui_at_pointer(|ui| tip.ui(ui));
-            }
-            None => {}
-        }
-    }
-
     /// The rows of the boxes of `traces` traces in the plot `frame`, `None` in Bars.
     fn rows(&self, frame: egui::Rect, traces: usize) -> Option<boxes::Rows> {
         match self.show {
@@ -1459,7 +1439,7 @@ impl Distribution {
         (unit, format): (Option<&str>, DisplayFormat),
         following: bool,
     ) -> egui_plot::Plot<'static> {
-        let movable = self.movable(following);
+        let movable = self.orientation.xy(!following, false);
         let value_formatter =
             move |mark: egui_plot::GridMark, _: &std::ops::RangeInclusive<f64>| {
                 write_value(mark.value, mark.step_size, format)

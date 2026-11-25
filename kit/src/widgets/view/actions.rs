@@ -1219,18 +1219,12 @@ impl Actions {
         let names = || action.params.iter().map(|param| param.name.clone());
         invoker.assume_accepted(id, names().zip(values_before).collect());
         let args: Args = names().zip(values).collect();
-        if on_change {
-            // each change at most every DRAG_INTERVAL, the latest held back until due
-            match change {
-                Change::Released => invoker.finish_dragging(id, *readback_path, args, now),
-                _ => invoker.invoke_dragging(id, *readback_path, args, now),
-            }
-        } else {
-            match change {
-                Change::Dragging => invoker.invoke_dragging(id, *readback_path, args, now),
-                Change::Released => invoker.finish_dragging(id, *readback_path, args, now),
-                _ => invoker.invoke(id, *readback_path, args, now),
-            }
+        // on change: each change at most every DRAG_INTERVAL, the latest held back until due
+        match change {
+            Change::Released => invoker.finish_dragging(id, *readback_path, args, now),
+            Change::Dragging => invoker.invoke_dragging(id, *readback_path, args, now),
+            _ if on_change => invoker.invoke_dragging(id, *readback_path, args, now),
+            _ => invoker.invoke(id, *readback_path, args, now),
         }
     }
 

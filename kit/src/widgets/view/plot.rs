@@ -326,8 +326,7 @@ impl Plot {
         include: impl Fn(&str) -> bool,
         margin: bool,
     ) -> Option<(f64, f64)> {
-        let range = self
-            .selected_path_iter()
+        let range = super::indexed_names(&self.traces)
             .filter(|&(path, _, _)| include(path))
             .filter_map(|(path, _, _)| store.series(path, Window::NONE).data?.range)
             .reduce(|(low_a, high_a), (low_b, high_b)| (low_a.min(low_b), high_a.max(high_b)));
@@ -375,12 +374,6 @@ impl Plot {
             .or_else(|| y_bounds(self.y_min, self.y_max, self.range_y(store)))
     }
 
-    /// The shown paths with their names in the legend and their indices, which pick
-    /// their colors.
-    fn selected_path_iter(&self) -> impl Iterator<Item = (&str, &str, usize)> {
-        super::indexed_names(&self.traces)
-    }
-
     /// The tooltip with the values of the shown traces at `t` nanoseconds, a faint dash
     /// for a trace without a series, and the description of the trace `near` the
     /// pointer, by its path. The time on top is that of the samples
@@ -397,8 +390,7 @@ impl Plot {
         let mut footer = None;
         // the times of the closest samples shown, none if a value is held
         let mut times = Some(BTreeSet::new());
-        let rows = self
-            .selected_path_iter()
+        let rows = super::indexed_names(&self.traces)
             .map(|(path, name, index)| {
                 let labels = store.labels(path);
                 let unit = store.unit(path);
@@ -445,8 +437,7 @@ impl Plot {
     ) {
         let t_ns = axis.timestamp(t);
         let near = y.and_then(|y| {
-            let values: Vec<f64> = self
-                .selected_path_iter()
+            let values: Vec<f64> = super::indexed_names(&self.traces)
                 .map(|(path, ..)| {
                     store
                         .series(path, Window::at(t_ns))
@@ -458,7 +449,9 @@ impl Plot {
                 })
                 .collect();
             let index = nearest_curve(&values, y, points_per_value)?;
-            self.selected_path_iter().nth(index).map(|(path, ..)| path)
+            super::indexed_names(&self.traces)
+                .nth(index)
+                .map(|(path, ..)| path)
         });
         (self.tooltip(store, formats, t_ns, (axis.base, decimals), near)).ui(ui);
     }
@@ -483,7 +476,7 @@ impl Plot {
         );
         ui.allocate_ui(plot_size, |ui| self.show_plot(context, ui));
         ui.add_space(STATS_GAP);
-        let shown: Vec<_> = self.selected_path_iter().collect();
+        let shown: Vec<_> = super::indexed_names(&self.traces).collect();
         let time = &*context.time;
         let window = time.timestamps();
         let response = ui.scope(|ui| {
@@ -533,7 +526,7 @@ impl Plot {
             // two points for each point of the width show all a plot can show
             let points = plot_ui.transform().frame().width().max(1.0) as usize * 2;
             let window = Window::of(axis.timestamps()).points(points);
-            for (path, name, index) in this.selected_path_iter() {
+            for (path, name, index) in super::indexed_names(&this.traces) {
                 let Some(series) = store.series(path, window).data else {
                     continue;
                 };
@@ -555,7 +548,7 @@ impl Plot {
         }
 
         if let Some(corner) = legend.corner() {
-            let entries = (self.selected_path_iter())
+            let entries = (super::indexed_names(&self.traces))
                 .map(|(_, name, index)| (name, theme::trace_color(&visuals, index)));
             super::plotting::corner_legend(ui, response.frame, corner, entries);
         }
@@ -711,7 +704,7 @@ impl Viewable for Plot {
         let t = time.cursor_timestamp();
         // one unit shared by all traces is written once, at the end
         let unit = super::common_unit(store, self.traces.iter().map(String::as_str));
-        let entries: Vec<TitleEntry<'_>> = (self.selected_path_iter())
+        let entries: Vec<TitleEntry<'_>> = (super::indexed_names(&self.traces))
             .map(|(path, name, index)| {
                 let series = store.series(path, Window::of(time.timestamps())).data;
                 let labels = store.labels(path);
@@ -757,7 +750,7 @@ impl Viewable for Plot {
     }
 
     fn colored_paths(&self, _store: &dyn Store) -> Vec<String> {
-        self.selected_path_iter()
+        super::indexed_names(&self.traces)
             .map(|(path, _, _)| path.to_owned())
             .collect()
     }

@@ -1,5 +1,6 @@
 use super::*;
 use crate::widgets::view::{View, ViewKind, ViewType};
+use std::collections::BTreeSet;
 
 /// A view type of an application: it shows the traces picked for it and keeps a
 /// setting.

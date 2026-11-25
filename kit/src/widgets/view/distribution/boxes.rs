@@ -429,14 +429,6 @@ pub fn cut(ui: &egui::Ui, text: &str, width: f32, font: &egui::FontId) -> String
         .unwrap_or_else(|| "…".to_owned())
 }
 
-/// How a value of the tooltip is written: one of the box in the text colour, one of
-/// its ends weak.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Weight {
-    Box,
-    End,
-}
-
 /// The names and values of the tooltip of `stats` with `whiskers`, in the order drawn:
 /// from low to high upright, from high to low sideways. Min–max leaves out the
 /// whiskers, which end at the minimum and the maximum.
@@ -444,23 +436,23 @@ pub fn tooltip_rows(
     stats: &BoxStats,
     whiskers: Whiskers,
     orientation: Orientation,
-) -> Vec<(&'static str, f64, Weight)> {
+) -> Vec<(&'static str, f64, Tone)> {
     let ends = match whiskers {
         Whiskers::Iqr => Some(("Low whisker", "High whisker")),
         Whiskers::MinMax => None,
         Whiskers::P5 => Some(("5 %", "95 %")),
         Whiskers::P1 => Some(("1 %", "99 %")),
     };
-    let mut rows = vec![("Min", stats.min, Weight::End)];
-    rows.extend(ends.map(|(low, _)| (low, stats.low, Weight::End)));
+    let mut rows = vec![("Min", stats.min, Tone::Weak)];
+    rows.extend(ends.map(|(low, _)| (low, stats.low, Tone::Weak)));
     rows.extend([
-        ("Q1", stats.q1, Weight::Box),
-        ("Median", stats.median, Weight::Box),
-        ("Mean", stats.mean, Weight::Box),
-        ("Q3", stats.q3, Weight::Box),
+        ("Q1", stats.q1, Tone::Text),
+        ("Median", stats.median, Tone::Text),
+        ("Mean", stats.mean, Tone::Text),
+        ("Q3", stats.q3, Tone::Text),
     ]);
-    rows.extend(ends.map(|(_, high)| (high, stats.high, Weight::End)));
-    rows.push(("Max", stats.max, Weight::End));
+    rows.extend(ends.map(|(_, high)| (high, stats.high, Tone::Weak)));
+    rows.push(("Max", stats.max, Tone::Weak));
     if orientation == Orientation::Sideways {
         rows.reverse();
     }
@@ -505,12 +497,8 @@ impl Tip<'_> {
         };
         let step = value_step(stats);
         let values = (tooltip_rows(stats, self.whiskers, self.orientation).into_iter())
-            .map(|(name, value, weight)| {
+            .map(|(name, value, tone)| {
                 let text = with_unit(write_value(value, step, self.format), self.unit);
-                let tone = match weight {
-                    Weight::Box => Tone::Text,
-                    Weight::End => Tone::Weak,
-                };
                 Row::new(Label::Weak(name.to_owned()), [Value::new(text, tone)])
             })
             .collect();
@@ -529,11 +517,6 @@ impl Tip<'_> {
             .group(values)
             .group(counts)
             .describe(&self.trace.name, self.description)
-    }
-
-    /// Shows the tooltip.
-    pub fn ui(&self, ui: &mut egui::Ui) {
-        self.tooltip().ui(ui);
     }
 }
 

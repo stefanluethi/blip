@@ -465,7 +465,7 @@ fn text_that_is_no_end_stays_and_keeps_the_end() {
         .build_ui_state(
             |ui, min: &mut Option<f64>| {
                 egui::Grid::new("range").show(ui, |ui| {
-                    optional_number_row(ui, "Min", min, Some(0.0));
+                    end_row(ui, "Min", min, Some(0.0), None);
                 });
             },
             None,

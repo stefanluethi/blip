@@ -634,19 +634,6 @@ fn end_hint(end: Option<f64>) -> String {
     )
 }
 
-/// Adds a row labelled `label` to the grid of a properties section with a field for
-/// `value`, which is `None` while the field is empty. The empty field shows `hint`, the
-/// end in use. Text that is no finite number is kept in the field, marked as an error,
-/// and leaves `value` as it was.
-pub fn optional_number_row(
-    ui: &mut egui::Ui,
-    label: &str,
-    value: &mut Option<f64>,
-    hint: Option<f64>,
-) {
-    end_row(ui, label, value, hint, None);
-}
-
 /// Why the text of a Min or Max field is no end of an axis.
 const NOT_AN_END: &str = "Enter a finite number, or nothing to fit";
 
@@ -664,7 +651,7 @@ fn parse_end(text: &str) -> Result<Option<f64>, &'static str> {
 }
 
 /// Adds the rows "Min" and "Max" to the grid of a properties section with fields for
-/// the ends of an axis, as [`optional_number_row`] does. An end not set falls back to
+/// the ends of an axis, as [`end_row`] does. An end not set falls back to
 /// that of `fitted`; the empty fields show the ends of `hints`, those in use. A set end
 /// that is not below, or above, the other one is marked as an error.
 pub(crate) fn optional_range_rows(
@@ -682,8 +669,11 @@ pub(crate) fn optional_range_rows(
     end_row(ui, "Max", max, hints.map(|(_, high)| high), max_problem);
 }
 
-/// Adds a row of [`optional_number_row`], its field marked as an error with `problem`
-/// on hover if there is one and the text is a number.
+/// Adds a row labelled `label` to the grid of a properties section with a field for
+/// `value`, which is `None` while the field is empty. The empty field shows `hint`, the
+/// end in use. Text that is no finite number is kept in the field, marked as an error,
+/// and leaves `value` as it was. Its field is marked as an error with `problem` on hover
+/// if there is one and the text is a number.
 fn end_row(
     ui: &mut egui::Ui,
     label: &str,
@@ -849,14 +839,9 @@ impl Ends {
 /// that are empty to fit, showing then the end of `fitted`, the range that fits the
 /// shown values, as their hint. Text that is no finite number stays in its field,
 /// marked, and leaves its end as it was; ends that are not in order are marked too, and
-/// views fit the values instead. Gives whether an end changed.
-pub fn range_rows(ui: &mut egui::Ui, ends: &mut Ends, fitted: Option<(f64, f64)>) -> bool {
-    let before = *ends;
-    let [min_problem, max_problem] = ends.problems(fitted);
-    let hints = (fitted.map(|(min, _)| min), fitted.map(|(_, max)| max));
-    end_row(ui, "Min", &mut ends.min, hints.0, min_problem);
-    end_row(ui, "Max", &mut ends.max, hints.1, max_problem);
-    *ends != before
+/// views fit the values instead.
+pub fn range_rows(ui: &mut egui::Ui, ends: &mut Ends, fitted: Option<(f64, f64)>) {
+    optional_range_rows(ui, (&mut ends.min, &mut ends.max), fitted, fitted);
 }
 
 /// The elements of an array of `shape` if they are few enough to be listed.

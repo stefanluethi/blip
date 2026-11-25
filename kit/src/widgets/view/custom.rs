@@ -2,10 +2,8 @@
 //! [`register`], offered like the others to add to a layout, and saved in presets by
 //! their name.
 
-use super::{PropertiesContext, Selectable, ViewContext, ViewInfo, Viewable};
-use crate::store::Store;
+use super::{Selectable, ViewContext, ViewInfo, Viewable};
 use crate::store::traces::Trace;
-use std::collections::BTreeSet;
 use std::sync::RwLock;
 
 /// A registered type of view: what [`ViewInfo`] says of it, and how to make and load a
@@ -41,8 +39,6 @@ impl std::fmt::Debug for CustomType {
 
 /// The state of a view of a registered type, as the layout keeps it.
 trait Custom: Viewable {
-    fn viewable(&mut self) -> &mut dyn Viewable;
-    fn viewable_ref(&self) -> &dyn Viewable;
     fn save(&self) -> serde_json::Value;
     fn clone_box(&self) -> Box<dyn Custom>;
 }
@@ -51,14 +47,6 @@ impl<T> Custom for T
 where
     T: Viewable + Clone + serde::Serialize + 'static,
 {
-    fn viewable(&mut self) -> &mut dyn Viewable {
-        self
-    }
-
-    fn viewable_ref(&self) -> &dyn Viewable {
-        self
-    }
-
     fn save(&self) -> serde_json::Value {
         serde_json::to_value(self).unwrap_or_else(|error| {
             log::warn!("a view cannot be saved: {error}");
@@ -173,11 +161,11 @@ impl CustomView {
     }
 
     pub(super) fn viewable(&mut self) -> &mut dyn Viewable {
-        self.state.viewable()
+        &mut *self.state
     }
 
     pub(super) fn viewable_ref(&self) -> &dyn Viewable {
-        self.state.viewable_ref()
+        &*self.state
     }
 }
 
@@ -240,16 +228,6 @@ struct Missing;
 impl Viewable for Missing {
     fn view(&mut self, ui: &mut egui::Ui, _context: &mut ViewContext<'_>) {
         crate::widgets::theme::hint(ui, "This application does not have this type of view");
-    }
-
-    fn properties_ui(&mut self, _ui: &mut egui::Ui, _context: &PropertiesContext<'_>) {}
-
-    fn selection(&mut self) -> Option<(&mut BTreeSet<String>, bool)> {
-        None
-    }
-
-    fn colored_paths(&self, _store: &dyn Store) -> Vec<String> {
-        vec![]
     }
 }
 

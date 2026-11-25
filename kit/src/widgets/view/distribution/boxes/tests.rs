@@ -153,9 +153,9 @@ fn the_tooltip_lists_the_values_in_the_order_drawn() {
     assert_eq!(names(Whiskers::P1, Orientation::Sideways)[1], "99 %");
     // the box in the text colour, its ends weak
     let rows = tooltip_rows(&stats, Whiskers::Iqr, Orientation::Upright);
-    let weights: Vec<Weight> = rows.iter().map(|&(_, _, weight)| weight).collect();
-    assert_eq!(weights[2..6], [Weight::Box; 4]);
-    assert!([0, 1, 6, 7].iter().all(|&row| weights[row] == Weight::End));
+    let weights: Vec<Tone> = rows.iter().map(|&(_, _, weight)| weight).collect();
+    assert_eq!(weights[2..6], [Tone::Text; 4]);
+    assert!([0, 1, 6, 7].iter().all(|&row| weights[row] == Tone::Weak));
     assert_eq!(rows[7].1, 30.0);
     // written to a thousandth of the range
     assert_eq!(value_step(&stats), 0.02);
