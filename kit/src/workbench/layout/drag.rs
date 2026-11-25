@@ -74,7 +74,7 @@ impl Layout {
         let Some(target) = self.drop_target(dragged, shown, pos) else {
             return;
         };
-        self.paint_drop(ui, &target);
+        paint_drop(ui, &target);
         if ui.input(|i| i.pointer.any_released()) {
             egui::DragAndDrop::clear_payload(ui.ctx());
             self.drop_tile(dragged, target.tile_id, target.drop);
@@ -119,46 +119,39 @@ impl Layout {
             .or_else(empty_group)
             .filter(|target| self.can_drop(dragged, target.tile_id))
     }
+}
 
-    /// Marks where `target` would put the dropped view or group: a line in the gap where
-    /// it moves between views or tabs, or the place it takes in a new or empty group.
-    fn paint_drop(&self, ui: &egui::Ui, target: &Target) {
-        let accent = ui.tokens().accent;
-        let painter = ui.painter();
-        let rect = target.rect;
-        let line = |from: egui::Pos2, to: egui::Pos2| {
-            painter.line_segment([from, to], egui::Stroke::new(3.0, accent));
-        };
-        let area = |area: egui::Rect| {
-            painter.rect(
-                area,
-                theme::CARD_RADIUS,
-                accent.gamma_multiply(0.15),
-                egui::Stroke::new(1.0, accent),
-                egui::StrokeKind::Inside,
-            );
-        };
-        match target.drop {
-            Drop::Before => line(rect.left_top(), rect.left_bottom()),
-            Drop::After => line(rect.right_top(), rect.right_bottom()),
-            Drop::Side(side) if self.reorders(target.tile_id, side) => {
-                // in the middle of the gap to the next view
-                let rect = rect.expand(theme::GAP / 2.0);
-                match side {
-                    Side::Left => line(rect.left_top(), rect.left_bottom()),
-                    Side::Right => line(rect.right_top(), rect.right_bottom()),
-                    Side::Top => line(rect.left_top(), rect.right_top()),
-                    Side::Bottom => line(rect.left_bottom(), rect.right_bottom()),
-                }
-            }
-            Drop::Side(side) => area(match side {
-                Side::Left => rect.split_left_right_at_fraction(0.5).0,
-                Side::Right => rect.split_left_right_at_fraction(0.5).1,
-                Side::Top => rect.split_top_bottom_at_fraction(0.5).0,
-                Side::Bottom => rect.split_top_bottom_at_fraction(0.5).1,
-            }),
-            Drop::Into => area(rect),
-        }
+/// Marks where `target` would put the dropped view or group: the half of the view at
+/// the side it is dropped at, the whole of an empty group, or a line at the side of a
+/// tab button it moves next to.
+fn paint_drop(ui: &egui::Ui, target: &Target) {
+    let accent = ui.tokens().accent;
+    let painter = ui.painter();
+    let rect = target.rect;
+    let line = |from: egui::Pos2, to: egui::Pos2| {
+        painter.line_segment([from, to], egui::Stroke::new(3.0, accent));
+    };
+    let area = |area: egui::Rect| {
+        painter.rect(
+            area,
+            theme::CARD_RADIUS,
+            accent.gamma_multiply(0.15),
+            egui::Stroke::new(1.0, accent),
+            egui::StrokeKind::Inside,
+        );
+    };
+    match target.drop {
+        Drop::Before => line(rect.left_top(), rect.left_bottom()),
+        Drop::After => line(rect.right_top(), rect.right_bottom()),
+        // the same for a move next to the view and for a new group of both, the user
+        // need not know how the views are grouped to read it
+        Drop::Side(side) => area(match side {
+            Side::Left => rect.split_left_right_at_fraction(0.5).0,
+            Side::Right => rect.split_left_right_at_fraction(0.5).1,
+            Side::Top => rect.split_top_bottom_at_fraction(0.5).0,
+            Side::Bottom => rect.split_top_bottom_at_fraction(0.5).1,
+        }),
+        Drop::Into => area(rect),
     }
 }
 

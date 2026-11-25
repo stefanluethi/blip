@@ -38,10 +38,10 @@ Arranging
 Drag a view by its title, or a view or group shown as a tab by its tab, onto
 the side of another view:
 
-* A **line in the gap** shows a move next to that view, where its group stacks
-  its children across that side.
-* A **highlighted half** shows a new group of both, stacked across that side; a
-  group of just the two turns instead.
+* The **highlighted half** of that view shows the side the dragged one goes to.
+* Where the group of that view stacks its children across that side, the
+  dragged one moves next to it. Otherwise both form a new group, stacked across
+  that side; a group of just the two turns instead.
 * Dropping onto a tab moves before or after it, and onto an empty tab into
   it. Hovering a tab while dragging opens it.
 
