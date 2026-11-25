@@ -259,3 +259,86 @@ fn the_progress_and_the_answer_of_an_invocation_are_readable() {
     assert_ne!(outcome, &Outcome::Pending);
     assert!(format!("{outcome:?}").contains("jammed"), "{outcome:?}");
 }
+
+#[test]
+fn recorded_samples_are_unsaved_until_saved_cleared_or_replaced() {
+    let message = serde_cbor_2::to_vec(&sample(1_000, "rpm", 1.0)).unwrap();
+    let mut session = Session::default();
+    // samples dropped while not recording are nothing to save
+    session.receive("sim", &message, 0.0);
+    assert!(!session.is_unsaved());
+
+    session.recording = true;
+    session.receive("sim", &message, 0.0);
+    assert!(session.is_unsaved());
+    session.mark_saved();
+    assert!(!session.is_unsaved());
+    // more recorded after the save is unsaved again
+    session.receive("sim", &message, 0.0);
+    assert!(session.is_unsaved());
+    // stopping keeps it unsaved
+    session.set_recording(false, true);
+    assert!(session.is_unsaved());
+
+    session.clear_data();
+    assert!(!session.is_unsaved());
+    session.recording = true;
+    session.receive("sim", &message, 0.0);
+    session.start_fresh(MemoryStore::default());
+    assert!(!session.is_unsaved());
+}
+
+#[test]
+fn the_first_source_to_open_keeps_an_unsaved_recording() {
+    let message = serde_cbor_2::to_vec(&sample(1_000, "rpm", 1.0)).unwrap();
+    let mut session = Session::default();
+    session.set_recording(true, true);
+    session.receive("old", &message, 0.0);
+    session.set_recording(false, false);
+    assert!(!session.first_opened());
+    assert!(session.store.has_samples());
+
+    // once saved, it starts afresh
+    session.mark_saved();
+    assert!(session.first_opened());
+    assert!(!session.store.has_samples());
+}
+
+#[test]
+fn a_session_waits_for_record_while_connected_without_samples() {
+    let source = Scripted::default();
+    let mut session = Session::default();
+    assert!(!session.waiting_for_record());
+    session.add_source("sim", source.clone());
+    source.tell(Event::Opened);
+    source.tell(Event::message(&sample(1_000, "rpm", 1.0)));
+    session.update(0.0);
+    assert!(session.waiting_for_record());
+
+    session.set_recording(true, true);
+    assert!(!session.waiting_for_record());
+    source.tell(Event::message(&sample(2_000, "rpm", 2.0)));
+    session.update(0.1);
+    // stopped, the recorded samples are shown
+    session.set_recording(false, true);
+    assert!(!session.waiting_for_record());
+}
+
+#[test]
+fn a_kept_recording_takes_no_logs_of_a_new_connection() {
+    let encode = |message: &proto::Message| serde_cbor_2::to_vec(message).unwrap();
+    let mut session = Session::default();
+    session.set_recording(true, true);
+    session.receive("old", &encode(&sample(1_000, "rpm", 1.0)), 0.0);
+    session.set_recording(false, false);
+    assert!(!session.first_opened());
+    let log = proto::Message::Log(proto::LogRecord {
+        timestamp: 9_000_000_000,
+        path: "log/sim".to_owned(),
+        level: proto::level::WARN,
+        message: "hot".to_owned(),
+    });
+    session.receive("new", &encode(&log), 0.0);
+    assert!(session.store.logs.get("log/sim").is_none());
+    assert_eq!(session.store.time_span(), Some((1_000, 1_000)));
+}

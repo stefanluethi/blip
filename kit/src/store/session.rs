@@ -17,7 +17,8 @@ struct Attached {
 
 /// The store, the invoker and the sources, and the rules between them: samples are
 /// kept only while recording, a recording starts only while connected and clears the
-/// data, and the first source to open starts afresh.
+/// data, and the first source to open starts afresh, unless that drops an unsaved
+/// recording.
 #[derive(Default)]
 pub struct Session {
     pub store: MemoryStore,
@@ -26,6 +27,9 @@ pub struct Session {
     /// [`Self::set_recording`].
     pub recording: bool,
     sources: Vec<Attached>,
+    /// Whether samples were recorded since the data was last saved, cleared or
+    /// replaced. See [`Self::is_unsaved`].
+    changed: bool,
     /// What went wrong with the sources since [`Self::take_notices`].
     notices: Vec<(Level, String)>,
 }
@@ -181,6 +185,7 @@ impl Session {
     /// records it while recording, and passes answers to the invoker.
     pub fn receive(&mut self, source: &str, message: &[u8], now: f64) {
         let result = if self.recording {
+            self.changed = true;
             self.store.receive(source, message)
         } else {
             self.store.receive_unrecorded(source, message)
@@ -191,9 +196,10 @@ impl Session {
     }
 
     /// Tells that a source opened while no other was open, before any of its
-    /// messages: starts afresh with no data, unless recording. Returns whether it did.
+    /// messages: starts afresh with no data, unless recording or the data is an
+    /// unsaved recording, which stays until the user drops it. Returns whether it did.
     pub fn first_opened(&mut self) -> bool {
-        if self.recording {
+        if self.recording || self.is_unsaved() {
             return false;
         }
         self.start_fresh(MemoryStore::default());
@@ -204,6 +210,7 @@ impl Session {
     /// stay, so the invocations still tell which readback samples are newer.
     pub fn clear_data(&mut self) {
         self.store.clear();
+        self.changed = false;
     }
 
     /// Starts afresh with `store`, e.g. of an opened recording: drops all data, also the
@@ -211,8 +218,29 @@ impl Session {
     /// forgets the invocations.
     pub fn start_fresh(&mut self, store: MemoryStore) {
         self.recording = false;
+        self.changed = false;
         self.invoker.reset();
         self.store = store;
+    }
+
+    /// Whether the data holds samples recorded since it was last saved, cleared or
+    /// replaced, e.g. by an opened recording. An application asks before it drops
+    /// them, e.g. to record anew or to quit.
+    pub fn is_unsaved(&self) -> bool {
+        self.changed && self.store.has_samples()
+    }
+
+    /// Tells that the data was saved as it is now, so it is no longer unsaved until
+    /// more is recorded.
+    pub fn mark_saved(&mut self) {
+        self.changed = false;
+    }
+
+    /// Whether samples arrive but are dropped as nothing records them: a source is
+    /// connected, the session is not recording and has no samples to show. An
+    /// application with a record button tells the user to press it.
+    pub fn waiting_for_record(&self) -> bool {
+        !self.recording && !self.invoker.connected.is_empty() && !self.store.has_samples()
     }
 
     /// Starts or stops recording. A recording starts only while `connected` and clears
