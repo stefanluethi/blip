@@ -1,5 +1,6 @@
 # Builds the blip web app (trunk) and the Sphinx documentation and publishes
-# them together on GitHub Pages: the app at the site root, the docs under /docs/.
+# them together on GitHub Pages, served at https://blip.embedded-systems.io/:
+# the app at the site root, the docs under /docs/.
 #
 # Pull requests only build (to catch breakage); pushes to main also deploy.
 # One-time setup: Settings → Pages → Build and deployment → Source: GitHub Actions.
@@ -112,8 +113,12 @@ jobs:
         working-directory: doc
         run: make html
 
+      # The sitemap lists the app and the documentation, so it goes to the
+      # root of the site: a sitemap covers only what is below it.
       - name: Assemble site
-        run: cp -r doc/_build/html site/docs
+        run: |
+          cp -r doc/_build/html site/docs
+          mv site/docs/sitemap.xml site/sitemap.xml
 
       - uses: actions/upload-pages-artifact@v5
         with:

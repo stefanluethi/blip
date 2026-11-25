@@ -43,7 +43,7 @@ Leave it running.
 2. Start blip
 -------------
 
-Open the hosted web app at https://stefanluethi.github.io/blip/, or run blip
+Open the hosted web app at https://blip.embedded-systems.io/, or run blip
 yourself, natively::
 
    cargo run --release -p blip

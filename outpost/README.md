@@ -1,7 +1,7 @@
 # blip-outpost
 
 Send the traces, log records and actions of your target to
-[blip](https://stefanluethi.github.io/blip/), the telemetry viewer for embedded systems.
+[blip](https://blip.embedded-systems.io/), the telemetry viewer for embedded systems.
 
 Your script talks to the target however it needs to: a serial port, a socket, a CAN bus,
 a vendor library. It decodes what it receives and passes it on. The outpost serves blip
@@ -9,9 +9,9 @@ over a WebSocket, records the messages if asked, and calls your **actions** when
 invokes them, e.g. a setpoint or a calibration.
 
 The user guide is in the documentation:
-[outpost](https://stefanluethi.github.io/blip/docs/outpost/index.html). Its internals
+[outpost](https://blip.embedded-systems.io/docs/outpost/index.html). Its internals
 are described in
-[outpost internals](https://stefanluethi.github.io/blip/docs/outpost/internals.html).
+[outpost internals](https://blip.embedded-systems.io/docs/outpost/internals.html).
 
 ## Install
 
@@ -155,7 +155,7 @@ message Battery {
 }
 ```
 
-See the [user guide](https://stefanluethi.github.io/blip/docs/outpost/index.html) for all
+See the [user guide](https://blip.embedded-systems.io/docs/outpost/index.html) for all
 rules.
 
 The target sends CBOR messages, several at once as a CBOR sequence (RFC 8742): a UDP
@@ -195,7 +195,7 @@ uv run pytest
 ## Message schema (CBOR)
 
 Messages sent in binary WebSocket frames match the Rust `proto` crate, see the
-[wire protocol](https://stefanluethi.github.io/blip/docs/reference/protocol.html):
+[wire protocol](https://blip.embedded-systems.io/docs/reference/protocol.html):
 
 - **Hello**: `{ version: 1, name: str, clock: "epoch" | "boot", sender: str }`, sent first; all but the version optional
 - **Sample**: `{ timestamp: int (ns), path: str, value: any }`, where `value` is a plain CBOR item: `None`, `int`, `float`, `bool`, `str`, a `list` of fixed length or a `dict` with `str` keys, nested freely

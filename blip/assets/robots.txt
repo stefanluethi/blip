@@ -1,0 +1,6 @@
+# The web app and its documentation (docs/) may be crawled; the sitemap lists
+# their pages. It is written by the documentation build (doc/source/conf.py).
+User-agent: *
+Allow: /
+
+Sitemap: https://blip.embedded-systems.io/sitemap.xml

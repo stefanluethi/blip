@@ -3,9 +3,11 @@
 import re
 import shutil
 from datetime import date
+from html import escape
 from pathlib import Path
 
 import matplotlib.style
+from docutils import nodes
 
 # -- Project information -----------------------------------------------------
 
@@ -13,6 +15,11 @@ project = "blip"
 author = "Stefan Lüthi"
 copyright = f"{date.today().year}, {author}"
 release = "0.1.0"
+language = "en"
+
+# Where the site is published: the web app at the root, this documentation
+# under docs/ (.github/workflows/pages.yml).
+site_url = "https://blip.embedded-systems.io/"
 
 # -- General configuration ---------------------------------------------------
 
@@ -78,7 +85,7 @@ linkcheck_ignore = [
     r"wss?://.*",
     # answers link checkers with 403
     r"https://trunkrs\.dev/?",
-    r"https://stefanluethi\.github\.io/blip/.*",
+    r"https://blip\.embedded-systems\.io/.*",
     r"https://github\.com/stefanluethi/blip/(edit|blob|issues).*",
 ]
 linkcheck_anchors = False
@@ -87,6 +94,11 @@ linkcheck_anchors = False
 
 html_theme = "shibuya"
 html_title = "blip documentation"
+# The address of the published documentation: it gives each page its canonical
+# link, and the addresses in the Open Graph tags and in the sitemap below.
+html_baseurl = site_url + "docs/"
+# The picture in the preview of a link to the documentation.
+html_theme_options = {"og_image_url": html_baseurl + "_images/window.png"}
 html_static_path = ["_static"]
 # Fira Sans for text, Fira Code for code; fonts.css self-hosts them (no Google
 # Fonts, for GDPR) and maps them onto shibuya's font variables.
@@ -139,9 +151,61 @@ def _copy_dark_images(app, exception):
         shutil.copyfile(image, images / image.name)
 
 
+def _description(doctree):
+    """The first paragraph of a page, cut to the length search engines show."""
+    for paragraph in doctree.findall(nodes.paragraph):
+        if not isinstance(paragraph.parent, nodes.section):
+            continue
+        text = " ".join(paragraph.astext().split())
+        if len(text) > 160:
+            text = text[:159].rsplit(" ", 1)[0].rstrip(",;:.") + "…"
+        return text
+    return None
+
+
+def _add_description(app, pagename, templatename, context, doctree):
+    """Describe each page to search engines and to the previews of links with
+    its first paragraph, unless the page sets a description itself. shibuya
+    writes it out with the Open Graph tags."""
+    if doctree is None:
+        return
+    meta = context.get("meta") or {}
+    if "description" not in meta:
+        description = _description(doctree)
+        if description:
+            context["meta"] = {**meta, "description": description}
+
+
+def _page_url(page):
+    """The address of a page as in its canonical link, where Sphinx leaves out
+    the ``index.html`` of a directory."""
+    if page == "index" or page.endswith("/index"):
+        return html_baseurl + page[: -len("index")]
+    return html_baseurl + page + ".html"
+
+
+def _write_sitemap(app, exception):
+    """Write sitemap.xml for search engines: the web app and every page of the
+    documentation. The redirects of moved pages are not source pages, so they
+    stay out. A sitemap covers only what is below it, so pages.yml moves this
+    one to the root of the site."""
+    if exception or app.builder.name != "html":
+        return
+    pages = sorted(app.env.found_docs, key=lambda page: (page != "index", page))
+    urls = [site_url] + [_page_url(page) for page in pages]
+    lines = ['<?xml version="1.0" encoding="UTF-8"?>']
+    lines.append('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">')
+    lines += [f"  <url><loc>{escape(url)}</loc></url>" for url in urls]
+    lines.append("</urlset>")
+    Path(app.outdir, "sitemap.xml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def setup(app):
+    app.add_config_value("site_url", "", "html")
+    app.connect("html-page-context", _add_description)
     app.connect("build-finished", _drop_cdn_fonts)
     app.connect("build-finished", _copy_dark_images)
+    app.connect("build-finished", _write_sitemap)
 
 
 # -- sphinx-needs ------------------------------------------------------------

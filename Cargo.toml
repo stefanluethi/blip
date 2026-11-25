@@ -9,7 +9,7 @@ edition = "2024"
 rust-version = "1.88" # let chains
 license = "MIT"
 repository = "https://github.com/stefanluethi/blip"
-homepage = "https://stefanluethi.github.io/blip/"
+homepage = "https://blip.embedded-systems.io/"
 # the library crates say `publish = true` themselves, the application is not published
 publish = false
 

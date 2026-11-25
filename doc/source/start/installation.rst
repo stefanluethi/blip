@@ -11,7 +11,7 @@ What you need depends on what you use:
      - you need
    * - look at data in the browser
      - nothing: open the hosted web app at
-       https://stefanluethi.github.io/blip/, or build and serve it yourself
+       https://blip.embedded-systems.io/, or build and serve it yourself
        (below)
    * - run blip natively
      - Rust, to build it

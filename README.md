@@ -8,14 +8,14 @@ The outpost (`blip-outpost`), a small Python library, lets a script that talks t
 target (or a simulator) send its data to blip over a WebSocket, using CBOR-encoded messages.
 sonde, a C++ library, encodes those messages on the target or in unit tests.
 
-Try the web app at <https://stefanluethi.github.io/blip/> and read the
-documentation at <https://stefanluethi.github.io/blip/docs/>:
+Try the web app at <https://blip.embedded-systems.io/> and read the
+documentation at <https://blip.embedded-systems.io/docs/>:
 
-- [How it fits together](https://stefanluethi.github.io/blip/docs/overview/index.html) — the parts, which setup you need, and the concepts they share
-- [Quick start](https://stefanluethi.github.io/blip/docs/start/quickstart.html) — a simulated target in blip in a few minutes
-- Guides for [blip](https://stefanluethi.github.io/blip/docs/blip/index.html),
-  the [outpost](https://stefanluethi.github.io/blip/docs/outpost/index.html) and
-  [sonde](https://stefanluethi.github.io/blip/docs/sonde/index.html)
+- [How it fits together](https://blip.embedded-systems.io/docs/overview/index.html) — the parts, which setup you need, and the concepts they share
+- [Quick start](https://blip.embedded-systems.io/docs/start/quickstart.html) — a simulated target in blip in a few minutes
+- Guides for [blip](https://blip.embedded-systems.io/docs/blip/index.html),
+  the [outpost](https://blip.embedded-systems.io/docs/outpost/index.html) and
+  [sonde](https://blip.embedded-systems.io/docs/sonde/index.html)
 
 The sources are in [`doc/source`](doc/source).
 
@@ -105,7 +105,7 @@ cargo run --release -p blip
 ```
 
 To connect a target of your own, write a script that reads it and passes on what it
-decodes, see the [outpost guide](https://stefanluethi.github.io/blip/docs/outpost/index.html):
+decodes, see the [outpost guide](https://blip.embedded-systems.io/docs/outpost/index.html):
 
 ```python
 import blip_outpost as outpost

@@ -17,6 +17,6 @@ let message = Message::Sample(Sample {
 
 `blip.cddl` describes the messages in CDDL (RFC 8610), for encoders in other
 languages. The protocol is described in the
-[protocol reference](https://stefanluethi.github.io/blip/docs/reference/protocol.html).
+[protocol reference](https://blip.embedded-systems.io/docs/reference/protocol.html).
 To show what a target sends, use [`blip-kit`](https://crates.io/crates/blip-kit), which
 has the store and the widgets, or blip itself.

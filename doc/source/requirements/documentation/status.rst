@@ -30,6 +30,10 @@ Where each is met:
 * :need:`REQ_DOC_CHANGES` -- :doc:`/changes`.
 * :need:`REQ_DOC_LIMITS` -- :doc:`/help/limits`.
 * :need:`REQ_DOC_FIND` -- ``redirects`` in ``conf.py``, for pages that move.
+* :need:`REQ_DOC_SEARCH_ENGINES` -- ``html_baseurl`` and the sitemap and
+  descriptions written by ``conf.py``, the tags in ``blip/index.html``; the
+  Pages workflow puts ``sitemap.xml`` at the root of the site, where
+  ``blip/assets/robots.txt`` announces it.
 * :need:`REQ_DOC_LINKS` -- ``make linkcheck``.
 * :need:`REQ_DOC_FEEDBACK` -- *Edit this page* and *Report a problem* beside
   each page.

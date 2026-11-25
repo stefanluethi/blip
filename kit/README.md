@@ -44,7 +44,7 @@ cargo run --release -p blip-kit --example dashboard
 ```
 
 The guides are in the
-[documentation of blip](https://stefanluethi.github.io/blip/docs/library/index.html).
+[documentation of blip](https://blip.embedded-systems.io/docs/library/index.html).
 
 ## Notes
 

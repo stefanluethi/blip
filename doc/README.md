@@ -24,7 +24,8 @@ Without make: `uv run sphinx-build -W source _build/html`.
 ```
 source/
 ├── conf.py            Sphinx + sphinx-needs configuration (need types, links,
-│                      redirects of moved pages)
+│                      redirects of moved pages, the sitemap and page
+│                      descriptions for search engines)
 ├── index.rst          what blip is, where to start
 ├── start/             installation, quick start
 ├── overview/          how the parts fit together, the concepts they share

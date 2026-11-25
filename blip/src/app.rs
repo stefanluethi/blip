@@ -432,7 +432,7 @@ impl App {
                 ui.label(format!("blip {}", env!("CARGO_PKG_VERSION")));
                 let documentation = egui::Hyperlink::from_label_and_url(
                     "Documentation",
-                    "https://stefanluethi.github.io/blip/docs/",
+                    "https://blip.embedded-systems.io/docs/",
                 )
                 .open_in_new_tab(true);
                 ui.add(documentation);
