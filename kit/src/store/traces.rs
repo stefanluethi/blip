@@ -2,10 +2,10 @@
 //! a column per leaf of its values, e.g. the fields of a record, sharing the
 //! timestamps of the table. A column is a trace.
 
-use super::decode::{Flat, Leaf};
+use super::flatten::{Flat, Leaf};
 use super::growing::Growing;
 use super::numbers::{DisplayFormat, Extent, Labels, Number, NumberKind, Numbers};
-use super::sorted::upper_bound;
+use super::sorted::{self, upper_bound};
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 
@@ -125,8 +125,8 @@ impl Samples {
         }
     }
 
-    /// Appends `leaf` of `flat` decoded from `frame`, unless its kind does not match.
-    fn push(&mut self, leaf: &Leaf, flat: &Flat, frame: &[u8]) -> Result<(), String> {
+    /// Appends `leaf` of `flat` whose texts are in `texts`, unless its kind does not match.
+    fn push(&mut self, leaf: &Leaf, flat: &Flat, texts: &str) -> Result<(), String> {
         if let (Self::Empty(count), leaf) = (&*self, leaf) {
             let count = *count;
             *self = match leaf {
@@ -157,8 +157,7 @@ impl Samples {
             (samples, Leaf::Null) => samples.push_null(),
             (Self::Numbers(numbers), Leaf::Number(number)) => numbers.push_row(&[*number])?,
             (Self::Strings(strings), Leaf::Text(text)) => {
-                let text = std::str::from_utf8(&frame[text.clone()]).expect("checked when read");
-                strings.push(Some(text));
+                strings.push(Some(&texts[text.clone()]));
             }
             (
                 Self::Arrays { shape, elements },
@@ -313,6 +312,21 @@ impl<'a> Trace<'a> {
         }
     }
 
+    /// The index of the newest sample at or before `t` (ns), the one current at `t`.
+    pub fn index_at(&self, t: u64) -> Option<usize> {
+        sorted::index_at(self.timestamps, t)
+    }
+
+    /// The index of the sample closest to `t` (ns).
+    pub fn closest_index(&self, t: u64) -> Option<usize> {
+        sorted::closest_index(self.timestamps, t)
+    }
+
+    /// The indices of the samples within `[start, end]` (ns).
+    pub fn within(&self, range: (u64, u64)) -> Range<usize> {
+        sorted::within(self.timestamps, range)
+    }
+
     /// The numbers of a numeric trace.
     fn series(self) -> Option<Series<'a>> {
         let Samples::Numbers(numbers) = self.samples else {
@@ -388,6 +402,21 @@ impl<'a> Series<'a> {
     pub fn extent(&self, range: Range<usize>) -> Extent {
         self.numbers
             .extent(self.lane, self.first + range.start..self.first + range.end)
+    }
+
+    /// The index of the newest sample at or before `t` (ns), the one current at `t`.
+    pub fn index_at(&self, t: u64) -> Option<usize> {
+        sorted::index_at(self.timestamps, t)
+    }
+
+    /// The index of the sample closest to `t` (ns).
+    pub fn closest_index(&self, t: u64) -> Option<usize> {
+        sorted::closest_index(self.timestamps, t)
+    }
+
+    /// The indices of the samples within `[start, end]` (ns).
+    pub fn within(&self, range: (u64, u64)) -> Range<usize> {
+        sorted::within(self.timestamps, range)
     }
 
     /// The samples within `range`.
@@ -498,11 +527,11 @@ impl Traces {
         id: usize,
         leaf: &Leaf,
         flat: &Flat,
-        frame: &[u8],
+        texts: &str,
     ) -> Result<(), String> {
         let samples = &mut self.columns[id].samples;
         let kind = samples.kind();
-        let pushed = samples.push(leaf, flat, frame);
+        let pushed = samples.push(leaf, flat, texts);
         if samples.kind() != kind {
             self.kinds += 1;
         }
@@ -636,13 +665,10 @@ impl Traces {
     /// Appends `value` as if received, for tests.
     #[cfg(any(test, feature = "test-util"))]
     pub fn append(&mut self, value: &proto::Sample) {
-        let frame = serde_cbor_2::to_vec(&proto::Message::Sample(value.clone())).unwrap();
+        let tape = super::value::Value::from(&value.value);
         let mut flat = Flat::default();
-        let message = super::decode::decode(&frame, &mut flat).unwrap();
-        let super::decode::Message::Sample { timestamp, path } = message else {
-            unreachable!("a value was encoded");
-        };
-        self.insert(path, timestamp, &flat, &frame);
+        flat.fill(tape.as_ref());
+        self.insert(&value.path, value.timestamp, &flat, tape.texts());
     }
 
     /// Adds a column for the leaf `field` of `table`, e.g. `.acc`, with nulls for the
@@ -694,12 +720,12 @@ impl Traces {
         }
     }
 
-    /// Appends the value at `path` with `timestamp`, flattened into `flat` from
-    /// `frame`: a sample to the trace of each of its leaves. The first record at a path
+    /// Appends the value at `path` with `timestamp`, flattened into `flat`, its texts in
+    /// `texts`: a sample to the trace of each of its leaves. The first record at a path
     /// sets its fields: a record with other fields is dropped, a field whose value does
     /// not fit its trace is null. A value that does not fit the trace at `path` is
     /// dropped, as is a value older than `MAX_LATE` values of its path.
-    pub fn insert(&mut self, path: &str, timestamp: u64, flat: &Flat, frame: &[u8]) {
+    pub(crate) fn insert(&mut self, path: &str, timestamp: u64, flat: &Flat, texts: &str) {
         let table = match self.tables_by_path.get(path) {
             Some(&table) => {
                 let table_ref = &mut self.tables[table];
@@ -736,9 +762,9 @@ impl Traces {
         };
         let rows = self.tables[table].timestamps.len();
         let kept = if flat.is_record() {
-            self.insert_record(table, flat, frame)
+            self.insert_record(table, flat, texts)
         } else {
-            self.insert_scalar(table, flat, frame)
+            self.insert_scalar(table, flat, texts)
         };
         if !kept {
             return;
@@ -782,7 +808,7 @@ impl Traces {
     /// Appends the value in `flat`, which is no record, to `table`. Returns whether it
     /// did: a null of a record leaves a gap in all its fields, other values do not fit
     /// a record.
-    fn insert_scalar(&mut self, table: usize, flat: &Flat, frame: &[u8]) -> bool {
+    fn insert_scalar(&mut self, table: usize, flat: &Flat, texts: &str) -> bool {
         let leaf = &flat.leaves[0].1;
         let record = self.tables[table]
             .columns
@@ -803,7 +829,7 @@ impl Traces {
                     self.tables[table].warn("a field of a record has the path");
                     return false;
                 };
-                match self.push_leaf(id, leaf, flat, frame) {
+                match self.push_leaf(id, leaf, flat, texts) {
                     Ok(()) => true,
                     Err(problem) => {
                         self.tables[table].warn(&problem);
@@ -818,7 +844,7 @@ impl Traces {
     /// `table`, which the first record at its path sets. Returns whether it did, i.e.
     /// the record has the fields of the first; a leaf that does not fit its trace is
     /// left for a null.
-    fn insert_record(&mut self, table: usize, flat: &Flat, frame: &[u8]) -> bool {
+    fn insert_record(&mut self, table: usize, flat: &Flat, texts: &str) -> bool {
         // a trace that only received nulls so far turns out to be a record
         if let Some(id) = self.find_column(table, "", 0) {
             if !matches!(self.columns[id].samples, Samples::Empty(_)) {
@@ -852,7 +878,7 @@ impl Traces {
         for (index, (field, leaf)) in flat.leaves.iter().enumerate() {
             let id = (self.find_column(table, flat.field(field), index))
                 .expect("the record has the fields of the table");
-            if let Err(problem) = self.push_leaf(id, leaf, flat, frame) {
+            if let Err(problem) = self.push_leaf(id, leaf, flat, texts) {
                 let column = &mut self.columns[id];
                 if !column.warned {
                     column.warned = true;

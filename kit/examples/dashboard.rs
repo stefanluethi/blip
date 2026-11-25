@@ -19,14 +19,13 @@
 
 use blip_kit::proto;
 use blip_kit::store::session::Session;
-use blip_kit::store::source::{Event, Source};
+use blip_kit::store::source::{Inbox, Source};
 use blip_kit::widgets::theme;
 use blip_kit::widgets::time::{self, TimeRange};
 use blip_kit::widgets::view::plot::Plot;
 use blip_kit::widgets::view::table::Table;
 use blip_kit::widgets::view::{self, ViewContext, Viewable as _};
 use std::cell::Cell;
-use std::collections::VecDeque;
 use std::rc::Rc;
 
 /// The name of the simulator among the sources, which its actions are invoked by.
@@ -45,7 +44,20 @@ struct Simulator {
     /// The time in seconds up to which samples were sent, `None` before it opened.
     sent_until: Option<f64>,
     levels: [f64; TANKS.len()],
-    queue: VecDeque<Event>,
+    /// The paths of the traces of the tanks, made once.
+    paths: [String; TANKS.len()],
+    /// What the simulator answers or logs between two polls.
+    answers: Vec<Answer>,
+}
+
+/// What the simulator hands over after a request, as plain data.
+enum Answer {
+    Log {
+        timestamp: u64,
+        level: u8,
+        text: String,
+    },
+    Result(proto::ActionResult),
 }
 
 impl Simulator {
@@ -54,33 +66,21 @@ impl Simulator {
             clock,
             sent_until: None,
             levels: [0.0; TANKS.len()],
-            queue: VecDeque::new(),
+            paths: TANKS.map(|(tank, _)| format!("tank/{tank}/level")),
+            answers: Vec::new(),
         }
     }
 
-    fn tell(&mut self, message: proto::Message) {
-        self.queue.push_back(Event::message(&message));
-    }
-
-    fn log(&mut self, time: f64, level: u8, message: String) {
-        self.tell(proto::Message::Log(proto::LogRecord {
-            timestamp: nanoseconds(time),
-            path: "log/tanks".to_owned(),
-            level,
-            message,
-        }));
-    }
-
     /// What a target says once: who it is, what its traces are and what it can do.
-    fn describe(&mut self) {
-        self.tell(proto::Message::Hello(proto::Hello {
+    fn describe(&mut self, inbox: &mut Inbox<'_>) {
+        inbox.hello(&proto::Hello {
             version: proto::VERSION,
             name: Some("Tanks".to_owned()),
             clock: Some(proto::Clock::Boot),
             sender: None,
-        }));
+        });
         for (tank, _) in TANKS {
-            self.tell(proto::Message::TraceMetadata(proto::TraceMetadata {
+            inbox.metadata(&proto::TraceMetadata {
                 path: format!("tank/{tank}/level"),
                 unit: "l".to_owned(),
                 description: format!("How much is in tank {tank}"),
@@ -89,9 +89,9 @@ impl Simulator {
                     max: CAPACITY,
                 }),
                 ..Default::default()
-            }));
+            });
         }
-        self.tell(proto::Message::Actions(vec![proto::ActionDescriptor {
+        inbox.actions(&[proto::ActionDescriptor {
             path: "drain".to_owned(),
             description: "Empties a tank".to_owned(),
             params: vec![proto::Param {
@@ -106,11 +106,11 @@ impl Simulator {
             confirm: false,
             enabled: true,
             disabled_reason: None,
-        }]));
+        }]);
     }
 
     /// Fills the tanks up to the time of the clock and sends their levels.
-    fn run(&mut self) {
+    fn run(&mut self, inbox: &mut Inbox<'_>) {
         let now = self.clock.get();
         let Some(mut time) = self.sent_until else {
             return;
@@ -126,13 +126,10 @@ impl Simulator {
                 let level = (before + rate * PERIOD).min(CAPACITY);
                 self.levels[index] = level;
                 if level >= CAPACITY && before < CAPACITY {
-                    self.log(time, proto::level::WARN, format!("Tank {tank} is full"));
+                    let text = format!("Tank {tank} is full");
+                    inbox.log(nanoseconds(time), "log/tanks", proto::level::WARN, &text);
                 }
-                self.tell(proto::Message::Sample(proto::Sample {
-                    timestamp: nanoseconds(time),
-                    path: format!("tank/{tank}/level"),
-                    value: proto::Data::Float(level),
-                }));
+                inbox.sample(nanoseconds(time), &self.paths[index], level);
             }
         }
         self.sent_until = Some(time);
@@ -152,27 +149,33 @@ impl Simulator {
             .position(|(known, _)| Some(*known) == tank)
             .ok_or("there is no such tank")?;
         self.levels[index] = 0.0;
-        let time = self.clock.get();
-        self.log(
-            time,
-            proto::level::INFO,
-            format!("Tank {} drained", TANKS[index].0),
-        );
+        self.answers.push(Answer::Log {
+            timestamp: nanoseconds(self.clock.get()),
+            level: proto::level::INFO,
+            text: format!("Tank {} drained", TANKS[index].0),
+        });
         Ok(())
     }
 }
 
 impl Source for Simulator {
-    fn poll(&mut self) -> Option<Event> {
+    fn poll(&mut self, inbox: &mut Inbox<'_>) {
         if self.sent_until.is_none() {
             self.sent_until = Some(self.clock.get());
-            self.describe();
-            return Some(Event::Opened);
+            inbox.opened();
+            self.describe(inbox);
         }
-        if self.queue.is_empty() {
-            self.run();
+        self.run(inbox);
+        for answer in self.answers.drain(..) {
+            match answer {
+                Answer::Log {
+                    timestamp,
+                    level,
+                    text,
+                } => inbox.log(timestamp, "log/tanks", level, &text),
+                Answer::Result(result) => inbox.action_result(&result),
+            }
         }
-        self.queue.pop_front()
     }
 
     fn send(&mut self, request: &proto::Request) {
@@ -181,7 +184,7 @@ impl Source for Simulator {
             "drain" => self.drain(&invocation.args),
             other => Err(format!("there is no action {other}")),
         };
-        self.tell(proto::Message::ActionResult(proto::ActionResult {
+        self.answers.push(Answer::Result(proto::ActionResult {
             id: invocation.id,
             result,
         }));

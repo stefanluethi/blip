@@ -1,10 +1,10 @@
 //! The WebSocket source: a connection to an outpost or a target that speaks the blip
 //! protocol, natively and in the browser.
 
-use super::source::{Event, Source};
+use super::source::{Inbox, Source};
 
 /// A WebSocket connection as a [`Source`]. It is being opened until it tells
-/// [`Event::Opened`].
+/// [`Inbox::opened`].
 pub struct WebSocket {
     sender: ewebsock::WsSender,
     receiver: ewebsock::WsReceiver,
@@ -24,24 +24,26 @@ impl WebSocket {
 }
 
 impl Source for WebSocket {
-    fn poll(&mut self) -> Option<Event> {
-        loop {
-            return Some(match self.receiver.try_recv()? {
-                ewebsock::WsEvent::Opened => Event::Opened,
+    fn poll(&mut self, inbox: &mut Inbox<'_>) {
+        while let Some(event) = self.receiver.try_recv() {
+            match event {
+                ewebsock::WsEvent::Opened => inbox.opened(),
                 ewebsock::WsEvent::Message(ewebsock::WsMessage::Binary(frame)) => {
-                    Event::Frame(frame)
+                    inbox.frame(&frame);
                 }
                 ewebsock::WsEvent::Message(ewebsock::WsMessage::Text(text)) => {
                     log::info!("{text}");
-                    continue;
                 }
-                ewebsock::WsEvent::Message(_) => {
-                    log::warn!("ws unknown message received");
-                    continue;
+                ewebsock::WsEvent::Message(_) => log::warn!("ws unknown message received"),
+                ewebsock::WsEvent::Error(error) => {
+                    inbox.failed(error);
+                    break;
                 }
-                ewebsock::WsEvent::Error(error) => Event::Failed(error),
-                ewebsock::WsEvent::Closed => Event::Closed,
-            });
+                ewebsock::WsEvent::Closed => {
+                    inbox.closed();
+                    break;
+                }
+            }
         }
     }
 
@@ -54,3 +56,6 @@ impl Source for WebSocket {
         self.sender.close();
     }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests;

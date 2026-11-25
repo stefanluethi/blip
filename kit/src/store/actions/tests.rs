@@ -1,4 +1,6 @@
 use super::*;
+use crate::store::MemoryStore;
+use crate::store::testing::receive_unrecorded;
 
 fn args(rpm: u64) -> Args {
     vec![("rpm".to_owned(), Data::Uint(rpm))]
@@ -53,7 +55,7 @@ fn model(samples: u64) -> MemoryStore {
             path: "on".to_owned(),
             value: Data::Bool(true),
         });
-        model.receive_unrecorded("", &serde_cbor_2::to_vec(&value).unwrap());
+        receive_unrecorded(&mut model, "", &value);
     }
     model
 }
@@ -293,12 +295,11 @@ fn resetting_keeps_the_inputs() {
 #[test]
 fn readbacks_follow_after_another_clock_dropped_the_data() {
     let sample = |timestamp| {
-        let value = proto::Message::Sample(proto::Sample {
+        proto::Message::Sample(proto::Sample {
             timestamp,
             path: "on".to_owned(),
             value: Data::Bool(true),
-        });
-        serde_cbor_2::to_vec(&value).unwrap()
+        })
     };
     let mut model = model(3);
     let mut invoker = Invoker::default();
@@ -313,9 +314,9 @@ fn readbacks_follow_after_another_clock_dropped_the_data() {
         clock: Some(proto::Clock::Epoch),
         sender: None,
     });
-    model.receive_unrecorded("b", &serde_cbor_2::to_vec(&hello).unwrap());
+    receive_unrecorded(&mut model, "b", &hello);
     assert_eq!(model.readback_samples(Some("on")), 3);
-    model.receive_unrecorded("", &sample(1_700_000_000_000_000_000));
+    receive_unrecorded(&mut model, "", &sample(1_700_000_000_000_000_000));
     let samples = model.readback_samples(Some("on"));
     assert_eq!(samples, 4);
     assert!(invoker.follows_readback(&enable, samples));

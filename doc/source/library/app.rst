@@ -28,7 +28,8 @@ What the application holds
        table: Table,
    }
 
-* The ``Session`` holds the store, the invoker of actions and the sources.
+* The ``Session`` holds the store, the recorder, the invoker of actions and the
+  sources.
 * The ``TimeRange`` is the time all widgets show: the window, the cursor and
   whether it plays.
 * ``Plot`` and ``Table`` are views, the state of a widget. They are plain

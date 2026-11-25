@@ -1,4 +1,7 @@
 use super::*;
+use crate::store::actions::{ActionId, Outcome};
+use crate::store::session::Session;
+use crate::store::testing::{receive, receive_unrecorded};
 
 fn frame(message: &proto::Message) -> Vec<u8> {
     serde_cbor_2::to_vec(message).unwrap()
@@ -21,13 +24,14 @@ fn paths_are_kept_as_the_outposts_send_them() {
             message: "hi".to_owned(),
         }))
     };
-    let mut model = MemoryStore::default();
-    model.receive("", &value("cpu"));
-    model.receive("a", &value("cpu"));
-    model.receive("b", &value("cpu"));
-    model.receive("b", &log("robot/arm"));
-    model.receive("b", &log(""));
-    model.receive("b", &log("motor"));
+    let mut session = Session::recording();
+    session.inbox("", 0.0).frame(&value("cpu"));
+    session.inbox("a", 0.0).frame(&value("cpu"));
+    session.inbox("b", 0.0).frame(&value("cpu"));
+    session.inbox("b", 0.0).frame(&log("robot/arm"));
+    session.inbox("b", 0.0).frame(&log(""));
+    session.inbox("b", 0.0).frame(&log("motor"));
+    let model = &session.store;
     // the same path from several outposts is one trace
     assert_eq!(model.traces.iter().count(), 1);
     assert_eq!(model.traces.get("cpu").unwrap().timestamps.len(), 3);
@@ -39,17 +43,17 @@ fn paths_are_kept_as_the_outposts_send_them() {
         model.logs.paths().collect::<Vec<_>>(),
         ["log/default", "motor", "robot/arm"]
     );
-    assert_eq!(model.recording.messages(), 6);
+    assert_eq!(session.recorder.messages(), 6);
 }
 
 #[test]
 fn activity_is_counted_per_bin_with_records_once() {
     let value = |timestamp: u64, path: &str, value: proto::Data| {
-        frame(&proto::Message::Sample(proto::Sample {
+        proto::Message::Sample(proto::Sample {
             timestamp,
             path: path.to_owned(),
             value,
-        }))
+        })
     };
     let imu = proto::Data::Record(
         [("x", 1.0), ("y", 2.0)]
@@ -59,21 +63,21 @@ fn activity_is_counted_per_bin_with_records_once() {
     );
     let mut model = MemoryStore::default();
     for t in [0, 10, 19, 20, 39, 40] {
-        model.receive("", &value(t, "cpu", proto::Data::Uint(1)));
+        receive(&mut model, "", &value(t, "cpu", proto::Data::Uint(1)));
     }
-    model.receive("", &value(25, "imu", imu.clone()));
-    model.receive("", &value(35, "imu", imu));
+    receive(&mut model, "", &value(25, "imu", imu.clone()));
+    receive(&mut model, "", &value(35, "imu", imu));
     // of two paths, the first with a record after the bins of the second
     let log = |timestamp, path: &str, level| {
-        frame(&proto::Message::Log(proto::LogRecord {
+        proto::Message::Log(proto::LogRecord {
             timestamp,
             path: path.to_owned(),
             level,
             message: "hi".to_owned(),
-        }))
+        })
     };
     for (timestamp, path, level) in [(5, "", 2), (30, "", 2), (2, "motor", 3), (15, "motor", 4)] {
-        model.receive("", &log(timestamp, path, level));
+        receive(&mut model, "", &log(timestamp, path, level));
     }
     let values =
         |activity: Vec<Activity>| -> Vec<u32> { activity.iter().map(|bin| bin.values).collect() };
@@ -95,13 +99,13 @@ fn activity_is_counted_per_bin_with_records_once() {
             .into_iter()
             .collect(),
     );
-    model.receive("", &value(45, "imu", partial));
+    receive(&mut model, "", &value(45, "imu", partial));
     assert_eq!(values(model.activity(40, 10, 1)), [1]);
 }
 
 #[test]
 fn actions_are_kept_with_their_source_and_answers_returned() {
-    let actions = frame(&proto::Message::Actions(vec![proto::ActionDescriptor {
+    let actions = proto::Message::Actions(vec![proto::ActionDescriptor {
         path: "motor/speed".to_owned(),
         description: String::new(),
         params: vec![],
@@ -109,18 +113,18 @@ fn actions_are_kept_with_their_source_and_answers_returned() {
         confirm: false,
         enabled: true,
         disabled_reason: None,
-    }]));
+    }]);
     let result = proto::ActionResult {
         id: 3,
         result: Ok(()),
     };
     let mut model = MemoryStore::default();
-    assert_eq!(model.receive("b", &actions), None);
+    assert_eq!(receive(&mut model, "b", &actions), None);
     let speed = model.actions.announced("b", "motor/speed").unwrap();
     assert_eq!(speed.readback.as_deref(), Some("motor/rpm"));
     assert!(model.actions.announced("a", "motor/speed").is_none());
-    let answer = frame(&proto::Message::ActionResult(result.clone()));
-    assert_eq!(model.receive("b", &answer), Some(result));
+    let answer = proto::Message::ActionResult(result.clone());
+    assert_eq!(receive(&mut model, "b", &answer), Some(result));
 }
 
 /// Measures how many messages a second the model takes in: scalars on 100 paths
@@ -156,11 +160,12 @@ fn ingest_rate() {
             _ => scalar(n, &paths[n as usize % 100]),
         })
         .collect();
-    let mut model = MemoryStore::default();
+    let mut session = Session::recording();
     let start = std::time::Instant::now();
     for frame in &frames {
-        model.receive("a", frame);
+        session.inbox("a", 0.0).frame(frame);
     }
+    let model = &session.store;
     let seconds = start.elapsed().as_secs_f64();
     println!(
         "{} messages in {seconds:.3} s: {:.0} messages/s",
@@ -181,26 +186,27 @@ fn ingest_rate() {
 #[test]
 fn the_origin_is_the_first_timestamp_a_target_sent() {
     let log = |timestamp| {
-        frame(&proto::Message::Log(proto::LogRecord {
+        proto::Message::Log(proto::LogRecord {
             timestamp,
             path: String::new(),
             level: 2,
             message: "hi".to_owned(),
-        }))
+        })
     };
     let mut model = MemoryStore::default();
     // a record without a timestamp gets the wall clock, which is no origin
-    model.receive("a", &log(0));
+    receive(&mut model, "a", &log(0));
     assert_eq!(model.origin(), None);
-    model.receive(
+    receive(
+        &mut model,
         "a",
-        &frame(&proto::Message::Sample(proto::Sample {
+        &proto::Message::Sample(proto::Sample {
             timestamp: 5_000_000_000,
             path: "rpm".to_owned(),
             value: proto::Data::Uint(1),
-        })),
+        }),
     );
-    model.receive("a", &log(7_000_000_000));
+    receive(&mut model, "a", &log(7_000_000_000));
     assert_eq!(model.origin(), Some(5_000_000_000));
 }
 
@@ -208,20 +214,33 @@ fn the_origin_is_the_first_timestamp_a_target_sent() {
 fn samples_of_another_time_base_than_the_origin_are_dropped() {
     let utc = 1_700_000_000_000_000_000;
     let mut model = MemoryStore::default();
-    model.receive("target", &value(5_000_000_000, "rpm", proto::Data::Uint(1)));
+    receive(
+        &mut model,
+        "target",
+        &value(5_000_000_000, "rpm", proto::Data::Uint(1)),
+    );
     // e.g. from a source with the time of its computer
-    model.receive("pc", &value(utc, "rpm", proto::Data::Uint(2)));
-    model.receive("pc", &value(utc, "pc/load", proto::Data::Uint(3)));
-    model.receive(
+    receive(&mut model, "pc", &value(utc, "rpm", proto::Data::Uint(2)));
+    receive(
+        &mut model,
         "pc",
-        &frame(&proto::Message::Log(proto::LogRecord {
+        &value(utc, "pc/load", proto::Data::Uint(3)),
+    );
+    receive(
+        &mut model,
+        "pc",
+        &proto::Message::Log(proto::LogRecord {
             timestamp: utc,
             path: String::new(),
             level: 2,
             message: "hi".to_owned(),
-        })),
+        }),
     );
-    model.receive("target", &value(6_000_000_000, "rpm", proto::Data::Uint(4)));
+    receive(
+        &mut model,
+        "target",
+        &value(6_000_000_000, "rpm", proto::Data::Uint(4)),
+    );
     assert_eq!(model.time_span(), Some((5_000_000_000, 6_000_000_000)));
     assert_eq!(model.logs.paths().next(), None);
     assert!(model.traces.get("pc/load").is_none());
@@ -229,35 +248,40 @@ fn samples_of_another_time_base_than_the_origin_are_dropped() {
     // a record without a timestamp before any data has the wall clock, and moves to
     // the first timestamp in another time base
     model.clear();
-    model.receive(
+    receive(
+        &mut model,
         "target",
-        &frame(&proto::Message::Log(proto::LogRecord {
+        &proto::Message::Log(proto::LogRecord {
             timestamp: 0,
             path: String::new(),
             level: 2,
             message: "booting".to_owned(),
-        })),
+        }),
     );
-    model.receive("target", &value(2_000_000_000, "rpm", proto::Data::Uint(1)));
+    receive(
+        &mut model,
+        "target",
+        &value(2_000_000_000, "rpm", proto::Data::Uint(1)),
+    );
     assert_eq!(model.logs.entries().next().unwrap().time, 2_000_000_000);
     assert_eq!(model.time_span(), Some((2_000_000_000, 2_000_000_000)));
 
     // cleared, the next sample sets the time base anew
     model.clear();
-    model.receive("pc", &value(utc, "rpm", proto::Data::Uint(5)));
+    receive(&mut model, "pc", &value(utc, "rpm", proto::Data::Uint(5)));
     assert_eq!(model.time_span(), Some((utc, utc)));
 }
 
-fn value(timestamp: u64, path: &str, value: proto::Data) -> Vec<u8> {
-    frame(&proto::Message::Sample(proto::Sample {
+fn value(timestamp: u64, path: &str, value: proto::Data) -> proto::Message {
+    proto::Message::Sample(proto::Sample {
         timestamp,
         path: path.to_owned(),
         value,
-    }))
+    })
 }
 
-fn announce(readback: &str) -> Vec<u8> {
-    frame(&proto::Message::Actions(vec![proto::ActionDescriptor {
+fn announce(readback: &str) -> proto::Message {
+    proto::Message::Actions(vec![proto::ActionDescriptor {
         path: "set".to_owned(),
         description: String::new(),
         params: vec![],
@@ -265,7 +289,7 @@ fn announce(readback: &str) -> Vec<u8> {
         confirm: false,
         enabled: true,
         disabled_reason: None,
-    }]))
+    }])
 }
 
 fn readback_value(model: &MemoryStore, path: &str) -> Option<String> {
@@ -288,10 +312,10 @@ fn readbacks_are_kept_also_while_not_recording() {
         value(timestamp, "motor", proto::Data::Record(fields))
     };
     let mut model = MemoryStore::default();
-    model.receive_unrecorded("b", &announce("motor.speed"));
-    model.receive_unrecorded("b", &motor(1, 10));
-    model.receive_unrecorded("b", &motor(2, 12));
-    model.receive_unrecorded("b", &value(2, "rpm", proto::Data::Uint(3)));
+    receive_unrecorded(&mut model, "b", &announce("motor.speed"));
+    receive_unrecorded(&mut model, "b", &motor(1, 10));
+    receive_unrecorded(&mut model, "b", &motor(2, 12));
+    receive_unrecorded(&mut model, "b", &value(2, "rpm", proto::Data::Uint(3)));
     // only the latest value of the readback, the samples are dropped
     assert_eq!(readback_value(&model, "motor.speed").as_deref(), Some("12"));
     assert_eq!(model.readback("motor.speed").unwrap().timestamps.len(), 1);
@@ -302,7 +326,7 @@ fn readbacks_are_kept_also_while_not_recording() {
     // clearing the data keeps them and their counts
     model.clear();
     assert_eq!(readback_value(&model, "motor.speed").as_deref(), Some("12"));
-    model.receive("b", &motor(3, 14));
+    receive(&mut model, "b", &motor(3, 14));
     assert_eq!(readback_value(&model, "motor.speed").as_deref(), Some("14"));
     assert_eq!(model.readback_samples(Some("motor.speed")), 3);
 }
@@ -310,12 +334,16 @@ fn readbacks_are_kept_also_while_not_recording() {
 #[test]
 fn values_announced_as_readbacks_later_show() {
     let mut model = MemoryStore::default();
-    model.receive_unrecorded("b", &value(1, "level", proto::Data::from("INFO")));
+    receive_unrecorded(
+        &mut model,
+        "b",
+        &value(1, "level", proto::Data::from("INFO")),
+    );
     assert!(model.readback("level").is_none());
-    model.receive_unrecorded("b", &announce("level"));
+    receive_unrecorded(&mut model, "b", &announce("level"));
     assert_eq!(readback_value(&model, "level").as_deref(), Some("INFO"));
     // and no more once no action has it as its readback
-    model.receive_unrecorded("b", &frame(&proto::Message::Actions(vec![])));
+    receive_unrecorded(&mut model, "b", &proto::Message::Actions(vec![]));
     assert!(model.readback("level").is_none());
 }
 
@@ -349,27 +377,35 @@ fn samples_are_dropped_while_not_recording() {
     }));
     let actions = frame(&proto::Message::Actions(vec![]));
     let result = proto::ActionResult {
-        id: 3,
+        id: 0,
         result: Ok(()),
     };
     let answer = frame(&proto::Message::ActionResult(result.clone()));
 
-    let mut model = MemoryStore::default();
-    model.receive_unrecorded("b", &value);
-    model.receive_unrecorded("b", &log);
-    model.receive_unrecorded("b", &metadata);
-    model.receive_unrecorded("b", &actions);
-    assert_eq!(model.receive_unrecorded("b", &answer), Some(result));
-    assert_eq!(model.time_span(), None);
-    assert_eq!(model.logs.paths().next(), None);
+    let mut session = Session::default();
+    // the answer goes to the invoker, as the session routes it
+    let action = ActionId::new("b", "x");
+    session.invoker.invoke(&action, None, vec![], 0.0);
+    session.inbox("b", 0.0).frame(&value);
+    session.inbox("b", 0.0).frame(&log);
+    session.inbox("b", 0.0).frame(&metadata);
+    session.inbox("b", 0.0).frame(&actions);
+    session.inbox("b", 0.0).frame(&answer);
+    assert_eq!(
+        session.invoker.outcome(&action, 0.0),
+        Some(&Outcome::Accepted(0.0))
+    );
+    assert_eq!(session.store.time_span(), None);
+    assert_eq!(session.store.logs.paths().next(), None);
     // nothing is recorded, a recording starts with the kept units and actions
-    assert_eq!(model.recording.messages(), 0);
-    model.clear();
-    assert_eq!(model.recording.messages(), 2);
+    assert_eq!(session.recorder.messages(), 0);
+    session.clear_data();
+    assert_eq!(session.recorder.messages(), 2);
 
-    model.receive("b", &value);
-    assert_eq!(model.traces.get("rpm").unwrap().timestamps.len(), 1);
-    assert_eq!(model.traces.unit("rpm"), Some("rpm"));
+    session.recording = true;
+    session.inbox("b", 0.0).frame(&value);
+    assert_eq!(session.store.traces.get("rpm").unwrap().timestamps.len(), 1);
+    assert_eq!(session.store.traces.unit("rpm"), Some("rpm"));
 }
 
 #[test]
@@ -395,18 +431,19 @@ fn clearing_keeps_the_latest_units_and_actions_and_records_them_again() {
         enabled: true,
         disabled_reason: None,
     }]));
-    let mut model = MemoryStore::default();
-    model.receive("a", &unit("rpm"));
-    model.receive("b", &actions);
-    model.receive("a", &value);
-    model.receive("a", &unit("1/min"));
-    model.clear();
+    let mut session = Session::recording();
+    session.inbox("a", 0.0).frame(&unit("rpm"));
+    session.inbox("b", 0.0).frame(&actions);
+    session.inbox("a", 0.0).frame(&value);
+    session.inbox("a", 0.0).frame(&unit("1/min"));
+    session.clear_data();
+    let model = &session.store;
 
     assert_eq!(model.time_span(), None);
     assert_eq!(model.traces.unit("rpm"), Some("1/min"));
     assert!(model.actions.announced("b", "motor/speed").is_some());
     let mut recorded = vec![];
-    recording::read_file(&model.recording.to_file(), |source, frame| {
+    recording::read_file(&session.recorder.to_file(), |source, frame| {
         recorded.push((source.to_owned(), frame.to_vec()));
     })
     .unwrap();
@@ -436,9 +473,9 @@ fn series_of(model: &MemoryStore, path: &str) -> (Vec<u64>, Vec<String>) {
 /// Models that received the block, and its samples one by one.
 fn block_and_samples(block: &proto::Samples) -> (MemoryStore, MemoryStore) {
     let (mut blocks, mut singles) = (MemoryStore::default(), MemoryStore::default());
-    blocks.receive("a", &frame(&proto::Message::Samples(block.clone())));
+    receive(&mut blocks, "a", &proto::Message::Samples(block.clone()));
     for sample in block.to_samples() {
-        singles.receive("a", &frame(&proto::Message::Sample(sample)));
+        receive(&mut singles, "a", &proto::Message::Sample(sample));
     }
     (blocks, singles)
 }
@@ -480,58 +517,6 @@ fn blocks_give_the_traces_of_single_samples() {
 }
 
 #[test]
-fn a_malformed_block_is_dropped_alone() {
-    use super::Level;
-    // a block with both a period and timestamps, written by hand
-    let mut both = vec![0xa1, 0x67];
-    both.extend(b"Samples");
-    both.extend([0xa5, 0x64]);
-    both.extend(b"path");
-    both.push(0x63);
-    both.extend(b"bad");
-    both.push(0x66);
-    both.extend(b"values");
-    both.extend([0x81, 0x01, 0x69]);
-    both.extend(b"timestamp");
-    both.extend([0x01, 0x66]);
-    both.extend(b"period");
-    both.extend([0x01, 0x6a]);
-    both.extend(b"timestamps");
-    both.extend([0x81, 0x01]);
-    let mut sequence = frame(&proto::Message::Log(proto::LogRecord {
-        timestamp: 10,
-        path: String::new(),
-        level: 2,
-        message: "hi".to_owned(),
-    }));
-    sequence.extend(&both);
-    sequence.extend(value(20, "rpm", proto::Data::Uint(5)));
-    let mut model = MemoryStore::default();
-    for item in cbor::items(&sequence) {
-        model.receive("a", item.unwrap());
-    }
-    assert_eq!(model.logs.entries().count(), 1);
-    assert!(model.traces.get("rpm").is_some());
-    assert!(model.traces.get("bad").is_none());
-    assert_eq!(
-        model.take_notices(),
-        [(
-            Level::Error,
-            "Dropped a malformed block of samples from a".to_owned()
-        )]
-    );
-    assert_eq!(model.take_notices(), []);
-    model.receive("", &both);
-    assert_eq!(
-        model.take_notices(),
-        [(
-            Level::Error,
-            "Dropped a malformed block of samples".to_owned()
-        )]
-    );
-}
-
-#[test]
 fn an_empty_block_gives_nothing() {
     let empty = block(
         "adc",
@@ -542,7 +527,7 @@ fn an_empty_block_gives_nothing() {
         },
     );
     let mut model = MemoryStore::default();
-    model.receive("a", &frame(&proto::Message::Samples(empty)));
+    receive(&mut model, "a", &proto::Message::Samples(empty));
     assert!(model.traces.get("adc").is_none());
     assert_eq!(model.take_notices(), []);
     assert_eq!(model.time_span(), None);
@@ -552,33 +537,48 @@ fn an_empty_block_gives_nothing() {
 fn the_latest_value_of_a_block_is_its_last() {
     use proto::Data::Uint;
     let mut model = MemoryStore::default();
-    model.receive_unrecorded("a", &announce("adc"));
+    receive_unrecorded(&mut model, "a", &announce("adc"));
     let adc = block(
         "adc",
         vec![Uint(1), Uint(2), Uint(3)],
         proto::SampleTimes::Each(vec![1, 2, 3]),
     );
-    model.receive_unrecorded("a", &frame(&proto::Message::Samples(adc)));
+    receive_unrecorded(&mut model, "a", &proto::Message::Samples(adc));
     assert_eq!(readback_value(&model, "adc").as_deref(), Some("3"));
     assert_eq!(model.readback_samples(Some("adc")), 1);
 }
 
-fn hello(clock: Option<proto::Clock>) -> Vec<u8> {
-    frame(&proto::Message::Hello(proto::Hello {
+#[test]
+fn a_block_counts_once_for_readbacks() {
+    use proto::Data::Uint;
+    let mut model = MemoryStore::default();
+    receive(&mut model, "a", &announce("adc"));
+    let adc = block(
+        "adc",
+        vec![Uint(1), Uint(2), Uint(3)],
+        proto::SampleTimes::Each(vec![1, 2, 3]),
+    );
+    receive(&mut model, "a", &proto::Message::Samples(adc));
+    assert_eq!(model.readback_samples(Some("adc")), 1);
+    assert_eq!(readback_value(&model, "adc").as_deref(), Some("3"));
+}
+
+fn hello(clock: Option<proto::Clock>) -> proto::Message {
+    proto::Message::Hello(proto::Hello {
         version: 1,
         name: None,
         clock,
         sender: None,
-    }))
+    })
 }
 
-fn log_at(timestamp: u64) -> Vec<u8> {
-    frame(&proto::Message::Log(proto::LogRecord {
+fn log_at(timestamp: u64) -> proto::Message {
+    proto::Message::Log(proto::LogRecord {
         timestamp,
         path: String::new(),
         level: 2,
         message: "hi".to_owned(),
-    }))
+    })
 }
 
 #[test]
@@ -586,31 +586,47 @@ fn a_declared_clock_decides_the_time_base() {
     use proto::Clock;
     let uint = proto::Data::Uint(1);
     let mut model = MemoryStore::default();
-    model.receive("a", &hello(Some(Clock::Boot)));
-    model.receive("a", &value(1_700_000_000_000_000_000, "rpm", uint.clone()));
+    receive(&mut model, "a", &hello(Some(Clock::Boot)));
+    receive(
+        &mut model,
+        "a",
+        &value(1_700_000_000_000_000_000, "rpm", uint.clone()),
+    );
     assert_eq!(model.time_base(), Some(TimeBase::SinceBoot));
     assert!(model.traces.get("rpm").is_some());
 
     let mut model = MemoryStore::default();
-    model.receive("a", &hello(Some(Clock::Epoch)));
+    receive(&mut model, "a", &hello(Some(Clock::Epoch)));
     assert_eq!(model.time_base(), Some(TimeBase::Unix));
-    model.receive("a", &value(5_000_000_000, "rpm", uint.clone()));
+    receive(&mut model, "a", &value(5_000_000_000, "rpm", uint.clone()));
     assert_eq!(model.time_base(), Some(TimeBase::Unix));
     assert!(model.traces.get("rpm").is_some());
 
     // without a Hello the value guesses
     let mut model = MemoryStore::default();
-    model.receive("a", &value(999_999_999_999_999_999, "rpm", uint.clone()));
+    receive(
+        &mut model,
+        "a",
+        &value(999_999_999_999_999_999, "rpm", uint.clone()),
+    );
     assert_eq!(model.time_base(), Some(TimeBase::SinceBoot));
     let mut model = MemoryStore::default();
-    model.receive("a", &value(1_000_000_000_000_000_000, "rpm", uint.clone()));
+    receive(
+        &mut model,
+        "a",
+        &value(1_000_000_000_000_000_000, "rpm", uint.clone()),
+    );
     assert_eq!(model.time_base(), Some(TimeBase::Unix));
 
     // a Hello without a clock replaces the one with it, so the source is guessed again
     let mut model = MemoryStore::default();
-    model.receive("a", &hello(Some(Clock::Boot)));
-    model.receive("a", &hello(None));
-    model.receive("a", &value(1_700_000_000_000_000_000, "rpm", uint));
+    receive(&mut model, "a", &hello(Some(Clock::Boot)));
+    receive(&mut model, "a", &hello(None));
+    receive(
+        &mut model,
+        "a",
+        &value(1_700_000_000_000_000_000, "rpm", uint),
+    );
     assert_eq!(model.time_base(), Some(TimeBase::Unix));
 }
 
@@ -625,23 +641,27 @@ fn different_clocks_share_the_utc_axis() {
             .to_owned(),
     );
     let mut model = MemoryStore::default();
-    model.receive("a", &hello(Some(Clock::Boot)));
-    model.receive("a", &value(5_000_000_000, "rpm", uint.clone()));
-    model.receive("a", &value(6_000_000_000, "rpm", uint.clone()));
-    model.receive("a", &log_at(5_000_000_000));
+    receive(&mut model, "a", &hello(Some(Clock::Boot)));
+    receive(&mut model, "a", &value(5_000_000_000, "rpm", uint.clone()));
+    receive(&mut model, "a", &value(6_000_000_000, "rpm", uint.clone()));
+    receive(&mut model, "a", &log_at(5_000_000_000));
     assert!(model.take_notices().is_empty());
-    model.receive("b", &hello(Some(Clock::Epoch)));
+    receive(&mut model, "b", &hello(Some(Clock::Epoch)));
     assert_eq!(model.time_span(), None);
     assert!(model.traces.get("rpm").is_none());
     assert_eq!(model.logs.paths().next(), None);
     assert_eq!(model.time_base(), Some(TimeBase::Unix));
     assert_eq!(model.take_notices(), [notice]);
 
-    model.receive("a", &value(7_000_000_000, "rpm", uint.clone()));
+    receive(&mut model, "a", &value(7_000_000_000, "rpm", uint.clone()));
     assert!(model.traces.get("rpm").is_none());
-    model.receive("b", &value(1_700_000_000_000_000_000, "temp", uint.clone()));
+    receive(
+        &mut model,
+        "b",
+        &value(1_700_000_000_000_000_000, "temp", uint.clone()),
+    );
     assert!(model.traces.get("temp").is_some());
-    model.receive("b", &hello(Some(Clock::Epoch)));
+    receive(&mut model, "b", &hello(Some(Clock::Epoch)));
     assert!(model.take_notices().is_empty());
 
     // a new recording starts with the Hellos, without a notice
@@ -651,29 +671,144 @@ fn different_clocks_share_the_utc_axis() {
 
     // the same clock twice is no conflict
     let mut model = MemoryStore::default();
-    model.receive("a", &hello(Some(Clock::Boot)));
-    model.receive("b", &hello(Some(Clock::Boot)));
+    receive(&mut model, "a", &hello(Some(Clock::Boot)));
+    receive(&mut model, "b", &hello(Some(Clock::Boot)));
     assert!(model.take_notices().is_empty());
 
     // the first sample sets the axis as its Hello declares
     let mut model = MemoryStore::default();
-    model.receive("a", &hello(Some(Clock::Boot)));
-    model.receive("a", &value(1_700_000_000_000_000_000, "rpm", uint));
+    receive(&mut model, "a", &hello(Some(Clock::Boot)));
+    receive(
+        &mut model,
+        "a",
+        &value(1_700_000_000_000_000_000, "rpm", uint),
+    );
     assert_eq!(model.time_base(), Some(TimeBase::SinceBoot));
 }
 
 #[test]
 fn a_record_at_0_follows_the_newest_data() {
     let mut model = MemoryStore::default();
-    model.receive("a", &value(7_000_000_000, "rpm", proto::Data::Uint(1)));
-    model.receive("a", &log_at(0));
+    receive(
+        &mut model,
+        "a",
+        &value(7_000_000_000, "rpm", proto::Data::Uint(1)),
+    );
+    receive(&mut model, "a", &log_at(0));
     assert_eq!(model.logs.entries().next().unwrap().time, 7_000_000_000);
 }
 
 #[test]
 fn a_record_at_0_without_data_shows_the_time_of_day() {
     let mut model = MemoryStore::default();
-    model.receive("a", &log_at(0));
+    receive(&mut model, "a", &log_at(0));
     assert!(model.logs.entries().next().unwrap().time >= 1_000_000_000_000_000_000);
     assert_eq!(model.time_base(), Some(TimeBase::Unix));
+}
+
+#[test]
+fn the_store_takes_typed_input() {
+    let action = proto::ActionDescriptor {
+        path: "set".to_owned(),
+        description: String::new(),
+        params: vec![],
+        readback: Some("rpm".to_owned()),
+        confirm: false,
+        enabled: true,
+        disabled_reason: None,
+    };
+    let metadata = proto::TraceMetadata {
+        path: "rpm".to_owned(),
+        unit: "rpm".to_owned(),
+        ..Default::default()
+    };
+    let mut rows = value::RowsBuf::default();
+    for n in [1u64, 2, 3] {
+        rows.push_with(|to| to.uint(n));
+    }
+    let one = |n: u64| value::Value::from(&proto::Data::Uint(n));
+    let mut model = MemoryStore::default();
+    model.ingest("a", Input::Clock(Some(TimeBase::SinceBoot)));
+    model.ingest("a", Input::Metadata(&metadata));
+    model.ingest("a", Input::Actions(&[action]));
+    model.ingest(
+        "a",
+        Input::Sample {
+            timestamp: 10,
+            path: "rpm",
+            value: one(5).as_ref(),
+        },
+    );
+    model.ingest(
+        "a",
+        Input::Samples {
+            path: "adc",
+            times: Times::Period {
+                timestamp: 20,
+                period: 5,
+            },
+            values: rows.rows(),
+        },
+    );
+    model.ingest(
+        "a",
+        Input::Log {
+            timestamp: 30,
+            path: "motor",
+            level: proto::level::WARN,
+            message: "hot",
+        },
+    );
+    model.ingest(
+        "a",
+        Input::Latest {
+            timestamp: 40,
+            path: "rpm",
+            value: one(7).as_ref(),
+        },
+    );
+    assert_eq!(model.traces.get("rpm").unwrap().timestamps.len(), 1);
+    assert_eq!(model.traces.get("adc").unwrap().timestamps, [20, 25, 30]);
+    assert_eq!(model.logs.entries().count(), 1);
+    assert_eq!(model.traces.unit("rpm"), Some("rpm"));
+    assert_eq!(readback_value(&model, "rpm").as_deref(), Some("7"));
+    assert_eq!(model.readback_samples(Some("rpm")), 2);
+    assert_eq!(model.time_base(), Some(TimeBase::SinceBoot));
+}
+
+#[test]
+fn clearing_keeps_what_describes_the_sources() {
+    let action = proto::ActionDescriptor {
+        path: "set".to_owned(),
+        description: String::new(),
+        params: vec![],
+        readback: Some("rpm".to_owned()),
+        confirm: false,
+        enabled: true,
+        disabled_reason: None,
+    };
+    let metadata = proto::TraceMetadata {
+        path: "rpm".to_owned(),
+        unit: "rpm".to_owned(),
+        ..Default::default()
+    };
+    let five = value::Value::from(&proto::Data::Uint(5));
+    let mut model = MemoryStore::default();
+    model.ingest("a", Input::Clock(Some(TimeBase::Unix)));
+    model.ingest("a", Input::Metadata(&metadata));
+    model.ingest("a", Input::Actions(&[action]));
+    model.ingest(
+        "a",
+        Input::Sample {
+            timestamp: 1_700_000_000_000_000_000,
+            path: "rpm",
+            value: five.as_ref(),
+        },
+    );
+    model.clear();
+    assert_eq!(model.time_span(), None);
+    assert_eq!(model.traces.unit("rpm"), Some("rpm"));
+    assert!(model.actions.announced("a", "set").is_some());
+    assert_eq!(model.time_base(), Some(TimeBase::Unix));
+    assert_eq!(readback_value(&model, "rpm").as_deref(), Some("5"));
 }

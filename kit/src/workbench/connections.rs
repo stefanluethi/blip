@@ -1,8 +1,10 @@
 //! The connections panel: the WebSocket addresses of outposts and targets, to connect to
 //! any number of them at once.
 
-use crate::store::source::{Event, Source as _};
+use crate::store::session::{Polled, Session, SourceEvent};
+use crate::store::source::Source as _;
 use crate::store::websocket::WebSocket;
+use crate::store::{Ingest, Store};
 use crate::widgets::theme::{self, TokensExt};
 use egui_phosphor::regular;
 use std::collections::{HashMap, HashSet};
@@ -104,16 +106,6 @@ struct Socket {
     greeted: bool,
     /// Whether a newer protocol was warned of on this connection.
     warned_newer: bool,
-}
-
-/// What [`Connections::receive`] passes on, in the order it arrived.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Received<'a> {
-    /// A connection opened while no other was open: the first one, before any of its
-    /// messages.
-    FirstOpened,
-    /// A message from the connection named `source`.
-    Message { source: &'a str, message: &'a [u8] },
 }
 
 /// The name or address being edited, or the address being added, and the text of its
@@ -242,48 +234,31 @@ impl Connections {
         }
     }
 
-    /// Passes each message received since the last call to `receive` with the name of
-    /// its connection, and when the first connection opens, ending connections when they
-    /// are closed or fail. A frame holds one message or several as a CBOR sequence, e.g.
-    /// a batch of a target.
-    pub fn receive(&mut self, mut receive: impl FnMut(Received<'_>)) {
+    /// Polls the connections through `session` at the time `now`: it takes their messages
+    /// and starts afresh when the first connection opens. Ends connections that are
+    /// closed or fail, keeps the Hello of each and tells the user what went wrong. The
+    /// result counts the messages and tells whether the session started afresh, it has no
+    /// events.
+    pub fn receive<S: Ingest + Store>(&mut self, session: &mut Session<S>, now: f64) -> Polled {
         let failed = &mut self.failed;
         let errors = &mut self.errors;
         let hellos = &mut self.hellos;
         let warnings = &mut self.warnings;
         let mut open = self.sockets.iter().filter(|socket| socket.open).count();
+        let mut total = Polled::default();
         self.sockets.retain_mut(|socket| {
-            while let Some(event) = socket.source.poll() {
+            let polled = session.poll_source(&socket.name, &mut socket.source, now, open == 0);
+            total.messages += polled.messages;
+            total.started_fresh |= polled.started_fresh;
+            for event in polled.events {
                 match event {
-                    Event::Opened => {
+                    SourceEvent::Opened => {
                         log::info!("ws connected to {}", socket.address);
-                        if open == 0 {
-                            receive(Received::FirstOpened);
-                        }
-                        open += 1;
+                        open += usize::from(!socket.open);
                         socket.open = true;
                     }
-                    Event::Frame(frame) => {
-                        for message in crate::store::cbor::items(&frame) {
-                            match message {
-                                Ok(message) => {
-                                    if crate::store::decode::message_name(message) == Some("Hello")
-                                    {
-                                        keep_hello(socket, message, hellos, warnings);
-                                    }
-                                    receive(Received::Message {
-                                        source: &socket.name,
-                                        message,
-                                    });
-                                }
-                                Err(error) => log::warn!(
-                                    "error reading a message of {}: {error}",
-                                    socket.address
-                                ),
-                            }
-                        }
-                    }
-                    Event::Failed(error) => {
+                    SourceEvent::Hello(hello) => keep_hello(socket, hello, hellos, warnings),
+                    SourceEvent::Failed(error) => {
                         log::warn!("ws error of {}: {error}", socket.address);
                         socket.source.close();
                         errors.push(if socket.open {
@@ -295,7 +270,7 @@ impl Connections {
                         open -= usize::from(socket.open);
                         return false;
                     }
-                    Event::Closed => {
+                    SourceEvent::Closed => {
                         log::info!("ws disconnected from {}", socket.address);
                         // the user's disconnecting drops the socket before it is closed
                         errors.push(format!("{} closed the connection", socket.address));
@@ -306,6 +281,7 @@ impl Connections {
             }
             true
         });
+        total
     }
 
     /// Takes what went wrong since the last call, e.g. why connecting failed, to tell the
@@ -737,18 +713,10 @@ fn display_name<'a>(name: &'a str, address: &'a str) -> &'a str {
 /// connection when its protocol is newer than blip's.
 fn keep_hello(
     socket: &mut Socket,
-    message: &[u8],
+    hello: proto::Hello,
     hellos: &mut HashMap<String, proto::Hello>,
     warnings: &mut Vec<String>,
 ) {
-    let hello = match serde_cbor_2::from_slice::<proto::Message>(message) {
-        Ok(proto::Message::Hello(hello)) => hello,
-        Ok(_) => return,
-        Err(error) => {
-            log::warn!("error reading the Hello of {}: {error}", socket.address);
-            return;
-        }
-    };
     socket.greeted = true;
     if hello.version > proto::VERSION && !socket.warned_newer {
         socket.warned_newer = true;

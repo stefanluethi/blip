@@ -6,7 +6,8 @@ use blip_kit::store::logs::Logs;
 use blip_kit::store::numbers::Labels;
 use blip_kit::store::time_base::TimeBase;
 use blip_kit::store::traces::{Series, Trace};
-use blip_kit::store::{Activity, Loaded, MemoryStore, Store, Version, Window};
+use blip_kit::store::value::Value;
+use blip_kit::store::{Activity, Ingest as _, Input, Loaded, MemoryStore, Store, Version, Window};
 use blip_kit::widgets::time::TimeRange;
 use blip_kit::widgets::view::plot::Plot;
 use blip_kit::widgets::view::{ViewContext, Viewable as _};
@@ -99,13 +100,16 @@ struct State {
 fn a_plot_reads_another_store_and_asks_for_what_it_shows() {
     let mut store = Loading::default();
     for second in 0..=40u64 {
-        let sample = proto::Message::Sample(proto::Sample {
-            timestamp: second * 1_000_000_000,
-            path: "a".to_owned(),
-            value: proto::Data::Float(second as f64),
-        });
-        let frame = serde_cbor_2::to_vec(&sample).expect("a frame");
-        store.loaded.receive("target", &frame);
+        let mut value = Value::default();
+        value.set(second as f64);
+        store.loaded.ingest(
+            "target",
+            Input::Sample {
+                timestamp: second * 1_000_000_000,
+                path: "a",
+                value: value.as_ref(),
+            },
+        );
     }
     assert!(store.pending());
     let mut plot = Plot::default();

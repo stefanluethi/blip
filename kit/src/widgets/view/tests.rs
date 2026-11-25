@@ -53,16 +53,16 @@ fn the_number_formats_of_a_linked_histogram_are_greyed() {
 
 #[test]
 fn wildcards_pick_new_paths_once_the_model_has_them() {
+    use crate::store::testing::receive;
     let frame = |path: &str| {
-        serde_cbor_2::to_vec(&proto::Message::Sample(proto::Sample {
+        proto::Message::Sample(proto::Sample {
             timestamp: 0,
             path: path.to_owned(),
             value: proto::Data::Uint(1),
-        }))
-        .unwrap()
+        })
     };
     let mut model = MemoryStore::default();
-    model.receive("a", &frame("motor/a"));
+    receive(&mut model, "a", &frame("motor/a"));
     let mut view = View::new(ViewType::Plot, "plot".to_owned());
     view.wildcards.insert("/motor".to_owned());
     let paths = |view: &mut View| view.selection_mut().unwrap().paths.clone();
@@ -71,12 +71,12 @@ fn wildcards_pick_new_paths_once_the_model_has_them() {
 
     // without new paths in the model, the wildcards are not expanded again
     view.selection_mut().unwrap().paths.clear();
-    model.receive("a", &frame("motor/a"));
+    receive(&mut model, "a", &frame("motor/a"));
     view.expand_wildcards(&model);
     assert!(paths(&mut view).is_empty());
 
-    model.receive("a", &frame("motor/b"));
-    model.receive("a", &frame("cpu"));
+    receive(&mut model, "a", &frame("motor/b"));
+    receive(&mut model, "a", &frame("cpu"));
     view.expand_wildcards(&model);
     assert_eq!(
         paths(&mut view),

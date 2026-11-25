@@ -61,7 +61,7 @@ Stakeholder Requirements
 
 .. stk:: Build my own tracing UI
    :id: STK_OWN_UI
-   :status: implemented
+   :status: approved
    :priority: medium
 
    As a Rust developer I want to build my own tracing UI from blip's parts,
@@ -73,7 +73,7 @@ Stakeholder Requirements
 
 .. stk:: Use my own data
    :id: STK_OWN_DATA
-   :status: implemented
+   :status: approved
    :priority: medium
 
    As a Rust developer I want to feed the views from my own data source in

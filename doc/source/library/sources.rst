@@ -13,8 +13,8 @@ The Source trait
 .. code-block:: rust
 
    pub trait Source {
-       /// The next event since the last call, `None` when there is none for now.
-       fn poll(&mut self) -> Option<Event>;
+       /// Hands what arrived since the last call to `inbox`, in order. Must not block.
+       fn poll(&mut self, inbox: &mut Inbox<'_>);
 
        /// Sends `request` to the target, e.g. the invocation of an action. A source
        /// without a way back drops it.
@@ -28,29 +28,48 @@ The session asks each source each frame, so no call may block. That matters in
 the browser, where there is nothing to wait on. A source that reads from a
 thread or a socket keeps what arrived and hands it over in ``poll``.
 
-What a source tells is an ``Event``:
+A source hands what it has to the ``Inbox`` it gets in ``poll``. The session
+makes the inbox for one source and one poll, and does the rest: it keeps the
+data while recording and only the latest value of each path otherwise, answers
+invocations and records what arrives. A source does not know whether the
+session records.
 
 .. list-table::
    :header-rows: 1
-   :widths: 25 75
+   :widths: 35 65
 
-   * - Event
+   * - Call of the inbox
      - Meaning
-   * - ``Opened``
-     - The source is open: it delivers frames and takes requests from now on.
-   * - ``Frame(bytes)``
-     - A frame: one message as CBOR, or several one after another as a CBOR
-       sequence (RFC 8742), e.g. a batch of sonde passed through by the
-       outpost. See :doc:`/reference/protocol`.
-   * - ``Closed``
-     - The source ended. The session does not ask it again.
-   * - ``Failed(reason)``
-     - The source could not be opened or broke. The session does not ask it
-       again.
-
-``Event::message(&message)`` encodes a ``proto::Message`` as a frame, for a
-source that makes its messages itself. There is no way to hand over decoded
-messages without encoding them yet.
+   * - ``opened()``
+     - The source is open: it delivers messages and takes requests from now
+       on. Call it before the first message.
+   * - ``closed()``, ``failed(reason)``
+     - The source ended, or could not be opened or broke. The session drops it
+       and tells the user. The inbox ignores every call after these.
+   * - ``frame(bytes)``
+     - Bytes in the blip protocol: one message as CBOR, or several one after
+       another as a CBOR sequence (RFC 8742), e.g. a batch of sonde passed
+       through by the outpost. See :doc:`/reference/protocol`. The library
+       reads them, so a source holds no parser. A message that cannot be read
+       is logged and not shown, and a malformed block of samples gives a
+       notice.
+   * - ``sample(timestamp, path, value)``
+     - The value of a trace at a time, in nanoseconds. ``value`` is anything
+       that is an ``AsValue``: a number, a bool, text, an array or a record,
+       see :doc:`stores`.
+   * - ``samples(path, times, values)``
+     - A block of values taken at ``times``, a ``Times`` with a period or a
+       timestamp for each value. A block ends with its timestamps for
+       ``Times::Each`` and with its values for ``Times::Period``.
+   * - ``log(timestamp, path, level, message)``
+     - A log record. Logs are kept only while recording.
+   * - ``metadata(&metadata)``, ``actions(&actions)``, ``hello(&hello)``
+     - What the target says about itself: its traces, its actions and who it
+       is.
+   * - ``action_result(&result)``
+     - The answer of the target to an invocation.
+   * - ``message(&message)``
+     - A ``proto::Message`` the source built itself.
 
 The session tells the user of a source that closed or failed as a notice, see
 below.
@@ -67,33 +86,88 @@ natively and in the browser. It needs the ``websocket`` feature, on by default.
    session.add_source("outpost", socket);
 
 The second argument is called from another thread whenever an event arrived,
-to wake the application up. A ``WebSocket`` is opening until it tells
-``Event::Opened``.
+to wake the application up. A ``WebSocket`` is opening until it calls
+``inbox.opened()``. In ``poll`` it hands each binary message to
+``inbox.frame``, as received; it splits and reads nothing.
 
 In blip, the ``Connections`` of the workbench hold the ``WebSocket`` sources,
-show their list from the status chip and pass what they receive to the
-session. An application without the workbench adds its sources to the session
-itself.
+show their list from the status chip and poll them through the session with
+``Connections::receive(&mut session, now)``. An application without the
+workbench adds its sources to the session itself.
 
 Writing a source
 ----------------
 
-The ``Simulator`` of ``kit/examples/dashboard.rs`` is a model. It queues the
-events, and ``poll`` hands them out one at a time:
+There are two kinds, by what the source has.
+
+**Bytes in the blip protocol**, e.g. a serial port that the application reads and
+deframes itself, hand them over as they are:
+
+.. code-block:: rust
+
+   struct Serial {
+       port: Port,
+       opened: bool,
+   }
+
+   impl Source for Serial {
+       fn poll(&mut self, inbox: &mut Inbox<'_>) {
+           if !self.opened {
+               self.opened = true;
+               inbox.opened();
+           }
+           while let Some(frame) = self.port.read_frame() {
+               inbox.frame(&frame);
+           }
+       }
+
+       fn send(&mut self, request: &proto::Request) {
+           // a source without a way back leaves this empty
+       }
+   }
+
+**Data of its own**, e.g. a simulation or a sensor the application reads, hand
+over typed, without encoding it and without building a protocol message:
+
+.. code-block:: rust
+
+   use blip_kit::store::Times;
+   use blip_kit::store::session::Session;
+
+   let mut session = Session::recording();
+   let mut inbox = session.inbox("sim", 0.0);
+   inbox.opened();
+   inbox.sample(1_000, "motor.speed", 3.2);
+   inbox.samples("motor.current", Times::Period { timestamp: 2_000, period: 1_000 }, [0.5, 0.6]);
+   inbox.log(3_000, "motor", 2, "started");
+
+``Session::inbox(source, now)`` gives an inbox without a ``Source`` to poll, for
+an application that has its data at hand. A ``Source`` gets its inbox in
+``poll``.
+
+The ``Simulator`` of ``kit/examples/dashboard.rs`` is a model of the second
+kind. Its ``poll`` runs the simulation and hands over what happened:
 
 .. code-block:: rust
 
    impl Source for Simulator {
-       fn poll(&mut self) -> Option<Event> {
+       fn poll(&mut self, inbox: &mut Inbox<'_>) {
            if self.sent_until.is_none() {
                self.sent_until = Some(self.clock.get());
-               self.describe();
-               return Some(Event::Opened);
+               inbox.opened();
+               self.describe(inbox);
            }
-           if self.queue.is_empty() {
-               self.run();
+           self.run(inbox);
+           for answer in self.answers.drain(..) {
+               match answer {
+                   Answer::Log {
+                       timestamp,
+                       level,
+                       text,
+                   } => inbox.log(timestamp, "log/tanks", level, &text),
+                   Answer::Result(result) => inbox.action_result(&result),
+               }
            }
-           self.queue.pop_front()
        }
 
        fn send(&mut self, request: &proto::Request) {
@@ -102,23 +176,24 @@ events, and ``poll`` hands them out one at a time:
                "drain" => self.drain(&invocation.args),
                other => Err(format!("there is no action {other}")),
            };
-           self.tell(proto::Message::ActionResult(proto::ActionResult {
+           self.answers.push(Answer::Result(proto::ActionResult {
                id: invocation.id,
                result,
            }));
        }
    }
 
-* The first ``poll`` says what the target is: ``describe`` queues a ``Hello``,
-  the ``TraceMetadata`` of each trace and the ``Actions`` it offers, then it
-  returns ``Event::Opened``. What a target says once, the session keeps as the
-  description of the source.
-* Each later ``poll`` runs the simulation up to the time of the clock and
-  queues a ``Sample`` of each tank for every period that passed. ``tell``
-  encodes a message with ``Event::message`` and queues it.
-* ``send`` carries out the invocation and answers with an ``ActionResult`` that
-  carries the id of the invocation, which the invoker matches to the
-  invocation.
+* The first ``poll`` opens the source, then ``describe`` says what the target
+  is: ``inbox.hello``, ``inbox.metadata`` for each trace and ``inbox.actions``.
+  What a target says once, the session keeps as the description of the source.
+* Each ``poll`` runs the simulation up to the time of the clock and hands over
+  ``inbox.sample(timestamp, path, level)`` of each tank for every period that
+  passed, and ``Answer::Log`` when a tank is full. ``Answer`` is a private enum of the
+  example: ``Log { timestamp, level, text }`` or ``Result(proto::ActionResult)``.
+* ``send`` carries out the invocation and queues an ``Answer::Result`` with an ``ActionResult`` that
+  carries the id of the invocation, which the invoker matches to the invocation.
+  The next ``poll`` hands it over with ``inbox.action_result``, and the logs
+  with ``inbox.log``. The example builds no protocol message.
 
 The simulator reads its time from a clock the application sets each frame
 (``Rc<Cell<f64>>``), not from the system, so that it runs the same natively and
@@ -128,9 +203,11 @@ instead of catching up.
 The session
 -----------
 
-``Session`` has three public fields: ``store`` (a ``MemoryStore``),
-``invoker`` and ``recording``. It does what happens each frame apart from the
-GUI.
+``Session<S>`` works with any store ``S`` that takes input and answers queries
+(``Ingest + Store``, see :doc:`stores`); the default is the ``MemoryStore``. It
+has four public fields: ``store``, ``recorder`` (what writes the recording file
+from what arrives), ``invoker`` and ``recording`` (whether samples are kept). It
+does what happens each frame apart from the GUI.
 
 .. list-table::
    :header-rows: 1
@@ -138,8 +215,9 @@ GUI.
 
    * - Call
      - What it does
-   * - ``Session::default()``, ``Session::recording()``
-     - A new session. The second keeps the samples from the start, for an
+   * - ``Session::default()``, ``Session::recording()``, ``Session::new(store)``
+     - A new session over a ``MemoryStore``, or over the store of the
+       application. ``recording()`` keeps the samples from the start, for an
        application without a record button.
    * - ``add_source(name, source)``
      - Adds a source. Its messages are kept under ``name`` and its actions are
@@ -153,19 +231,24 @@ GUI.
    * - ``send_invocations()``
      - After the widgets: sends what they queued.
    * - ``take_notices()``
-     - What to tell the user: what went wrong in the store, and sources that
-       closed or failed.
-   * - ``receive_frame(source, frame, now)``, ``receive(source, message, now)``
-     - Applies a frame or a message that did not come from a source of the
-       session, e.g. of an opened file.
+     - What to tell the user: what went wrong in the store, messages that could
+       not be read and sources that closed or failed.
+   * - ``inbox(source, now)``
+     - An inbox to hand over messages without a source to poll, see above.
+   * - ``poll_source(name, source, now, fresh_when_opened)``
+     - Polls one source through an inbox and returns a ``Polled``: the
+       ``SourceEvent`` s (opened, hello, closed, failed), the number of messages
+       and whether the source opened first and started afresh. For an
+       application that keeps its sources itself, as blip does through its
+       ``Connections``.
    * - ``first_opened()``
      - Tells that a source opened while no other was open. Starts afresh unless
        recording. ``update`` calls it itself.
    * - ``set_recording(recording, connected)``
      - Starts or stops recording, see below.
-   * - ``clear_data()``, ``start_fresh(store)``
-     - Drops the data and the descriptions are kept, or replaces the store, e.g.
-       with that of an opened recording.
+   * - ``clear_data()``, ``start_fresh(store, recorder)``
+     - Drops the data and keeps the descriptions, or replaces the store and the
+       recorder, e.g. with those of an opened recording.
    * - ``take_requests()``, ``update_invoker(connected, now)``
      - What ``send_invocations`` and ``update`` do, in parts, for an
        application that sends the requests itself, as blip does through its
@@ -174,10 +257,19 @@ GUI.
 Recording
 ---------
 
-Samples are kept only while recording; those that arrive otherwise are dropped.
-What a target says once or seldom, its hello, its trace metadata and its
-actions, is kept either way. A session that is not recording still shows the
-actions and readbacks. ``Session::recording()`` records from the start.
+Samples are kept only while recording; of those that arrive otherwise, only the
+latest value of each path is kept, for the readbacks of actions. What a target
+says once or seldom, its hello, its trace metadata and its actions, is kept
+either way. A session that is not recording still shows the actions and
+readbacks. ``Session::recording()`` records from the start.
+
+The ``recorder`` of the session encodes what arrives, as it arrives, for the
+recording file: ``session.recorder.to_file()`` is the file, and
+``session.recorder.messages()`` how many messages it holds. It is beside the
+store, not in it, so a store of the application needs nothing for it. The file
+holds the same as was received, not the same bytes: see
+:doc:`/reference/protocol`. A message the library cannot read is kept in it as it
+arrived.
 
 ``set_recording(true, connected)`` starts a recording only while a source is
 open, and clears the data first. It returns whether one started, e.g. to follow

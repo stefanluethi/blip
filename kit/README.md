@@ -7,7 +7,7 @@ own, read the data in the application itself, or keep it in a store of your own.
 
 | Part | Feature | What it has |
 |------|---------|-------------|
-| `store` | always | The `Store` trait the widgets read through and the in-memory `MemoryStore`; the `Source` trait for where the messages come from; the `Session` that receives and sends each frame; recording files; the invoker of actions. No GUI. |
+| `store` | always | The `Store` trait the widgets read through and the in-memory `MemoryStore`; the typed `Ingest` entry of a store; the `Source` trait for where the messages come from, which hand them to an `Inbox`; the `Session` that receives and sends each frame and holds the `Recorder`; recording files; the invoker of actions. No GUI. |
 | `store::websocket` | `websocket` (default) | The WebSocket source, to connect to an outpost or a target. |
 | `widgets` | `widgets` (default) | The time range with its controls and the timeline; the views: plot, states, table, XY plot, distribution, heatmap, log table and actions; the registry of the view types an application adds; the theme. |
 | `workbench` | `workbench` | The layout of views the user arranges, the presets, the connections, the toasts and the file dialogs: what blip is made of. |
@@ -22,7 +22,8 @@ use blip_kit::widgets::time::TimeRange;
 use blip_kit::widgets::view::{self, plot::Plot, ViewContext, Viewable as _};
 
 let mut session = Session::recording();
-session.add_source("target", my_source); // anything that implements `Source`
+session.add_source("target", my_source); // anything that implements `Source`: it hands bytes
+                                          // in the blip protocol or typed values to an `Inbox`
 let mut time = TimeRange::default();
 let mut plot: Plot = view::showing(["motor/rpm"]);
 

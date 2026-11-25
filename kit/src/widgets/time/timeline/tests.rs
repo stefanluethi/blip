@@ -15,7 +15,7 @@ fn harness() -> Harness<'static, State> {
 fn harness_until(last: u64) -> Harness<'static, State> {
     let mut model = MemoryStore::default();
     let mut receive = |message: proto::Message| {
-        model.receive("", &serde_cbor_2::to_vec(&message).unwrap());
+        crate::store::testing::receive(&mut model, "", &message);
     };
     for second in 0..=last {
         receive(proto::Message::Sample(proto::Sample {
@@ -268,17 +268,16 @@ fn showing_all_data_rescales_in_steps() {
 #[test]
 fn the_filling_newest_bin_does_not_rescale_the_bars() {
     let value = |seconds: f64| {
-        serde_cbor_2::to_vec(&proto::Message::Sample(proto::Sample {
+        proto::Message::Sample(proto::Sample {
             timestamp: (seconds * 1.0e9).round() as u64,
             path: "a".to_owned(),
             value: proto::Data::Float(1.0),
-        }))
-        .unwrap()
+        })
     };
     let mut model = MemoryStore::default();
     // 10 values a second for 10 seconds, in bins of a second
     for tenth in 0..100 {
-        model.receive("", &value(f64::from(tenth) / 10.0));
+        crate::store::testing::receive(&mut model, "", &value(f64::from(tenth) / 10.0));
     }
     let scale = Scale {
         x: egui::Rangef::new(0.0, 11.0 * MIN_BIN_WIDTH),
@@ -296,7 +295,11 @@ fn the_filling_newest_bin_does_not_rescale_the_bars() {
 
     // a burst early in the newest bin neither looks large nor rescales the others
     for thousandth in 0..30 {
-        model.receive("", &value(10.0 + f64::from(thousandth) / 1000.0));
+        crate::store::testing::receive(
+            &mut model,
+            "",
+            &value(10.0 + f64::from(thousandth) / 1000.0),
+        );
     }
     let bins = Bins::of(&model, &time(10.029), &scale);
     assert_eq!(bins.newest_bin(), Some(10));

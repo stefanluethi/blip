@@ -636,7 +636,7 @@ fn add_log(model: &mut MemoryStore, path: &str) {
         level: 2,
         message: "hi".to_owned(),
     });
-    model.receive("", &serde_cbor_2::to_vec(&record).unwrap());
+    crate::store::testing::receive(model, "", &record);
 }
 
 #[test]

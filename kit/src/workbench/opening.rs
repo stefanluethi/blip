@@ -1,6 +1,7 @@
 //! Opening a recording a part at a time, across frames, so that the view stays
 //! responsive while a long one is read and shows how far it got.
 
+use crate::store::session::Session;
 use crate::store::{MemoryStore, recording};
 
 /// How long the messages of a recording are read for in a frame, in seconds, leaving
@@ -39,10 +40,7 @@ impl Opening {
     /// Reads the next part of the recording while `more` tells there is time for more.
     /// Returns whether all is read.
     pub fn read_while(&mut self, more: impl FnMut() -> bool) -> bool {
-        let store = &mut self.store;
-        self.reader.read(more, |source, frame| {
-            store.receive(source, frame);
-        })
+        self.reader.read(more, &mut self.store)
     }
 
     /// How much of the file is read, from 0 to 1.
@@ -50,10 +48,16 @@ impl Opening {
         self.reader.progress()
     }
 
-    /// The store of the messages read, and what was found in the file.
-    pub fn finish(self) -> (MemoryStore, recording::Loaded) {
-        let loaded = self.reader.loaded();
-        (self.store, loaded)
+    /// Puts what was read into `session`, which starts afresh with it: the store of the
+    /// messages, the recorder that saves the file as it was opened, and the notices of
+    /// the opening. Returns what was found in the file.
+    pub fn finish(self, session: &mut Session) -> recording::Loaded {
+        let (recorder, loaded) = self.reader.finish();
+        session.start_fresh(self.store, recorder);
+        for (level, text) in &loaded.notices {
+            session.notify(*level, text.clone());
+        }
+        loaded
     }
 }
 

@@ -98,24 +98,32 @@ Structure
        rules of the session (a recording starts only while connected and
        clears the data; the first connection to open starts afresh).
    * - ``store``
-     - What was received. ``store.rs`` is the ``MemoryStore``, which applies
-       the messages, and the ``Level`` of the notices for the user. Its
-       parts: ``traces`` (with ``numbers``, the columns of numbers),
-       ``logs``, ``actions`` (the announced actions and the ``Invoker``) and
-       ``recording`` (the received messages, and reading and writing recording
-       files); ``cbor`` and ``decode`` read the messages; ``sorted`` holds the
-       searches of ascending timestamps; ``time_base`` what the timestamps
-       count from, with ``seconds_since`` and ``timestamp_at`` (re-exported by
-       ``widgets::time``).
+     - What was received. ``store.rs`` is the ``MemoryStore``, which takes
+       typed input and keeps it, and the ``Level`` of the notices for the user.
+       Its public parts: ``ingest`` (the ``Ingest`` trait with its ``Input``
+       and ``Times``: what puts data into a store), ``value`` (the ``Value`` of
+       a sample, ``Rows`` and ``AsValue``), ``traces`` (with ``numbers``, the
+       columns of numbers), ``logs``, ``actions`` (the announced actions and
+       the ``Invoker``), ``recording`` (the ``Recorder`` that writes what
+       arrives to a recording file, and the reader of recording files) and
+       ``time_base`` (what the timestamps count from, with ``seconds_since``
+       and ``timestamp_at``, re-exported by ``widgets::time``). Its private
+       parts: ``cbor`` (the CBOR reader and writer), ``protocol`` (the parser
+       of the messages, the only one in front of the store), ``said`` (what
+       the parser makes of a message), ``flatten`` (a value into the leaves
+       the traces hold) and ``growing`` (the columns); ``sorted`` holds the
+       searches of ascending timestamps and is private to the crate.
    * - ``store/query.rs``
      - The ``Store`` trait all widgets read through (as ``&dyn Store``), the
        ``Window`` a widget asks for and the ``Loaded`` answer. See
        :doc:`/library/stores`.
    * - ``store/source.rs``, ``store/websocket.rs``
-     - The ``Source`` trait with its ``Event``\ s, and the ``WebSocket`` source
-       on ``ewebsock``. See :doc:`/library/sources`.
+     - The ``Source`` trait and the ``Inbox`` a source hands its messages to,
+       and the ``WebSocket`` source on ``ewebsock``. See
+       :doc:`/library/sources`.
    * - ``store/session.rs``
-     - The ``Session``: the ``MemoryStore``, the ``Invoker``, whether
+     - The ``Session``: the store (any ``Ingest + Store``, the
+       ``MemoryStore`` by default), the ``Recorder``, the ``Invoker``, whether
        recording and the sources, and what happens each frame apart from the
        GUI.
    * - ``widgets/time.rs``, ``widgets/time/timeline.rs``
@@ -139,9 +147,10 @@ Structure
        ``PresetsFile`` format and the ``Storage`` trait they are kept in.
    * - ``workbench/connections.rs``
      - The list of connections, opened from the status chip in the menu bar,
-       and one ``WebSocket`` source per open address. Splits frames into
-       messages and passes them on with the name of their connection; reads
-       the ``Hello`` to show it; sends requests.
+       and one ``WebSocket`` source per open address. Polls the sources
+       through the session (``Session::poll_source``), which reads their frames;
+       keeps the ``Hello`` of each from the events of the poll to show it;
+       sends requests.
    * - ``workbench/layout``
      - The ``Layout``: an ``egui_tiles`` tree of views, the menus to add and
        delete them in the center, the properties panel (``properties.rs``), dragging in
@@ -155,12 +164,15 @@ Structure
 
 The modules without a crate before them are in ``kit/src``.
 
-The ``blip-proto`` crate holds the wire types. Values and log records, which arrive
-all the time, are read by the store's own CBOR reader (``store/cbor.rs`` and
-``store/decode.rs``) in one pass: it borrows the strings of the frame and
-flattens a value into its leaves, the fields of records and their arrays of
-numbers, into a buffer kept for the next value. The other messages are decoded
-with ``serde_cbor_2``.
+The ``blip-proto`` crate holds the wire types. The store takes typed input and
+reads no CBOR. CBOR ends at the parser (``store/protocol.rs``) that the inbox of
+a source holds. Values and log records, which arrive all the time, it reads with
+the store's own CBOR reader (``store/cbor.rs``) in one scan of the frame: it
+borrows the strings of the frame and writes a value into a ``Value``, a tape of
+items in a buffer that is kept for the next value. The store then flattens it
+(``store/flatten.rs``) into its leaves, the fields of records and their arrays of
+numbers. The other messages are decoded with ``serde_cbor_2``. The same reader
+and a writer next to it serve the recorder.
 
 The frame
 ---------
@@ -172,19 +184,21 @@ draws as often as data arrives, not more.
 .. figure:: /diagrams/blip-frame.svg
    :target: ../_images/blip-frame.svg
    :class: diagram
-   :alt: logic(): receive from the connections, split frames, apply to the
-         state and store, pass answers to the invoker, update the invoker,
-         open files. ui(): menu, update the time range, bottom, left and right
+   :alt: logic(): poll the connections through the session, parse the frames, route
+         what arrives to the recorder, the store and the invoker, update the
+         invoker, open files. ui(): menu, update the time range, bottom, left and right
          panels, the views, then send the invocations.
 
    What happens in a frame.
 
-* ``logic`` drains the connections. Each message goes through ``State::apply`` to
-  ``Session::receive``, which gives it to ``MemoryStore::receive`` (while
-  recording) or ``MemoryStore::receive_unrecorded`` (otherwise: only the
-  hello, metadata, actions and answers). Answers to invocations go to the
-  invoker. ``Session::update_invoker`` then tells the invoker which
-  connections are open.
+* ``logic`` polls the connections: ``Connections::receive`` gives the session
+  each socket to poll (``Session::poll_source``), which hands it an inbox. The
+  session routes each message the inbox reads, see *Receiving*: to the
+  recorder, the store (while recording, or only the latest value of a sample
+  otherwise) and, for answers to invocations, the invoker. The first
+  connection to open starts afresh, unless recording.
+  ``Session::update_invoker`` then tells the invoker which connections are
+  open.
 * ``ui`` first updates the time range from the store (the span of the data;
   playing moves the window on), then draws the panels and the views, which
   read the store and may change the time range and queue invocations.
@@ -200,7 +214,7 @@ polling its sources itself, see :doc:`/library/app`: ``Session::update``, then
 ``TimeRange::update``, then the widgets, then ``Session::send_invocations``.
 blip holds its ``WebSocket`` sources in the ``Connections`` of the workbench
 instead, which add the list and the user's choices of connections, so it
-receives from them and passes each message to the session.
+polls them through the session.
 
 What a frame costs follows what is shown, not how much data there is:
 
@@ -231,34 +245,41 @@ Receiving
 
 What happens to a message on its way into the store:
 
-* **Sources and frames.** A source is a ``Source`` (see
+* **Sources and the inbox.** A source is a ``Source`` (see
   :doc:`/library/sources`), in blip one connection, named in the connections.
-  A frame is one ``Event::Frame``, e.g. one binary WebSocket message, holding
-  one ``Message`` or several as a CBOR sequence (RFC 8742), e.g. a batch of
-  sonde passed through by the outpost. ``connections.rs`` splits frames into
-  messages before anything else and passes each on with the name of its
-  source; ``Session::update`` does the same (``Session::receive_frame``) for
-  the sources added to it. So everything later deals with single messages.
+  When polled it gets an ``Inbox`` and hands over what it has: a frame
+  (``Inbox::frame``), e.g. one binary WebSocket message holding one ``Message``
+  or several as a CBOR sequence (RFC 8742), e.g. a batch of sonde passed
+  through by the outpost, or typed data (``sample``, ``samples``, ``log``,
+  ``metadata``, ``actions``, ``hello``, ``action_result``). The inbox holds the
+  parser, so a source holds none: it reads a frame message by message in one
+  scan, so everything later deals with single messages. Whatever the way in,
+  the session's router gets the same thing for it, which it gives to the
+  recorder, to the invoker (answers) or to the store as an ``Input``.
 * **Paths.** Paths are global, not prefixed with the source. Record fields
   are joined to the path of their record with ``.`` (``imu.acc``), array
   elements written with indices (``imu.acc[0]``); ``fields_start`` marks where
   the field names begin in the path, so the tree can fold a record.
 * **Messages.** A ``Sample`` is applied as it comes. A ``Samples`` block is
-  decoded by ``decode.rs`` in two passes over the frame: the first reads its
-  fields, checks each value and collects the timestamps, then
-  ``proto::SampleTimes::new`` checks the form of the times (the one function
-  proto and blip share); only if all passes is any sample applied, one by
-  one as a ``Sample`` would be. So a malformed block is dropped whole, with a
-  warning in the log and an error notice, and the other messages of the frame
-  are kept. The old names ``Value`` and ``ValueMetadata`` are read as
-  ``Sample`` and ``TraceMetadata``. The store collects the notices
-  (``MemoryStore::take_notices``, without repeats), ``Session::take_notices``
-  adds those of the sources; ``App::logic`` turns them into
-  toasts, also those of an opened recording. A block counts once for the
-  rate of a readback.
-* **Hello.** ``connections.rs`` reads the ``Hello`` of a frame to show it and
-  passes it on; the store keeps it as a description of its source and takes
-  the clock from it.
+  read in one pass: each value goes into the rows of the block while its
+  timestamps are collected, then the parser checks the form of the borrowed
+  times itself (``block_times`` in ``kit/src/store/protocol.rs``), with the same
+  rules and error texts as ``proto::SampleTimes::new``, so that reading a block
+  allocates nothing; only if all passes is the block applied. So a malformed
+  block is dropped whole, with a warning in the log and an error notice, and
+  the other messages of the frame are kept. CBOR the protocol does not allow
+  inside a value (a byte string, a tag, an indefinite-length array) makes the
+  whole message unreadable, not only that value. A message that cannot be read
+  is not shown; a recording keeps its bytes. The old names ``Value`` and
+  ``ValueMetadata`` are read as ``Sample`` and ``TraceMetadata``. The store
+  collects the notices (``Ingest::take_notices``, without repeats),
+  ``Session::take_notices`` adds those of the sources and of messages that could
+  not be read; ``App::logic`` turns them into toasts, also those of an opened
+  recording. A block counts once for the rate of a readback.
+* **Hello.** The parser reads the ``Hello`` of a frame like any message; the
+  inbox also reports it as an event of the poll, so ``connections.rs`` can show
+  it. The store keeps it as a description of its source and takes the clock from
+  it (``Input::Clock``).
 * **Kinds.** Integers are stored as ``i64``, as ``u64`` once one is above
   ``i64::MAX``, and the column switches to ``f64`` with the first float.
   Arrays are stored row-major with their shape. A sample of an incompatible
@@ -276,7 +297,7 @@ What happens to a message on its way into the store:
   dropped with a single warning, as it would land decades away from the
   others. An epoch ``Hello`` while the base is time since boot removes the
   samples and log records already received (``MemoryStore::drop_samples``, keeping
-  metadata, actions, descriptions and the recording) and sets the base to UTC;
+  metadata, actions and the latest values) and sets the base to UTC;
   later boot samples are dropped. The warning that connections send different
   clocks is given once per store.
 * **Metadata** comes from ``TraceMetadata`` and is kept by path in ``Traces``,
@@ -294,11 +315,14 @@ What happens to a message on its way into the store:
   wrote one is in its path, by convention ``log/<part>``. A ``component`` key
   of an old recording is ignored when decoding.
 * **Recording versus receiving.** Samples are kept only while recording.
-  What a target sends only once or seldom -- its hello, its trace metadata and its actions -- is
-  kept regardless, as the latest **description** per source and path.
-  Clearing the data, or starting a recording, re-applies these descriptions,
-  so a new recording starts with them and a saved recording is complete on
-  its own.
+  While not, the parser reads a sample message only up to its latest value,
+  which the store keeps for the readbacks of actions (``Input::Latest``), and
+  skips log records; a source does nothing for this. What a target sends only
+  once or seldom -- its hello, its trace metadata and its actions -- is
+  kept regardless, as the latest **description** per source and path, in the
+  recorder. Clearing the data, or starting a recording, writes these
+  descriptions first, so a new recording starts with them and a saved recording
+  is complete on its own.
 * **Actions.** A source announces all its actions in one ``Actions`` message;
   a new list replaces the old one of that source. Several sources may announce
   an action at the same path; blip keeps each, and an actions view chooses the
@@ -315,7 +339,7 @@ two points per pixel of its width, tooltips and tables ask ``Window::at(t)``,
 the trace tree and the checks of what a view can show of a kind ask
 ``Window::NONE``, the log table asks for all records. ``MemoryStore`` is the
 store of blip. It ignores the window and borrows its columns, so nothing is
-copied. The ``Session`` holds it and receives into it.
+copied. The ``Session`` holds it and feeds it through ``Ingest``.
 
 ``MemoryStore`` owns everything received since the data was last cleared:
 
@@ -337,12 +361,21 @@ copied. The ``Session`` holds it and receives into it.
   record put before others of its path changes the order ``Version`` of that
   path only. The timeline counts the records of all paths.
 * ``Actions``: the latest list of actions of each source.
-* ``Recording``: the received messages, with the source names written in
-  between where the source changes, compressed fast as they arrive, a gzip
-  member per 64 KiB, each a fraction of a millisecond of work, so the view
-  does not stutter; saving writes the members one after another as they are.
-* The **descriptions**: the latest hello, metadata and actions frame of each source,
-  re-applied by ``MemoryStore::clear``.
+* The **latest value** of each path, also while not recording.
+
+The ``Recorder`` is not in the store: the session holds it beside the store and
+gives it each message as it routes it. It encodes the message as it arrives
+(``recording.rs``, with the CBOR writer of ``cbor.rs``): integers in their
+shortest form, floats in the shortest of half, single and double precision that
+reads back the same, a block as a block, the old names ``Value`` and
+``ValueMetadata`` as ``Sample`` and ``TraceMetadata``, and the source names
+written in between where the source changes. Fields blip does not know in a
+message it can read are not kept. A message it cannot read is written as it
+arrived. The messages are compressed fast as they arrive, a gzip member per
+64 KiB, each a fraction of a millisecond of work, so the view does not stutter;
+saving writes the members one after another as they are. It also keeps the
+**descriptions**: the latest hello, metadata and actions of each source, with
+which a recording that starts later begins.
 
 Two ``Version`` counters let views and the timeline cache work: the
 ``paths_version`` changes when a trace, the first log record of a path or a
@@ -350,9 +383,13 @@ list of actions arrives (views
 expand their wildcards only then), the ``samples_version`` when a value or log
 record arrives.
 
-Opening a recording file creates a fresh ``MemoryStore`` and feeds it the file's
-messages with ``MemoryStore::receive``, exactly as if they had been received;
-``Session::start_fresh`` then puts it in place of the old one.
+Opening a recording file creates a fresh ``MemoryStore`` and reads the file into
+it through ``Ingest`` with a ``FileReader``, which reads the file's messages with the
+same parser as those of a frame. ``FileReader::finish`` gives the
+``Recorder`` of the file, which holds it as it was opened, and
+``Session::start_fresh(store, recorder)`` puts both in place of the old ones.
+Saving an opened recording again writes the file as it was opened, byte for byte,
+with its version, until a new recording starts.
 
 The time range
 --------------

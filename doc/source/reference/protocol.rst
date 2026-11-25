@@ -174,7 +174,9 @@ decides the kind of the value:
      - ``null``
      - A sample without a value, e.g. a failed measurement. Plots show a gap.
 
-Byte strings, maps with other keys and other simple values are rejected.
+Byte strings, maps with other keys and other simple values are outside the
+data model: a message with such a value is unreadable as a whole. blip does not
+show it and keeps it in a recording.
 
 The kind of a trace is set by its first value other than ``null``. Integer
 and float are compatible, a trace switches to float when its first float
@@ -341,8 +343,9 @@ without anything around them, compressed with gzip:
    Layout of a recording file.
 
 #. A header, the map ``{"format": "blip recording", "version": 3}``.
-#. The ``Message`` of each binary frame, byte for byte as received, in the
-   order of arrival.
+#. The ``Message`` of each binary frame, in the order of arrival. The outpost and
+   sonde write them byte for byte as received; blip writes each message again
+   (see below).
 #. Since version 2, a text string before the messages of another connection
    with the name of that connection, see :doc:`/blip/connecting`. Messages are maps, so
    a name cannot be taken for a message. Messages before the first name, and
@@ -368,7 +371,7 @@ without anything around them, compressed with gzip:
 Each writer keeps to a layout:
 
 * **blip** writes version 3 in the layout of version 2, with connection
-  names, gzip-compressed.
+  names, gzip-compressed; a file it opened and saves again keeps its version.
 * The **outpost** writes version 3 in the layout of version 1, without names,
   gzip-compressed.
 * **sonde** (``FileSink``) writes version 3 in the layout of version 1,
@@ -378,8 +381,17 @@ Each writer keeps to a layout:
 blip and the outpost read versions 1 to 3 and refuse a newer one; the outpost
 replays the messages of all connections of a file without their names.
 
-As the frames are stored as received, a recording keeps everything that was
-sent, also messages blip could not read. Appending a frame is writing its
+The outpost and sonde store the frames as received, so a recording of theirs
+keeps everything that was sent. blip writes what it received again, the format
+and the version unchanged: integers in their shortest form and floats in the
+shortest of half, single and double precision that reads back the same value, so
+a file does not grow, a block of samples as a block, and the old names ``Value``
+and ``ValueMetadata`` as ``Sample`` and ``TraceMetadata``. Of a message it can
+read, fields it does not know are not kept. A message it cannot read, e.g. of a
+newer protocol or a malformed block, is kept as it arrived. A recording that
+starts later begins with the latest ``Hello``, actions and trace metadata of
+each connection. A file that was opened and is saved again is written as it was
+opened, with its version. Appending a frame is writing its
 bytes, so a recording that was cut off, e.g. when the outpost was killed, is
 read up to the last whole message. Readers accept files of several gzip
 members one after another, as appending to a gzip file creates them, and

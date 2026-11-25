@@ -1,6 +1,8 @@
-//! A small CBOR reader for what blip receives: it splits CBOR sequences into their
-//! items and reads values without allocating, borrowing strings from the bytes.
+//! A small CBOR reader and writer for what blip receives and records: it splits CBOR
+//! sequences into their items, reads values without allocating, borrowing strings
+//! from the bytes, and writes messages in the shortest form.
 
+use super::value::{Node, ValueRef};
 use std::fmt;
 
 /// Why the bytes could not be read, and where.
@@ -224,6 +226,7 @@ fn f16_to_f64(bits: u16) -> f64 {
 
 /// The items of the CBOR sequence (RFC 8742) `bytes`, each as its bytes, e.g. the
 /// messages of a frame. Ends after the first item that cannot be read, with its error.
+#[cfg(test)]
 pub fn items(bytes: &[u8]) -> impl Iterator<Item = Result<&[u8]>> {
     let mut reader = Reader::new(bytes);
     let mut failed = false;
@@ -243,67 +246,139 @@ pub fn items(bytes: &[u8]) -> impl Iterator<Item = Result<&[u8]>> {
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// Writes CBOR into a buffer, in the shortest form that reads back as the same value,
+/// without allocating beyond the buffer. For what blip records: the bytes it writes for
+/// a message are those of serde_cbor_2 for the same message.
+pub(crate) struct Writer<'o> {
+    out: &'o mut Vec<u8>,
+}
 
-    fn cbor(value: &impl serde::Serialize) -> Vec<u8> {
-        serde_cbor_2::to_vec(value).unwrap()
+impl<'o> Writer<'o> {
+    /// Writes after the bytes in `out`.
+    pub(crate) fn new(out: &'o mut Vec<u8>) -> Self {
+        Self { out }
     }
 
-    #[test]
-    fn heads_of_all_kinds_are_read() {
-        let read = |bytes: &[u8]| Reader::new(bytes).head().unwrap();
-        assert_eq!(read(&cbor(&5u8)), Head::Uint(5));
-        assert_eq!(read(&cbor(&u64::MAX)), Head::Uint(u64::MAX));
-        assert_eq!(read(&cbor(&-5i8)), Head::Negative(4));
-        assert_eq!(read(&cbor(&1.5f64)), Head::Float(1.5));
-        assert_eq!(read(&cbor(&0.1f32)), Head::Float(f64::from(0.1f32)));
-        assert_eq!(read(&cbor(&0.1f64)), Head::Float(0.1));
-        assert_eq!(read(&[0xf9, 0xc4, 0x00]), Head::Float(-4.0));
-        assert_eq!(read(&[0xf9, 0x00, 0x01]), Head::Float(2f64.powi(-24)));
-        assert_eq!(read(&cbor(&true)), Head::Bool(true));
-        assert_eq!(read(&[0xf6]), Head::Null);
-        assert_eq!(read(&cbor(&"ab")), Head::Text(Some(2)));
-        assert_eq!(read(&[0x9f]), Head::Array(None));
-        assert!(Reader::new(&[0x1c]).head().is_err());
+    /// The head of major type `major` with `value`, in as few bytes as it takes.
+    fn head(&mut self, major: u8, value: u64) {
+        let major = major << 5;
+        match value {
+            0..=23 => self.out.push(major | value as u8),
+            24..=0xff => self.out.extend_from_slice(&[major | 24, value as u8]),
+            0x100..=0xffff => {
+                self.out.push(major | 25);
+                self.out.extend_from_slice(&(value as u16).to_be_bytes());
+            }
+            0x1_0000..=0xffff_ffff => {
+                self.out.push(major | 26);
+                self.out.extend_from_slice(&(value as u32).to_be_bytes());
+            }
+            _ => {
+                self.out.push(major | 27);
+                self.out.extend_from_slice(&value.to_be_bytes());
+            }
+        }
     }
 
-    #[test]
-    fn strings_are_borrowed() {
-        let bytes = cbor(&"motor/rpm");
-        assert_eq!(Reader::new(&bytes).str().unwrap(), "motor/rpm");
-        assert!(Reader::new(&[0x62, 0xff, 0xfe]).str().is_err());
-        assert!(Reader::new(&[0x65, b'a']).str().is_err());
-        // a length beyond the bytes, also beyond 32 bits
-        let huge = [0x7b, 0, 0, 0, 1, 0, 0, 0, 5, b'a'];
-        assert!(Reader::new(&huge).str().is_err());
-        assert!(Reader::new(&huge).skip().is_err());
+    pub(crate) fn uint(&mut self, v: u64) {
+        self.head(0, v);
     }
 
-    #[test]
-    fn a_sequence_is_split_into_its_items() {
-        let a = cbor(&proto::Message::Sample(proto::Sample {
-            timestamp: 1,
-            path: "cpu".to_owned(),
-            value: proto::Data::Array(vec![proto::Data::Float(1.5), proto::Data::Null]),
-        }));
-        let b = cbor(&"source");
-        // indefinite lengths, as other encoders may write them
-        let c = [0x9f, 0x01, 0x7f, 0x61, b'x', 0xff, 0xff];
-        let all = [&a[..], &b, &c].concat();
-        let items: Vec<&[u8]> = items(&all).collect::<Result<_>>().unwrap();
-        assert_eq!(items, [&a[..], &b[..], &c[..]]);
-        assert_eq!(super::items(&[]).count(), 0);
+    /// An integer, as an unsigned one if it is not negative.
+    pub(crate) fn int(&mut self, v: i64) {
+        match u64::try_from(v) {
+            Ok(v) => self.head(0, v),
+            Err(_) => self.head(1, !(v as u64)),
+        }
+    }
 
-        // the items end with the first that cannot be read
-        let cut = &all[..all.len() - 1];
-        let read: Vec<_> = super::items(cut).collect();
-        assert_eq!(read.len(), 3);
-        assert!(read[2].is_err());
-        let broken = [&a[..], &[0xff], &b[..]].concat();
-        let read: Vec<_> = super::items(&broken).collect();
-        assert_eq!(read.len(), 2);
-        assert!(read[1].is_err());
+    /// A float in half, single or double precision, the first that holds it exactly.
+    /// A NaN is written as the half precision one.
+    pub(crate) fn float(&mut self, v: f64) {
+        if v.is_nan() {
+            self.out.extend_from_slice(&[0xf9, 0x7e, 0x00]);
+        } else if let Some(half) = half(v) {
+            self.out.push(0xf9);
+            self.out.extend_from_slice(&half.to_be_bytes());
+        } else if f64::from(v as f32).to_bits() == v.to_bits() {
+            self.out.push(0xfa);
+            self.out
+                .extend_from_slice(&(v as f32).to_bits().to_be_bytes());
+        } else {
+            self.out.push(0xfb);
+            self.out.extend_from_slice(&v.to_bits().to_be_bytes());
+        }
+    }
+
+    pub(crate) fn bool(&mut self, v: bool) {
+        self.out.push(if v { 0xf5 } else { 0xf4 });
+    }
+
+    pub(crate) fn null(&mut self) {
+        self.out.push(0xf6);
+    }
+
+    pub(crate) fn text(&mut self, v: &str) {
+        self.head(3, v.len() as u64);
+        self.out.extend_from_slice(v.as_bytes());
+    }
+
+    /// The head of an array of `len` elements, which the caller writes next.
+    pub(crate) fn array(&mut self, len: usize) {
+        self.head(4, len as u64);
+    }
+
+    /// The head of a map of `len` entries, which the caller writes next, key and value.
+    pub(crate) fn map(&mut self, len: usize) {
+        self.head(5, len as u64);
+    }
+
+    /// A value of the tape: a record is a map, an array an array.
+    pub(crate) fn value(&mut self, value: ValueRef<'_>) {
+        match value.node() {
+            Node::Null => self.null(),
+            Node::Bool(v) => self.bool(v),
+            Node::Uint(v) => self.uint(v),
+            Node::Int(v) => self.int(v),
+            Node::Float(v) => self.float(v),
+            Node::Text(v) => self.text(v),
+            Node::Array(elements) => {
+                self.array(elements.size_hint().0);
+                for element in elements {
+                    self.value(element);
+                }
+            }
+            Node::Record(fields) => {
+                self.map(fields.size_hint().0);
+                for (name, element) in fields {
+                    self.text(name);
+                    self.value(element);
+                }
+            }
+        }
     }
 }
+
+/// The bits of `value` as a half precision float, if it is exactly one. A NaN is not.
+fn half(value: f64) -> Option<u16> {
+    let bits = value.to_bits();
+    let sign = (bits >> 48) as u16 & 0x8000;
+    if value == 0.0 {
+        return Some(sign);
+    }
+    if value.is_infinite() {
+        return Some(sign | 0x7c00);
+    }
+    if value.abs() < 2f64.powi(-14) {
+        // a subnormal half: a whole multiple of 2^-24
+        let m = value.abs() * 2f64.powi(24);
+        return (m.fract() == 0.0 && m < 1024.0).then_some(sign | m as u16);
+    }
+    let exponent = (bits >> 52 & 0x7ff) as i32 - 1023;
+    let fraction = bits & ((1 << 52) - 1);
+    ((-14..=15).contains(&exponent) && fraction & ((1 << 42) - 1) == 0)
+        .then(|| sign | ((exponent + 15) as u16) << 10 | (fraction >> 42) as u16)
+}
+
+#[cfg(test)]
+mod tests;

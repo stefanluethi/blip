@@ -1,6 +1,6 @@
 //! The actions the targets announced, and the invocations blip sends to carry them out.
 
-use super::MemoryStore;
+use super::query::Store;
 use proto::{ActionDescriptor, ActionResult, Data, Invocation, Request};
 use std::collections::{HashMap, HashSet};
 
@@ -289,7 +289,7 @@ impl Invoker {
     /// Takes the answer to an invocation received from the connection `source`, also
     /// after [`ANSWER_TIMEOUT`]. Answers from another connection than the one the
     /// invocation was sent to are ignored.
-    pub fn receive(&mut self, source: &str, result: &ActionResult, now: f64, model: &MemoryStore) {
+    pub fn receive(&mut self, source: &str, result: &ActionResult, now: f64, model: &dyn Store) {
         let from_outpost = self
             .pending
             .get(&result.id)

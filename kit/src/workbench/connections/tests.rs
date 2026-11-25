@@ -275,35 +275,56 @@ fn serve(path: &str, frame: Vec<u8>) -> String {
     address
 }
 
-/// What `connections` receive until `count` things arrived, or 5 s passed.
-fn receive_some(connections: &mut Connections, count: usize) -> Vec<String> {
-    let mut received = vec![];
+/// Polls `connections` through `session` until `count` messages arrived, or 5 s passed.
+/// Returns the messages and whether a poll started afresh.
+fn receive_some(
+    connections: &mut Connections,
+    session: &mut Session,
+    count: usize,
+) -> (usize, bool) {
+    let (mut messages, mut fresh) = (0, false);
     let start = std::time::Instant::now();
-    while received.len() < count && start.elapsed().as_secs() < 5 {
-        connections.receive(|r| {
-            received.push(match r {
-                Received::FirstOpened => "first opened".to_owned(),
-                Received::Message { source, message } => format!("{source} {message:?}"),
-            });
-        });
+    while messages < count && start.elapsed().as_secs() < 5 {
+        let polled = connections.receive(session, 0.0);
+        messages += polled.messages;
+        fresh |= polled.started_fresh;
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    received
+    (messages, fresh)
+}
+
+fn announce(path: &str) -> Vec<u8> {
+    serde_cbor_2::to_vec(&proto::Message::Actions(vec![proto::ActionDescriptor {
+        path: path.to_owned(),
+        description: String::new(),
+        params: vec![],
+        readback: None,
+        confirm: false,
+        enabled: true,
+        disabled_reason: None,
+    }]))
+    .unwrap()
 }
 
 #[test]
 fn the_first_connection_to_open_is_passed_on_before_its_messages() {
-    let mut connections = connections(&[&serve("a", vec![1]), &serve("b", vec![2])]);
+    let mut connections = connections(&[&serve("a", announce("x")), &serve("b", announce("y"))]);
+    let mut session = Session::default();
     let ctx = egui::Context::default();
     connections.apply(Action::Connect(0), &ctx);
-    assert_eq!(receive_some(&mut connections, 2), ["first opened", "a [1]"]);
+    assert_eq!(receive_some(&mut connections, &mut session, 1), (1, true));
+    assert!(session.store.actions.announced("a", "x").is_some());
     connections.apply(Action::Connect(1), &ctx);
-    assert_eq!(receive_some(&mut connections, 1), ["b [2]"]);
+    assert_eq!(receive_some(&mut connections, &mut session, 1), (1, false));
+    assert!(session.store.actions.announced("a", "x").is_some());
+    assert!(session.store.actions.announced("b", "y").is_some());
 
     connections.apply(Action::Disconnect(0), &ctx);
     connections.apply(Action::Disconnect(1), &ctx);
     connections.apply(Action::Connect(1), &ctx);
-    assert_eq!(receive_some(&mut connections, 2), ["first opened", "b [2]"]);
+    assert_eq!(receive_some(&mut connections, &mut session, 1), (1, true));
+    assert!(session.store.actions.announced("a", "x").is_none());
+    assert!(session.store.actions.announced("b", "y").is_some());
     assert!(connections.take_errors().is_empty());
 }
 
@@ -314,7 +335,7 @@ fn an_invalid_address_fails_to_connect() {
     // natively, the error arrives from the thread connecting
     let start = std::time::Instant::now();
     while !connections.sockets.is_empty() && start.elapsed().as_secs() < 5 {
-        connections.receive(|_| {});
+        connections.receive(&mut Session::default(), 0.0);
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert!(matches!(
@@ -401,7 +422,7 @@ fn a_hello_is_kept_and_replaced() {
         .with_size(egui::vec2(300.0, 200.0))
         .build_ui_state(
             |ui, connections: &mut Connections| {
-                connections.receive(|_| {});
+                connections.receive(&mut Session::default(), 0.0);
                 connections.ui(ui, false);
             },
             connections(&[&address]),
@@ -460,10 +481,11 @@ fn a_newer_protocol_is_warned_once_per_connect() {
     let mut old = hellos_frame(&[hello(1, None, None)]);
     old.extend(&sample);
     let ctx = egui::Context::default();
+    let mut session = Session::default();
 
     let mut connections = connections(&[&serve("a", frame), &serve("b", twice), &serve("c", old)]);
     connections.apply(Action::Connect(0), &ctx);
-    assert_eq!(receive_some(&mut connections, 3).len(), 3);
+    assert_eq!(receive_some(&mut connections, &mut session, 2).0, 2);
     let warning = "a sends protocol 2, blip reads up to 1. Update blip to see all of it.";
     assert_eq!(connections.take_warnings(), [warning]);
     let address = connections.connections[0].address.clone();
@@ -471,16 +493,16 @@ fn a_newer_protocol_is_warned_once_per_connect() {
     assert_eq!(connections.newer(), ["a: protocol 2 is newer than blip"]);
 
     connections.apply(Action::Connect(1), &ctx);
-    assert_eq!(receive_some(&mut connections, 3).len(), 3);
+    assert_eq!(receive_some(&mut connections, &mut session, 3).0, 3);
     assert_eq!(connections.take_warnings().len(), 1);
 
     connections.apply(Action::Disconnect(0), &ctx);
     connections.apply(Action::Connect(0), &ctx);
-    assert_eq!(receive_some(&mut connections, 2).len(), 2);
+    assert_eq!(receive_some(&mut connections, &mut session, 2).0, 2);
     assert_eq!(connections.take_warnings(), [warning]);
 
     connections.apply(Action::Connect(2), &ctx);
-    assert_eq!(receive_some(&mut connections, 2).len(), 2);
+    assert_eq!(receive_some(&mut connections, &mut session, 2).0, 2);
     assert!(connections.take_warnings().is_empty());
     let address = connections.connections[2].address.clone();
     assert_eq!(connections.status(&address), Status::Connected);

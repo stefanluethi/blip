@@ -19,6 +19,7 @@ whose requirements the tests verify.
    platforms
    files
    library
+   ingest
    outpost
    sonde
    documentation

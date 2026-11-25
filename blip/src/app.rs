@@ -5,7 +5,6 @@ use blip_kit::store as model;
 use blip_kit::widgets::{theme, time, view};
 use blip_kit::workbench::{connections, files, layout, opening, presets, toasts};
 
-use connections::Received;
 use eframe::Frame;
 use egui::{Context, Key, KeyboardShortcut, Modifiers};
 use model::session::Session;
@@ -27,27 +26,9 @@ pub struct State {
 }
 
 impl State {
-    /// Applies what the connections received at the time `now`. Returns whether the
-    /// first connection opened, which starts afresh with no data, unless recording.
-    fn apply(&mut self, received: Received<'_>, now: f64) -> bool {
-        match received {
-            Received::FirstOpened => self.session.first_opened(),
-            Received::Message { source, message } => {
-                self.session.receive(source, message, now);
-                false
-            }
-        }
-    }
-
     /// Removes the received data, see [`Session::clear_data`].
     fn clear_data(&mut self) {
         self.session.clear_data();
-    }
-
-    /// Starts afresh with `model`, e.g. of an opened recording, see
-    /// [`Session::start_fresh`].
-    fn start_fresh(&mut self, model: model::MemoryStore) {
-        self.session.start_fresh(model);
     }
 
     /// Starts or stops recording. A recording starts only while `connected`, clears the
@@ -291,7 +272,7 @@ impl App {
                     self.files.open(files::Kind::Recording, ui.ctx());
                 }
                 let recorded = self.state.session.store.has_samples();
-                let messages = self.state.session.store.recording.messages();
+                let messages = self.state.session.recorder.messages();
                 let save = shortcut("Save recording…", &SAVE_RECORDING);
                 if ui
                     .add_enabled(recorded, save)
@@ -421,24 +402,18 @@ impl App {
     }
 
     /// Receives from the connections at the time `now`. The first connection to open
-    /// starts afresh, see [`State::apply`].
+    /// starts afresh with no data, unless recording.
     fn receive(&mut self, now: f64) {
-        let state = &mut self.state;
-        let mut fresh = false;
-        let mut messages = 0;
-        self.connections.receive(|received| {
-            messages += usize::from(matches!(received, Received::Message { .. }));
-            fresh |= state.apply(received, now);
-        });
-        self.rate.update(now, messages);
-        if fresh {
+        let polled = self.connections.receive(&mut self.state.session, now);
+        self.rate.update(now, polled.messages);
+        if polled.started_fresh {
             self.reset_traces_panel();
         }
     }
 
     fn save_recording(&mut self) {
         let name = format!("{}.blip", chrono::Local::now().format("%Y-%m-%d-%H%M%S"));
-        let file = self.state.session.store.recording.to_file();
+        let file = self.state.session.recorder.to_file();
         if let Err(error) = files::save(files::Kind::Recording, &name, &file) {
             self.toasts.error(error);
         }
@@ -493,8 +468,7 @@ impl App {
     /// Shows the recording read by `opening`.
     fn show_opened(&mut self, opening: opening::Opening) {
         let name = opening.name.clone();
-        let (model, loaded) = opening.finish();
-        self.state.start_fresh(model);
+        let loaded = opening.finish(&mut self.state.session);
         self.reset_traces_panel();
         self.state.time.fit(&self.state.session.store);
         if let Some(problem) = loaded.problem {

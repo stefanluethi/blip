@@ -71,7 +71,8 @@ What an application needs
 
 * A **source** of messages: anything that implements the ``Source`` trait,
   e.g. the ``WebSocket`` source, or your own, which reads a serial port or
-  simulates a target. See :doc:`sources`.
+  simulates a target. It hands over bytes in the blip protocol or, if its data
+  never was CBOR, typed values. See :doc:`sources`.
 * A **session**, which receives from the sources into its store and sends the
   invocations of actions back. See :doc:`sources`.
 * A **time range**, the time all widgets show.
@@ -99,9 +100,9 @@ Limits
 
 * No widget shows a loading state yet. ``Store::pending`` and
   ``Loaded::pending`` are there for the application to show one.
-* A source delivers CBOR frames. There is no way to hand over decoded messages
-  without encoding them; ``Event::message`` encodes a message for a source
-  that makes its messages itself.
+* A value is one of the protocol's data model: null, integer, float, bool,
+  text, array or record. A source whose data has another form converts it,
+  e.g. bytes into a number or a text.
 * The file dialogs of the workbench (``rfd``) need the ``wayland`` feature of
   eframe or the libwayland development files on Linux.
 * The crates are prepared for crates.io: they have their metadata and

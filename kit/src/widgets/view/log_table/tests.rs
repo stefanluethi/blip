@@ -375,7 +375,7 @@ fn the_columns_follow_the_properties() {
             clock: Some(proto::Clock::Epoch),
             sender: None,
         });
-        model.receive("", &serde_cbor_2::to_vec(&hello).unwrap());
+        crate::store::testing::receive(&mut model, "", &hello);
         let mut time = TimeRange::default();
         time.update(&model, 0.0);
         Harness::builder()
