@@ -145,9 +145,82 @@ fn pressing_on_the_ruler_sets_the_cursor() {
     click(&mut harness, egui::pos2(x, y));
     let time = &harness.state().0;
     assert!(!time.is_live());
-    assert_near(time.cursor().unwrap(), 50.0);
-    // the window stays
+    let cursor = time.cursor().unwrap();
+    assert_near(cursor, 50.0);
+    // the window moves to show the cursor, around it
+    let (start, end) = time.range().unwrap();
+    assert!(start <= cursor && cursor <= end);
+    assert_near(start, 40.0);
+}
+
+#[test]
+fn pressing_on_the_ruler_within_the_window_keeps_it() {
+    let mut harness = harness();
+    let (x, y, ..) = at(&harness, 90.0);
+    click(&mut harness, egui::pos2(x, y));
+    let time = &harness.state().0;
+    assert_near(time.cursor().unwrap(), 90.0);
     assert_eq!(time.range(), Some((80.0, 100.0)));
+}
+
+#[test]
+fn the_empty_timeline_says_how_to_get_data() {
+    let mut time = TimeRange::default();
+    assert_eq!(
+        empty_hint(&time),
+        "Connect to an outpost or open a recording"
+    );
+    time.set_connected(true);
+    assert_eq!(empty_hint(&time), "Press Record to collect data");
+    time.recording = true;
+    assert_eq!(empty_hint(&time), "Waiting for data");
+}
+
+#[test]
+fn hovering_a_gap_tells_how_long_it_lasts() {
+    use egui_kittest::kittest::Queryable;
+    let mut model = MemoryStore::default();
+    let mut receive = |second: u64| {
+        let message = proto::Message::Sample(proto::Sample {
+            timestamp: second * 1_000_000_000,
+            path: "a".to_owned(),
+            value: proto::Data::Float(1.0),
+        });
+        model.receive("", &serde_cbor_2::to_vec(&message).unwrap());
+    };
+    for second in (0..=40).chain(70..=100) {
+        receive(second);
+    }
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1000.0, 60.0))
+        .build_ui_state(
+            |ui, (time, model, rect): &mut State| {
+                time.update(model, 0.0);
+                let top_left = ui.cursor().min;
+                show(time, ui, model);
+                *rect = egui::Rect::from_min_max(top_left, ui.min_rect().max);
+            },
+            (TimeRange::default(), model, egui::Rect::NOTHING),
+        );
+    harness.run();
+    let (x, _, y, _) = at(&harness, 55.0);
+    harness.hover_at(egui::pos2(x, y));
+    harness.run();
+    harness.run();
+    assert!(
+        harness.query_by_label_contains("No data for").is_some(),
+        "no hover over the gap"
+    );
+}
+
+#[test]
+fn the_first_label_of_a_new_day_has_the_date() {
+    assert_eq!(local_day(TimeBase::SinceBoot, 90_000_000_000_000), None);
+    // a day apart in local time
+    let day = 86_400_000_000_000;
+    let noon = 1_700_000_000_000_000_000 / day * day + day / 2;
+    let today = local_day(TimeBase::Unix, noon).unwrap();
+    assert_eq!(local_day(TimeBase::Unix, noon + day), Some(today + 1));
 }
 
 #[test]

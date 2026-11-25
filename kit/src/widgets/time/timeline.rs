@@ -178,8 +178,9 @@ pub(super) fn show(time: &mut TimeRange, ui: &mut egui::Ui, store: &dyn Store) {
 
     let tokens = ui.tokens();
     let painter = ui.painter_at(rect.expand(1.0));
-    painter.rect_filled(track_rect, 3.0, tokens.canvas);
+    painter.rect_filled(track_rect, theme::CONTROL_RADIUS, tokens.canvas);
     let Some((start, end)) = view(time) else {
+        paint_empty_hint(ui, &painter, track_rect, empty_hint(time));
         return;
     };
     let mut scale = Scale {
@@ -211,10 +212,13 @@ pub(super) fn show(time: &mut TimeRange, ui: &mut egui::Ui, store: &dyn Store) {
         }
     }
 
-    // pressing or dragging on the ruler puts the cursor there
+    // pressing or dragging on the ruler puts the cursor there, and the window with it
     let scrubbing = ruler.is_pointer_button_down_on();
-    if scrubbing && let Some(pos) = ruler.interact_pointer_pos() {
-        time.set_cursor(scale.t_at(pos.x));
+    if scrubbing
+        && let Some(pos) = ruler.interact_pointer_pos()
+        && let Some((first, latest)) = time.span
+    {
+        time.go_to(clamp_within(scale.t_at(pos.x), first, latest));
     }
 
     let bins = Bins::cached(ui, id, store, time, &scale);
@@ -227,7 +231,7 @@ pub(super) fn show(time: &mut TimeRange, ui: &mut egui::Ui, store: &dyn Store) {
 
     // a new recording starts with its own scale, not animated from the last one's
     let scale_id = id.with(time.origin());
-    bins.paint(ui, scale_id, &painter, track_rect);
+    let gaps = bins.paint(ui, scale_id, &painter, track_rect);
     if let Some(range) = time.range() {
         let thumb = thumb_rect(range, track_rect, &scale);
         let active = track.dragged() || track.hovered();
@@ -238,7 +242,7 @@ pub(super) fn show(time: &mut TimeRange, ui: &mut egui::Ui, store: &dyn Store) {
         };
         painter.rect(
             thumb,
-            3.0,
+            theme::CONTROL_RADIUS,
             ui.visuals().selection.bg_fill.gamma_multiply(0.35),
             stroke,
             egui::StrokeKind::Inside,
@@ -248,6 +252,12 @@ pub(super) fn show(time: &mut TimeRange, ui: &mut egui::Ui, store: &dyn Store) {
         track
             .clone()
             .on_hover_ui_at_pointer(|ui| log_tooltip_ui(ui, store, logs.times));
+    } else if let Some(pos) = track.hover_pos()
+        && let Some(gap) = gaps.iter().find(|gap| gap.x.contains(pos.x))
+        && !track.dragged()
+    {
+        let text = format!("No data for {}", super::format_duration(gap.duration));
+        track.clone().on_hover_text_at_pointer(text);
     }
 
     let mut label_rect = ruler_rect;
@@ -258,7 +268,7 @@ pub(super) fn show(time: &mut TimeRange, ui: &mut egui::Ui, store: &dyn Store) {
             ruler_rect.right_bottom(),
         );
         label_rect.max.x = button_rect.left();
-        let button = egui::Button::new(regular::ARROWS_OUT_LINE_HORIZONTAL).frame(false);
+        let button = theme::icon_button(regular::ARROWS_OUT_LINE_HORIZONTAL);
         if ui
             .put(button_rect, button)
             .on_hover_text("Show all data on the timeline")
@@ -291,7 +301,7 @@ pub(super) fn show(time: &mut TimeRange, ui: &mut egui::Ui, store: &dyn Store) {
     let pill_x = if scrubbing { cursor_x } else { hover_x };
     if let Some(x) = pill_x {
         let decimals = decimals_for(scale.resolution());
-        let text = base.format(time.timestamp(scale.t_at(x)), decimals);
+        let text = base.format_dated(time.timestamp(scale.t_at(x)), decimals);
         paint_pill(ui, &painter, ruler_rect, x, &text);
     }
     if ruler.hovered() || scrubbing {
@@ -602,8 +612,14 @@ impl Bins {
     ///
     /// The bars are scaled to the highest of the complete bins, so that the newest
     /// one, which is still filling, grows up to the others instead of rescaling them,
-    /// and changes of the scale under `id` are animated.
-    fn paint(&self, ui: &egui::Ui, id: egui::Id, painter: &egui::Painter, rect: egui::Rect) {
+    /// and changes of the scale under `id` are animated. Returns the hatched gaps.
+    fn paint(
+        &self,
+        ui: &egui::Ui,
+        id: egui::Id,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+    ) -> Vec<Gap> {
         let tokens = ui.tokens();
         let room = rect.height() - 2.0;
         let log_room = room * LOG_BAR_SHARE;
@@ -654,7 +670,7 @@ impl Bins {
             (0..self.activity.len()).find(complete),
             (0..self.activity.len()).rfind(complete),
         ) else {
-            return;
+            return vec![];
         };
         let counts: Vec<u32> = self.activity[first..=last]
             .iter()
@@ -662,14 +678,50 @@ impl Bins {
             .collect();
         let duration = seconds_since(0, self.step) * counts.len() as f64;
         let hatch = egui::Stroke::new(1.0, tokens.border_strong);
+        let mut shown = vec![];
         for gap in gaps(&counts, duration) {
             let (start, _) = self.bin_times(first + gap.start);
             let (_, end) = self.bin_times(first + gap.end - 1);
             let x = self.scale.x_at(start)..=self.scale.x_at(end);
             let gap_rect = egui::Rect::from_x_y_ranges(x, rect.y_range()).intersect(rect);
             paint_hatching(&painter.with_clip_rect(gap_rect), gap_rect, hatch);
+            shown.push(Gap {
+                x: gap_rect.x_range(),
+                duration: end - start,
+            });
         }
+        shown
     }
+}
+
+/// A gap without data hatched on the track.
+struct Gap {
+    /// Where it is on the track.
+    x: egui::Rangef,
+    /// How long it lasts in seconds.
+    duration: f64,
+}
+
+/// What the empty timeline of `time` says to do to get data.
+fn empty_hint(time: &TimeRange) -> &'static str {
+    match (time.connected, time.recording) {
+        (true, true) => "Waiting for data",
+        (true, false) => "Press Record to collect data",
+        (false, _) => "Connect to an outpost or open a recording",
+    }
+}
+
+/// Paints `text` on the empty track in `rect` as the hint of a panel: weak, at the left.
+fn paint_empty_hint(ui: &egui::Ui, painter: &egui::Painter, rect: egui::Rect, text: &str) {
+    let color = ui.visuals().weak_text_color();
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let galley = painter.layout_no_wrap(text.to_owned(), font, color);
+    let margin = f32::from(theme::FIELD_MARGIN.left);
+    let pos = egui::pos2(
+        rect.left() + margin,
+        rect.center().y - galley.size().y / 2.0,
+    );
+    painter.with_clip_rect(rect).galley(pos, galley, color);
 }
 
 /// The runs of bins in `counts` without samples that last [`GAP_FACTOR`] times the
@@ -783,6 +835,9 @@ fn paint_ruler(
     let font = egui::TextStyle::Body.resolve(ui.style());
     let offset = base.display_offset(timestamp_at(origin, scale.start));
     let mut t = first_tick(scale.start, step, offset, origin);
+    // the day of the tick before, to date the first label of a new day
+    let mut day = local_day(base, timestamp_at(origin, t - step));
+    let mut free_from = rect.left();
     while t <= scale.end() {
         let x = scale.x_at(t);
         painter.vline(
@@ -790,14 +845,35 @@ fn paint_ruler(
             rect.bottom() - TICK_HEIGHT..=rect.bottom(),
             egui::Stroke::new(1.0, tokens.border_strong),
         );
-        let text = base.format(timestamp_at(origin, t), decimals);
+        let timestamp = timestamp_at(origin, t);
+        let tick_day = local_day(base, timestamp);
+        let text = if tick_day != day {
+            base.format_dated(timestamp, decimals)
+        } else {
+            base.format(timestamp, decimals)
+        };
         let galley = painter.layout_no_wrap(text, font.clone(), tokens.text_faint);
-        // right of the tick, if there is room
+        // right of the tick, if there is room, and not over a longer, dated label
         let pos = egui::pos2(x + 3.0, rect.center().y - galley.size().y / 2.0 - 1.0);
-        if pos.x + galley.size().x <= labels_end {
+        let label_end = pos.x + galley.size().x;
+        if pos.x >= free_from && label_end <= labels_end {
             painter.galley(pos, galley, tokens.text_faint);
+            free_from = label_end + 3.0;
+            day = tick_day;
         }
         t += step;
+    }
+}
+
+/// The local day of `timestamp` in nanoseconds counted from the Unix epoch, `None` for
+/// times since boot, which have no date.
+fn local_day(base: TimeBase, timestamp: u64) -> Option<i64> {
+    match base {
+        TimeBase::Unix => {
+            let seconds = seconds_since(0, timestamp) + base.display_offset(timestamp);
+            Some(seconds.div_euclid(86400.0) as i64)
+        }
+        TimeBase::SinceBoot => None,
     }
 }
 
@@ -826,7 +902,7 @@ fn paint_pill(ui: &egui::Ui, painter: &egui::Painter, rect: egui::Rect, x: f32, 
     let pill = egui::Rect::from_min_size(egui::pos2(left, rect.center().y - size.y / 2.0), size);
     painter.rect(
         pill,
-        3.0,
+        theme::CONTROL_RADIUS,
         ui.visuals().extreme_bg_color,
         egui::Stroke::new(1.0, tokens.border_strong),
         egui::StrokeKind::Inside,

@@ -1,5 +1,6 @@
 use super::*;
 use crate::store::MemoryStore;
+use egui_kittest::kittest::NodeT;
 
 fn time_range(first: f64, latest: f64, window: f64) -> TimeRange {
     TimeRange {
@@ -151,6 +152,16 @@ fn durations_are_formatted_short_and_read_back() {
     assert_eq!(parse_duration("2.5min"), Some(150.0));
     assert_eq!(parse_duration(" 1 h "), Some(3600.0));
     assert_eq!(parse_duration("2 weeks"), None);
+    assert_eq!(parse_duration("250 us"), Some(250.0e-6));
+    assert_eq!(parse_duration("250µs"), Some(250.0e-6));
+    assert_eq!(parse_duration("3 sec"), Some(3.0));
+    assert_eq!(parse_duration("2 hr"), Some(7200.0));
+    assert_eq!(parse_duration("1 d"), Some(86400.0));
+    assert_eq!(parse_duration("500 MS"), Some(0.5));
+    assert_eq!(parse_duration("5 Min"), Some(300.0));
+    assert_eq!(parse_duration("-5 s"), None);
+    assert_eq!(parse_duration("fast"), None);
+    assert_eq!(parse_duration("0"), Some(0.0));
     for seconds in [0.0123, 1.5, 20.0, 150.0, 7200.0] {
         let read = parse_duration(&format_duration(seconds)).unwrap();
         assert!((read - seconds).abs() < seconds * 1.0e-9, "{seconds}");
@@ -203,22 +214,22 @@ fn window_end_stays_within_data() {
 fn a_paused_window_stays_while_data_arrives_and_plays_on_from_there() {
     let mut time = time_range(100.0, 150.0, 20.0);
     assert!(time.playing);
-    time.toggle_play();
+    time.toggle_play_as(true);
     assert!(!time.is_live() && !time.playing);
     time.span = Some((100.0, 160.0));
     time.play_on(1.0);
     time.play_on(3.0);
     assert_eq!(time.range(), Some((130.0, 150.0)));
 
-    time.toggle_play();
+    time.toggle_play_as(true);
     time.play_on(4.0);
     time.play_on(6.5);
     assert!(time.playing && !time.is_live());
     assert_eq!(time.range(), Some((132.5, 152.5)));
     // the time while paused is skipped
-    time.toggle_play();
+    time.toggle_play_as(true);
     time.play_on(10.0);
-    time.toggle_play();
+    time.toggle_play_as(true);
     time.play_on(20.0);
     time.play_on(21.0);
     assert_eq!(time.range(), Some((133.5, 153.5)));
@@ -229,7 +240,7 @@ fn playing_moves_the_cursor_along_and_goes_live_at_the_newest_data() {
     let mut time = time_range(100.0, 150.0, 20.0);
     time.pan_zoom(120.0, 140.0);
     time.set_cursor(130.0);
-    time.toggle_play();
+    time.toggle_play_as(true);
     time.play_on(0.0);
     time.play_on(5.0);
     assert_eq!(time.range(), Some((125.0, 145.0)));
@@ -244,7 +255,7 @@ fn panning_and_setting_the_cursor_pause_and_zooming_plays_on() {
     let mut time = time_range(100.0, 150.0, 20.0);
     time.pan_zoom(120.0, 140.0);
     assert!(!time.playing);
-    time.toggle_play();
+    time.toggle_play_as(true);
     time.pan_zoom(130.0, 140.0);
     assert!(time.playing);
     assert_eq!(time.range(), Some((130.0, 140.0)));
@@ -300,13 +311,145 @@ fn the_buttons_pause_and_go_live() {
     harness.run();
     assert!(time(&harness).is_live() && time(&harness).playing);
 
-    // without recording, there is nothing new to follow
+    // without recording, nothing moves at the end of the data: Play shows, disabled,
+    // and so is Live
     harness.state_mut().1 = false;
-    harness.get_by_label(regular::PAUSE).click();
     harness.run();
-    harness.get_by_label_contains("Live").click();
+    assert!(
+        harness
+            .get_by_label(regular::PLAY)
+            .accesskit_node()
+            .is_disabled()
+    );
+    assert!(
+        harness
+            .get_by_label_contains("Live")
+            .accesskit_node()
+            .is_disabled()
+    );
+    // away from the end, Live goes back there, as in an opened recording
+    harness.state_mut().0.pan_zoom(110.0, 130.0);
     harness.run();
     assert!(!time(&harness).is_live());
+    harness.get_by_label_contains("Live").click();
+    harness.run();
+    assert!(time(&harness).is_live());
+}
+
+/// A harness showing the controls of `time` while recording.
+fn controls_harness(time: TimeRange) -> egui_kittest::Harness<'static, TimeRange> {
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(600.0, 300.0))
+        .build_ui_state(|ui, time: &mut TimeRange| time.controls_ui(ui, true), time);
+    harness.run();
+    harness
+}
+
+/// Types `text` into the window field of `harness` in place of what it holds, and
+/// presses Enter.
+fn enter_window(harness: &mut egui_kittest::Harness<'_, TimeRange>, text: &str) {
+    use egui_kittest::kittest::Queryable;
+    let field = || egui::accesskit::Role::TextInput;
+    harness.get_by_role(field()).focus();
+    harness.run_steps(2);
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    harness.get_by_role(field()).type_text(text);
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(2);
+}
+
+#[test]
+fn the_window_field_keeps_and_marks_what_it_cannot_read() {
+    use egui_kittest::kittest::Queryable;
+    let mut harness = controls_harness(time_range(100.0, 150.0, 20.0));
+    enter_window(&mut harness, "5 Sec");
+    assert_eq!(harness.state().window, 5.0);
+    assert!(harness.query_all_by_value("5.00 s").next().is_some());
+
+    // not a length: the text stays to correct it, the window too
+    enter_window(&mut harness, "5 parsecs");
+    assert_eq!(harness.state().window, 5.0);
+    assert!(harness.query_all_by_value("5 parsecs").next().is_some());
+    let hover = |harness: &mut egui_kittest::Harness<'_, TimeRange>, hint: &str| {
+        harness
+            .get_by_role(egui::accesskit::Role::TextInput)
+            .hover();
+        harness.run_steps(3);
+        harness.query_by_label_contains(hint).is_some()
+    };
+    assert!(hover(&mut harness, "Not a length: write a number with µs"));
+
+    // too long: limited, and told so while it stays
+    enter_window(&mut harness, "30 d");
+    assert_eq!(harness.state().window, MAX_WINDOW);
+    assert!(hover(&mut harness, "at least and"));
+    harness.state_mut().window = 20.0;
+    harness.run();
+    assert!(hover(&mut harness, "Window: the length"));
+}
+
+#[test]
+fn the_window_presets_set_round_lengths() {
+    use egui_kittest::kittest::Queryable;
+    let mut harness = controls_harness(time_range(100.0, 150.0, 20.0));
+    harness.get_by_label(regular::CARET_DOWN).click();
+    harness.run();
+    harness.get_by_label("500 ms").click();
+    harness.run();
+    assert_eq!(harness.state().window, 0.5);
+    for pair in WINDOW_PRESETS.windows(2) {
+        assert!(pair[0].0 < pair[1].0);
+        assert_eq!(parse_duration(pair[0].1), Some(pair[0].0));
+    }
+}
+
+#[test]
+fn live_releases_a_set_cursor_in_a_recording() {
+    let mut time = time_range(100.0, 150.0, 20.0);
+    assert!(!time.can_go_live(false));
+    time.set_cursor(140.0);
+    assert!(time.can_go_live(false));
+    time.go_live();
+    assert!(!time.cursor_is_set() && time.is_live());
+    assert!(!time.can_go_live(false));
+    assert!(time.can_go_live(true));
+}
+
+#[test]
+fn releasing_the_cursor_keeps_the_window() {
+    let mut time = time_range(100.0, 150.0, 20.0);
+    time.go_to(110.0);
+    let range = time.range();
+    time.release_cursor();
+    assert!(!time.cursor_is_set());
+    assert_eq!(time.range(), range);
+    assert_eq!(time.cursor(), range.map(|(_, end)| end));
+}
+
+#[test]
+fn play_shows_only_while_something_moves_and_needs_data() {
+    // an opened recording: live at its end, not recording, nothing moves
+    let mut time = time_range(100.0, 150.0, 20.0);
+    assert!(time.playing && !time.moves(false));
+    assert!(!time.can_play(false));
+    // while recording, live moves on
+    assert!(time.moves(true) && time.can_play(true));
+    // moved back, it plays from there
+    time.pan_zoom(110.0, 130.0);
+    assert!(!time.moves(false) && time.can_play(false));
+    time.toggle_play_as(false);
+    assert!(time.moves(false));
+    // without data there is nothing to play
+    let time = TimeRange::default();
+    assert!(!time.can_play(true) && !time.can_play(false));
+}
+
+#[test]
+fn the_window_shows_how_far_it_is_behind_the_newest_data() {
+    let mut time = time_range(100.0, 150.0, 20.0);
+    assert_eq!(time.behind(), None);
+    time.pan_zoom(110.0, 130.0);
+    assert_eq!(time.behind(), Some(20.0));
 }
 
 #[test]
@@ -347,4 +490,23 @@ fn times_count_nanoseconds_and_the_range_takes_the_base_of_the_model() {
     let mut range = TimeRange::default();
     range.update(&model, 0.0);
     assert_eq!(range.base(), TimeBase::SinceBoot);
+}
+
+#[test]
+fn leaving_the_window_field_unchanged_keeps_a_length_set_meanwhile() {
+    use egui_kittest::kittest::Queryable;
+    let mut harness = controls_harness(time_range(100.0, 150.0, 20.0));
+    harness
+        .get_by_role(egui::accesskit::Role::TextInput)
+        .focus();
+    harness.run_steps(2);
+    // e.g. a zoom of a plot with the wheel
+    harness.state_mut().window = 3.0;
+    harness.run_steps(2);
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(2);
+    assert_eq!(harness.state().window, 3.0);
+    // typed text is still taken
+    enter_window(&mut harness, "4 s");
+    assert_eq!(harness.state().window, 4.0);
 }

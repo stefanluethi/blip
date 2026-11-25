@@ -17,6 +17,8 @@ const MAX_WINDOW: f64 = 1.0e6;
 const ZOOM_SPEED: f32 = 0.005;
 /// Width of the field of the window length in points, wide enough for all its values.
 const WINDOW_FIELD_WIDTH: f32 = 72.0;
+/// Width of the caret of the window length menu at the right end of its field.
+const WINDOW_CARET_WIDTH: f32 = 20.0;
 /// Distance in points from the cursor line within which it can be grabbed.
 const CURSOR_GRAB_DISTANCE: f32 = 5.0;
 /// Width and height of the handle on top of the cursor line in points.
@@ -25,7 +27,7 @@ const CURSOR_HANDLE_SIZE: egui::Vec2 = egui::vec2(10.0, 6.0);
 /// A window of `window` seconds shown by all views. It either follows the newest data
 /// (live), or ends at a time that stays while paused and moves on at the pace of the
 /// timestamps while playing. Its times are seconds since [`Self::origin`].
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(serde::Deserialize, serde::Serialize, Clone)]
 #[serde(default)]
 pub struct TimeRange {
     window: f64,
@@ -53,6 +55,12 @@ pub struct TimeRange {
     /// What the timeline shows when zoomed in, `None` to show all data.
     #[serde(skip)]
     overview: Option<timeline::Overview>,
+    /// Whether a connection is open, for the hint of the empty timeline.
+    #[serde(skip)]
+    connected: bool,
+    /// Whether the received samples are recorded, as the controls were last shown.
+    #[serde(skip)]
+    recording: bool,
 }
 
 impl Default for TimeRange {
@@ -67,6 +75,8 @@ impl Default for TimeRange {
             span: None,
             cursor: None,
             overview: None,
+            connected: false,
+            recording: false,
         }
     }
 }
@@ -169,6 +179,18 @@ impl TimeRange {
         self.go_live();
     }
 
+    /// Puts the cursor back at the end of the window, which it follows again, e.g. on
+    /// Escape. The window stays where it is.
+    pub fn release_cursor(&mut self) {
+        self.cursor = None;
+    }
+
+    /// Tells the timeline whether a connection is open, so that its hint without data
+    /// says what to do: record, or connect or open a recording.
+    pub fn set_connected(&mut self, connected: bool) {
+        self.connected = connected;
+    }
+
     /// Follows the newest data with the window and the cursor.
     pub fn go_live(&mut self) {
         self.end = None;
@@ -184,13 +206,48 @@ impl TimeRange {
         self.playing = false;
     }
 
-    /// Pauses while playing, else moves the window on from where it is.
-    fn toggle_play(&mut self) {
-        if self.playing {
+    /// Whether the shown window moves on: following the newest data while `recording`,
+    /// or playing from where it was paused. Live without recording, nothing moves.
+    fn moves(&self, recording: bool) -> bool {
+        self.playing && (recording || !self.is_live())
+    }
+
+    /// Does what the play and pause button does, e.g. for Space: pauses while the window
+    /// moves on, else plays on from where it is. Does nothing without data or at the end
+    /// of the data while not recording, when the button is disabled.
+    pub fn toggle_play(&mut self) {
+        if self.can_play(self.recording) {
+            self.toggle_play_as(self.recording);
+        }
+    }
+
+    /// Pauses while the window moves with `recording`, see [`Self::moves`], else plays
+    /// on from where it is.
+    fn toggle_play_as(&mut self, recording: bool) {
+        if self.moves(recording) {
             self.pause();
         } else {
             self.playing = true;
         }
+    }
+
+    /// Whether there is something to play or pause: data, and the window moves or
+    /// stopped before the end of the data.
+    fn can_play(&self, recording: bool) -> bool {
+        self.span.is_some() && (self.moves(recording) || !self.is_live())
+    }
+
+    /// Whether going live changes anything: while `recording` it follows the newest
+    /// data, else it shows the end of the data and releases the cursor.
+    fn can_go_live(&self, recording: bool) -> bool {
+        recording || !self.is_live() || self.cursor_is_set()
+    }
+
+    /// How far the end of the window is behind the newest data in seconds, while it
+    /// does not follow it.
+    fn behind(&self) -> Option<f64> {
+        let (end, latest) = (self.end?, self.latest()?);
+        Some((latest - end).max(0.0))
     }
 
     /// Whether the window moves on, following the newest data or at the pace of the
@@ -290,13 +347,18 @@ impl TimeRange {
         ui.horizontal(|ui| {
             let inner = ui
                 .vertical(|ui| {
-                    ui.add_space(timeline::ruler_height(ui));
-                    ui.horizontal(|ui| {
-                        let inner = leading(ui);
-                        self.controls_ui(ui, recording);
-                        inner
-                    })
-                    .inner
+                    let band_size = egui::vec2(0.0, timeline::ruler_height(ui));
+                    let band = ui.allocate_space(band_size).1;
+                    let (inner, live) = ui
+                        .horizontal(|ui| {
+                            let inner = leading(ui);
+                            let live = self.controls(ui, recording);
+                            (inner, live)
+                        })
+                        .inner;
+                    // in the band above the controls, so that nothing moves
+                    self.paint_behind(ui, band, live.left(), recording);
+                    inner
                 })
                 .inner;
             timeline::show(self, ui, store);
@@ -323,14 +385,32 @@ impl TimeRange {
     /// The buttons to play, pause and go live, which only follows new data while
     /// `recording`, and the length of the window.
     pub fn controls_ui(&mut self, ui: &mut egui::Ui, recording: bool) {
+        self.controls(ui, recording);
+    }
+
+    /// Shows the controls, see [`Self::controls_ui`], and returns the rect of the Live
+    /// button.
+    fn controls(&mut self, ui: &mut egui::Ui, recording: bool) -> egui::Rect {
+        self.recording = recording;
         self.repaint_while_playing(ui);
-        let (icon, hint) = if self.playing {
+        let moves = self.moves(recording);
+        let (icon, hint) = if moves {
             (regular::PAUSE, "Pause")
         } else {
             (regular::PLAY, "Play at the pace of the timestamps")
         };
-        if ui.button(icon).on_hover_text(hint).clicked() {
-            self.toggle_play();
+        let cannot_play = if self.span.is_some() {
+            "At the end of the data: move the window back to play from there"
+        } else {
+            "Nothing to play yet"
+        };
+        if ui
+            .add_enabled(self.can_play(recording), theme::icon_button(icon))
+            .on_hover_text(hint)
+            .on_disabled_hover_text(cannot_play)
+            .clicked()
+        {
+            self.toggle_play_as(recording);
         }
         // filled with the accent while following the newest data
         let live = format!("{} Live", regular::BROADCAST);
@@ -344,27 +424,189 @@ impl TimeRange {
             egui::Button::new(live)
         }
         .selected(following);
-        if ui
-            .add_enabled(recording, live_button)
-            .on_hover_text("Follow the newest data")
-            .on_disabled_hover_text("Follows the newest data while recording")
-            .clicked()
-        {
+        let (hint, disabled_hint) = if recording {
+            ("Follow the newest data", "")
+        } else if self.span.is_some() {
+            (
+                "Follow the end of the recording",
+                "Shows the end of the recording",
+            )
+        } else {
+            ("", "Follows the newest data while recording")
+        };
+        let live = ui
+            .add_enabled(self.can_go_live(recording), live_button)
+            .on_hover_text(hint)
+            .on_disabled_hover_text(disabled_hint);
+        if live.clicked() {
             self.go_live();
         }
+        self.window_ui(ui);
+        live.rect
+    }
 
-        let speed = self.window * 0.01;
-        let window = egui::DragValue::new(&mut self.window)
-            .range(MIN_WINDOW..=MAX_WINDOW)
-            .speed(speed)
-            .custom_formatter(|seconds, _| format_duration(seconds))
-            .custom_parser(parse_duration);
-        // a fixed width, so that the timeline beside it stays put
-        let size = egui::vec2(WINDOW_FIELD_WIDTH, ui.spacing().interact_size.y);
-        ui.add_sized(size, window)
-            .on_hover_text("Window: the length of the shown range, e.g. 500 ms, 20 s or 5 min");
+    /// Paints how far the window is behind the newest data in `band` from `left` on,
+    /// while `recording` and not live: the cue that it does not follow.
+    fn paint_behind(&self, ui: &egui::Ui, band: egui::Rect, left: f32, recording: bool) {
+        let Some(behind) = self.behind().filter(|_| recording) else {
+            return;
+        };
+        let state = if self.playing { "Playing" } else { "Paused" };
+        let text = format!("{state}, {} behind", format_duration(behind));
+        let font = egui::FontId::proportional(11.0);
+        let color = ui.visuals().weak_text_color();
+        let painter = ui.painter();
+        let galley = painter.layout_no_wrap(text, font, color);
+        let pos = egui::pos2(left, band.center().y - galley.size().y / 2.0);
+        painter.galley(pos, galley, color);
+    }
+
+    /// The field of the length of the window, with a menu of round lengths beside it.
+    /// An entry that is not a length stays in the field, marked, until it is replaced.
+    fn window_ui(&mut self, ui: &mut egui::Ui) {
+        let id = ui.id().with("window length");
+        let edit = ui
+            .data(|data| data.get_temp::<WindowEdit>(id))
+            .filter(|edit| {
+                // the mark of a limited length goes once the length changes
+                !matches!(edit, WindowEdit::Limited(window) if *window != self.window)
+            });
+        let mut text = match &edit {
+            Some(WindowEdit::Editing(text, _) | WindowEdit::Rejected(text)) => text.clone(),
+            _ => format_duration(self.window),
+        };
+        // the length the text was written from, to tell whether the user changed it
+        let written = match &edit {
+            Some(WindowEdit::Editing(_, written)) => *written,
+            _ => self.window,
+        };
+        // one control of a fixed width, so that the timeline beside it stays put: the
+        // field with the caret of the menu inside it at the right, as in a combo box
+        let height = ui.spacing().interact_size.y;
+        let size = egui::vec2(WINDOW_FIELD_WIDTH + WINDOW_CARET_WIDTH, height);
+        let rect = ui.allocate_exact_size(size, egui::Sense::hover()).0;
+        let mut margin = theme::FIELD_MARGIN;
+        margin.right += WINDOW_CARET_WIDTH as i8;
+        let field = theme::field(&mut text)
+            .id(id.with("field"))
+            .margin(margin)
+            .horizontal_align(egui::Align::Center)
+            .vertical_align(egui::Align::Center);
+        let response = ui.put(rect, field);
+        let edit = if response.lost_focus() {
+            // text the user did not change leaves the length as it is now, e.g. zoomed
+            let unchanged = text == format_duration(written);
+            if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+                None
+            } else if unchanged {
+                // the mark of an entry before stays
+                edit.filter(|edit| !matches!(edit, WindowEdit::Editing(..)))
+            } else {
+                match parse_duration(&text) {
+                    Some(window) => {
+                        self.window = window.clamp(MIN_WINDOW, MAX_WINDOW);
+                        (self.window != window).then_some(WindowEdit::Limited(self.window))
+                    }
+                    None => Some(WindowEdit::Rejected(text)),
+                }
+            }
+        } else if response.has_focus() {
+            Some(WindowEdit::Editing(text, written))
+        } else {
+            edit
+        };
+        let hint = match &edit {
+            Some(WindowEdit::Rejected(_)) => format!(
+                "Not a length: write a number with {DURATION_UNITS}, e.g. 500 ms, 20 s or 5 min"
+            ),
+            Some(WindowEdit::Limited(_)) => format!(
+                "The window is {} at least and {} at most",
+                format_duration(MIN_WINDOW),
+                format_duration(MAX_WINDOW)
+            ),
+            _ => "Window: the length of the shown range, e.g. 500 ms, 20 s or 5 min".to_owned(),
+        };
+        if matches!(edit, Some(WindowEdit::Rejected(_) | WindowEdit::Limited(_))) {
+            let stroke = egui::Stroke::new(1.0, ui.tokens().error);
+            let radius = theme::CONTROL_RADIUS;
+            let painter = ui.painter();
+            painter.rect_stroke(response.rect, radius, stroke, egui::StrokeKind::Inside);
+        }
+        response.on_hover_text(hint);
+        ui.data_mut(|data| {
+            if let Some(edit) = edit {
+                data.insert_temp(id, edit);
+            } else {
+                data.remove::<WindowEdit>(id);
+            }
+        });
+
+        // the caret inside the right end of the field, within its stroke
+        let caret = egui::Rect::from_min_max(
+            egui::pos2(rect.right() - WINDOW_CARET_WIDTH, rect.top()),
+            rect.right_bottom(),
+        )
+        .shrink(2.0);
+        let builder =
+            egui::UiBuilder::new()
+                .max_rect(caret)
+                .layout(egui::Layout::centered_and_justified(
+                    egui::Direction::LeftToRight,
+                ));
+        ui.scope_builder(builder, |ui| {
+            ui.spacing_mut().button_padding.x = 0.0;
+            let button = theme::icon_button(regular::CARET_DOWN).button(ui);
+            egui::containers::menu::MenuButton::from_button(button)
+                .ui(ui, |ui| {
+                    for &(seconds, label) in WINDOW_PRESETS {
+                        let chosen = (self.window - seconds).abs() < seconds * 1.0e-9;
+                        if ui.add(theme::selectable(chosen, label)).clicked() {
+                            self.window = seconds;
+                            ui.data_mut(|data| data.remove::<WindowEdit>(id));
+                            ui.close();
+                        }
+                    }
+                })
+                .0
+                .on_hover_text("Choose a window length");
+        });
     }
 }
+
+/// What the field of the window length holds apart from the length.
+#[derive(Clone)]
+enum WindowEdit {
+    /// The text while the field has the focus, and the length it was written from.
+    Editing(String, f64),
+    /// A text that is not a length, kept to correct it.
+    Rejected(String),
+    /// The length an entry was limited to, marked as long as it stays.
+    Limited(f64),
+}
+
+/// The units [`parse_duration`] reads, for the hint of a rejected entry.
+const DURATION_UNITS: &str = "µs, ms, s, min, h or d";
+
+/// The window lengths to choose from, in steps of 1, 2 and 5.
+const WINDOW_PRESETS: &[(f64, &str)] = &[
+    (0.01, "10 ms"),
+    (0.02, "20 ms"),
+    (0.05, "50 ms"),
+    (0.1, "100 ms"),
+    (0.2, "200 ms"),
+    (0.5, "500 ms"),
+    (1.0, "1 s"),
+    (2.0, "2 s"),
+    (5.0, "5 s"),
+    (10.0, "10 s"),
+    (20.0, "20 s"),
+    (60.0, "1 min"),
+    (120.0, "2 min"),
+    (300.0, "5 min"),
+    (600.0, "10 min"),
+    (1200.0, "20 min"),
+    (3600.0, "1 h"),
+];
 
 /// Formats `seconds` with three significant digits in ms, s, min or h.
 fn format_duration(seconds: f64) -> String {
@@ -388,19 +630,23 @@ fn format_duration(seconds: f64) -> String {
 }
 
 /// Reads a duration in seconds as [`format_duration`] writes it, also without a unit
-/// for seconds.
+/// for seconds, with the units of [`DURATION_UNITS`] and their usual spellings, in any
+/// case. Gives `None` for anything else, and for negative durations.
 fn parse_duration(text: &str) -> Option<f64> {
     let text = text.trim();
     let split = text.find(|c: char| c.is_alphabetic()).unwrap_or(text.len());
     let value: f64 = text[..split].trim().parse().ok()?;
-    let scale = match text[split..].trim() {
+    let scale = match text[split..].trim().to_lowercase().as_str() {
+        "us" | "µs" | "μs" => 1.0e-6,
         "ms" => 1.0e-3,
-        "" | "s" => 1.0,
+        "" | "s" | "sec" => 1.0,
         "m" | "min" => 60.0,
-        "h" => 3600.0,
+        "h" | "hr" => 3600.0,
+        "d" => 86400.0,
         _ => return None,
     };
-    Some(value * scale)
+    let seconds = value * scale;
+    (seconds.is_finite() && seconds >= 0.0).then_some(seconds)
 }
 
 /// Id of the flag that the timeline contained the pointer in the last pass.

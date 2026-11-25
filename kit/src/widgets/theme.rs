@@ -48,6 +48,8 @@ pub struct Tokens {
     pub on_accent: Color32,
     /// The time cursor, apart from the trace colours, most of which are saturated.
     cursor: Color32,
+    /// Marks drawn on the colours of the traces, e.g. the check of a checked trace.
+    on_trace: Color32,
     /// The accent as text and lines on the canvas, panels and cards.
     pub accent_text: Color32,
     pub ok: Color32,
@@ -77,6 +79,7 @@ pub const LIGHT: Tokens = Tokens {
     text_faint: Color32::from_rgb(0x87, 0x8d, 0x95),
     accent: Color32::from_rgb(0x38, 0x71, 0xdc),
     cursor: Color32::from_rgb(0x3a, 0x3f, 0x46),
+    on_trace: Color32::from_rgb(0x12, 0x13, 0x18),
     on_accent: Color32::WHITE,
     accent_text: Color32::from_rgb(0x1f, 0x62, 0xe0),
     ok: Color32::from_rgb(0x1f, 0x9d, 0x55),
@@ -109,6 +112,7 @@ pub const DARK: Tokens = Tokens {
     text_faint: Color32::from_rgb(0x6e, 0x6e, 0x80),
     accent: Color32::from_rgb(0x3d, 0x71, 0xd9),
     cursor: Color32::from_rgb(0xec, 0xec, 0xf4),
+    on_trace: Color32::from_rgb(0x12, 0x13, 0x18),
     on_accent: Color32::WHITE,
     accent_text: Color32::from_rgb(0x6e, 0x9f, 0xff),
     ok: Color32::from_rgb(0x3f, 0xbf, 0x72),
@@ -377,10 +381,16 @@ pub fn cursor_color(visuals: &Visuals) -> Color32 {
     tokens(visuals).cursor
 }
 
-/// The title of a panel or of a section of properties: small capitals in the weak text
-/// color.
+/// The colour of a mark drawn on the colour of a trace, e.g. the check of a checked
+/// trace: dark in both themes, so that it reads on all the colours of the traces.
+pub(crate) fn on_trace_color(visuals: &Visuals) -> Color32 {
+    tokens(visuals).on_trace
+}
+
+/// The title of a panel or of a section of properties: small and strong in the weak text
+/// color, in sentence case as written.
 pub fn title(visuals: &Visuals, text: &str) -> egui::RichText {
-    egui::RichText::new(text.to_uppercase())
+    egui::RichText::new(text)
         .size(11.0)
         .strong()
         .color(tokens(visuals).text_weak)
