@@ -3,6 +3,46 @@ Protocol
 
 Tests of the requirements in :doc:`/requirements/system/protocol`.
 
+.. test:: The senders write what the schema says
+   :id: TEST_PROTO_SCHEMA
+   :status: implemented
+   :component: proto, outpost, sonde
+   :verifies: REQ_PROTO_SCHEMA
+
+   ``proto/tests/schema.rs`` checks against ``proto/blip.cddl``, with the
+   ``cddl-cat`` crate: a message of each kind and a request as ``blip-proto``
+   encodes them (``blip_proto_writes_what_the_schema_says``), the header and
+   the messages of the fixture sonde wrote, ``sonde/tests/data/recording.blip``
+   (``sonde_writes_what_the_schema_says``), and the messages of the fixture
+   the outpost wrote, ``outpost/tests/data/messages.cbor``
+   (``the_outpost_writes_what_the_schema_says``).
+   ``the_old_names_are_legacy_messages`` checks that ``Value`` and
+   ``ValueMetadata`` are legacy messages and items of a recording, not
+   messages, and ``the_schema_refuses_what_is_no_message`` that the schema
+   refuses e.g. a byte string as a value, a misspelt or missing field and a
+   block with both forms of times or neither. The fixtures are what the
+   senders write: ``outpost/tests/test_fixture.py``
+   ``test_the_fixture_is_what_the_outpost_writes`` builds a message of each
+   kind, the actions from annotated functions, and compares it with the
+   fixture; ``sonde/tests/test_file_sink.cpp`` ("the recording fixture is what
+   sonde writes") does so for sonde.
+
+.. test:: A message is a map of one entry
+   :id: TEST_PROTO_ENCODING
+   :status: implemented
+   :component: proto, blip, outpost, sonde
+   :verifies: REQ_PROTO_ENCODING
+
+   ``proto/tests/schema.rs`` checks that each message ``blip-proto`` encodes
+   and each message of the fixtures of sonde and of the outpost starts with
+   the byte ``0xa1``, and ``proto/tests/sonde.rs``
+   (``sonde_encodes_as_serde_does``) that sonde writes byte for byte what
+   serde writes, so with definite lengths. ``kit/src/store/protocol`` unit
+   tests (``samples_and_logs_in_another_encoding_are_refused``,
+   ``samples_and_logs_of_indefinite_length_are_refused``, ``unreadable_messages_keep_their_bytes``)
+   check that blip gives a sample or log in another encoding as unreadable,
+   with its bytes for the recording.
+
 .. test:: Messages are named Sample and TraceMetadata
    :id: TEST_PROTO_NAMES
    :status: implemented

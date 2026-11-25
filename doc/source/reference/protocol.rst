@@ -4,7 +4,34 @@ Wire protocol
 Messages are exchanged as **binary WebSocket frames** containing CBOR-encoded
 values of the types defined in the ``blip-proto`` crate (``proto/src/lib.rs``).
 Enums use serde's externally tagged representation, i.e. a map with a single
-key naming the variant.
+key naming the variant. The `Schema`_ at the end of this page says the same in
+CDDL, for senders that are not written in Rust.
+
+Encoding
+--------
+
+A message is a CBOR map of **definite length with one entry**: the name of the
+message as its key and its fields as the value. Its encoding so starts with
+the byte ``0xa1`` and the name as a text string, which is how blip and the
+outpost tell the messages apart without decoding them. The maps, arrays and
+text strings within a message have a definite length too. The encoders of
+``blip-proto``, the outpost and sonde write this form, as do serde, cbor2 and
+tinycbor when the lengths are known. A sender that streams its items with
+indefinite lengths (the initial bytes ``0xbf``, ``0x9f`` and ``0x7f``) does
+not:
+
+* blip reads a ``Sample``, a ``Samples`` and a ``Log`` in this form only. One
+  that is encoded otherwise, also with a map, an array or a text string of
+  indefinite length within it, is unreadable: blip warns in its log, does not
+  show it and keeps it in a recording. The other messages are read in any
+  encoding of the map.
+* The outpost forwards a message whose outer map is encoded otherwise, but
+  does not know it: it does not shift its timestamps, keep its metadata for
+  clients that connect later, or drop its ``ActionResult``.
+
+The order of the fields of a message is free, and a field a reader does not
+know is skipped, so a later version of the protocol may add fields. A field
+that is there twice makes a ``Sample``, a ``Samples`` or a ``Log`` unreadable.
 
 Target to blip: ``Message``
 ---------------------------
@@ -400,3 +427,17 @@ uncompressed files.
 blip saves recordings with the extension ``.blip``. Layouts are saved as JSON
 files of the same versioned format that blip keeps its layout in, so they can
 be read, compared and edited.
+
+Schema
+------
+
+``proto/blip.cddl`` describes the messages, the request and the header of a
+recording in CDDL (:rfc:`8610`), for writing an encoder or checking one: the
+tests of ``blip-proto`` check what ``blip-proto``, the outpost and sonde write
+against it. It describes what a sender of version 1 writes, so its maps are
+closed and a misspelt field shows, while blip skips fields it does not know.
+The old names ``Value`` and ``ValueMetadata`` are its ``legacy-message``. CDDL
+describes the data and not its encoding, see `Encoding`_ for that.
+
+.. literalinclude:: ../../../proto/blip.cddl
+   :language: cddl

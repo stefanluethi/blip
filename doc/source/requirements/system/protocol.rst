@@ -5,6 +5,36 @@ The contract of the wire protocol and its messages beyond the basics of
 :need:`REQ_PROTO_CBOR`. The messages are described in
 :doc:`/reference/protocol`.
 
+.. req:: Schema of the protocol
+   :id: REQ_PROTO_SCHEMA
+   :status: implemented
+   :component: proto, outpost, sonde
+   :satisfies: STK_DEVICE_IF
+   :rationale: The messages are written by encoders in Rust, Python and C++.
+      A schema that a machine checks keeps them in step, and tells someone who
+      writes a fourth encoder what to send.
+
+   The messages of the protocol, the request and the header of a recording
+   shall be described in a CDDL schema (RFC 8610), ``proto/blip.cddl``. What
+   the blip-proto crate, the outpost and sonde write shall be valid against
+   it.
+
+.. req:: Encoding of a message
+   :id: REQ_PROTO_ENCODING
+   :status: implemented
+   :component: proto, blip, outpost, sonde
+   :satisfies: STK_DEVICE_IF, STK_LIVE_OBSERVE
+   :rationale: blip and the outpost tell the messages apart by their first
+      bytes and read the frequent ones in one pass, without decoding them into
+      a tree.
+
+   The blip-proto crate, the outpost and sonde shall encode a message as a
+   CBOR map of definite length with one entry, the name of the message as its
+   key, and the maps, arrays and text strings within it with a definite
+   length. blip shall treat a ``Sample``, ``Samples`` or ``Log`` message
+   encoded otherwise as unreadable: not show it, warn in its log and keep it
+   in a recording.
+
 .. req:: Timestamps and time base
    :id: REQ_PROTO_TIME
    :status: implemented

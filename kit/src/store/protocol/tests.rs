@@ -577,6 +577,65 @@ fn samples_and_logs_in_another_encoding_are_refused() {
 }
 
 #[test]
+fn samples_and_logs_of_indefinite_length_are_refused() {
+    let text = |text: &str| serde_cbor_2::to_vec(&text).unwrap();
+    let fields = [text("timestamp"), vec![0x07], text("path"), text("a")].concat();
+    // the message, its fields, an array and a text string of indefinite length
+    let outer = [
+        &[0xbf][..],
+        &text("Sample"),
+        &[0xa3],
+        &fields,
+        &text("value"),
+        &[0x01, 0xff],
+    ];
+    let inner = [
+        &[0xa1][..],
+        &text("Sample"),
+        &[0xbf],
+        &fields,
+        &text("value"),
+        &[0x01, 0xff],
+    ];
+    let array = [
+        &[0xa1][..],
+        &text("Sample"),
+        &[0xa3],
+        &fields,
+        &text("value"),
+        &[0x9f, 0x01, 0xff],
+    ];
+    let string = [
+        &[0xa1][..],
+        &text("Sample"),
+        &[0xa3],
+        &fields,
+        &text("value"),
+        &[0x7f, 0x61, b'x', 0xff],
+    ];
+    for bytes in [
+        outer.concat(),
+        inner.concat(),
+        array.concat(),
+        string.concat(),
+    ] {
+        // well-formed CBOR, and a sample to serde but for the string in pieces
+        assert!(serde_cbor_2::from_slice::<serde_cbor_2::Value>(&bytes).is_ok());
+        assert!(unreadable(&bytes).is_some(), "{bytes:02x?}");
+    }
+    // with definite lengths it is a sample
+    let definite = [
+        &[0xa1][..],
+        &text("Sample"),
+        &[0xa3],
+        &fields,
+        &text("value"),
+        &[0x01],
+    ];
+    assert!(unreadable(&definite.concat()).is_none());
+}
+
+#[test]
 fn samples_are_read_only_up_to_their_latest_value_while_not_recording() {
     #[derive(serde::Serialize)]
     enum Old {

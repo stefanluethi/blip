@@ -18,6 +18,8 @@ publish = true
 serde.workspace = true
 
 [dev-dependencies]
+# checks what the senders write against the schema, blip.cddl
+cddl-cat = { version = "0.7.1", default-features = false, features = ["ciborium"] }
 serde_cbor_2 = "0.13.0"
 
 [lints]

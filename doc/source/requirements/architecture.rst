@@ -60,14 +60,15 @@ satisfies. How each is built is described on the internals page of its part.
    :id: ARCH_PROTO
    :status: implemented
    :component: proto
-   :satisfies: REQ_PROTO_CBOR, REQ_PROTO_LOG, REQ_CTRL_ANNOUNCE, REQ_PROTO_TIME, REQ_PROTO_LEVELS, REQ_PROTO_NAMES, REQ_PROTO_METADATA, REQ_PROTO_HELLO, REQ_PROTO_SAMPLES, REQ_PROTO_TYPES, REQ_LIB_PROTO_CRATE, REQ_LIB_PUBLISH
+   :satisfies: REQ_PROTO_CBOR, REQ_PROTO_LOG, REQ_CTRL_ANNOUNCE, REQ_PROTO_TIME, REQ_PROTO_LEVELS, REQ_PROTO_NAMES, REQ_PROTO_METADATA, REQ_PROTO_HELLO, REQ_PROTO_SAMPLES, REQ_PROTO_TYPES, REQ_LIB_PROTO_CRATE, REQ_LIB_PUBLISH, REQ_PROTO_SCHEMA, REQ_PROTO_ENCODING
 
-   Rust crate defining the serde-serialisable wire types. It is the single
-   source of truth for the message schema: ``Hello``, ``Sample``, ``Samples``,
-   ``TraceMetadata``, ``Log`` with its ``level`` constants, the actions, the
-   protocol ``VERSION`` and the old names ``Value`` and ``ValueMetadata`` as
-   aliases when reading. The outpost mirrors it in
-   ``outpost/src/blip_outpost/proto.py``.
+   Rust crate defining the serde-serialisable wire types: ``Hello``,
+   ``Sample``, ``Samples``, ``TraceMetadata``, ``Log`` with its ``level``
+   constants, the actions, the protocol ``VERSION`` and the old names
+   ``Value`` and ``ValueMetadata`` as aliases when reading. It holds the
+   schema of the protocol, ``proto/blip.cddl``, and its tests check the three
+   encoders against it: its own, the outpost's, which mirrors the types in
+   ``outpost/src/blip_outpost/proto.py``, and sonde's.
 
 .. arch:: blip-kit core
    :id: ARCH_KIT_CORE

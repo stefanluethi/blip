@@ -66,6 +66,10 @@ blip
    * CBOR the protocol does not allow inside a value (a byte string, a tag, an
      indefinite-length array) now makes the whole message unreadable, where only
      that value was dropped before.
+   * The protocol has a schema in CDDL, ``proto/blip.cddl``, shown in
+     :doc:`/reference/protocol`; what ``blip-proto``, the outpost and sonde
+     write is checked against it. The reference now says how a message is
+     encoded: a map of definite length with one entry.
    * Empty views, panels and lists show their hint in one style. Plot and States
      now say *Check the traces to show in the tree on the left* over their
      empty plot.

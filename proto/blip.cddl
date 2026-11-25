@@ -1,0 +1,93 @@
+; The wire protocol of blip, version 1, in CDDL (RFC 8610).
+
+; This is what a sender writes. The tests of blip-proto (tests/schema.rs) check what
+; blip-proto, the outpost and sonde write against it; doc/source/reference/protocol.rst
+; says what the messages mean.
+
+; What CDDL does not say:
+; - The encoding. A message is a map of definite length with one entry, so it starts
+;   with the byte 0xa1, and the maps, arrays and strings in it have a definite length.
+; - A reader ignores the keys of a map it does not know, so a later version of the
+;   protocol may add some. The maps here are closed, so that a misspelt key shows.
+; - What holds between fields, e.g. as many timestamps as values in a block.
+
+; A WebSocket frame to blip, or a datagram of a target, is a CBOR sequence (RFC 8742)
+; of these.
+message = hello / sample / samples / trace-metadata / log / actions / action-result
+
+; A frame to the target is one of these.
+request = invoke
+
+; The names of a sample and of trace metadata before version 1: read, not written.
+legacy-message = { Value: sample-fields } / { ValueMetadata: { path: tstr, ? unit: tstr } }
+
+; --- Values ----------------------------------------------------------------------------
+
+; The value of a sample: a plain CBOR item without a tag. An integer is from -2^63 to
+; 2^64 - 1; a float is of any width.
+data = nil / int / float / bool / tstr / [* data] / { * tstr => data }
+
+num = int / float
+u8 = 0..255
+u32 = 0..4294967295
+; nanoseconds, from the Unix epoch or the boot of the target
+ns = uint
+
+; --- Target to blip --------------------------------------------------------------------
+
+hello = { Hello: {
+    version: u32,
+    ? name: tstr,
+    ? clock: "epoch" / "boot",
+    ? sender: tstr,
+} }
+
+sample = { Sample: sample-fields }
+sample-fields = { timestamp: ns, path: tstr, value: data }
+
+samples = { Samples: periodic-block / listed-block }
+; sample i is at timestamp + i * period
+periodic-block = { path: tstr, values: [* data], timestamp: ns, period: ns }
+; as many timestamps as values
+listed-block = { path: tstr, values: [* data], timestamps: [* ns] }
+
+trace-metadata = { TraceMetadata: {
+    path: tstr,
+    ? unit: tstr,
+    ? description: tstr,
+    ? enum: { * int => tstr },
+    ? range: { min: num, max: num },
+} }
+
+; a timestamp of 0 is now; a level is 0 Trace, 1 Debug, 2 Info, 3 Warn, 4 Error
+log = { Log: { timestamp: ns, ? path: tstr, level: u8, message: tstr } }
+
+actions = { Actions: [* action] }
+action = {
+    path: tstr,
+    ? description: tstr,
+    ? params: [* param],
+    ? readback: tstr / nil,
+    ? confirm: bool,
+    ? enabled: bool,
+    ? disabled_reason: tstr / nil,
+}
+param = { name: tstr, kind: param-kind, ? unit: tstr, ? default: data }
+param-kind = "Bool" / "String"
+    / { Int: { ? min: int / nil, ? max: int / nil } }
+    / { Float: { ? min: num / nil, ? max: num / nil, ? step: num / nil } }
+    / { Enum: [* tstr] }
+
+action-result = { ActionResult: { id: u32, result: { Ok: nil } / { Err: tstr } } }
+
+; --- blip to target --------------------------------------------------------------------
+
+; the arguments by the names of the parameters
+invoke = { Invoke: { id: u32, path: tstr, args: { * tstr => data } } }
+
+; --- Recording files -------------------------------------------------------------------
+
+; A recording is a CBOR sequence: the header, then its items. A text names the
+; connection of the messages after it.
+recording-header = { format: "blip recording", version: 1..3 }
+recording-item = message / legacy-message / tstr
