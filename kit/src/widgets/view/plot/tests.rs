@@ -253,7 +253,9 @@ fn a_vertical_drag_pans_the_y_axis_and_a_double_click_fits_it_again() {
     harness.run();
     assert_eq!(harness.state().plot.y_view, Some((panned_low, panned_high)));
 
-    // without `drop_at`, which takes the pointer away
+    // without `drop_at`, which takes the pointer away; the time stays as it was
+    let range = harness.state().time.range();
+    assert!(!harness.state().time.cursor_is_set());
     let at = egui::pos2(200.0, 150.0);
     harness.hover_at(at);
     for pressed in [true, false, true, false] {
@@ -266,6 +268,8 @@ fn a_vertical_drag_pans_the_y_axis_and_a_double_click_fits_it_again() {
         harness.run();
     }
     assert!(harness.state().plot.y_view.is_none());
+    assert_eq!(harness.state().time.range(), range);
+    assert!(!harness.state().time.cursor_is_set());
 }
 
 #[test]
@@ -420,7 +424,7 @@ fn the_tooltip_has_the_time_and_a_row_per_trace() {
         &model,
         &super::super::NO_FORMATS,
         30_000_000_000,
-        TimeBase::SinceBoot,
+        (TimeBase::SinceBoot, 3),
         None,
     );
     let label = |name: &str, index| {
@@ -460,7 +464,7 @@ fn the_tooltip_of_a_curve_of_steps_has_the_value_held_at_the_time() {
             &model,
             &super::super::NO_FORMATS,
             t,
-            TimeBase::SinceBoot,
+            (TimeBase::SinceBoot, 3),
             None,
         );
         tooltip.groups[0][0].values.clone()
@@ -496,7 +500,7 @@ fn the_tooltip_describes_the_trace_near_the_pointer() {
             &model,
             &super::super::NO_FORMATS,
             30_000_000_000,
-            TimeBase::SinceBoot,
+            (TimeBase::SinceBoot, 3),
             near,
         )
     };
@@ -559,7 +563,7 @@ fn a_plot_shows_blocks_as_single_samples() {
                 model,
                 &super::super::NO_FORMATS,
                 t,
-                TimeBase::SinceBoot,
+                (TimeBase::SinceBoot, 3),
                 None,
             )
         };

@@ -3,14 +3,15 @@
 //! be shown at the cursor time as a line over its indices.
 
 use super::Selectable;
-use super::plot::{LineStyle, ShowPoints};
+use super::plot::{LineStyles, ShowPoints};
 use super::plotting::{
-    index_formatter, index_spacer, index_under, index_x_axis, plot_array, sample_at_cursor,
+    index_formatter, index_spacer, index_under, index_x_axis, plot_array, range_moved,
+    sample_at_cursor,
 };
 use super::time_axis;
 use super::tooltip::{Header, Label, Row, Tooltip, TraceName, Value};
-use super::{PropertiesContext, ViewContext, Viewable, short_names, text_color_on};
-use crate::store::numbers::{DisplayFormat, Labels, Number, format_significant};
+use super::{Ends, Fit, PropertiesContext, ViewContext, Viewable, short_names, text_color_on};
+use crate::store::numbers::{DisplayFormat, Labels, Number, SHOWN_DIGITS, format_significant};
 use crate::store::sorted::index_at;
 use crate::store::traces::{Samples, Trace};
 use crate::store::{Store, Window};
@@ -26,6 +27,10 @@ const COLOR_BAR_WIDTH: f32 = 70.0;
 const MAX_COLUMNS: usize = 2048;
 /// Cells of a grid at least this wide in points show their value.
 const MIN_LABELLED_CELL_WIDTH: f64 = 40.0;
+/// The room the axes of a grid take before its first frame is shown, in points.
+const GRID_AXES: egui::Vec2 = egui::vec2(50.0, 30.0);
+/// The margin of the y axis at the cursor time fitted to the values, of their span.
+const Y_MARGIN_FRACTION: f64 = 0.05;
 
 /// The viridis colour map at equal steps from low to high values.
 const COLOR_MAP: [Color32; 9] = [
@@ -53,14 +58,27 @@ named_enum! {
 }
 
 /// The selected array trace as a heatmap.
-#[derive(serde::Deserialize, serde::Serialize, Clone, Default)]
+#[derive(serde::Deserialize, serde::Serialize, Clone)]
 #[serde(default)]
 pub struct Heatmap {
     /// Path of the shown trace, at most one.
     pub traces: BTreeSet<String>,
     pub mode: ArrayMode,
-    /// The values at the ends of the colour scale, or `None` to fit the shown values.
-    pub value_range: Option<(f64, f64)>,
+    /// The values at the ends of the colour scale, or of the y axis of a 1D array at
+    /// the cursor time, each `None` to fit, see [`Heatmap::fit`].
+    pub value_range: Ends,
+    /// What the ends not set fit.
+    pub fit: Fit,
+    /// When the elements of a 1D array at the cursor time are marked.
+    pub points: ShowPoints,
+    /// Width of the line of a 1D array at the cursor time in points.
+    pub line_width: f32,
+    #[serde(skip_serializing_if = "LineStyles::is_empty")]
+    pub line_styles: LineStyles,
+    /// The y range of a 1D array at the cursor time panned or zoomed to instead of the
+    /// one of `value_range`, until a double click.
+    #[serde(skip)]
+    y_view: Option<(f64, f64)>,
     /// The range of the values shown in the last frame.
     #[serde(skip)]
     fitted_range: Option<(f64, f64)>,
@@ -73,6 +91,26 @@ pub struct Heatmap {
     /// to upload it again only when they change.
     #[serde(skip)]
     uploaded: Option<u64>,
+}
+
+impl Default for Heatmap {
+    fn default() -> Self {
+        Self {
+            traces: BTreeSet::new(),
+            mode: ArrayMode::default(),
+            value_range: Ends::default(),
+            fit: Fit::default(),
+            // the elements of an array are few and far apart
+            points: ShowPoints::Always,
+            line_width: 1.5,
+            line_styles: LineStyles::default(),
+            y_view: None,
+            fitted_range: None,
+            expected: None,
+            texture: None,
+            uploaded: None,
+        }
+    }
 }
 
 /// The colour of `value` on the scale from `min` to `max`, transparent for NaN.
@@ -108,9 +146,6 @@ fn value_range(values: &[f64]) -> Option<(f64, f64)> {
         })
 }
 
-/// Significant digits of the values shown in a heatmap.
-const DIGITS: usize = 3;
-
 /// How the elements of the shown array are written.
 #[derive(Clone, Copy)]
 struct ValueText<'a> {
@@ -123,12 +158,12 @@ struct ValueText<'a> {
 impl ValueText<'_> {
     /// `value` written for a cell.
     fn write(self, value: Number) -> String {
-        value.format(Some(DIGITS), self.format)
+        value.format(Some(SHOWN_DIGITS), self.format)
     }
 
     /// `value` as a tooltip shows it, with its unit and label.
     fn tooltip_value(self, value: Number) -> Vec<Value> {
-        Value::labelled(value, DIGITS, self.format, self.unit, self.labels)
+        Value::labelled(value, SHOWN_DIGITS, self.format, self.unit, self.labels)
     }
 }
 
@@ -216,13 +251,69 @@ fn over_time(
     grid
 }
 
+/// How many times as long as wide a cell of a grid stretched to its card may be.
+const MAX_CELL_STRETCH: f64 = 3.0;
+
+/// The x and the y range that show a grid of `rows` × `columns` cells, cell `(row,
+/// column)` centred at `(column, -row)`, in a plot `frame` large: with square cells
+/// while they fill more than half the frame, else stretched to fill it as far as
+/// [`MAX_CELL_STRETCH`] allows.
+fn grid_bounds(frame: egui::Vec2, (rows, columns): (usize, usize)) -> [(f64, f64); 2] {
+    let (width, height) = (f64::from(frame.x.max(1.0)), f64::from(frame.y.max(1.0)));
+    let (columns, rows) = (columns.max(1) as f64, rows.max(1) as f64);
+    let cell = (width / columns).min(height / rows);
+    let filled = columns * rows * cell * cell / (width * height);
+    let (x_span, y_span) = if filled > 0.5 {
+        (width / cell, height / cell)
+    } else {
+        // stretched, but no cell more than MAX_CELL_STRETCH times as long as wide
+        let (cell_x, cell_y) = (width / columns, height / rows);
+        let cell_x = cell_x.min(cell_y * MAX_CELL_STRETCH);
+        let cell_y = cell_y.min(cell_x * MAX_CELL_STRETCH);
+        (width / cell_x, height / cell_y)
+    };
+    let (x_centre, y_centre) = ((columns - 1.0) / 2.0, -(rows - 1.0) / 2.0);
+    [
+        (x_centre - x_span / 2.0, x_centre + x_span / 2.0),
+        (y_centre - y_span / 2.0, y_centre + y_span / 2.0),
+    ]
+}
+
 impl Heatmap {
+    /// The range the ends of the colour scale fit, by `fit`: the expected range grown
+    /// by the shown values, or the shown values.
+    fn fitted(&self) -> Option<(f64, f64)> {
+        match self.fit {
+            Fit::Expected => super::union(self.expected, self.fitted_range),
+            Fit::Values => self.fitted_range,
+        }
+    }
+
     /// The values at the ends of the colour scale.
     fn shown_range(&self) -> (f64, f64) {
-        self.value_range
-            .or(self.expected)
-            .or(self.fitted_range)
-            .unwrap_or((0.0, 1.0))
+        self.value_range.over(self.fitted()).unwrap_or((0.0, 1.0))
+    }
+
+    /// The range the y axis of a 1D array at the cursor time fits, by `fit`: the
+    /// expected range grown by the shown values, or the shown values with a margin.
+    fn fitted_y(&self) -> Option<(f64, f64)> {
+        match (self.fit, self.expected) {
+            (Fit::Expected, Some(expected)) => super::union(Some(expected), self.fitted_range),
+            _ => self.fitted_range.map(|(low, high)| {
+                let margin = if high > low {
+                    (high - low) * Y_MARGIN_FRACTION
+                } else {
+                    0.5
+                };
+                (low - margin, high + margin)
+            }),
+        }
+    }
+
+    /// Whether a 1D array is shown at the cursor time as a line, for an array of
+    /// `dimensions`.
+    fn shows_line(&self, dimensions: Option<usize>) -> bool {
+        dimensions != Some(2) && self.mode == ArrayMode::AtCursor
     }
 
     /// Uploads the colours of `values` as an image of `size` pixels unless they are
@@ -289,6 +380,8 @@ impl Heatmap {
             .width(size.x)
             .height(size.y)
             .show_grid(false)
+            // the rows of the elements always fill the height
+            .allow_axis_zoom_drag([true, false])
             .y_axis_label("index")
             .y_grid_spacer(index_spacer)
             .y_axis_formatter(index_formatter(false));
@@ -332,11 +425,20 @@ impl Heatmap {
         let texture =
             (!values.is_empty()).then(|| self.texture(ui.ctx(), [columns, rows], &values));
 
-        let plot = egui_plot::Plot::new(ui.id().with("grid"))
+        let id = ui.id().with("grid");
+        let frame_id = id.with("frame");
+        // the size of the plot without its axes in the last frame
+        let frame = ui
+            .data(|data| data.get_temp::<egui::Vec2>(frame_id))
+            .unwrap_or(size - GRID_AXES);
+        let [x, y] = grid_bounds(frame, (rows, columns));
+        let plot = egui_plot::Plot::new(id)
             .grid_color(theme::grid_color(ui.visuals()))
             .width(size.x)
             .height(size.y)
-            .data_aspect(1.0)
+            // the grid fits the frame until panned or zoomed, and again on a double click
+            .default_x_bounds(x.0, x.1)
+            .default_y_bounds(y.0, y.1)
             .show_x(false)
             .show_y(false)
             .show_grid(false)
@@ -377,6 +479,11 @@ impl Heatmap {
             Some((row, column, numbers[row * columns + column]))
         });
 
+        let shown_frame = response.transform.frame().size();
+        if shown_frame != frame {
+            ui.data_mut(|data| data.insert_temp(frame_id, shown_frame));
+            ui.ctx().request_repaint();
+        }
         super::zoom_on_wheel(&response.response);
         if let Some((row, column, value)) = response.inner {
             let name = short_names([trace.path])[0];
@@ -399,19 +506,23 @@ impl Heatmap {
         let numbers = sample_at_cursor(trace, time);
         let values: Vec<f64> = numbers.iter().map(|number| number.as_f64()).collect();
         self.fitted_range = value_range(&values);
-        let fixed_range = self.value_range.or(self.expected);
+        let shown_y = self.y_view.or(self.value_range.over(self.fitted_y()));
         let color = theme::trace_color(ui.visuals(), 0);
+        let style = (self.line_styles.of(trace.path), self.line_width);
 
         let plot = egui_plot::Plot::new(ui.id().with("line"))
             .grid_color(theme::grid_color(ui.visuals()))
+            // the value at the pointer is shown in a tooltip
+            .show_x(false)
+            .show_y(false)
             .custom_x_axes(vec![index_x_axis("index")])
             .x_grid_spacer(index_spacer)
             .allow_boxed_zoom(false);
+        let points = self.points;
         let response = plot.show(ui, |plot_ui| {
-            if let Some((min, max)) = fixed_range {
+            if let Some((min, max)) = shown_y {
                 plot_ui.set_plot_bounds_y(min..=max);
             }
-            let (style, points) = (LineStyle::Solid, ShowPoints::Always);
             plot_array(trace.path, &values, color, style, points, plot_ui);
             let pointer = plot_ui
                 .response()
@@ -421,6 +532,17 @@ impl Heatmap {
             index_under(pointer.x, numbers.len())
         });
         super::zoom_on_wheel(&response.response);
+        // the y range is set until the user moves it, and again on a double click
+        if response.response.double_clicked() {
+            self.y_view = None;
+            ui.ctx().request_repaint();
+        } else if let Some(shown) = shown_y {
+            let bounds = response.transform.bounds();
+            let moved = (bounds.min()[1], bounds.max()[1]);
+            if range_moved(shown, moved) {
+                self.y_view = Some(moved);
+            }
+        }
         if let Some(index) = response.inner {
             let name = short_names([trace.path])[0];
             let tooltip = element_tooltip(name, trace.path, text, index, numbers[index]);
@@ -466,7 +588,7 @@ impl Heatmap {
             painter.text(
                 egui::pos2(bar.right() + 4.0, y),
                 egui::Align2::LEFT_CENTER,
-                format_significant(value, DIGITS),
+                format_significant(value, SHOWN_DIGITS),
                 font.clone(),
                 color,
             );
@@ -497,7 +619,7 @@ impl Viewable for Heatmap {
         let store: &dyn Store = context.store;
         self.expected = self.traces.first().and_then(|path| store.expected(path));
         let Some(path) = self.traces.first() else {
-            theme::hint(ui, "Select an array trace in the traces panel");
+            theme::hint(ui, super::CHECK_TRACES);
             return;
         };
         let window = Window::of(context.time.timestamps());
@@ -544,10 +666,37 @@ impl Viewable for Heatmap {
                 super::choice_row(ui, "Show", &mut self.mode, &ArrayMode::CHOICES);
             });
         }
-        let fitted = self.shown_range();
-        super::properties_section(ui, "Colour scale", |ui| {
+        // the ends of the colour scale are those of the y axis of the line
+        let line = self.shows_line(dimensions);
+        let (title, fitted) = match line {
+            true => ("Y axis", self.fitted_y()),
+            false => ("Colour scale", self.fitted()),
+        };
+        let declared = self.expected.is_some();
+        super::properties_section(ui, title, |ui| {
+            let before = (self.value_range, self.fit);
+            super::fit_row(ui, &mut self.fit, declared);
             super::range_rows(ui, &mut self.value_range, fitted);
+            if (self.value_range, self.fit) != before {
+                // show the range as set
+                self.y_view = None;
+            }
         });
+        if !line {
+            return;
+        }
+        super::properties_section(ui, "Lines", |ui| {
+            self.points.choice_row(ui);
+            super::property_label(ui, "Width");
+            ui.add(
+                egui::DragValue::new(&mut self.line_width)
+                    .range(0.5..=6.0)
+                    .speed(0.1),
+            );
+            ui.end_row();
+        });
+        let paths: Vec<&str> = self.traces.iter().map(String::as_str).collect();
+        self.line_styles.properties_ui(ui, &paths);
     }
 }
 

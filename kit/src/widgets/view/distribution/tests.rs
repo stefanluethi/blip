@@ -254,12 +254,11 @@ fn the_legend_names_the_traces_in_the_title_row_or_in_a_corner() {
     harness.run();
     assert!(harness.query_by_label("m").is_none());
 
-    // in a corner without a title row, not in the view with one
+    // in a corner without a title row, painted only, so that a click on it cannot hide
+    // a trace; not in the view with one
     let mut harness = self::harness(State::new(distribution.clone(), pose("m", "m")), false);
     harness.run();
-    let x = harness.get_by_label("x").rect();
-    assert!(x.center().x > 300.0 && x.center().y < 100.0, "{x:?}");
-    harness.get_by_label("y");
+    assert!(harness.query_by_label("x").is_none());
     let mut state = State::new(distribution, pose("m", "m"));
     state.titled = true;
     let mut harness = self::harness(state, false);
@@ -792,7 +791,7 @@ fn a_linked_histogram_bins_the_y_range_of_the_plot_in_either_orientation() {
         orientation: Orientation::Sideways,
         link: Some(ViewId(7)),
         // its own range is ignored while following
-        range: Some((0.0, 1.0)),
+        range: Ends::fixed((0.0, 1.0)),
         ..distribution_of(&["a"])
     };
     let plots = plots((100.0, 150.0));
@@ -928,8 +927,13 @@ fn the_link_is_chosen_in_either_orientation_and_greys_the_range() {
     harness.run();
     harness.run();
     assert_eq!(harness.state().link, Some(ViewId(7)));
-    // the plot sets the range
-    assert!(harness.get_by_label("Fixed").accesskit_node().is_disabled());
+    // the plot sets the range: the Min and the Max field are greyed
+    let greyed = |harness: &Harness<'_, Distribution>| {
+        (harness.get_all_by_role(egui::accesskit::Role::TextInput))
+            .filter(|field| field.accesskit_node().is_disabled())
+            .count()
+    };
+    assert_eq!(greyed(&harness), 2);
 
     // turning sideways keeps the link working
     harness.get_by_label("Sideways").click();
@@ -938,7 +942,7 @@ fn the_link_is_chosen_in_either_orientation_and_greys_the_range() {
     assert_eq!(harness.state().link, Some(ViewId(7)));
     harness.get_by(link("Motor speed"));
     harness.get_by_label("Axis side");
-    assert!(harness.get_by_label("Fixed").accesskit_node().is_disabled());
+    assert_eq!(greyed(&harness), 2);
 
     // unlinked, the own range is back
     harness.get_by(link("Motor speed")).click();
@@ -947,7 +951,9 @@ fn the_link_is_chosen_in_either_orientation_and_greys_the_range() {
     harness.run();
     harness.run();
     assert_eq!(harness.state().link, None);
-    assert!(!harness.get_by_label("Fixed").accesskit_node().is_disabled());
+    assert_eq!(greyed(&harness), 0);
+    let fields = harness.get_all_by_role(egui::accesskit::Role::TextInput);
+    assert_eq!(fields.count(), 2);
 }
 
 /// A harness showing a distribution of `pose.x` in m and `pose.y` in rad.
@@ -1045,9 +1051,9 @@ fn hovering_a_bin_shows_its_range_and_the_shares_and_counts_of_the_traces() {
         write_value(bins.edge(index + 1), bins.width, DisplayFormat::Default)
     );
     harness.get_by_label(&range);
-    // the names of the traces in the legend and the tooltip
-    assert_eq!(harness.get_all_by_label("x").count(), 2);
-    assert_eq!(harness.get_all_by_label("y").count(), 2);
+    // the names of the traces in the tooltip; the legend in the corner is painted
+    assert_eq!(harness.get_all_by_label("x").count(), 1);
+    assert_eq!(harness.get_all_by_label("y").count(), 1);
     // the share and the count of each trace
     assert_eq!(harness.get_all_by_label_contains(" %").count(), 2);
     assert_eq!(harness.get_all_by_label_contains(" of ").count(), 2);
@@ -1126,7 +1132,7 @@ fn settings_are_saved_with_defaults_for_those_missing() {
         bins: BinMode::Width,
         bin_width: 0.5,
         bin_count: 12,
-        range: Some((1.0, 2.0)),
+        range: Ends::fixed((1.0, 2.0)),
         counts: CountScale::Log,
         orientation: Orientation::Sideways,
         axis_side: AxisSide::Right,
@@ -1210,7 +1216,7 @@ fn a_link_to_a_plot_without_a_range_yet_turns_off_the_own_range_and_zoom() {
     let distribution = Distribution {
         orientation: Orientation::Sideways,
         link: Some(ViewId(7)),
-        range: Some((0.0, 1.0)),
+        range: Ends::fixed((0.0, 1.0)),
         ..distribution_of(&["a"])
     };
     let plots = Plots(vec![PlotInfo {
@@ -1245,12 +1251,13 @@ fn a_link_to_a_plot_without_a_range_yet_turns_off_the_own_range_and_zoom() {
             distribution,
         );
     properties.run();
-    assert!(
-        properties
-            .get_by_label("Fixed")
-            .accesskit_node()
-            .is_disabled()
-    );
+    // the Min and the Max field are greyed
+    let fields = |harness: &Harness<'_, Distribution>| {
+        (harness.get_all_by_role(egui::accesskit::Role::TextInput))
+            .filter(|field| field.accesskit_node().is_disabled())
+            .count()
+    };
+    assert_eq!(fields(&properties), 2);
     properties.get_by_label("Mode");
 }
 
@@ -1488,7 +1495,7 @@ fn boxes_count_each_sample_once_over_the_shown_window() {
     assert_eq!((stats.samples, stats.mean, stats.median), (4, 5.0, 5.0));
 
     // the box does not depend on the range of the value axis
-    distribution.range = Some((100.0, 200.0));
+    distribution.range = Ends::fixed((100.0, 200.0));
     let fixed = boxes_of(&mut distribution, &model, &time, &NO_PLOTS);
     distribution.link = Some(ViewId(7));
     let linked = boxes_of(&mut distribution, &model, &time, &plots((3.0, 4.0)));
@@ -1684,7 +1691,7 @@ fn the_properties_hide_the_rows_that_do_not_apply_to_the_form() {
             .map(|label| harness.query_all_by_label(label).next().is_some())
             .collect()
     };
-    let labels = ["Markers", "Whiskers", "Mode", "Width", "Scale", "Range"];
+    let labels = ["Markers", "Whiskers", "Mode", "Width", "Scale", "Min"];
     assert_eq!(
         shows(&harness, &labels),
         [true, false, true, true, true, true]
@@ -1971,4 +1978,50 @@ fn orientation_picks_and_swaps() {
     assert_eq!(Orientation::Sideways.pick(1, 2), 2);
     assert_eq!(Orientation::Upright.xy(1, 2), [1, 2]);
     assert_eq!(Orientation::Sideways.xy(1, 2), [2, 1]);
+}
+
+#[test]
+fn distributions_saved_with_a_fixed_or_no_range_load_to_the_same_bins() {
+    let fixed: Distribution =
+        serde_json::from_str(r#"{"traces": ["a"], "range": [900.0, 1100.0]}"#).unwrap();
+    assert_eq!(fixed.range, Ends::fixed((900.0, 1100.0)));
+    let model = MemoryStore::default();
+    assert_eq!(
+        fixed.own_range(&model, Some((0.0, 2000.0))),
+        Some((900.0, 1100.0))
+    );
+    // an automatic range binned all values as they are, also those of traces with an
+    // expected range
+    for json in [r#"{"range": null}"#, r#"{"traces": ["a"]}"#] {
+        let auto: Distribution = serde_json::from_str(json).unwrap();
+        assert_eq!((auto.range, auto.fit), (Ends::default(), Fit::Values));
+        assert_eq!(auto.own_range(&model, Some((1.0, 2.0))), None);
+    }
+}
+
+#[test]
+fn each_end_of_the_range_is_set_alone_and_wrong_ends_are_left_out() {
+    let model = MemoryStore::default();
+    let mut distribution = distribution_of(&["a"]);
+    distribution.range.min = Some(1.5);
+    assert_eq!(
+        distribution.own_range(&model, Some((1.0, 4.0))),
+        Some((1.5, 4.0))
+    );
+    // a Min past the values bins all of them, as the properties mark it
+    distribution.range.min = Some(5.0);
+    assert_eq!(distribution.own_range(&model, Some((1.0, 4.0))), None);
+    let [min, max] = distribution.range.problems(Some((1.0, 4.0)));
+    assert_eq!(min.as_deref(), Some("Min must be below Max, 4"));
+    assert_eq!(max, None);
+}
+
+#[test]
+fn a_bin_width_too_small_is_marked_with_the_one_in_use() {
+    assert!(widened(0.001, 0.01));
+    assert!(!widened(0.5, 0.5));
+    assert_eq!(
+        widened_hint(0.01),
+        "Too narrow for the shown values: the bins are 0.01 wide"
+    );
 }

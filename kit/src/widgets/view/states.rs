@@ -256,6 +256,25 @@ fn fnv1a(text: &str) -> u64 {
     })
 }
 
+/// The widest a name on the y axis gets, in points: the least thickness of the y axis
+/// of the time plots, less the margins egui_plot leaves beside its labels.
+const MAX_NAME_WIDTH: f32 = super::plotting::TIME_Y_AXIS_THICKNESS - 8.0;
+
+/// `name`, cut off with "…" to be at most `max` points wide as `width_of` measures it.
+fn cut_off(name: &str, max: f32, width_of: impl Fn(&str) -> f32) -> String {
+    if width_of(name) <= max {
+        return name.to_owned();
+    }
+    // the longest start of the name that fits with the "…"
+    let ends: Vec<usize> = name.char_indices().map(|(at, _)| at).skip(1).collect();
+    let fits = |&end: &usize| width_of(&format!("{}…", &name[..end])) <= max;
+    let count = ends.partition_point(fits);
+    match count.checked_sub(1) {
+        Some(last) => format!("{}…", &name[..ends[last]]),
+        None => "…".to_owned(),
+    }
+}
+
 impl States {
     /// Draws the bands of `samples` in the row centered at `y`.
     fn plot_row(
@@ -272,6 +291,10 @@ impl States {
         let seconds_per_point = seconds_per_point.abs();
         // the edge in the full color on top of the quiet fill of a band
         let edge = BAND_EDGE * values_per_point.abs();
+        // values only in bands high enough for their text
+        let font = egui::TextStyle::Body.resolve(&plot_ui.ctx().global_style());
+        let labelled =
+            self.show_values && self.band_height / values_per_point.abs() >= f64::from(font.size);
         let (top, bottom) = (y + self.band_height / 2.0, y - self.band_height / 2.0);
         let min_width = MIN_RUN_WIDTH * seconds_per_point;
         for run in runs(samples, range, latest, min_width, origin) {
@@ -302,7 +325,7 @@ impl States {
                     visuals.weak_text_color()
                 }
             };
-            if self.show_values
+            if labelled
                 && let Some(label) = run.index.map(|index| samples.text(index))
                 && (end - start) / seconds_per_point
                     > (label.chars().count() + 1) as f64 * LABEL_CHAR_WIDTH
@@ -325,7 +348,7 @@ impl States {
         store: &dyn Store,
         formats: &Formats,
         t: u64,
-        base: TimeBase,
+        (base, decimals): (TimeBase, usize),
         row: Option<usize>,
     ) -> Tooltip {
         let names = short_names(self.traces.iter().map(String::as_str));
@@ -348,31 +371,40 @@ impl States {
                 Row::new(Label::Weak((*name).to_owned()), values)
             })
             .collect();
-        let tooltip = Tooltip::new(Header::Text(base.format(t, 3))).group(rows);
+        let tooltip = Tooltip::new(Header::Text(base.format(t, decimals))).group(rows);
         match row.and_then(|row| Some((names.get(row)?, self.traces.iter().nth(row)?))) {
             Some((name, path)) => tooltip.describe(name, store.description(path)),
             None => tooltip,
         }
     }
 
-    /// Shows the values of the shown traces current at `t` seconds.
+    /// Shows the values of the shown traces current at `t` seconds, written with
+    /// `decimals` decimals of the seconds.
     fn tooltip_ui(
         &self,
         ui: &mut egui::Ui,
-        store: &dyn Store,
-        formats: &Formats,
+        (store, formats): (&dyn Store, &Formats),
         (t, row): (f64, Option<usize>),
-        axis: time_axis::TimeAxis,
+        (axis, decimals): (time_axis::TimeAxis, usize),
     ) {
-        self.tooltip(store, formats, axis.timestamp(t), axis.base, row)
+        let t = axis.timestamp(t);
+        self.tooltip(store, formats, t, (axis.base, decimals), row)
             .ui(ui);
     }
 
     fn show_states(&self, context: &mut ViewContext<'_>, ui: &mut egui::Ui) {
         let (store, formats, time) = (context.store, context.formats, &mut *context.time);
+        // long names are cut off, so that the axis is as wide as that of other plots
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        let width_of = |text: &str| {
+            let galley =
+                ui.painter()
+                    .layout_no_wrap(text.to_owned(), font.clone(), Color32::PLACEHOLDER);
+            galley.size().x
+        };
         let names: Vec<String> = short_names(self.traces.iter().map(String::as_str))
             .into_iter()
-            .map(str::to_owned)
+            .map(|name| cut_off(name, MAX_NAME_WIDTH, width_of))
             .collect();
         let rows = names.len();
         // the first trace is the top row
@@ -380,6 +412,8 @@ impl States {
         let id = ui.id().with("states");
         let plot = time_axis::plot(id, time, ui.visuals())
             .show_grid([true, false])
+            // the rows are set every frame, so the y axis offers no zoom
+            .allow_axis_zoom_drag([true, false])
             .y_grid_spacer(move |_input| {
                 (0..rows)
                     .map(|row| egui_plot::GridMark {
@@ -424,11 +458,11 @@ impl States {
         if let Some(t) = response.hovered
             && !self.traces.is_empty()
         {
-            let axis = response.axis;
+            let axis = (response.axis, response.time_decimals());
             let row = response.hovered_y.and_then(|y| row_at(y, rows));
-            response
-                .response
-                .on_hover_ui_at_pointer(|ui| self.tooltip_ui(ui, store, formats, (t, row), axis));
+            response.response.on_hover_ui_at_pointer(|ui| {
+                self.tooltip_ui(ui, (store, formats), (t, row), axis);
+            });
         }
     }
 }
@@ -464,7 +498,11 @@ impl Viewable for States {
     fn properties_ui(&mut self, ui: &mut egui::Ui, _context: &PropertiesContext<'_>) {
         super::properties_section(ui, "Bands", |ui| {
             super::property_label(ui, "Height");
-            ui.add(egui::Slider::new(&mut self.band_height, 0.2..=1.0))
+            let height = egui::DragValue::new(&mut self.band_height)
+                .range(0.2..=1.0)
+                .speed(0.01)
+                .fixed_decimals(2);
+            ui.add(height)
                 .on_hover_text("Height of a band as a fraction of its row");
             ui.end_row();
             super::checkbox_row(

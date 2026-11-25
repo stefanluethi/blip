@@ -49,8 +49,17 @@ pub struct TimePlotResponse {
     pub bounds: egui_plot::PlotBounds,
     /// The screen rectangle of the plot inside its axes.
     pub frame: egui::Rect,
+    /// Whether the plot was double clicked, which left the time as it was.
+    pub double_clicked: bool,
     pub response: egui::Response,
     pub axis: TimeAxis,
+}
+
+impl TimePlotResponse {
+    /// The decimals of the seconds of a time read off the plot, see [`time_decimals`].
+    pub(crate) fn time_decimals(&self) -> usize {
+        time_decimals(self.bounds.width() / f64::from(self.frame.width().max(1.0)))
+    }
 }
 
 /// A plot with the time on the x axis that can only be panned and zoomed along it, to
@@ -74,10 +83,11 @@ pub fn plot<'a>(id: egui::Id, time: &TimeRange, visuals: &egui::Visuals) -> egui
         })
 }
 
-/// Whether the drag in progress pans the y axis of the plot under `id` instead of the
-/// time: whether it went more vertically than horizontally when it went far enough to
-/// tell. A drag pans the time until then.
-fn drags_y(ui: &egui::Ui, id: egui::Id) -> bool {
+/// Which axis the drag in progress pans in the plot under `id`: the y axis
+/// (`Some(true)`) if it went more vertically than horizontally when it went far enough
+/// to tell, else the time (`Some(false)`). `None` until then and without a drag, when
+/// it pans nothing, so that a vertical drag does not move the time first.
+fn drag_lock(ui: &egui::Ui, id: egui::Id) -> Option<bool> {
     let lock_id = id.with("drag lock");
     let (down, moved) = ui.input(|input| {
         let pointer = &input.pointer;
@@ -89,28 +99,97 @@ fn drags_y(ui: &egui::Ui, id: egui::Id) -> bool {
     });
     if !down {
         ui.data_mut(|data| data.remove::<bool>(lock_id));
-        return false;
+        return None;
     }
     if let Some(vertical) = ui.data(|data| data.get_temp(lock_id)) {
-        return vertical;
+        return Some(vertical);
     }
-    match moved {
-        Some(moved) if moved.length() > DRAG_LOCK_DISTANCE => {
-            let vertical = moved.y.abs() > moved.x.abs();
-            ui.data_mut(|data| data.insert_temp(lock_id, vertical));
-            vertical
+    let moved = moved.filter(|moved| moved.length() > DRAG_LOCK_DISTANCE)?;
+    let vertical = moved.y.abs() > moved.x.abs();
+    ui.data_mut(|data| data.insert_temp(lock_id, vertical));
+    Some(vertical)
+}
+
+/// The time range as it was before the first click of what may become a double click
+/// on a plot, and when that click ended, `None` while its press did not end in a
+/// click, e.g. while it drags.
+#[derive(Clone)]
+struct BeforeClick {
+    time: TimeRange,
+    released: Option<f64>,
+}
+
+/// Keeps `before`, the time range before a press in `rect` that may start a double
+/// click, and puts it back in `time` on a double click there, so that a double click
+/// leaves the time as it was before its first click. Returns whether the pointer double
+/// clicked in `rect`.
+fn undo_double_click(
+    ui: &egui::Ui,
+    id: egui::Id,
+    rect: egui::Rect,
+    before: Option<TimeRange>,
+    time: &mut TimeRange,
+) -> bool {
+    let memory_id = id.with("before click");
+    let delay = ui
+        .ctx()
+        .options(|options| options.input_options.max_double_click_delay);
+    let (now, inside, clicked, double) = ui.input(|input| {
+        let pointer = &input.pointer;
+        (
+            input.time,
+            pointer.interact_pos().is_some_and(|pos| rect.contains(pos)),
+            pointer.button_clicked(egui::PointerButton::Primary),
+            pointer.button_double_clicked(egui::PointerButton::Primary),
+        )
+    });
+    if !inside {
+        return false;
+    }
+    let memory: Option<BeforeClick> = ui.data(|data| data.get_temp(memory_id));
+    if double {
+        if let Some(memory) = memory {
+            *time = memory.time;
+            ui.data_mut(|data| data.remove::<BeforeClick>(memory_id));
+            ui.ctx().request_repaint();
         }
-        _ => false,
+        return true;
     }
+    if let Some(before) = before {
+        // the press of a second click keeps the time of before the first one
+        let second = (memory.as_ref())
+            .and_then(|memory| memory.released)
+            .is_some_and(|released| now - released < delay);
+        if !second {
+            let memory = BeforeClick {
+                time: before,
+                released: None,
+            };
+            ui.data_mut(|data| data.insert_temp(memory_id, memory));
+        }
+    } else if clicked && let Some(mut memory) = memory {
+        memory.released = Some(now);
+        ui.data_mut(|data| data.insert_temp(memory_id, memory));
+    }
+    false
+}
+
+/// The decimals of the seconds of a time read off a plot with `seconds_per_point`
+/// seconds per point, as the time axis labels its marks: enough to tell apart times a
+/// point apart, at most nanoseconds.
+pub(crate) fn time_decimals(seconds_per_point: f64) -> usize {
+    (-seconds_per_point.abs().log10().floor()).clamp(0.0, 9.0) as usize
 }
 
 /// Shows `plot` made with [`plot`] under `id` over the shared window of `time` with
 /// the contents added by `build`, and applies panning and zooming of the plot to
 /// `time`. Shows the cursor of `time` as a vertical line, which a click in the plot puts
-/// there and which can be dragged.
+/// there and which can be dragged. A double click leaves the time as it was before its
+/// first click.
 ///
-/// With `pan_zoom_y`, a vertical drag pans the y axis and the wheel with Alt zooms it,
-/// for `build` to keep in [`TimePlotResponse::bounds`].
+/// A drag pans once it went far enough to tell its direction: the time if it went
+/// more horizontally, else, with `pan_zoom_y`, the y axis. With `pan_zoom_y` the wheel
+/// with Alt zooms the y axis too, for `build` to keep in [`TimePlotResponse::bounds`].
 pub fn show<'a>(
     id: egui::Id,
     plot: egui_plot::Plot<'a>,
@@ -120,11 +199,16 @@ pub fn show<'a>(
     build: impl FnOnce(&mut egui_plot::PlotUi<'a>, TimeAxis) + 'a,
 ) -> TimePlotResponse {
     let axis = TimeAxis::of(time);
+    // as it is before a press changes it, for a double click to put back
+    let before = ui
+        .input(|input| input.pointer.primary_pressed())
+        .then(|| time.clone());
     let cursor_id = id.with("cursor");
     let cursor_grabbed = time::cursor_grabbed(ui, cursor_id);
-    let drag_y = pan_zoom_y && drags_y(ui, id);
+    let lock = drag_lock(ui, id);
     // dragging the cursor does not pan the plot
-    let plot = plot.allow_drag([!cursor_grabbed && !drag_y, !cursor_grabbed && drag_y]);
+    let pans = |vertical: bool| !cursor_grabbed && lock == Some(vertical);
+    let plot = plot.allow_drag([pans(false), pan_zoom_y && pans(true)]);
     // the wheel zooms the time, and with Alt the y axis only, see `zoom_with_wheel`
     let zoom_y = pan_zoom_y && ui.input(|input| input.modifiers.alt);
     let plot = plot.allow_zoom([true, zoom_y]);
@@ -150,7 +234,11 @@ pub fn show<'a>(
         }
     }
 
-    let set_at = (cursor_grabbed || response.response.clicked())
+    // the first click puts the cursor under the pointer, which gets the second one, so
+    // the double click is told by the pointer in the plot
+    let rect = response.response.rect;
+    let double_clicked = undo_double_click(ui, id, rect, before, time);
+    let set_at = (!double_clicked && (cursor_grabbed || response.response.clicked()))
         .then(|| ui.ctx().pointer_interact_pos())
         .flatten();
     if let Some(pos) = set_at {
@@ -173,6 +261,7 @@ pub fn show<'a>(
         hovered_y: response.inner.map(|point| point.y),
         bounds: *transform.bounds(),
         frame: *transform.frame(),
+        double_clicked,
         response: response.response,
         axis,
     }

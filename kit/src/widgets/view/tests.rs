@@ -374,14 +374,14 @@ fn the_traces_section_lists_the_facts() {
         );
     harness.run();
     for label in [
-        "TRACES",
+        "Traces",
         "Speed",
         "Expected 0 to 3000",
         "-1 fault, 0 off, 1 on",
     ] {
         assert!(harness.query_by_label(label).is_some(), "{label}");
     }
-    assert!(harness.query_by_label("NUMBER FORMAT").is_none());
+    assert!(harness.query_by_label("Number format").is_none());
     // "p" has no facts and adds no row
     assert_eq!(harness.query_all_by_label_contains("Expected ").count(), 1);
 }
@@ -428,4 +428,61 @@ fn fit_to_and_formats_survive_json() {
     let old: View = serde_json::from_str(old).unwrap();
     assert!(matches!(&old.kind, ViewKind::Plot(plot) if plot.fit == Fit::Expected));
     assert_eq!(old.formats.format_of("a", false), DisplayFormat::Hex);
+}
+
+#[test]
+fn an_end_is_a_finite_number_or_nothing() {
+    assert_eq!(parse_end(" 1.5 "), Ok(Some(1.5)));
+    assert_eq!(parse_end("-2e3"), Ok(Some(-2000.0)));
+    assert_eq!(parse_end("  "), Ok(None));
+    for text in ["abc", "1,5", "inf", "-inf", "NaN", "1e400"] {
+        assert_eq!(parse_end(text), Err(NOT_AN_END), "{text}");
+    }
+}
+
+#[test]
+fn ends_out_of_order_blame_the_ends_set() {
+    let fitted = Some((0.0, 10.0));
+    let problems = |min, max, fitted| Ends { min, max }.problems(fitted);
+    assert_eq!(problems(Some(1.0), Some(2.0), fitted), [None, None]);
+    assert_eq!(problems(None, None, fitted), [None, None]);
+    assert_eq!(problems(Some(1.0), None, None), [None, None]);
+    let both = problems(Some(5.0), Some(5.0), fitted);
+    assert_eq!(both[0].as_deref(), Some("Min must be below Max, 5"));
+    assert_eq!(both[1].as_deref(), Some("Max must be above Min, 5"));
+    // the fitted end is not blamed
+    let min = problems(Some(12.0), None, fitted);
+    assert_eq!(min, [Some("Min must be below Max, 10".to_owned()), None]);
+    let max = problems(None, Some(-1.0), fitted);
+    assert_eq!(max, [None, Some("Max must be above Min, 0".to_owned())]);
+}
+
+#[test]
+fn text_that_is_no_end_stays_and_keeps_the_end() {
+    use egui_kittest::kittest::Queryable;
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(300.0, 100.0))
+        .build_ui_state(
+            |ui, min: &mut Option<f64>| {
+                egui::Grid::new("range").show(ui, |ui| {
+                    optional_number_row(ui, "Min", min, Some(0.0));
+                });
+            },
+            None,
+        );
+    harness.run();
+    let field = egui::accesskit::Role::TextInput;
+    harness.get_by_role(field).focus();
+    harness.run();
+    harness.get_by_role(field).type_text("2");
+    harness.run();
+    assert_eq!(*harness.state(), Some(2.0));
+    harness.get_by_role(field).type_text("x");
+    harness.run();
+    assert_eq!(*harness.state(), Some(2.0));
+    // the text stays when the field loses the focus
+    harness.key_press(egui::Key::Escape);
+    harness.run();
+    assert!(harness.query_all_by_value("2x").next().is_some());
+    assert_eq!(*harness.state(), Some(2.0));
 }

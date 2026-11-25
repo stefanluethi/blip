@@ -288,25 +288,136 @@ fn the_colour_scale_starts_from_the_expected_range() {
 }
 
 #[test]
-fn a_fixed_range_starts_with_the_one_shown() {
+fn the_colour_scale_fits_the_values_or_the_expected_range_grown_by_them() {
+    let mut heatmap = Heatmap {
+        expected: Some((0.0, 100.0)),
+        fitted_range: Some((-5.0, 7.0)),
+        ..Heatmap::default()
+    };
+    assert_eq!(heatmap.shown_range(), (-5.0, 100.0));
+    heatmap.fit = Fit::Values;
+    assert_eq!(heatmap.shown_range(), (-5.0, 7.0));
+}
+
+#[test]
+fn each_end_of_the_colour_scale_is_set_alone_and_wrong_ends_are_left_out() {
     let mut heatmap = Heatmap {
         expected: Some((0.0, 100.0)),
         fitted_range: Some((3.0, 7.0)),
         ..Heatmap::default()
     };
-    let shown = heatmap.shown_range();
-    let mut harness = egui_kittest::Harness::builder()
-        .with_size(egui::vec2(300.0, 200.0))
-        .build_ui_state(
-            move |ui, heatmap: &mut Heatmap| {
-                egui::Grid::new("g").show(ui, |ui| {
-                    super::super::range_rows(ui, &mut heatmap.value_range, shown);
-                });
-            },
-            std::mem::take(&mut heatmap),
+    heatmap.value_range.min = Some(10.0);
+    assert_eq!(heatmap.shown_range(), (10.0, 100.0));
+    heatmap.value_range.max = Some(50.0);
+    assert_eq!(heatmap.shown_range(), (10.0, 50.0));
+    // a Min past the Max fits the values again, as the properties mark it
+    heatmap.value_range.min = Some(60.0);
+    assert_eq!(heatmap.shown_range(), (0.0, 100.0));
+    let [min, max] = heatmap.value_range.problems(heatmap.fitted());
+    assert_eq!(min.as_deref(), Some("Min must be below Max, 50"));
+    assert_eq!(max.as_deref(), Some("Max must be above Min, 60"));
+}
+
+#[test]
+fn heatmaps_saved_with_a_fixed_or_no_range_load_to_the_same_scale() {
+    let fixed: Heatmap =
+        serde_json::from_str(r#"{"traces": ["a"], "value_range": [1.0, 5.0]}"#).unwrap();
+    assert_eq!(fixed.value_range, Ends::fixed((1.0, 5.0)));
+    let fitted = Heatmap {
+        expected: Some((0.0, 100.0)),
+        fitted_range: Some((3.0, 7.0)),
+        ..fixed
+    };
+    assert_eq!(fitted.shown_range(), (1.0, 5.0));
+    // an automatic range took the expected one, else the values, as now
+    for json in [r#"{"value_range": null}"#, r#"{"traces": ["a"]}"#] {
+        let auto: Heatmap = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            (auto.value_range, auto.fit),
+            (Ends::default(), Fit::Expected)
         );
+        let mut auto = Heatmap {
+            expected: Some((0.0, 100.0)),
+            fitted_range: Some((3.0, 7.0)),
+            ..auto
+        };
+        assert_eq!(auto.shown_range(), (0.0, 100.0));
+        auto.expected = None;
+        assert_eq!(auto.shown_range(), (3.0, 7.0));
+        // the line at the cursor time as before: solid, every element marked
+        assert_eq!(auto.points, ShowPoints::Always);
+        assert_eq!(auto.line_width, 1.5);
+        assert!(auto.line_styles.is_empty());
+    }
+    let set = Heatmap {
+        value_range: Ends {
+            min: None,
+            max: Some(9.0),
+        },
+        fit: Fit::Values,
+        points: ShowPoints::Never,
+        line_width: 3.0,
+        ..Heatmap::default()
+    };
+    let json = serde_json::to_string(&set).unwrap();
+    let loaded: Heatmap = serde_json::from_str(&json).unwrap();
+    assert_eq!(serde_json::to_string(&loaded).unwrap(), json);
+}
+
+#[test]
+fn a_grid_fills_its_frame_with_square_cells_only_while_they_fill_half_of_it() {
+    // 4 × 4 cells in a frame of 200 × 100: square cells of 25 fill half, so they stretch
+    let [x, y] = grid_bounds(egui::vec2(200.0, 100.0), (4, 4));
+    assert_eq!((x, y), ((-0.5, 3.5), (-3.5, 0.5)));
+    // in a frame of 150 × 100 they fill two thirds: square, the columns centred
+    let [x, y] = grid_bounds(egui::vec2(150.0, 100.0), (4, 4));
+    assert_eq!(y, (-3.5, 0.5));
+    assert!((x.1 - x.0 - 6.0).abs() < 1.0e-9, "{x:?}");
+    assert!((x.0 + x.1 - 3.0).abs() < 1.0e-9, "{x:?}");
+    // a small array in a tall card is stretched to fill it
+    let [x, y] = grid_bounds(egui::vec2(80.0, 200.0), (8, 8));
+    assert_eq!((x, y), ((-0.5, 7.5), (-7.5, 0.5)));
+    // but its cells get no more than three times as high as wide: 10 × 30 in a card
+    // of 80 × 640, which shows 21⅓ rows, centred
+    let [x, y] = grid_bounds(egui::vec2(80.0, 640.0), (8, 8));
+    assert_eq!(x, (-0.5, 7.5));
+    assert!((y.1 - y.0 - 640.0 / 30.0).abs() < 1.0e-9, "{y:?}");
+    assert!((y.0 + y.1 + 7.0).abs() < 1.0e-9, "{y:?}");
+}
+
+/// The y range the line at the cursor shows.
+fn line_y(harness: &egui_kittest::Harness<'static, State>) -> (f64, f64) {
+    let heatmap = &harness.state().heatmap;
+    (heatmap.y_view)
+        .or_else(|| heatmap.value_range.over(heatmap.fitted_y()))
+        .expect("a y range")
+}
+
+#[test]
+fn the_y_axis_at_the_cursor_stays_where_zoomed_until_a_double_click() {
+    let mut harness = heatmap_harness("frame", ArrayMode::AtCursor);
     harness.run();
-    harness.get_by_label("Fixed").click();
-    harness.run();
-    assert_eq!(harness.state().value_range, Some((0.0, 100.0)));
+    // the values 0 to 3 with a margin
+    let (low, high) = line_y(&harness);
+    assert!((low + 0.15).abs() < 1.0e-9 && (high - 3.15).abs() < 1.0e-9);
+    assert!(harness.state().heatmap.y_view.is_none());
+
+    super::super::scroll_wheel(&mut harness, egui::pos2(200.0, 150.0), 100.0);
+    let (low, high) = harness.state().heatmap.y_view.expect("zoomed");
+    assert!(high - low < 3.3 * 0.9, "{low} {high}");
+    // it stays while the frame is shown again
+    harness.run_steps(5);
+    assert_eq!(harness.state().heatmap.y_view, Some((low, high)));
+
+    let at = egui::pos2(200.0, 150.0);
+    for pressed in [true, false, true, false] {
+        harness.event(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+    }
+    assert!(harness.state().heatmap.y_view.is_none());
 }

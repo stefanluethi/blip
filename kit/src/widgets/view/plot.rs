@@ -1,5 +1,5 @@
 use super::Selectable;
-use super::plotting::{is_point, to_screen};
+use super::plotting::{TitleEntry, is_point, title_legend, to_screen};
 use super::stats::{self, Measurement};
 use super::time_axis::{self, TimeAxis, visible_range};
 use super::tooltip::{Header, Label, Row, Tooltip, TraceName, Value};
@@ -187,7 +187,8 @@ named_enum! {
 }
 
 impl LegendPlacement {
-    fn corner(self) -> Option<egui_plot::Corner> {
+    /// The corner of the plot the legend goes to, if it goes to one.
+    pub(super) fn corner(self) -> Option<egui_plot::Corner> {
         match self {
             LegendPlacement::Hidden | LegendPlacement::Title => None,
             LegendPlacement::TopLeft => Some(egui_plot::Corner::LeftTop),
@@ -382,37 +383,50 @@ impl Plot {
 
     /// The tooltip with the values of the shown traces at `t` nanoseconds, a faint dash
     /// for a trace without a series, and the description of the trace `near` the
-    /// pointer, by its path.
+    /// pointer, by its path. The time on top is that of the samples
+    /// shown if they share one and are not held, else `t`, written in `base` with
+    /// `decimals` decimals of the seconds.
     fn tooltip(
         &self,
         store: &dyn Store,
         formats: &Formats,
         t: u64,
-        base: TimeBase,
+        (base, decimals): (TimeBase, usize),
         near: Option<&str>,
     ) -> Tooltip {
         let mut footer = None;
+        // the times of the closest samples shown, none if a value is held
+        let mut times = Some(BTreeSet::new());
         let rows = self
             .selected_path_iter()
             .map(|(path, name, index)| {
+                let labels = store.labels(path);
+                let unit = store.unit(path);
+                let format = formats.format_of(path, labels.is_some());
+                let shown = store.series(path, Window::at(t)).data.and_then(|series| {
+                    let shown = self.index_shown(&series, t)?;
+                    match &mut times {
+                        Some(_) if self.steps(&series) => times = None,
+                        Some(times) => _ = times.insert(series.timestamps[shown]),
+                        None => {}
+                    }
+                    Some(series.number(shown))
+                });
                 if near == Some(path) {
                     footer = Some((name, store.description(path)));
                 }
-                let labels = store.labels(path);
-                let values = store
-                    .series(path, Window::at(t))
-                    .data
-                    .and_then(|series| {
-                        let number = series.number(self.index_shown(&series, t)?);
-                        let unit = store.unit(path);
-                        let format = formats.format_of(path, labels.is_some());
-                        Some(Value::labelled(number, SHOWN_DIGITS, format, unit, labels))
-                    })
-                    .unwrap_or_else(|| vec![Value::missing()]);
+                let values = shown.map_or_else(
+                    || vec![Value::missing()],
+                    |number| Value::labelled(number, SHOWN_DIGITS, format, unit, labels),
+                );
                 Row::new(Label::Trace(TraceName::new(name, path, index)), values)
             })
             .collect();
-        let tooltip = Tooltip::new(Header::Text(base.format(t, 3))).group(rows);
+        let at = match times.as_ref().map(|times| times.iter().collect::<Vec<_>>()) {
+            Some(times) if times.len() == 1 => *times[0],
+            _ => t,
+        };
+        let tooltip = Tooltip::new(Header::Text(base.format(at, decimals))).group(rows);
         match footer {
             Some((name, description)) => tooltip.describe(name, description),
             None => tooltip,
@@ -420,14 +434,14 @@ impl Plot {
     }
 
     /// Shows the values of the shown traces at `t` seconds, `y` being the height of the
-    /// pointer, with `points_per_value` points per unit of y.
+    /// pointer, with `points_per_value` points per unit of y and times written with
+    /// `decimals` decimals of the seconds.
     fn tooltip_ui(
         &self,
         ui: &mut egui::Ui,
-        store: &dyn Store,
-        formats: &Formats,
+        (store, formats): (&dyn Store, &Formats),
         (t, y, points_per_value): (f64, Option<f64>, f64),
-        axis: TimeAxis,
+        (axis, decimals): (TimeAxis, usize),
     ) {
         let t_ns = axis.timestamp(t);
         let near = y.and_then(|y| {
@@ -446,7 +460,7 @@ impl Plot {
             let index = nearest_curve(&values, y, points_per_value)?;
             self.selected_path_iter().nth(index).map(|(path, ..)| path)
         });
-        self.tooltip(store, formats, t_ns, axis.base, near).ui(ui);
+        (self.tooltip(store, formats, t_ns, (axis.base, decimals), near)).ui(ui);
     }
 
     /// Whether a stat of a shown trace is shown below the plot.
@@ -502,15 +516,12 @@ impl Plot {
         if let Some(label) = label {
             y_axis = y_axis.label(label);
         }
-        let mut plot = time_axis::plot(id, time, ui.visuals()).custom_y_axes(vec![y_axis]);
+        let plot = time_axis::plot(id, time, ui.visuals()).custom_y_axes(vec![y_axis]);
         // without a title row, the legend of the title row goes to a corner
         let legend = match self.legend {
             LegendPlacement::Title if !context.titled => LegendPlacement::TopRight,
             legend => legend,
         };
-        if let Some(corner) = legend.corner() {
-            plot = plot.legend(egui_plot::Legend::default().position(corner));
-        }
 
         let visuals = ui.visuals().clone();
         let shown_y = self.shown_y(store);
@@ -532,17 +543,8 @@ impl Plot {
             }
         });
 
-        // the first click puts the cursor under the pointer, which gets the second one
-        let double_clicked = ui.input(|input| {
-            input
-                .pointer
-                .button_double_clicked(egui::PointerButton::Primary)
-                && input
-                    .pointer
-                    .interact_pos()
-                    .is_some_and(|pos| response.response.rect.contains(pos))
-        });
-        if double_clicked {
+        // a double click fits the y axis and leaves the time as it was
+        if response.double_clicked {
             self.y_view = None;
             ui.ctx().request_repaint();
         } else if let Some((min_y, max_y)) = shown_y {
@@ -552,22 +554,27 @@ impl Plot {
             }
         }
 
+        if let Some(corner) = legend.corner() {
+            let entries = (self.selected_path_iter())
+                .map(|(_, name, index)| (name, theme::trace_color(&visuals, index)));
+            super::plotting::corner_legend(ui, response.frame, corner, entries);
+        }
         if self.traces.is_empty() {
             theme::hint_over(ui, response.frame, super::CHECK_TRACES);
         }
         if let Some(t) = response.hovered
             && !self.traces.is_empty()
         {
-            let axis = response.axis;
+            let axis = (response.axis, response.time_decimals());
             let height = response.bounds.max()[1] - response.bounds.min()[1];
             let at = (
                 t,
                 response.hovered_y,
                 f64::from(response.frame.height()) / height,
             );
-            response
-                .response
-                .on_hover_ui_at_pointer(|ui| self.tooltip_ui(ui, store, formats, at, axis));
+            response.response.on_hover_ui_at_pointer(|ui| {
+                self.tooltip_ui(ui, (store, formats), at, axis);
+            });
         }
     }
 }
@@ -658,15 +665,15 @@ impl super::ViewInfo for Plot {
     }
 }
 
-/// Shows `value` of the trace at `path` in the legend of the title row, right-aligned
-/// in a slot as wide as `widest` and as the widest value it showed since `widest` or
-/// its `format` last changed, so that its digits keep their place while it changes.
-fn legend_value(
-    ui: &mut egui::Ui,
+/// The width of the slot of `value` of the trace at `path` in the legend of the title
+/// row: as wide as `widest` and as the widest value it showed since `widest` or its
+/// `format` last changed, so that its digits keep their place while it changes.
+fn legend_value_width(
+    ui: &egui::Ui,
     path: &str,
     value: Option<&str>,
     (widest, format): (Option<&str>, DisplayFormat),
-) {
+) -> f32 {
     let width_of = |text: &str| super::text_size(ui, text, egui::TextStyle::Body).x;
     let needed = value
         .map_or(0.0, width_of)
@@ -674,14 +681,7 @@ fn legend_value(
     // a new range or format, e.g. of another recording, starts the slot anew
     let slot = format!("{format:?} {widest:?}");
     let id = ui.id().with(("legend value width", path));
-    let width = super::sticky_width(ui.ctx(), id, slot, needed);
-    let size = egui::vec2(width, ui.spacing().interact_size.y);
-    let layout = egui::Layout::right_to_left(egui::Align::Center);
-    ui.allocate_ui_with_layout(size, layout, |ui| {
-        if let Some(value) = value {
-            ui.label(egui::RichText::new(value).strong());
-        }
-    });
+    super::sticky_width(ui.ctx(), id, slot, needed)
 }
 
 /// How the values of `series` written in `format` are kept in place in the legend: the
@@ -711,41 +711,49 @@ impl Viewable for Plot {
         let t = time.cursor_timestamp();
         // one unit shared by all traces is written once, at the end
         let unit = super::common_unit(store, self.traces.iter().map(String::as_str));
-        let weak = ui.visuals().weak_text_color();
-        ui.add_space(8.0);
-        for (path, name, index) in self.selected_path_iter() {
-            ui.add_space(6.0);
-            super::legend_dot(ui, theme::trace_color(ui.visuals(), index));
-            ui.label(egui::RichText::new(name).color(weak))
-                .on_hover_text(path);
-            let Some(series) = store.series(path, Window::of(time.timestamps())).data else {
-                continue;
-            };
-            let labels = store.labels(path);
-            let format = formats.format_of(path, labels.is_some());
-            let own_unit = store.unit(path).filter(|_| unit.is_none());
-            let (decimals, widest) = legend_slot(&series, format);
-            let value = t.and_then(|t| {
-                let value = series.number(index_at(series.timestamps, t)?);
-                let text = match decimals {
-                    Some(decimals) => value.format_fixed(decimals),
-                    None => value.format_labelled(Some(SHOWN_DIGITS), format, labels),
-                };
-                // a label replaces the number without its unit
-                let labelled = format == DisplayFormat::Labels
-                    && labels.is_some_and(|labels| value.label(labels).is_some());
-                Some(with_unit(
-                    text,
-                    own_unit.filter(|_| !value.is_null() && !labelled),
-                ))
-            });
-            let widest = widest.map(|widest| with_unit(widest, own_unit));
-            legend_value(ui, path, value.as_deref(), (widest.as_deref(), format));
-        }
-        if let Some(unit) = unit {
-            ui.add_space(4.0);
-            ui.label(egui::RichText::new(unit).color(weak));
-        }
+        let entries: Vec<TitleEntry<'_>> = (self.selected_path_iter())
+            .map(|(path, name, index)| {
+                let series = store.series(path, Window::of(time.timestamps())).data;
+                let labels = store.labels(path);
+                let format = formats.format_of(path, labels.is_some());
+                let own_unit = store.unit(path).filter(|_| unit.is_none());
+                let mut value = None;
+                let mut widest = None;
+                if let Some(series) = series {
+                    let (decimals, widest_text) = legend_slot(&series, format);
+                    widest = widest_text.map(|widest| with_unit(widest, own_unit));
+                    // the sample the tooltip shows at the cursor
+                    value = t.and_then(|t| {
+                        let number = series.number(self.index_shown(&series, t)?);
+                        let text = match decimals {
+                            Some(decimals) => number.format_fixed(decimals),
+                            None => number.format_labelled(Some(SHOWN_DIGITS), format, labels),
+                        };
+                        // a label replaces the number without its unit
+                        let labelled = format == DisplayFormat::Labels
+                            && labels.is_some_and(|labels| number.label(labels).is_some());
+                        let unit = own_unit.filter(|_| !number.is_null() && !labelled);
+                        // the hover has all digits, of the number behind a label too
+                        let numeric = match format {
+                            DisplayFormat::Labels => DisplayFormat::Default,
+                            format => format,
+                        };
+                        let exact = with_unit(number.format(None, numeric), unit);
+                        Some((with_unit(text, unit), exact))
+                    });
+                }
+                let text = value.as_ref().map(|(text, _)| text.as_str());
+                let slot = legend_value_width(ui, path, text, (widest.as_deref(), format));
+                TitleEntry {
+                    path,
+                    name,
+                    color: theme::trace_color(ui.visuals(), index),
+                    value,
+                    slot,
+                }
+            })
+            .collect();
+        title_legend(ui, &entries, unit);
     }
 
     fn colored_paths(&self, _store: &dyn Store) -> Vec<String> {
@@ -778,8 +786,22 @@ impl Viewable for Plot {
             let declared = self.expected_y(store).is_some();
             super::fit_row(ui, &mut self.fit, declared);
             let fitted = self.range_y(store);
-            super::optional_number_row(ui, "Min", &mut self.y_min, fitted.map(|r| r.0));
-            super::optional_number_row(ui, "Max", &mut self.y_max, fitted.map(|r| r.1));
+            // while zoomed, the hints are the ends shown
+            let hints = self.y_view.or(fitted);
+            let ends = (&mut self.y_min, &mut self.y_max);
+            super::optional_range_rows(ui, ends, fitted, hints);
+            if self.y_view.is_some() {
+                super::property_label(ui, "Zoomed");
+                let fit = theme::icon_button(egui_phosphor::regular::ARROWS_OUT_LINE_VERTICAL);
+                if ui
+                    .add(fit)
+                    .on_hover_text("Fit the y axis (double-click the plot)")
+                    .clicked()
+                {
+                    self.y_view = None;
+                }
+                ui.end_row();
+            }
             if (self.y_min, self.y_max, self.fit) != range {
                 // show the range as set
                 self.y_view = None;

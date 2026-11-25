@@ -418,15 +418,16 @@ pub fn zoom_with_wheel(ctx: &egui::Context, raw_input: &mut egui::RawInput) {
     }
 }
 
-/// A text colour readable on `background`.
+/// A text colour readable on `background`: the darkest or the lightest surface of the
+/// themes.
 pub fn text_color_on(background: egui::Color32) -> egui::Color32 {
     let luminance = 0.299 * f32::from(background.r())
         + 0.587 * f32::from(background.g())
         + 0.114 * f32::from(background.b());
     if luminance > 140.0 {
-        egui::Color32::BLACK
+        theme::DARK.canvas
     } else {
-        egui::Color32::WHITE
+        theme::LIGHT.card
     }
 }
 
@@ -635,33 +636,102 @@ fn end_hint(end: Option<f64>) -> String {
 
 /// Adds a row labelled `label` to the grid of a properties section with a field for
 /// `value`, which is `None` while the field is empty. The empty field shows `hint`, the
-/// end in use. While the field is edited, text that is no number is kept in it and
-/// leaves `value` as it was.
+/// end in use. Text that is no finite number is kept in the field, marked as an error,
+/// and leaves `value` as it was.
 pub fn optional_number_row(
     ui: &mut egui::Ui,
     label: &str,
     value: &mut Option<f64>,
     hint: Option<f64>,
 ) {
-    property_label(ui, label);
-    let id = ui.id().with(("optional number", label));
-    let edited: Option<String> = ui.data(|data| data.get_temp(id));
-    let mut text = edited.unwrap_or_else(|| value.map_or_else(String::new, |v| v.to_string()));
-    let response = ui.add(theme::wide_field(&mut text).hint_text(end_hint(hint)));
-    if response.changed() {
-        let text = text.trim();
-        if text.is_empty() {
-            *value = None;
-        } else if let Ok(number) = text.parse() {
-            *value = Some(number);
-        }
+    end_row(ui, label, value, hint, None);
+}
+
+/// Why the text of a Min or Max field is no end of an axis.
+const NOT_AN_END: &str = "Enter a finite number, or nothing to fit";
+
+/// The end of an axis that the text of a Min or Max field sets, `None` while it is
+/// empty, or why the text sets none.
+fn parse_end(text: &str) -> Result<Option<f64>, &'static str> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
     }
-    if response.has_focus() {
+    match text.parse::<f64>() {
+        Ok(end) if end.is_finite() => Ok(Some(end)),
+        _ => Err(NOT_AN_END),
+    }
+}
+
+/// Adds the rows "Min" and "Max" to the grid of a properties section with fields for
+/// the ends of an axis, as [`optional_number_row`] does. An end not set falls back to
+/// that of `fitted`; the empty fields show the ends of `hints`, those in use. A set end
+/// that is not below, or above, the other one is marked as an error.
+pub(crate) fn optional_range_rows(
+    ui: &mut egui::Ui,
+    (min, max): (&mut Option<f64>, &mut Option<f64>),
+    fitted: Option<(f64, f64)>,
+    hints: Option<(f64, f64)>,
+) {
+    let [min_problem, max_problem] = Ends {
+        min: *min,
+        max: *max,
+    }
+    .problems(fitted);
+    end_row(ui, "Min", min, hints.map(|(low, _)| low), min_problem);
+    end_row(ui, "Max", max, hints.map(|(_, high)| high), max_problem);
+}
+
+/// Adds a row of [`optional_number_row`], its field marked as an error with `problem`
+/// on hover if there is one and the text is a number.
+fn end_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut Option<f64>,
+    hint: Option<f64>,
+    problem: Option<String>,
+) {
+    property_label(ui, label);
+    // text that is no number stays in the field of this value, and not in that of
+    // another view whose properties show in the same place
+    let place = std::ptr::from_ref(value) as usize;
+    let id = ui.id().with(("optional number", label, place));
+    let kept: Option<String> = ui.data(|data| data.get_temp(id));
+    let mut text = kept.unwrap_or_else(|| value.map_or_else(String::new, |v| v.to_string()));
+    let response = ui.add(theme::wide_field(&mut text).hint_text(end_hint(hint)));
+    let parsed = parse_end(&text);
+    if response.changed()
+        && let Ok(end) = parsed
+    {
+        *value = end;
+    }
+    if response.has_focus() || parsed.is_err() {
         ui.data_mut(|data| data.insert_temp(id, text));
     } else {
         ui.data_mut(|data| data.remove::<String>(id));
     }
+    if let Some(problem) = parsed.err().map(str::to_owned).or(problem) {
+        mark(ui, response, theme::tokens(ui.visuals()).error, &problem);
+    }
     ui.end_row();
+}
+
+/// Marks the control of `response` framed in `color`, e.g. `error` for a value that is
+/// wrong or `warn` for one changed in use, with `reason` on hover.
+pub(crate) fn mark(
+    ui: &egui::Ui,
+    response: egui::Response,
+    color: egui::Color32,
+    reason: &str,
+) -> egui::Response {
+    let stroke = egui::Stroke::new(1.0, color);
+    ui.painter().rect_stroke(
+        response.rect,
+        theme::CONTROL_RADIUS,
+        stroke,
+        egui::StrokeKind::Inside,
+    );
+    response.on_hover_text(reason)
 }
 
 named_enum! {
@@ -694,24 +764,99 @@ pub fn fit_row(ui: &mut egui::Ui, fit: &mut Fit, declared: bool) {
     }
 }
 
-/// Adds rows to the grid of a properties section to choose whether `range` fits the
-/// shown values (`None`) or is fixed, and to set the ends of a fixed range. A range
-/// that becomes fixed starts at `fitted`, the range fitted to the shown values.
-pub fn range_rows(ui: &mut egui::Ui, range: &mut Option<(f64, f64)>, fitted: (f64, f64)) {
-    let mut fixed = range.is_some();
-    choice_row(ui, "Range", &mut fixed, &[(false, "Auto"), (true, "Fixed")]);
-    if fixed != range.is_some() {
-        *range = fixed.then_some(fitted);
+/// The ends of an axis as set in the properties, each `None` to fit the shown values,
+/// see [`range_rows`]. Also reads the fixed range of earlier versions: both ends, or
+/// `null` for none.
+#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Default, PartialEq, Debug)]
+#[serde(from = "SavedEnds")]
+pub struct Ends {
+    /// The low end, or `None` to fit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    /// The high end, or `None` to fit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+}
+
+/// The saved forms of [`Ends`].
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum SavedEnds {
+    /// The fixed range of earlier versions, `None` to fit.
+    Range(Option<(f64, f64)>),
+    Ends {
+        #[serde(default)]
+        min: Option<f64>,
+        #[serde(default)]
+        max: Option<f64>,
+    },
+}
+
+impl From<SavedEnds> for Ends {
+    fn from(saved: SavedEnds) -> Self {
+        match saved {
+            SavedEnds::Range(range) => Self {
+                min: range.map(|(min, _)| min),
+                max: range.map(|(_, max)| max),
+            },
+            SavedEnds::Ends { min, max } => Self { min, max },
+        }
     }
-    if let Some((min, max)) = range {
-        let speed = ((*max - *min).abs() * 0.01).max(1.0e-6);
-        property_label(ui, "Min");
-        ui.add(egui::DragValue::new(min).speed(speed));
-        ui.end_row();
-        property_label(ui, "Max");
-        ui.add(egui::DragValue::new(max).speed(speed));
-        ui.end_row();
+}
+
+impl Ends {
+    /// Both ends of `range`.
+    pub fn fixed((min, max): (f64, f64)) -> Self {
+        Self {
+            min: Some(min),
+            max: Some(max),
+        }
     }
+
+    /// Whether neither end is set.
+    pub fn is_auto(self) -> bool {
+        self.min.is_none() && self.max.is_none()
+    }
+
+    /// The range from the ends that are set and the ends of `fitted`, the range that
+    /// fits the shown values, for those that are not. `fitted` if the ends are not in
+    /// order, see `Ends::problems`, `None` if an end is unknown.
+    pub fn over(self, fitted: Option<(f64, f64)>) -> Option<(f64, f64)> {
+        let min = self.min.or(fitted.map(|(min, _)| min))?;
+        let max = self.max.or(fitted.map(|(_, max)| max))?;
+        if min < max { Some((min, max)) } else { fitted }
+    }
+
+    /// What is wrong with the Min and the Max over `fitted`: the ends that are set
+    /// while the low end is not below the high one, with the reason.
+    pub(crate) fn problems(self, fitted: Option<(f64, f64)>) -> [Option<String>; 2] {
+        let low = self.min.or(fitted.map(|(min, _)| min));
+        let high = self.max.or(fitted.map(|(_, max)| max));
+        match (low, high) {
+            (Some(low), Some(high)) if low >= high => {
+                let written = |end: f64| format_significant(end, SHOWN_DIGITS);
+                [
+                    (self.min).map(|_| format!("Min must be below Max, {}", written(high))),
+                    (self.max).map(|_| format!("Max must be above Min, {}", written(low))),
+                ]
+            }
+            _ => [None, None],
+        }
+    }
+}
+
+/// Adds the rows Min and Max to the grid of a properties section for `ends`: fields
+/// that are empty to fit, showing then the end of `fitted`, the range that fits the
+/// shown values, as their hint. Text that is no finite number stays in its field,
+/// marked, and leaves its end as it was; ends that are not in order are marked too, and
+/// views fit the values instead. Gives whether an end changed.
+pub fn range_rows(ui: &mut egui::Ui, ends: &mut Ends, fitted: Option<(f64, f64)>) -> bool {
+    let before = *ends;
+    let [min_problem, max_problem] = ends.problems(fitted);
+    let hints = (fitted.map(|(min, _)| min), fitted.map(|(_, max)| max));
+    end_row(ui, "Min", &mut ends.min, hints.0, min_problem);
+    end_row(ui, "Max", &mut ends.max, hints.1, max_problem);
+    *ends != before
 }
 
 /// The elements of an array of `shape` if they are few enough to be listed.
@@ -754,6 +899,17 @@ impl View {
     pub fn relink(&mut self, map: impl Fn(ViewId) -> Option<ViewId>) {
         if let ViewKind::Distribution(distribution) = &mut self.kind {
             distribution.link = distribution.link.and_then(map);
+        }
+    }
+
+    /// Gives this view the links to other views of `before`, an earlier state of it,
+    /// that it lost, e.g. to the views a delete removed that come back by an undo.
+    pub(crate) fn relink_as(&mut self, before: &View) {
+        if let (ViewKind::Distribution(now), ViewKind::Distribution(before)) =
+            (&mut self.kind, &before.kind)
+            && now.link.is_none()
+        {
+            now.link = before.link;
         }
     }
 

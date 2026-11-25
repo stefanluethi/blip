@@ -165,7 +165,7 @@ fn the_tooltip_describes_the_row_and_writes_labels_with_the_number() {
         &model,
         &super::super::NO_FORMATS,
         3_500_000_000,
-        TimeBase::SinceBoot,
+        (TimeBase::SinceBoot, 3),
         Some(1),
     );
     assert_eq!(
@@ -186,7 +186,7 @@ fn the_tooltip_describes_the_row_and_writes_labels_with_the_number() {
         &model,
         &super::super::NO_FORMATS,
         3_500_000_000,
-        TimeBase::SinceBoot,
+        (TimeBase::SinceBoot, 3),
         None,
     );
     assert_eq!(none.footer, None);
@@ -201,7 +201,7 @@ fn the_tooltip_has_the_time_and_the_state_of_each_trace() {
             &model,
             &super::super::NO_FORMATS,
             t,
-            TimeBase::SinceBoot,
+            (TimeBase::SinceBoot, 3),
             None,
         )
     };
@@ -291,4 +291,14 @@ fn bands_write_labels_and_keep_the_colour_of_the_number() {
     let samples = StateSamples::of(&model, "m", DisplayFormat::Default, Window::ALL).unwrap();
     let texts: Vec<_> = (0..3).map(|index| samples.text(index)).collect();
     assert_eq!(texts, ["0", "1", "3"]);
+}
+
+#[test]
+fn long_names_are_cut_off_to_the_width_of_the_axis() {
+    // each character 10 points wide, "…" too
+    let width_of = |text: &str| 10.0 * text.chars().count() as f32;
+    assert_eq!(cut_off("state", 50.0, width_of), "state");
+    assert_eq!(cut_off("log_level", 50.0, width_of), "log_…");
+    assert_eq!(cut_off("µs_long", 30.0, width_of), "µs…");
+    assert_eq!(cut_off("abc", 5.0, width_of), "…");
 }

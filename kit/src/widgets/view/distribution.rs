@@ -3,10 +3,10 @@
 //! in their colours, as boxes, a box plot of each trace in a row of its own, or both.
 
 use super::Selectable;
+use super::plotting::{TitleEntry, corner_legend, title_legend};
 use super::tooltip::{Header, Label, Row, Tone, Tooltip, TraceName, Value};
 use super::{
-    Formats, LEGEND_DOT_SIZE, Plots, PropertiesContext, ViewContext, ViewId, Viewable, legend_dot,
-    text_size,
+    Ends, Fit, Formats, Plots, PropertiesContext, ViewContext, ViewId, Viewable, text_size,
 };
 use crate::store::numbers::{DisplayFormat, Number, NumberKind, SHOWN_DIGITS, format_significant};
 use crate::store::sorted::within;
@@ -63,8 +63,6 @@ const OVERLAY_INSET: f32 = 6.0;
 const NAME_MARGIN: f32 = 4.0;
 /// The height of the counts of the samples outside the bins.
 const TEXT_ROW: f32 = 18.0;
-/// The least width left for a name in the legend of the title row, else it ends in "…".
-const MIN_NAME_WIDTH: f32 = 16.0;
 /// The least width of the value axis of a sideways distribution, as of the y axis of a
 /// plot, so that both line up.
 const VALUE_AXIS_THICKNESS: f32 = 50.0;
@@ -205,8 +203,12 @@ pub struct Distribution {
     pub bin_count: usize,
     /// The width of the bins with [`BinMode::Width`], in the unit of the traces.
     pub bin_width: f64,
-    /// The lowest and the highest value binned, or `None` to bin all shown values.
-    pub range: Option<(f64, f64)>,
+    /// The lowest and the highest value binned, each `None` to fit, see
+    /// [`Distribution::fit`]. Without either and without an expected range, all shown
+    /// values are binned.
+    pub range: Ends,
+    /// What the ends of the range not set fit.
+    pub fit: Fit,
     pub counts: CountScale,
     pub orientation: Orientation,
     pub axis_side: AxisSide,
@@ -253,7 +255,9 @@ impl Default for Distribution {
             bins: BinMode::default(),
             bin_count: 20,
             bin_width: 1.0,
-            range: None,
+            range: Ends::default(),
+            // as before the choice, and as the bins of a histogram fit the values
+            fit: Fit::Values,
             counts: CountScale::default(),
             orientation: Orientation::default(),
             axis_side: AxisSide::default(),
@@ -271,7 +275,8 @@ impl Default for Distribution {
 /// What a distribution showed in a frame.
 #[derive(Clone, PartialEq, Debug)]
 struct Last {
-    /// The lowest and the highest value of the samples.
+    /// The range the ends of the range not set fit: the lowest and the highest value
+    /// of the samples, grown by the expected ranges if fitted to them.
     data: (f64, f64),
     /// The range of the value axis.
     values: (f64, f64),
@@ -562,12 +567,12 @@ impl Distribution {
         let shown = self.shown_traces(store, window);
         let following = self.following(plots);
         let followed = self.followed(plots);
+        let data = data_range(&shown).filter(|_| window.is_some());
         // the own range is off while following, also before the plot shows a range
         let fixed = match following {
             true => followed,
-            false => self.range.filter(|(low, high)| low < high),
+            false => self.own_range(store, data),
         };
-        let data = data_range(&shown).filter(|_| window.is_some());
         let counted = data.map(|data| self.count(&shown, data, fixed, length));
         // without bins, the infinite samples are still counted at their ends
         let outside = match &counted {
@@ -586,6 +591,36 @@ impl Distribution {
             counted,
             outside,
         }
+    }
+
+    /// The union of the expected ranges of the shown traces, if fitted to them.
+    fn declared(&self, store: &dyn Store) -> Option<(f64, f64)> {
+        match self.fit {
+            Fit::Expected => (self.traces.iter())
+                .map(|path| store.expected(path))
+                .fold(None, super::union),
+            Fit::Values => None,
+        }
+    }
+
+    /// The range the ends of the range not set fit: the values of `data`, grown by the
+    /// expected ranges if fitted to them.
+    fn fitted_ends(&self, store: &dyn Store, data: Option<(f64, f64)>) -> Option<(f64, f64)> {
+        super::union(self.declared(store), data)
+    }
+
+    /// The range binned unless following a plot, of the values of `data`, `None` to bin
+    /// all values as they are. Ends that are not in order are left out.
+    fn own_range(&self, store: &dyn Store, data: Option<(f64, f64)>) -> Option<(f64, f64)> {
+        let declared = self.declared(store);
+        let fitted = super::union(declared, data);
+        let wrong = self.range.problems(fitted).iter().any(Option::is_some);
+        let fixed = match (self.range.is_auto() || wrong, declared) {
+            (true, None) => None,
+            (true, Some(_)) => fitted,
+            (false, _) => self.range.over(fitted),
+        };
+        fixed.filter(|(low, high)| low < high)
     }
 
     /// Whether the plot can be panned and zoomed along the axes, x and y.
@@ -930,37 +965,16 @@ impl super::ViewInfo for Distribution {
 impl Viewable for Distribution {
     fn title_ui(&self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         let unit = super::common_unit(context.store, self.traces.iter().map(String::as_str));
-        let weak = ui.visuals().weak_text_color();
-        // the unit keeps its place at the end, the names are cut off with "…" before it
-        let unit_width = unit.map_or(0.0, |unit| {
-            text_size(ui, unit, egui::TextStyle::Body).x + 4.0 + ui.spacing().item_spacing.x
-        });
-        ui.add_space(8.0);
-        let names = egui::vec2(
-            (ui.available_width() - unit_width).max(0.0),
-            ui.spacing().interact_size.y,
-        );
-        let left_to_right = egui::Layout::left_to_right(egui::Align::Center);
-        ui.allocate_ui_with_layout(names, left_to_right, |ui| {
-            for (path, name, index) in self.selected_path_iter() {
-                if ui.available_width() < 6.0 + LEGEND_DOT_SIZE + MIN_NAME_WIDTH {
-                    // a name cut off ends in "…" already
-                    let more = egui::RichText::new("…").color(weak);
-                    if ui.available_width() >= text_size(ui, "…", egui::TextStyle::Body).x {
-                        ui.label(more);
-                    }
-                    break;
-                }
-                ui.add_space(6.0);
-                legend_dot(ui, theme::trace_color(ui.visuals(), index));
-                let label = egui::Label::new(egui::RichText::new(name).color(weak)).truncate();
-                ui.add(label).on_hover_text(path);
-            }
-        });
-        if let Some(unit) = unit {
-            ui.add_space(4.0);
-            ui.label(egui::RichText::new(unit).color(weak));
-        }
+        let entries: Vec<TitleEntry<'_>> = (self.selected_path_iter())
+            .map(|(path, name, index)| TitleEntry {
+                path,
+                name,
+                color: theme::trace_color(ui.visuals(), index),
+                value: None,
+                slot: 0.0,
+            })
+            .collect();
+        title_legend(ui, &entries, unit);
     }
 
     fn colored_paths(&self, _store: &dyn Store) -> Vec<String> {
@@ -973,17 +987,16 @@ impl Viewable for Distribution {
     }
 
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
-        if self.traces.is_empty() {
-            theme::hint(ui, super::CHECK_TRACES);
-            return;
-        }
         self.show(ui, context);
     }
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, context: &PropertiesContext<'_>) {
-        let unit = super::common_unit(context.store, self.traces.iter().map(String::as_str));
+        let store = context.store;
+        let unit = super::common_unit(store, self.traces.iter().map(String::as_str));
         let following = self.following(context.plots);
-        let fitted = self.last.as_ref().map_or((0.0, 1.0), |last| last.data);
+        let followed = self.followed(context.plots);
+        let fitted = self.last.as_ref().map(|last| last.data);
+        let declared = (self.traces.iter()).any(|path| store.expected(path).is_some());
         let last_bins = self.last.as_ref().map(|last| last.bins);
         super::properties_section(ui, "Link", |ui| self.link_row(ui, context.plots));
         super::properties_section(ui, "Display", |ui| {
@@ -1007,9 +1020,15 @@ impl Viewable for Distribution {
         });
         super::properties_section(ui, "Values", |ui| {
             if following {
-                self.followed_range_rows(ui);
+                followed_range_rows(ui, followed);
             } else {
+                let before = (self.range, self.fit);
+                super::fit_row(ui, &mut self.fit, declared);
                 super::range_rows(ui, &mut self.range, fitted);
+                if (self.range, self.fit) != before {
+                    // show the range as set
+                    self.value_view = None;
+                }
             }
         });
         // the bins and counts are kept, but play no part in the boxes alone
@@ -1035,13 +1054,18 @@ impl Viewable for Distribution {
                 }
                 BinMode::Width => {
                     super::property_label(ui, "Width");
+                    // a width too small for the shown values is widened
+                    let in_use = (last_bins.map(|bins| bins.width))
+                        .filter(|&width| widened(self.bin_width, width));
                     ui.horizontal(|ui| {
                         let speed = (self.bin_width.abs() * 0.01).max(1.0e-9);
-                        ui.add(
-                            egui::DragValue::new(&mut self.bin_width)
-                                .range(f64::MIN_POSITIVE..=f64::MAX)
-                                .speed(speed),
-                        );
+                        let field = egui::DragValue::new(&mut self.bin_width)
+                            .range(f64::MIN_POSITIVE..=f64::MAX)
+                            .speed(speed);
+                        let response = ui.add(field);
+                        if let Some(width) = in_use {
+                            super::mark(ui, response, ui.tokens().warn, &widened_hint(width));
+                        }
                         if let Some(unit) = unit {
                             ui.weak(unit);
                         }
@@ -1080,29 +1104,39 @@ fn plot_names(plots: &Plots) -> Vec<String> {
         .collect()
 }
 
-impl Distribution {
-    /// Adds the rows of the range to the grid of a properties section, greyed, as the
-    /// plot followed sets it.
-    fn followed_range_rows(&mut self, ui: &mut egui::Ui) {
-        const SET_BY_PLOT: &str = "Set by the linked plot";
-        let mut fixed = self.range.is_some();
-        super::property_label(ui, "Range");
-        ui.add_enabled_ui(false, |ui| {
-            theme::segmented(ui, &mut fixed, &[(false, "Auto"), (true, "Fixed")]);
-        })
-        .response
-        .on_disabled_hover_text(SET_BY_PLOT);
-        ui.end_row();
-        if let Some((min, max)) = &mut self.range {
-            for (label, value) in [("Min", min), ("Max", max)] {
-                super::property_label(ui, label);
-                ui.add_enabled(false, egui::DragValue::new(value))
-                    .on_disabled_hover_text(SET_BY_PLOT);
-                ui.end_row();
-            }
-        }
-    }
+/// Whether bins `shown` wide are wider than the `set` width, as it was too small for
+/// the shown values.
+fn widened(set: f64, shown: f64) -> bool {
+    shown > set * (1.0 + 1.0e-9)
+}
 
+/// The hover of a bin width too small for the shown values, of bins `width` wide.
+fn widened_hint(width: f64) -> String {
+    format!(
+        "Too narrow for the shown values: the bins are {} wide",
+        format_significant(width, SHOWN_DIGITS)
+    )
+}
+
+/// Adds the rows Min and Max to the grid of a properties section, greyed, with the
+/// ends of `followed`, the range the linked plot shows, as their hints.
+fn followed_range_rows(ui: &mut egui::Ui, followed: Option<(f64, f64)>) {
+    const SET_BY_PLOT: &str = "Set by the linked plot";
+    let ends = [followed.map(|(min, _)| min), followed.map(|(_, max)| max)];
+    for (label, end) in ["Min", "Max"].into_iter().zip(ends) {
+        super::property_label(ui, label);
+        let hint = end.map_or_else(
+            || "auto".to_owned(),
+            |end| format_significant(end, SHOWN_DIGITS),
+        );
+        let mut text = String::new();
+        ui.add_enabled(false, theme::wide_field(&mut text).hint_text(hint))
+            .on_disabled_hover_text(SET_BY_PLOT);
+        ui.end_row();
+    }
+}
+
+impl Distribution {
     /// Adds a row to the grid of a properties section to choose where the whiskers of
     /// the boxes end, a combo box as four choices do not fit beside the label.
     fn whiskers_row(&mut self, ui: &mut egui::Ui) {
@@ -1204,6 +1238,11 @@ impl Distribution {
             outside,
         } = self.counting(store, context.time, context.plots, value_length);
         let fitted = fitted_values(counted.as_ref(), data, fixed);
+        // what the ends of the own range fit, for the properties
+        let fitted_ends = match following {
+            true => data,
+            false => self.fitted_ends(store, data),
+        };
         let values = match following {
             true => followed.unwrap_or(fitted),
             false => self.value_view.unwrap_or(fitted),
@@ -1243,12 +1282,7 @@ impl Distribution {
             }
         };
 
-        let mut plot = self.plot(id, ui.visuals(), &across, (unit, format), following);
-        // without a title row, the legend of the title row goes to a corner; the names
-        // of the rows of the boxes need none
-        if !context.titled && self.show != Show::Boxes {
-            plot = plot.legend(egui_plot::Legend::default().position(egui_plot::Corner::RightTop));
-        }
+        let plot = self.plot(id, ui.visuals(), &across, (unit, format), following);
         let visuals = ui.visuals().clone();
         let this = &*self;
         let response = plot.show(ui, |plot_ui| {
@@ -1295,7 +1329,7 @@ impl Distribution {
         let rows = self.rows(frame, shown.len());
         self.last = counted.as_ref().map(|counted| {
             Box::new(Last {
-                data: data.unwrap_or(fitted),
+                data: fitted_ends.unwrap_or(fitted),
                 values,
                 bins: counted.bins,
                 frame,
@@ -1338,7 +1372,22 @@ impl Distribution {
         if let Some(counted) = &counted {
             self.paint_markers(ui, &overlay, &shown, counted);
         }
-        if empty {
+        // without a title row, the legend of the title row goes to a corner; the names
+        // of the rows of the boxes need none
+        if !context.titled && self.show != Show::Boxes {
+            let entries: Vec<(&str, egui::Color32)> = (shown.iter())
+                .map(|trace| {
+                    (
+                        trace.name.as_str(),
+                        theme::trace_color(ui.visuals(), trace.index),
+                    )
+                })
+                .collect();
+            corner_legend(ui, frame, egui_plot::Corner::RightTop, entries);
+        }
+        if self.traces.is_empty() {
+            theme::hint_over(ui, frame, super::CHECK_TRACES);
+        } else if empty {
             theme::hint_over(ui, frame, NO_SAMPLES);
         }
         match self.hovered {
@@ -1424,7 +1473,9 @@ impl Distribution {
             .allow_double_click_reset(false)
             .allow_drag(movable)
             .allow_zoom(movable)
-            .allow_scroll(movable);
+            .allow_scroll(movable)
+            // the counts and, while linked, the values are set every frame
+            .allow_axis_zoom_drag(movable);
         let label = |hints: egui_plot::AxisHints<'static>| match unit {
             Some(unit) => hints.label(unit.to_owned()),
             None => hints,

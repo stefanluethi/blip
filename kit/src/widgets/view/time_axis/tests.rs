@@ -6,6 +6,11 @@ use egui_kittest::Harness;
 /// A harness showing a time plot of data from 0 to 40 seconds, its state is the
 /// shared time range.
 fn time_plot_harness() -> Harness<'static, TimeRange> {
+    time_plot_harness_stepping(1.0 / 4.0)
+}
+
+/// [`time_plot_harness`] with `step` seconds from frame to frame.
+fn time_plot_harness_stepping(step: f32) -> Harness<'static, TimeRange> {
     let mut traces = Traces::default();
     for second in 0..=40 {
         traces.append(&proto::Sample {
@@ -18,6 +23,7 @@ fn time_plot_harness() -> Harness<'static, TimeRange> {
     model.traces = traces;
     Harness::builder()
         .with_size(egui::vec2(400.0, 200.0))
+        .with_step_dt(step)
         .build_ui_state(
             move |ui, time: &mut TimeRange| {
                 time.update(&model, ui.input(|input| input.time));
@@ -77,6 +83,75 @@ fn clicking_a_time_plot_sets_the_cursor_which_can_be_dragged() {
     let time = harness.state();
     assert_eq!(time.cursor(), cursor);
     assert_ne!(time.range(), range);
+}
+
+/// Double clicks at `at`, without `drop_at`, which takes the pointer away.
+fn double_click(harness: &mut Harness<'_, TimeRange>, at: egui::Pos2) {
+    harness.hover_at(at);
+    harness.run();
+    for pressed in [true, false, true, false] {
+        harness.event(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+    }
+}
+
+#[test]
+fn a_double_click_leaves_the_time_as_it_was() {
+    // fast enough for double clicks
+    let mut harness = time_plot_harness_stepping(1.0 / 60.0);
+    harness.run();
+    assert!(harness.state().is_live());
+
+    // live stays live, the cursor follows the end
+    double_click(&mut harness, egui::pos2(300.0, 100.0));
+    let time = harness.state();
+    assert!(time.is_live());
+    assert!(!time.cursor_is_set());
+
+    // a cursor put somewhere stays there
+    let click = egui::pos2(250.0, 100.0);
+    harness.hover_at(click);
+    harness.run();
+    harness.drag_at(click);
+    harness.run();
+    harness.drop_at(click);
+    harness.run();
+    let cursor = harness.state().cursor();
+    let range = harness.state().range();
+    assert!(harness.state().cursor_is_set());
+    // a while later, so that this is no double click with the click before
+    harness.run_steps(30);
+    double_click(&mut harness, egui::pos2(100.0, 100.0));
+    assert_eq!(harness.state().cursor(), cursor);
+    assert_eq!(harness.state().range(), range);
+}
+
+#[test]
+fn a_vertical_drag_pans_no_time() {
+    let mut harness = time_plot_harness();
+    harness.run();
+    let range = harness.state().range();
+    drag(
+        &mut harness,
+        egui::pos2(200.0, 40.0),
+        egui::pos2(203.0, 160.0),
+    );
+    let time = harness.state();
+    assert!(time.is_live());
+    assert_eq!(time.range(), range);
+}
+
+#[test]
+fn time_decimals_follow_the_zoom() {
+    assert_eq!(time_decimals(2.0), 0);
+    assert_eq!(time_decimals(0.05), 2);
+    assert_eq!(time_decimals(0.002), 3);
+    assert_eq!(time_decimals(1.0e-12), 9);
 }
 
 #[test]

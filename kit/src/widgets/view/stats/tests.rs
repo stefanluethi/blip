@@ -192,3 +192,22 @@ fn stats_are_written_in_their_units() {
     assert_eq!(Stat::Mean.format(12.0234, Some("V"), format), "12.02 V");
     assert_eq!(Stat::Max.format(255.0, None, DisplayFormat::Hex), "0xff");
 }
+
+#[test]
+fn the_hover_of_a_stat_has_all_its_digits() {
+    let format = DisplayFormat::Default;
+    let mean = Stat::Mean;
+    assert_eq!(mean.format(1.234_567_8, Some("V"), format), "1.235 V");
+    assert_eq!(
+        mean.format_exact(1.234_567_8, Some("V"), format),
+        "1.2345678 V"
+    );
+    assert_eq!(
+        Stat::Frequency.format_exact(1234.5678, None, format),
+        "1234.5678 Hz"
+    );
+    assert_eq!(
+        Stat::Duty.format_exact(0.123_456, None, format),
+        "12.3456 %"
+    );
+}

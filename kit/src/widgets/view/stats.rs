@@ -94,6 +94,18 @@ impl Stat {
             ),
         }
     }
+
+    /// `value` of this stat with all its digits, for the hover of its chip, see
+    /// [`Self::format`].
+    fn format_exact(self, value: f64, unit: Option<&str>, format: DisplayFormat) -> String {
+        let exact = |value: f64, format| Number::Float(value).format(None, format);
+        match self {
+            Stat::Frequency => super::with_unit(exact(value, DisplayFormat::Default), Some("Hz")),
+            Stat::Period => super::with_unit(exact(value, DisplayFormat::Default), Some("s")),
+            Stat::Duty => format!("{} %", exact(value * 100.0, DisplayFormat::Default)),
+            _ => super::with_unit(exact(value, format), unit),
+        }
+    }
 }
 
 /// `value` in `unit` with an SI prefix that leaves one to three integer digits.
@@ -282,11 +294,17 @@ pub fn measurements_ui(
             });
             let value = trace_stats.and_then(|stats| measurement.stat.of(&stats));
             let format = formats.of(path);
-            let text = value.map(|value| measurement.stat.format(value, store.unit(path), format));
+            let unit = store.unit(path);
+            let text = value.map(|value| measurement.stat.format(value, unit, format));
             let color = theme::trace_color(ui.visuals(), index);
             let label = format!("{}({name})", measurement.stat.short_name());
+            // the hover has the value with all its digits
+            let exact = value
+                .map(|value| measurement.stat.format_exact(value, unit, format))
+                .filter(|exact| Some(exact) != text.as_ref())
+                .map_or_else(String::new, |exact| format!("{exact}\n"));
             chip_ui(ui, measurement, color, &label, text.as_deref(), format)
-                .on_hover_text(format!("{path}\n{}", measurement.stat.hint()));
+                .on_hover_text(format!("{path}\n{exact}{}", measurement.stat.hint()));
         }
     });
 }

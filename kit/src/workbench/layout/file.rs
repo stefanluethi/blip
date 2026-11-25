@@ -263,7 +263,7 @@ mod tests {
                 distribution.bins = distribution::BinMode::Width;
                 distribution.bin_count = 12;
                 distribution.bin_width = 0.5;
-                distribution.range = Some((-1.0, 2.0));
+                distribution.range = crate::widgets::view::Ends::fixed((-1.0, 2.0));
                 distribution.counts = distribution::CountScale::Log;
                 distribution.orientation = distribution::Orientation::Sideways;
                 distribution.axis_side = distribution::AxisSide::Right;

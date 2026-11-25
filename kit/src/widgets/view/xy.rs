@@ -2,14 +2,14 @@
 //! positions as paths.
 
 use super::Selectable;
-use super::plot::{LineStyle, LineStyles, ShowPoints};
+use super::plot::{LegendPlacement, LineStyle, LineStyles, ShowPoints};
 use super::plotting::{
-    index_spacer, index_under, index_x_axis, is_point, nearest_point, plot_array, plot_lines,
-    plot_points, sample_at_cursor, to_screen,
+    TitleEntry, corner_legend, index_spacer, index_under, index_x_axis, is_point, nearest_point,
+    plot_array, plot_lines, plot_points, sample_at_cursor, title_legend, to_screen,
 };
 use super::tooltip::{Header, Label, Row, Tooltip, TraceName, Value};
 use super::trace_selection::MAX_LISTED_ELEMENTS;
-use super::{Fit, PropertiesContext, ViewContext, ViewType, Viewable, short_names};
+use super::{Ends, Fit, PropertiesContext, ViewContext, ViewType, Viewable, short_names};
 use crate::store::numbers::{DisplayFormat, Number, SHOWN_DIGITS};
 use crate::store::sorted::{index_at, upper_bound, within};
 use crate::store::traces::{Samples, Series, Trace};
@@ -25,8 +25,8 @@ const MAX_POINTS: usize = 20_000;
 const FADE_STEPS: usize = 8;
 /// How far the trail fades out unless set otherwise.
 const DEFAULT_FADE: f32 = 0.85;
-/// Width of the choice between the x and the y axis in the properties.
-const AXIS_CHOICE_WIDTH: f32 = 64.0;
+/// The least width of the choice of a trace of a curve in the properties.
+const MIN_TRACE_CHOICE_WIDTH: f32 = 48.0;
 
 /// The shown traces on the y axis, each plotted against one of the shown traces on
 /// the x axis, within the shown window. Or the shown arrays at the cursor time,
@@ -53,8 +53,26 @@ pub struct Xy {
     pub fade: f32,
     /// What the axes fit.
     pub fit: Fit,
+    /// The ends of the x axis, each `None` to fit.
+    pub x_range: Ends,
+    /// The ends of the y axis, each `None` to fit.
+    pub y_range: Ends,
+    /// Label of the x axis, the names and the unit of its traces if empty.
+    pub x_label: String,
+    /// Label of the y axis, the names and the unit of its traces if empty.
+    pub y_label: String,
+    /// Width of the lines in points.
+    pub line_width: f32,
+    /// Where the legend is shown; at the top right in views saved before the choice.
+    #[serde(default = "legend_before_the_choice")]
+    pub legend: LegendPlacement,
     #[serde(skip_serializing_if = "LineStyles::is_empty")]
     pub line_styles: LineStyles,
+}
+
+/// Where the legend of a view saved before the choice of its placement is shown.
+fn legend_before_the_choice() -> LegendPlacement {
+    LegendPlacement::TopRight
 }
 
 impl Default for Xy {
@@ -67,9 +85,25 @@ impl Default for Xy {
             points: ShowPoints::default(),
             fade: DEFAULT_FADE,
             fit: Fit::default(),
+            x_range: Ends::default(),
+            y_range: Ends::default(),
+            x_label: String::new(),
+            y_label: String::new(),
+            line_width: 1.5,
+            legend: LegendPlacement::default(),
             line_styles: LineStyles::default(),
         }
     }
+}
+
+/// The range an axis with `ends` is set to over `fitted`, the range it fits, `None` to
+/// fit: while neither end is set or they are not in order.
+fn pinned(ends: Ends, fitted: Option<(f64, f64)>) -> Option<(f64, f64)> {
+    let wrong = ends.problems(fitted).iter().any(Option::is_some);
+    if ends.is_auto() || wrong {
+        return None;
+    }
+    ends.over(fitted)
 }
 
 /// The points of `y` against `x` for the samples of `y` in `indices`, each paired with
@@ -314,6 +348,38 @@ fn element_tooltip(
     }
 }
 
+/// A combo box to choose one of `paths` by its name, `current` chosen, "—" for none.
+/// Gives the path chosen in this frame.
+fn trace_choice(
+    ui: &mut egui::Ui,
+    id: (&str, usize),
+    current: Option<&String>,
+    paths: &[String],
+    width: f32,
+    name_of: &impl Fn(&str) -> String,
+) -> Option<String> {
+    let mut chosen = None;
+    let text = current.map_or_else(|| "—".to_owned(), |path| name_of(path));
+    let response = egui::ComboBox::from_id_salt(id)
+        .selected_text(text)
+        .width(width)
+        .truncate()
+        .show_ui(ui, |ui| {
+            for path in paths {
+                let selected = current == Some(path);
+                let option = ui.add(theme::selectable(selected, name_of(path)));
+                if option.on_hover_text(path).clicked() && !selected {
+                    chosen = Some(path.clone());
+                }
+            }
+        })
+        .response;
+    if let Some(current) = current {
+        response.on_hover_text(current);
+    }
+    chosen
+}
+
 impl Xy {
     /// Paths of the shown traces that are whole arrays, plotted over the indices of
     /// their elements instead of against the x trace.
@@ -398,24 +464,53 @@ impl Xy {
         axes
     }
 
-    /// Puts the trace at `path` on the x axis if `is_x`, else on the y axis against
-    /// the first x trace. If it was the only x trace, another trace takes its place.
-    fn set_axis(&mut self, path: &str, is_x: bool) {
-        if is_x {
-            self.against.remove(path);
-            self.xs.insert(path.to_owned());
-            return;
+    /// Exchanges the traces at `a` and `b` in all curves: each takes the axis and the
+    /// partners of the other, e.g. to swap the axes of a curve.
+    fn swap(&mut self, a: &str, b: &str) {
+        let other = |path: &String| match path.as_str() {
+            path if path == a => b.to_owned(),
+            path if path == b => a.to_owned(),
+            _ => path.clone(),
+        };
+        self.xs = self.xs.iter().map(other).collect();
+        self.against = (self.against.iter())
+            .map(|(y, x)| (other(y), other(x)))
+            .collect();
+    }
+
+    /// Puts `chosen` on the x side of the curve of the row `(x, y)` of the properties,
+    /// `y` `None` for an x trace with no curve: the curve is plotted against `chosen` if
+    /// it is an x trace, else `chosen` and `x` swap places.
+    fn choose_x(&mut self, (x, y): (&str, Option<&str>), chosen: &str) {
+        match y {
+            Some(y) if self.xs.contains(chosen) => {
+                self.against.insert(y.to_owned(), chosen.to_owned());
+            }
+            _ => self.swap(x, chosen),
         }
-        self.xs.remove(path);
-        if self.xs.is_empty()
-            && let Some(other) = self.traces.iter().find(|&other| other != path)
-        {
-            self.against.remove(other);
-            self.xs.insert(other.clone());
+    }
+
+    /// Puts `chosen` on the y side of the curve of the row `(x, y)` of the properties:
+    /// `chosen` and `y` swap places, or, for an x trace with no curve, the y trace
+    /// `chosen` is plotted against `x`.
+    fn choose_y(&mut self, (x, y): (&str, Option<&str>), chosen: &str) {
+        match y {
+            Some(y) => self.swap(y, chosen),
+            None if self.against.contains_key(chosen) => {
+                self.against.insert(chosen.to_owned(), x.to_owned());
+            }
+            None => {}
         }
-        if let Some(x) = self.xs.first() {
-            self.against.insert(path.to_owned(), x.clone());
-        }
+    }
+
+    /// The rows of the axes in the properties: each curve as its x and y trace, then
+    /// each x trace with no curve.
+    fn axis_rows(&self) -> Vec<(String, Option<String>)> {
+        let curves = (self.against.iter()).map(|(y, x)| (x.clone(), Some(y.clone())));
+        let alone = (self.xs.iter())
+            .filter(|x| !self.against.values().any(|against| against == *x))
+            .map(|x| (x.clone(), None));
+        curves.chain(alone).collect()
     }
 
     /// The lines plotted, each the path of an x trace and of a y trace plotted
@@ -426,27 +521,103 @@ impl Xy {
             .collect()
     }
 
-    /// A plot with `x_axis` and the y axis labelled `y_label`.
+    /// A plot with `x_axis` and the y axis labelled `y_label`, unless their labels are
+    /// set, that fits the `fitted` ranges of its x and y axis, or the ranges set.
     fn plot(
-        &self,
+        &mut self,
         ui: &egui::Ui,
         x_axis: egui_plot::AxisHints<'static>,
         y_label: String,
+        fitted: [Option<(f64, f64)>; 2],
     ) -> egui_plot::Plot<'static> {
-        let plot = egui_plot::Plot::new(ui.id().with("xy"))
+        let x_axis = match self.x_label.as_str() {
+            "" => x_axis,
+            label => x_axis.label(label.to_owned()),
+        };
+        let y_label = match self.y_label.as_str() {
+            "" => y_label,
+            label => label.to_owned(),
+        };
+        let id = ui.id().with("xy");
+        let mut plot = egui_plot::Plot::new(id)
             .grid_color(theme::grid_color(ui.visuals()))
-            .legend(
-                // the newest point is drawn first in full color, the trail fades out
-                egui_plot::Legend::default()
-                    .color_conflict_handling(egui_plot::ColorConflictHandling::PickFirst),
-            )
+            // the values at the pointer are shown in a tooltip
+            .show_x(false)
+            .show_y(false)
             .custom_x_axes(vec![x_axis])
             .y_axis_label(y_label);
         if self.equal_axes {
-            plot.data_aspect(1.0)
-        } else {
-            plot
+            plot = plot.data_aspect(1.0);
         }
+        // ends set anew show as set, also after panning or zooming
+        let set = (self.x_range, self.y_range, self.fit);
+        let changed = ui.ctx().data_mut(|data| {
+            let id = id.with("ends");
+            let last = data.get_temp::<(Ends, Ends, Fit)>(id);
+            data.insert_temp(id, set);
+            last.is_some_and(|last| last != set)
+        });
+        if changed {
+            plot = plot.reset();
+        }
+        // the plot fits the values, or the ends set, until panned or zoomed, and again
+        // after a double click
+        let [x, y] = fitted;
+        match pinned(self.x_range, x) {
+            Some((low, high)) => plot = plot.default_x_bounds(low, high),
+            None => plot = include_ranges(plot, [x, None]),
+        }
+        match pinned(self.y_range, y) {
+            Some((low, high)) => plot = plot.default_y_bounds(low, high),
+            None => plot = include_ranges(plot, [None, y]),
+        }
+        plot
+    }
+
+    /// The legend of the plot in a corner, if it goes there: the title row's goes to the
+    /// top right of a view without one.
+    fn corner(&self, titled: bool) -> Option<egui_plot::Corner> {
+        match self.legend {
+            LegendPlacement::Title if !titled => Some(egui_plot::Corner::RightTop),
+            placement => placement.corner(),
+        }
+    }
+
+    /// The curves or the arrays, each a path its name and the index that picks its
+    /// colour, as the legend shows them.
+    fn legend_entries(&self, store: &dyn Store) -> Vec<(String, String, usize)> {
+        let arrays = self.array_paths(store);
+        if !arrays.is_empty() {
+            let names = short_names(arrays.iter().copied());
+            return (arrays.iter().zip(names).enumerate())
+                .map(|(index, (path, name))| ((*path).to_owned(), name.to_owned(), index))
+                .collect();
+        }
+        let assigned = self.assigned(store);
+        let lines = assigned.lines();
+        let names = line_names(&lines);
+        (lines.iter().zip(names).enumerate())
+            .map(|(index, (&(x, y), name))| (format!("{y} against {x}"), name.to_owned(), index))
+            .collect()
+    }
+
+    /// The labels of the x and the y axis made of the names and the units of their
+    /// traces, or of the shown `arrays`.
+    fn automatic_labels(&self, store: &dyn Store, arrays: &[&str]) -> [String; 2] {
+        if !arrays.is_empty() {
+            let unit = super::common_unit(store, arrays.iter().copied());
+            let names = short_names(arrays.iter().copied());
+            return ["index".to_owned(), axis_label(&names, unit)];
+        }
+        let lines = self.lines();
+        let x_paths: BTreeSet<&str> = lines.iter().map(|&(x, _)| x).collect();
+        let y_paths: Vec<&str> = lines.iter().map(|&(_, y)| y).collect();
+        let x_unit = super::common_unit(store, x_paths.iter().copied());
+        let y_unit = super::common_unit(store, y_paths.iter().copied());
+        [
+            axis_label(&short_names(x_paths.iter().copied()), x_unit),
+            axis_label(&short_names(y_paths.iter().copied()), y_unit),
+        ]
     }
 
     /// Draws `points` as a line fading out towards the first points, and the last point
@@ -476,6 +647,7 @@ impl Xy {
         let lines = trail_lines(points, steps, period, &transform);
         for (step, line) in lines.iter().enumerate() {
             let color = color.gamma_multiply(trail_opacity(self.fade, step, lines.len()));
+            let line_style = (line_style, self.line_width);
             plot_lines(name, line, color, line_style, plot_ui);
         }
 
@@ -540,22 +712,22 @@ impl Xy {
         }
     }
 
-    /// Shows the y traces against their x traces within the shown window.
-    fn show_plot(&self, ui: &mut egui::Ui, store: &dyn Store, time: &TimeRange) {
+    /// Shows the y traces against their x traces within the shown window, the legend
+    /// in `corner`, if any.
+    fn show_plot(
+        &mut self,
+        ui: &mut egui::Ui,
+        store: &dyn Store,
+        time: &TimeRange,
+        corner: Option<egui_plot::Corner>,
+    ) {
+        let [x_label, y_label] = self.automatic_labels(store, &[]);
+        let x_axis = egui_plot::AxisHints::new_x().label(x_label);
+        // all values, also outside the shown window
+        let fitted = self.axis_ranges(store, &[]);
+        let plot = self.plot(ui, x_axis, y_label, fitted);
         let lines = self.lines();
         let names = line_names(&lines);
-        let x_paths: BTreeSet<&str> = lines.iter().map(|&(x, _)| x).collect();
-        let y_paths: Vec<&str> = lines.iter().map(|&(_, y)| y).collect();
-        let x_unit = super::common_unit(store, x_paths.iter().copied());
-        let x_label = axis_label(&short_names(x_paths.iter().copied()), x_unit);
-        let y_unit = super::common_unit(store, y_paths.iter().copied());
-        let y_label = axis_label(&short_names(y_paths.iter().copied()), y_unit);
-        let x_axis = egui_plot::AxisHints::new_x().label(x_label);
-        let mut plot = self.plot(ui, x_axis, y_label);
-
-        // the plot fits all values, also outside the shown window, until panned or
-        // zoomed, and again after a double click
-        plot = include_ranges(plot, self.axis_ranges(store, &[]));
         let range = time.timestamps();
         let cursor = time.cursor_timestamp();
         let ring_color = ui.visuals().strong_text_color();
@@ -602,6 +774,12 @@ impl Xy {
             hovered.map(|(hovered, _)| hovered)
         });
         super::zoom_on_wheel(&response.response);
+        if let Some(corner) = corner {
+            let entries: Vec<(&str, egui::Color32)> = (names.iter().enumerate())
+                .map(|(index, &name)| (name, theme::trace_color(ui.visuals(), index)))
+                .collect();
+            corner_legend(ui, *response.transform.frame(), corner, entries);
+        }
         if let Some(Hovered { line, point }) = response.inner {
             let tooltip = point_tooltip(store, lines[line], names[line], line, point);
             (response.response).on_hover_ui_at_pointer(|ui| tooltip.ui(ui));
@@ -609,16 +787,21 @@ impl Xy {
     }
 
     /// Shows the elements of the arrays at `paths` at the cursor time over their
-    /// indices.
-    fn show_arrays(&self, ui: &mut egui::Ui, store: &dyn Store, time: &TimeRange, paths: &[&str]) {
+    /// indices, the legend in `corner`, if any.
+    fn show_arrays(
+        &mut self,
+        ui: &mut egui::Ui,
+        store: &dyn Store,
+        time: &TimeRange,
+        (paths, corner): (&[&str], Option<egui_plot::Corner>),
+    ) {
         let names = short_names(paths.iter().copied());
-        let unit = super::common_unit(store, paths.iter().copied());
-        let y_label = axis_label(&names, unit);
-        let mut plot = self
-            .plot(ui, index_x_axis("index"), y_label)
+        let [_, y_label] = self.automatic_labels(store, paths);
+        // all elements and all their values
+        let fitted = self.axis_ranges(store, paths);
+        let plot = self
+            .plot(ui, index_x_axis("index"), y_label, fitted)
             .x_grid_spacer(index_spacer);
-        // the plot fits all elements and all their values until panned or zoomed
-        plot = include_ranges(plot, self.axis_ranges(store, paths));
         let visuals = ui.visuals().clone();
         let arrays: Vec<(&str, &str, Vec<Number>)> = (paths.iter().zip(&names))
             .filter_map(|(&path, &name)| {
@@ -634,7 +817,7 @@ impl Xy {
             for (index, (path, name, numbers)) in arrays.iter().enumerate() {
                 let values: Vec<f64> = numbers.iter().map(|number| number.as_f64()).collect();
                 let color = theme::trace_color(&visuals, index);
-                let style = self.line_styles.of(path);
+                let style = (self.line_styles.of(path), self.line_width);
                 plot_array(name, &values, color, style, self.points, plot_ui);
             }
             let pointer = plot_ui
@@ -645,11 +828,26 @@ impl Xy {
             index_under(pointer.x, longest?)
         });
         super::zoom_on_wheel(&response.response);
+        if let Some(corner) = corner {
+            let entries: Vec<(&str, egui::Color32)> = (arrays.iter().enumerate())
+                .map(|(index, (_, name, _))| (*name, theme::trace_color(ui.visuals(), index)))
+                .collect();
+            corner_legend(ui, *response.transform.frame(), corner, entries);
+        }
         if let Some(index) = response.inner {
             let tooltip = element_tooltip(store, index, &arrays);
             (response.response).on_hover_ui_at_pointer(|ui| tooltip.ui(ui));
         }
     }
+}
+
+/// Adds the row Label to the grid of a properties section, for the `label` of an axis,
+/// empty for the `automatic` one, shown as its hint.
+fn label_row(ui: &mut egui::Ui, label: &mut String, automatic: String) {
+    super::property_label(ui, "Label");
+    ui.add(theme::wide_field(label).hint_text(automatic))
+        .on_hover_text("The names and the unit of the traces on the axis if this is empty");
+    ui.end_row();
 }
 
 /// Makes `plot` include `ranges`, those of its x and y axis.
@@ -690,6 +888,24 @@ impl super::ViewInfo for Xy {
 }
 
 impl Viewable for Xy {
+    fn title_ui(&self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
+        if self.legend != LegendPlacement::Title {
+            return;
+        }
+        let entries = self.legend_entries(context.store);
+        let entries: Vec<TitleEntry<'_>> = (entries.iter())
+            .map(|(path, name, index)| TitleEntry {
+                path,
+                name,
+                color: theme::trace_color(ui.visuals(), *index),
+                value: None,
+                slot: 0.0,
+            })
+            .collect();
+        // the units are on the axes
+        title_legend(ui, &entries, None);
+    }
+
     fn colored_paths(&self, store: &dyn Store) -> Vec<String> {
         let arrays = self.array_paths(store);
         if arrays.is_empty() {
@@ -709,16 +925,19 @@ impl Viewable for Xy {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         self.line_styles.retain_shown(&self.traces);
         self.assign_axes(context.store);
-        let arrays = self.array_paths(context.store);
+        let corner = self.corner(context.titled);
+        let arrays: Vec<String> = (self.array_paths(context.store).into_iter())
+            .map(str::to_owned)
+            .collect();
         if !arrays.is_empty() {
-            self.show_arrays(ui, context.store, context.time, &arrays);
+            let arrays: Vec<&str> = arrays.iter().map(String::as_str).collect();
+            self.show_arrays(ui, context.store, context.time, (&arrays, corner));
+        } else if self.traces.is_empty() {
+            theme::hint(ui, super::CHECK_TRACES);
         } else if self.against.is_empty() {
-            theme::hint(
-                ui,
-                "Select an x and a y trace, or an array, in the traces panel",
-            );
+            theme::hint(ui, "Check a second trace to plot against the first");
         } else {
-            self.show_plot(ui, context.store, context.time);
+            self.show_plot(ui, context.store, context.time, corner);
         }
     }
 
@@ -737,40 +956,43 @@ impl Viewable for Xy {
         super::properties_section(ui, "Axes", |ui| {
             super::fit_row(ui, &mut self.fit, declared);
             if arrays.is_empty() {
-                super::path_rows(ui, &paths, |ui, path| {
+                let rows = self.axis_rows();
+                // the choice of a row, as the axis, the row and the trace chosen
+                let mut chosen = None;
+                for (index, (x, y)) in rows.iter().enumerate() {
+                    let label = match rows.len() {
+                        1 => "Curve".to_owned(),
+                        _ => format!("Curve {}", index + 1),
+                    };
+                    super::property_label(ui, &label);
                     ui.horizontal(|ui| {
-                        let mut is_x = self.xs.contains(path);
-                        let height = ui.spacing().interact_size.y;
-                        let changed = ui
-                            .allocate_ui(egui::vec2(AXIS_CHOICE_WIDTH, height), |ui| {
-                                theme::segmented(ui, &mut is_x, &[(true, "X"), (false, "Y")])
-                            })
-                            .inner;
-                        if changed {
-                            self.set_axis(path, is_x);
-                            self.assign_axes(context.store);
+                        let gap = ui.spacing().item_spacing.x;
+                        let letters = super::text_size(ui, "XY", egui::TextStyle::Body).x;
+                        let width = ((ui.available_width() - letters - 3.0 * gap) / 2.0)
+                            .max(MIN_TRACE_CHOICE_WIDTH);
+                        ui.weak("X");
+                        let id = ("xy x", index);
+                        if let Some(path) = trace_choice(ui, id, Some(x), &paths, width, &name_of) {
+                            chosen = Some((true, index, path));
                         }
-                        let Some(current) = self.against.get(path).cloned() else {
-                            return;
-                        };
-                        egui::ComboBox::from_id_salt(("xy against", path))
-                            .selected_text(name_of(&current))
-                            .width(90.0)
-                            .show_ui(ui, |ui| {
-                                for x in &self.xs {
-                                    if ui
-                                        .selectable_label(*x == current, name_of(x))
-                                        .on_hover_text(x)
-                                        .clicked()
-                                    {
-                                        self.against.insert(path.clone(), x.clone());
-                                    }
-                                }
-                            })
-                            .response
-                            .on_hover_text(format!("Plotted against {current}"));
+                        ui.weak("Y");
+                        let id = ("xy y", index);
+                        let y = y.as_ref();
+                        if let Some(path) = trace_choice(ui, id, y, &paths, width, &name_of) {
+                            chosen = Some((false, index, path));
+                        }
                     });
-                });
+                    ui.end_row();
+                }
+                if let Some((is_x, index, path)) = chosen {
+                    let (x, y) = &rows[index];
+                    let row = (x.as_str(), y.as_deref());
+                    if is_x {
+                        self.choose_x(row, &path);
+                    } else {
+                        self.choose_y(row, &path);
+                    }
+                }
             } else {
                 super::property_label(ui, "X");
                 ui.weak("Index of the elements")
@@ -784,8 +1006,26 @@ impl Viewable for Xy {
                 "Give a unit the same length on both axes",
             );
         });
+        let array_paths: Vec<&str> = arrays.iter().map(String::as_str).collect();
+        let [x_fitted, y_fitted] = self.axis_ranges(context.store, &array_paths);
+        let [x_auto, y_auto] = self.automatic_labels(context.store, &array_paths);
+        super::properties_section(ui, "X axis", |ui| {
+            super::range_rows(ui, &mut self.x_range, x_fitted);
+            label_row(ui, &mut self.x_label, x_auto);
+        });
+        super::properties_section(ui, "Y axis", |ui| {
+            super::range_rows(ui, &mut self.y_range, y_fitted);
+            label_row(ui, &mut self.y_label, y_auto);
+        });
         super::properties_section(ui, "Lines", |ui| {
             self.points.choice_row(ui);
+            super::property_label(ui, "Width");
+            ui.add(
+                egui::DragValue::new(&mut self.line_width)
+                    .range(0.5..=6.0)
+                    .speed(0.1),
+            );
+            ui.end_row();
             super::property_label(ui, "Fade");
             let mut percent = self.fade * 100.0;
             let response = ui
@@ -803,6 +1043,20 @@ impl Viewable for Xy {
             if response.changed() {
                 self.fade = percent / 100.0;
             }
+            ui.end_row();
+        });
+        super::properties_section(ui, "Legend", |ui| {
+            super::property_label(ui, "Placement");
+            super::choice_combo(
+                ui,
+                "xy_legend",
+                None,
+                &mut self.legend,
+                LegendPlacement::ALL
+                    .into_iter()
+                    .map(|placement| (placement, placement.name())),
+                None,
+            );
             ui.end_row();
         });
         let styled: Vec<String> = if arrays.is_empty() {

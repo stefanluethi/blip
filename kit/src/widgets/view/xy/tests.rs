@@ -96,7 +96,7 @@ fn newly_shown_traces_keep_the_axes_of_the_others() {
             line("a", "p.y")
         ]
     );
-    xy.set_axis("p.x", true);
+    make_x(&mut xy, "p.x");
     xy.against.remove("p.y");
     xy.assign_axes(&MemoryStore::default());
     assert_eq!(lines_of(&xy)[2], line("p.x", "p.y"));
@@ -118,8 +118,8 @@ fn a_y_trace_checked_before_its_x_sibling_pairs_up_with_it() {
 
     // but not when other traces are plotted against it
     let mut xy = xy_of(&["a", "pose.y"]);
-    xy.set_axis("pose.y", true);
-    xy.set_axis("a", false);
+    xy.xs = ["pose.y".to_owned()].into();
+    xy.against = [("a".to_owned(), "pose.y".to_owned())].into();
     assert_eq!(lines_of(&xy), [line("pose.y", "a")]);
     xy.traces.insert("pose.x".to_owned());
     xy.assign_axes(&MemoryStore::default());
@@ -130,7 +130,7 @@ fn a_y_trace_checked_before_its_x_sibling_pairs_up_with_it() {
 #[test]
 fn showing_an_array_keeps_the_axes_of_the_traces() {
     let mut xy = xy_of(&["p.x", "p.y", "rpm"]);
-    xy.set_axis("rpm", true);
+    make_x(&mut xy, "rpm");
     xy.against.insert("p.y".to_owned(), "rpm".to_owned());
     let lines = lines_of(&xy);
     let mut model = MemoryStore::default();
@@ -157,7 +157,7 @@ fn the_colours_follow_the_axes_before_the_view_assigns_them() {
 #[test]
 fn y_traces_of_a_gone_x_trace_move_to_another_one() {
     let mut xy = xy_of(&["a", "b", "p.x", "p.y"]);
-    xy.set_axis("a", true);
+    make_x(&mut xy, "a");
     xy.against.insert("b".to_owned(), "p.x".to_owned());
     xy.traces.remove("p.x");
     xy.assign_axes(&MemoryStore::default());
@@ -169,20 +169,60 @@ fn y_traces_of_a_gone_x_trace_move_to_another_one() {
     assert_eq!(lines_of(&xy), [line("b", "p.y")]);
 }
 
-#[test]
-fn the_only_x_trace_put_on_the_y_axis_gives_way_to_another() {
-    let mut xy = xy_of(&["a", "b", "c"]);
-    xy.set_axis("a", false);
-    xy.assign_axes(&MemoryStore::default());
-    assert_eq!(xy.xs, ["b".to_owned()].into());
-    assert_eq!(lines_of(&xy), [line("b", "a"), line("b", "c")]);
+/// Puts the trace at `path` on the x axis, without a curve.
+fn make_x(xy: &mut Xy, path: &str) {
+    xy.against.remove(path);
+    xy.xs.insert(path.to_owned());
+}
 
-    // with another x trace, the y traces of the one moved stay on that
-    xy.set_axis("c", true);
-    xy.against.insert("a".to_owned(), "c".to_owned());
-    xy.set_axis("c", false);
-    xy.assign_axes(&MemoryStore::default());
+#[test]
+fn a_curve_takes_the_x_trace_chosen_or_swaps_with_the_trace_chosen() {
+    let store = MemoryStore::default();
+    let mut xy = xy_of(&["a", "b", "c"]);
+    assert_eq!(lines_of(&xy), [line("a", "b"), line("a", "c")]);
+    // its own y trace swaps the axes of the curve, and of those it shares the x with
+    xy.choose_x(("a", Some("b")), "b");
     assert_eq!(lines_of(&xy), [line("b", "a"), line("b", "c")]);
+    // another y trace takes the place of the x trace
+    xy.choose_y(("b", Some("a")), "c");
+    assert_eq!(lines_of(&xy), [line("b", "a"), line("b", "c")]);
+    xy.choose_x(("b", Some("c")), "a");
+    assert_eq!(lines_of(&xy), [line("a", "b"), line("a", "c")]);
+
+    // another x trace is taken as it is, which leaves the x trace before alone
+    let mut xy = xy_of(&["a", "b", "c", "d"]);
+    make_x(&mut xy, "c");
+    xy.against.insert("d".to_owned(), "c".to_owned());
+    xy.choose_x(("c", Some("d")), "a");
+    assert_eq!(lines_of(&xy), [line("a", "b"), line("a", "d")]);
+    assert_eq!(
+        xy.axis_rows(),
+        [
+            ("a".to_owned(), Some("b".to_owned())),
+            ("a".to_owned(), Some("d".to_owned())),
+            ("c".to_owned(), None)
+        ]
+    );
+    // the y trace chosen for an x trace alone moves to it
+    xy.choose_y(("c", None), "d");
+    assert_eq!(lines_of(&xy), [line("a", "b"), line("c", "d")]);
+    xy.assign_axes(&store);
+    assert_eq!(lines_of(&xy), [line("a", "b"), line("c", "d")]);
+}
+
+#[test]
+fn a_y_trace_chosen_swaps_with_the_y_trace_of_the_curve() {
+    let mut xy = xy_of(&["a", "b", "c"]);
+    make_x(&mut xy, "c");
+    xy.against.insert("b".to_owned(), "c".to_owned());
+    assert_eq!(lines_of(&xy), [line("c", "b")]);
+    // an x trace, alone, takes the place of the y trace
+    xy.choose_y(("c", Some("b")), "a");
+    assert_eq!(lines_of(&xy), [line("c", "a")]);
+    assert!(xy.xs.contains("b") && xy.xs.contains("c"));
+    // the saved form keeps its shape
+    let saved = serde_json::to_value(&xy).unwrap();
+    assert_eq!(saved["against"], serde_json::json!({"a": "c"}));
 }
 
 #[test]
@@ -359,7 +399,11 @@ fn a_single_array_is_plotted_over_its_indices() {
             .array_paths(&harness.state().model)
             .is_empty()
     );
-    assert!(harness.query_by_label_contains("Select").is_some());
+    assert!(
+        harness
+            .query_by_label_contains("Check a second trace")
+            .is_some()
+    );
 }
 
 #[test]
@@ -577,4 +621,58 @@ fn the_axes_fit_the_declared_ranges_with_expected() {
         xy.axis_ranges(&model, &[]),
         [Some((0.0, 0.5)), Some((1.0, 12.0))]
     );
+}
+
+#[test]
+fn xy_plots_saved_before_the_new_properties_load_to_the_same_picture() {
+    let old: Xy =
+        serde_json::from_str(r#"{"traces": ["p.x", "p.y"], "equal_axes": true}"#).unwrap();
+    // the legend stays at the top right, the axes fit, the lines keep their width
+    assert_eq!(old.legend, LegendPlacement::TopRight);
+    assert_eq!(
+        (old.x_range, old.y_range),
+        (Ends::default(), Ends::default())
+    );
+    assert_eq!((old.x_label.as_str(), old.y_label.as_str()), ("", ""));
+    assert_eq!(old.line_width, 1.5);
+    // new views have the legend in the title row, as plots do
+    assert_eq!(Xy::default().legend, LegendPlacement::Title);
+    let set = Xy {
+        x_range: Ends {
+            min: Some(-1.0),
+            max: None,
+        },
+        y_label: "height".to_owned(),
+        legend: LegendPlacement::BottomLeft,
+        line_width: 3.0,
+        ..xy_of(&["p.x", "p.y"])
+    };
+    let json = serde_json::to_string(&set).unwrap();
+    let loaded: Xy = serde_json::from_str(&json).unwrap();
+    assert_eq!(serde_json::to_string(&loaded).unwrap(), json);
+}
+
+#[test]
+fn an_axis_is_set_only_by_ends_in_order() {
+    let fitted = Some((0.0, 10.0));
+    assert_eq!(pinned(Ends::default(), fitted), None);
+    let min = Ends {
+        min: Some(2.0),
+        max: None,
+    };
+    assert_eq!(pinned(min, fitted), Some((2.0, 10.0)));
+    assert_eq!(pinned(Ends::fixed((5.0, 1.0)), fitted), None);
+    assert_eq!(pinned(min, None), None);
+}
+
+#[test]
+fn the_legend_goes_to_a_corner_without_a_title_row() {
+    let xy = Xy::default();
+    assert_eq!(xy.corner(true), None);
+    assert_eq!(xy.corner(false), Some(egui_plot::Corner::RightTop));
+    let hidden = Xy {
+        legend: LegendPlacement::Hidden,
+        ..Xy::default()
+    };
+    assert_eq!(hidden.corner(false), None);
 }
