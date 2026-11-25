@@ -151,7 +151,7 @@ Tests of the requirements in :doc:`/requirements/system/histogram`.
    with automatic, a fixed number of and fixed width bins, counts the samples
    below and above it and ignores its own fixed range; a plot not in the
    layout is not followed.
-   ``kit/src/widgets/view/distribution.rs::a_linked_plot_sets_the_values_which_do_not_pan_or_zoom``
+   ``kit/src/widgets/view/distribution.rs::a_linked_view_follows_the_plot_in_all_forms``
    -- in either orientation the value axis shows the plot's range as it
    changes, not its own zoom, and dragging and the wheel do not move it.
    ``kit/src/widgets/view/distribution.rs::the_link_is_chosen_in_either_orientation_and_greys_the_range``

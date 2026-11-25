@@ -49,6 +49,47 @@ fn counted(distribution: &Distribution, model: &MemoryStore, time: &TimeRange) -
     counting.counted.expect("samples in the window")
 }
 
+/// Two traces counted in three bins 0 to 3 wide 1, the second with samples below and
+/// above them.
+fn two_traces() -> Counted {
+    Counted {
+        bins: Bins {
+            start: 0.0,
+            width: 1.0,
+            count: 3,
+        },
+        traces: vec![
+            Counts {
+                bins: vec![1, 2, 3],
+                ..Counts::default()
+            },
+            // samples outside the bins count towards all samples
+            Counts {
+                bins: vec![0, 2, 0],
+                below: 3,
+                above: 3,
+                ..Counts::default()
+            },
+        ],
+        single: false,
+    }
+}
+
+/// The bin at `index` of `counted`, written in the default format.
+fn bin_of<'a>(counted: &'a Counted, index: usize, unit: Option<&'a str>) -> Bin<'a> {
+    Bin {
+        index,
+        counted,
+        unit,
+        format: DisplayFormat::Default,
+    }
+}
+
+/// The frame `distribution` last drew.
+fn last_of(distribution: &Distribution) -> Last {
+    distribution.last.as_deref().cloned().unwrap()
+}
+
 /// The samples of the trace at `path` in the window of `time` that are not null.
 fn samples_in_window(model: &MemoryStore, time: &TimeRange, path: &str) -> u64 {
     let (start, end) = time.range().unwrap();
@@ -72,14 +113,30 @@ fn is_round(value: f64) -> bool {
         .any(|round| (mantissa - round).abs() < 1.0e-9)
 }
 
-#[test]
-fn counts_add_up_to_the_samples_of_the_shown_window() {
+/// A model of the trace `a`: 41 samples, one every second, every 7th null.
+fn with_nulls() -> MemoryStore {
     let values = (0..=40).map(|second| match second % 7 {
         3 => Data::Null,
         _ => Data::Float(f64::from(second % 5)),
     });
     let mut model = MemoryStore::default();
     append(&mut model, "a", (0.0, 1.0), &values.collect::<Vec<_>>());
+    model
+}
+
+/// A model of the trace `a` that holds 10 from 1 s to 19 s: 0 at 0 s, 10 at 1 s and
+/// 2 s, 0 at 19 s.
+fn long_hold() -> MemoryStore {
+    let mut model = MemoryStore::default();
+    append(&mut model, "a", (0.0, 1.0), &floats([0.0, 10.0]));
+    append(&mut model, "a", (2.0, 1.0), &floats([10.0]));
+    append(&mut model, "a", (19.0, 1.0), &floats([0.0]));
+    model
+}
+
+#[test]
+fn counts_add_up_to_the_samples_of_the_shown_window() {
+    let mut model = with_nulls();
     let distribution = distribution_of(&["a"]);
     let mut time = live(&model);
     let check = |model: &MemoryStore, time: &TimeRange| {
@@ -297,12 +354,7 @@ fn bins_show_the_unit_only_if_all_traces_share_one() {
         }],
         single: false,
     };
-    let bin = |unit| Bin {
-        index: 2,
-        counted: &counted,
-        unit,
-        format: DisplayFormat::Default,
-    };
+    let bin = |unit| bin_of(&counted, 2, unit);
     assert_eq!(bin(Some("m")).range_text(), "0.50 to 0.75 m");
     assert_eq!(bin(None).range_text(), "0.50 to 0.75");
     let model = pose("m", "rad");
@@ -344,12 +396,7 @@ fn samples_of_one_value_are_one_bar_centred_on_it() {
     assert!((counted.bins.center(0) - 23.4).abs() < 1.0e-9);
     // a round step near 1 % of the value
     assert_eq!(counted.bins.width, 0.2);
-    let bin = Bin {
-        index: 0,
-        counted: &counted,
-        unit: Some("°C"),
-        format: DisplayFormat::Default,
-    };
+    let bin = bin_of(&counted, 0, Some("°C"));
     assert_eq!(bin.range_text(), "All 21 samples are 23.4 °C");
     let counted = self::counted(&distribution_of(&["n"]), &model, &time);
     assert_eq!((counted.bins.start, counted.bins.width), (4.5, 1.0));
@@ -583,33 +630,8 @@ fn the_log_counts_axis_marks_powers_of_ten_from_below_one_sample() {
 
 #[test]
 fn the_tooltip_shows_the_share_and_the_count_of_each_trace() {
-    let counted = Counted {
-        bins: Bins {
-            start: 0.0,
-            width: 1.0,
-            count: 3,
-        },
-        traces: vec![
-            Counts {
-                bins: vec![1, 2, 3],
-                ..Counts::default()
-            },
-            // samples outside the bins count towards all samples
-            Counts {
-                bins: vec![0, 2, 0],
-                below: 3,
-                above: 3,
-                ..Counts::default()
-            },
-        ],
-        single: false,
-    };
-    let bin = |index| Bin {
-        index,
-        counted: &counted,
-        unit: None,
-        format: DisplayFormat::Default,
-    };
+    let counted = two_traces();
+    let bin = |index| bin_of(&counted, index, None);
     let [first, second] = [&counted.traces[0], &counted.traces[1]];
     assert_eq!(bin(1).share_texts(first), ["33.3 %", "2 of 6"]);
     assert_eq!(bin(1).share_texts(second), ["25 %", "2 of 8"]);
@@ -619,32 +641,8 @@ fn the_tooltip_shows_the_share_and_the_count_of_each_trace() {
 
 #[test]
 fn the_tooltip_of_a_bin_has_its_range_and_a_row_per_trace() {
-    let counted = Counted {
-        bins: Bins {
-            start: 0.0,
-            width: 1.0,
-            count: 3,
-        },
-        traces: vec![
-            Counts {
-                bins: vec![1, 2, 3],
-                ..Counts::default()
-            },
-            Counts {
-                bins: vec![0, 2, 0],
-                below: 3,
-                above: 3,
-                ..Counts::default()
-            },
-        ],
-        single: false,
-    };
-    let bin = Bin {
-        index: 0,
-        counted: &counted,
-        unit: None,
-        format: DisplayFormat::Default,
-    };
+    let counted = two_traces();
+    let bin = bin_of(&counted, 0, None);
     let name = |name: &str, index| TraceName {
         name: name.into(),
         path: name.into(),
@@ -689,12 +687,7 @@ fn the_bin_tooltip_describes_the_trace_only_with_one() {
         ],
         single: false,
     };
-    let bin = Bin {
-        index: 0,
-        counted: &counted,
-        unit: None,
-        format: DisplayFormat::Default,
-    };
+    let bin = bin_of(&counted, 0, None);
     let name = |name: &str, index| TraceName::new(name, name, index);
     let (a, b) = (name("a", 0), name("b", 1));
     let one = bin.tooltip(std::slice::from_ref(&a), Some("About a"));
@@ -716,10 +709,7 @@ fn mean_and_sigma_count_each_binned_sample_once() {
     assert!((counts.std_dev.unwrap() - 1.25f64.sqrt()).abs() < 1.0e-12);
 
     // a sample that holds long counts once, unlike in the stats of a plot
-    let mut model = MemoryStore::default();
-    append(&mut model, "a", (0.0, 1.0), &floats([0.0, 10.0]));
-    append(&mut model, "a", (2.0, 1.0), &floats([10.0]));
-    append(&mut model, "a", (19.0, 1.0), &floats([0.0]));
+    let model = long_hold();
     let time = live(&model);
     let counted = counted(&distribution_of(&["a"]), &model, &time);
     let mean = counted.traces[0].mean.unwrap();
@@ -767,6 +757,18 @@ fn upright_values_run_along_x_and_sideways_along_y() {
     assert_eq!(distribution.point(1.0, 5.0), [5.0, 1.0]);
 }
 
+/// A model of the trace `a`, 200 floats from 0 to 199, one every 0.1 s.
+fn ramp() -> MemoryStore {
+    let mut model = MemoryStore::default();
+    append(
+        &mut model,
+        "a",
+        (0.0, 0.1),
+        &floats((0..200).map(f64::from)),
+    );
+    model
+}
+
 /// The plots of a layout with the plot 7, "Motor speed", showing `y_range`.
 fn plots(y_range: (f64, f64)) -> Plots {
     Plots(vec![PlotInfo {
@@ -778,13 +780,7 @@ fn plots(y_range: (f64, f64)) -> Plots {
 
 #[test]
 fn a_linked_histogram_bins_the_y_range_of_the_plot_in_either_orientation() {
-    let mut model = MemoryStore::default();
-    append(
-        &mut model,
-        "a",
-        (0.0, 0.1),
-        &floats((0..200).map(f64::from)),
-    );
+    let model = ramp();
     let time = live(&model);
     let mut distribution = Distribution {
         orientation: Orientation::Sideways,
@@ -829,56 +825,9 @@ fn a_linked_histogram_bins_the_y_range_of_the_plot_in_either_orientation() {
     assert_eq!(counting.fixed, Some((0.0, 1.0)));
 }
 
-#[test]
-fn a_linked_plot_sets_the_values_which_do_not_pan_or_zoom() {
-    for orientation in Orientation::ALL {
-        let mut model = MemoryStore::default();
-        append(
-            &mut model,
-            "a",
-            (0.0, 0.1),
-            &floats((0..200).map(f64::from)),
-        );
-        let distribution = Distribution {
-            orientation,
-            link: Some(ViewId(7)),
-            value_view: Some((0.0, 10.0)),
-            ..distribution_of(&["a"])
-        };
-        let mut state = State::new(distribution, model);
-        state.plots = plots((100.0, 150.0));
-        let mut harness = harness(state, false);
-        harness.run();
-        let values = |harness: &Harness<'_, State>| {
-            harness
-                .state()
-                .distribution
-                .last
-                .as_deref()
-                .cloned()
-                .unwrap()
-                .values
-        };
-        assert_eq!(values(&harness), (100.0, 150.0), "{orientation:?}");
-        drag(
-            &mut harness,
-            egui::pos2(200.0, 100.0),
-            egui::pos2(100.0, 200.0),
-        );
-        super::super::scroll_wheel(&mut harness, egui::pos2(200.0, 150.0), 100.0);
-        assert_eq!(values(&harness), (100.0, 150.0), "{orientation:?}");
-        // as the plot is zoomed or panned
-        harness.state_mut().plots = plots((120.0, 130.0));
-        harness.run();
-        assert_eq!(values(&harness), (120.0, 130.0), "{orientation:?}");
-    }
-}
-
-/// A harness showing the properties of `distribution` in a layout with the plots of
-/// [`plots`].
-fn properties_harness(distribution: Distribution) -> Harness<'static, Distribution> {
+/// A harness showing the properties of `distribution` in a layout with `plots`.
+fn properties_harness(distribution: Distribution, plots: Plots) -> Harness<'static, Distribution> {
     let model = MemoryStore::default();
-    let plots = plots((0.0, 1.0));
     Harness::builder()
         .with_size(egui::vec2(300.0, 600.0))
         .build_ui_state(
@@ -895,6 +844,13 @@ fn properties_harness(distribution: Distribution) -> Harness<'static, Distributi
         )
 }
 
+/// How many text fields of the properties in `harness` are greyed.
+fn greyed_fields(harness: &Harness<'_, Distribution>) -> usize {
+    (harness.get_all_by_role(egui::accesskit::Role::TextInput))
+        .filter(|field| field.accesskit_node().is_disabled())
+        .count()
+}
+
 #[test]
 fn the_link_is_chosen_in_either_orientation_and_greys_the_range() {
     let link = |name: &'static str| {
@@ -904,7 +860,7 @@ fn the_link_is_chosen_in_either_orientation_and_greys_the_range() {
                 && !node.is_disabled()
         }
     };
-    let mut harness = properties_harness(Distribution::default());
+    let mut harness = properties_harness(Distribution::default(), plots((0.0, 1.0)));
     harness.run();
     harness.get_by(link("None")).click();
     harness.run();
@@ -913,12 +869,7 @@ fn the_link_is_chosen_in_either_orientation_and_greys_the_range() {
     harness.run();
     assert_eq!(harness.state().link, Some(ViewId(7)));
     // the plot sets the range: the Min and the Max field are greyed
-    let greyed = |harness: &Harness<'_, Distribution>| {
-        (harness.get_all_by_role(egui::accesskit::Role::TextInput))
-            .filter(|field| field.accesskit_node().is_disabled())
-            .count()
-    };
-    assert_eq!(greyed(&harness), 2);
+    assert_eq!(greyed_fields(&harness), 2);
 
     // turning sideways keeps the link working
     harness.get_by_label("Sideways").click();
@@ -927,7 +878,7 @@ fn the_link_is_chosen_in_either_orientation_and_greys_the_range() {
     assert_eq!(harness.state().link, Some(ViewId(7)));
     harness.get_by(link("Motor speed"));
     harness.get_by_label("Axis side");
-    assert_eq!(greyed(&harness), 2);
+    assert_eq!(greyed_fields(&harness), 2);
 
     // unlinked, the own range is back
     harness.get_by(link("Motor speed")).click();
@@ -936,7 +887,7 @@ fn the_link_is_chosen_in_either_orientation_and_greys_the_range() {
     harness.run();
     harness.run();
     assert_eq!(harness.state().link, None);
-    assert_eq!(greyed(&harness), 0);
+    assert_eq!(greyed_fields(&harness), 0);
     let fields = harness.get_all_by_role(egui::accesskit::Role::TextInput);
     assert_eq!(fields.count(), 2);
 }
@@ -1029,7 +980,7 @@ fn hovering_a_bin_shows_its_range_and_the_shares_and_counts_of_the_traces() {
     let Some(Hovered::Bin(index)) = state.distribution.hovered else {
         panic!("no bin under the pointer");
     };
-    let bins = state.distribution.last.as_deref().cloned().unwrap().bins;
+    let bins = last_of(&state.distribution).bins;
     let range = format!(
         "{} to {} m",
         write_value(bins.edge(index), bins.width, DisplayFormat::Default),
@@ -1053,7 +1004,7 @@ fn the_wheel_zooms_and_a_drag_pans_the_values_without_binning_anew() {
     let mut harness = pose_harness();
     let state = harness.state();
     let (range, cursor) = (state.time.range(), state.time.cursor());
-    let last = state.distribution.last.as_deref().cloned().unwrap();
+    let last = last_of(&state.distribution);
     let (low, high) = last.values;
     assert!(state.distribution.value_view.is_none());
 
@@ -1061,10 +1012,7 @@ fn the_wheel_zooms_and_a_drag_pans_the_values_without_binning_anew() {
     let state = harness.state();
     let (zoomed_low, zoomed_high) = state.distribution.value_view.unwrap();
     assert!(zoomed_high - zoomed_low < (high - low) * 0.9);
-    assert_eq!(
-        state.distribution.last.as_deref().cloned().unwrap().bins,
-        last.bins
-    );
+    assert_eq!(last_of(&state.distribution).bins, last.bins);
     assert_eq!((state.time.range(), state.time.cursor()), (range, cursor));
     // the counts axis fits the tallest bin in view
     let top = state.distribution.share_top.unwrap();
@@ -1079,19 +1027,13 @@ fn the_wheel_zooms_and_a_drag_pans_the_values_without_binning_anew() {
     let (panned_low, panned_high) = state.distribution.value_view.unwrap();
     assert!(panned_low < zoomed_low);
     assert!(((panned_high - panned_low) - (zoomed_high - zoomed_low)).abs() < 1.0e-6);
-    assert_eq!(
-        state.distribution.last.as_deref().cloned().unwrap().bins,
-        last.bins
-    );
+    assert_eq!(last_of(&state.distribution).bins, last.bins);
     assert_eq!((state.time.range(), state.time.cursor()), (range, cursor));
 
     double_click(&mut harness, egui::pos2(200.0, 150.0));
     let state = harness.state();
     assert!(state.distribution.value_view.is_none());
-    assert_eq!(
-        state.distribution.last.as_deref().cloned().unwrap().values,
-        (low, high)
-    );
+    assert_eq!(last_of(&state.distribution).values, (low, high));
     assert_eq!((state.time.range(), state.time.cursor()), (range, cursor));
 }
 
@@ -1113,6 +1055,8 @@ fn settings_are_saved_with_defaults_for_those_missing() {
         axis_side: AxisSide::Right,
         link: Some(ViewId(3)),
         markers: Markers::MeanSigma,
+        show: Show::Both,
+        whiskers: Whiskers::P1,
         ..distribution_of(&["a"])
     };
     let loaded: Distribution =
@@ -1181,13 +1125,7 @@ fn infinite_samples_are_counted_beyond_the_bins_also_without_a_fixed_range() {
 
 #[test]
 fn a_link_to_a_plot_without_a_range_yet_turns_off_the_own_range_and_zoom() {
-    let mut model = MemoryStore::default();
-    append(
-        &mut model,
-        "a",
-        (0.0, 0.1),
-        &floats((0..200).map(f64::from)),
-    );
+    let model = ramp();
     let distribution = Distribution {
         orientation: Orientation::Sideways,
         link: Some(ViewId(7)),
@@ -1210,29 +1148,10 @@ fn a_link_to_a_plot_without_a_range_yet_turns_off_the_own_range_and_zoom() {
     super::super::scroll_wheel(&mut harness, egui::pos2(200.0, 150.0), 100.0);
     assert_eq!(harness.state().distribution.value_view, None);
     // greyed in the properties
-    let model = MemoryStore::default();
-    let mut properties = Harness::builder()
-        .with_size(egui::vec2(300.0, 600.0))
-        .build_ui_state(
-            move |ui, distribution: &mut Distribution| {
-                let connected = Default::default();
-                let context = PropertiesContext {
-                    store: &model,
-                    connected: &connected,
-                    plots: &plots,
-                };
-                distribution.properties_ui(ui, &context);
-            },
-            distribution,
-        );
+    let mut properties = properties_harness(distribution, plots);
     properties.run();
     // the Min and the Max field are greyed
-    let fields = |harness: &Harness<'_, Distribution>| {
-        (harness.get_all_by_role(egui::accesskit::Role::TextInput))
-            .filter(|field| field.accesskit_node().is_disabled())
-            .count()
-    };
-    assert_eq!(fields(&properties), 2);
+    assert_eq!(greyed_fields(&properties), 2);
     properties.get_by_label("Mode");
 }
 
@@ -1363,14 +1282,7 @@ fn the_value_axis_of_a_sideways_histogram_is_on_the_side_chosen() {
         let mut harness = harness(State::new(distribution, pose("m", "m")), false);
         harness.run();
         harness.run();
-        let frame = harness
-            .state()
-            .distribution
-            .last
-            .as_deref()
-            .cloned()
-            .unwrap()
-            .frame;
+        let frame = last_of(&harness.state().distribution).frame;
         let (left, right) = (frame.left(), 400.0 - frame.right());
         assert_eq!(left > right, on_left, "{side:?} {frame:?}");
         assert!(
@@ -1423,12 +1335,7 @@ fn boxes_of(
 
 #[test]
 fn boxes_count_each_sample_once_over_the_shown_window() {
-    let values = (0..=40).map(|second| match second % 7 {
-        3 => Data::Null,
-        _ => Data::Float(f64::from(second % 5)),
-    });
-    let mut model = MemoryStore::default();
-    append(&mut model, "a", (0.0, 1.0), &values.collect::<Vec<_>>());
+    let mut model = with_nulls();
     let mut distribution = Distribution {
         show: Show::Boxes,
         ..distribution_of(&["a"])
@@ -1454,10 +1361,7 @@ fn boxes_count_each_sample_once_over_the_shown_window() {
     samples(&mut distribution, &model, &time);
 
     // a sample that holds long counts once, as in the bars
-    let mut model = MemoryStore::default();
-    append(&mut model, "a", (0.0, 1.0), &floats([0.0, 10.0]));
-    append(&mut model, "a", (2.0, 1.0), &floats([10.0]));
-    append(&mut model, "a", (19.0, 1.0), &floats([0.0]));
+    let model = long_hold();
     let time = live(&model);
     let stats = boxes_of(&mut distribution, &model, &time, &NO_PLOTS)[0]
         .clone()
@@ -1485,7 +1389,7 @@ fn the_form_is_bars_by_default_and_boxes_give_each_trace_a_row() {
         let mut harness = harness(State::new(distribution, pose("m", "m")), false);
         harness.run();
         let state = harness.state();
-        let last = state.distribution.last.as_deref().cloned().unwrap();
+        let last = last_of(&state.distribution);
         let rows = last.rows.unwrap();
         let across = match orientation {
             Orientation::Upright => last.frame.height(),
@@ -1540,13 +1444,7 @@ fn the_names_of_the_rows_are_cut_at_a_third_of_the_view() {
         let state = State::new(distribution, model());
         let mut harness = sized_harness(state, false, egui::vec2(300.0, 200.0));
         harness.run();
-        let last = harness
-            .state()
-            .distribution
-            .last
-            .as_deref()
-            .cloned()
-            .unwrap();
+        let last = last_of(&harness.state().distribution);
         let full = ["elbow_position_error", "shoulder_position_error"];
         for (name, full) in last.names.iter().zip(full) {
             assert!(name.ends_with('…'), "{name}");
@@ -1587,7 +1485,7 @@ fn both_puts_a_box_per_trace_in_the_strip_of_the_markers() {
     let mut harness = harness(State::new(distribution, pose("m", "m")), false);
     harness.run();
     let state = harness.state();
-    let last = state.distribution.last.as_deref().cloned().unwrap();
+    let last = last_of(&state.distribution);
     let rows = last.rows.unwrap();
     assert_eq!((rows.count, rows.length()), (2, 14.0));
     assert_eq!(rows.style.thickness, 10.0);
@@ -1622,13 +1520,7 @@ fn a_trace_without_samples_keeps_its_row() {
         };
         let mut harness = harness(State::new(distribution, model()), false);
         harness.run();
-        let last = harness
-            .state()
-            .distribution
-            .last
-            .as_deref()
-            .cloned()
-            .unwrap();
+        let last = last_of(&harness.state().distribution);
         let rows = last.rows.unwrap();
         assert_eq!(rows.count, 2, "{show:?}");
         let state = harness.state_mut();
@@ -1650,11 +1542,14 @@ fn a_trace_without_samples_keeps_its_row() {
 
 #[test]
 fn the_properties_hide_the_rows_that_do_not_apply_to_the_form() {
-    let mut harness = properties_harness(Distribution {
-        bins: BinMode::Width,
-        bin_width: 0.5,
-        ..Distribution::default()
-    });
+    let mut harness = properties_harness(
+        Distribution {
+            bins: BinMode::Width,
+            bin_width: 0.5,
+            ..Distribution::default()
+        },
+        plots((0.0, 1.0)),
+    );
     harness.run();
     let shows = |harness: &Harness<'_, Distribution>, labels: &[&str]| -> Vec<bool> {
         (labels.iter())
@@ -1714,33 +1609,27 @@ fn the_properties_hide_the_rows_that_do_not_apply_to_the_form() {
 
 #[test]
 fn a_linked_view_follows_the_plot_in_all_forms() {
-    let model = || {
-        let mut model = MemoryStore::default();
-        append(
-            &mut model,
-            "a",
-            (0.0, 0.1),
-            &floats((0..200).map(f64::from)),
-        );
-        model
-    };
     for show in Show::ALL {
         for orientation in Orientation::ALL {
             let distribution = Distribution {
                 show,
                 orientation,
                 link: Some(ViewId(7)),
+                value_view: Some((0.0, 10.0)),
                 ..distribution_of(&["a"])
             };
-            let mut state = State::new(distribution, model());
+            let mut state = State::new(distribution, ramp());
             state.plots = plots((100.0, 150.0));
             let mut harness = harness(state, false);
             harness.run();
-            let values = |harness: &Harness<'_, State>| {
-                let last = harness.state().distribution.last.as_deref().cloned();
-                last.unwrap().values
-            };
+            let values =
+                |harness: &Harness<'_, State>| last_of(&harness.state().distribution).values;
             assert_eq!(values(&harness), (100.0, 150.0), "{show:?} {orientation:?}");
+            drag(
+                &mut harness,
+                egui::pos2(200.0, 100.0),
+                egui::pos2(100.0, 200.0),
+            );
             super::super::scroll_wheel(&mut harness, egui::pos2(200.0, 150.0), 100.0);
             assert_eq!(values(&harness), (100.0, 150.0), "{show:?} {orientation:?}");
             harness.state_mut().plots = plots((120.0, 130.0));
@@ -1776,13 +1665,7 @@ fn hovering_a_row_lights_it_and_shows_the_box_of_the_trace() {
         let mut harness = harness(state, false);
         theme::install(&harness.ctx);
         harness.run();
-        let last = harness
-            .state()
-            .distribution
-            .last
-            .as_deref()
-            .cloned()
-            .unwrap();
+        let last = last_of(&harness.state().distribution);
         let rows = last.rows.unwrap();
         // anywhere in the row, also away from the box
         let at = match orientation {
@@ -1859,13 +1742,7 @@ fn min_max_whiskers_leave_out_their_rows_and_percentiles_are_named() {
         };
         let mut harness = harness(State::new(distribution, pose("m", "m")), false);
         harness.run();
-        let last = harness
-            .state()
-            .distribution
-            .last
-            .as_deref()
-            .cloned()
-            .unwrap();
+        let last = last_of(&harness.state().distribution);
         let rows = last.rows.unwrap();
         harness.hover_at(egui::pos2(last.frame.center().x, rows.centre(1)));
         harness.run_steps(40);
@@ -1893,13 +1770,7 @@ fn hovering_the_strip_of_both_shows_a_box_and_below_it_a_bin() {
     };
     let mut harness = harness(State::new(distribution, pose("m", "m")), false);
     harness.run();
-    let last = harness
-        .state()
-        .distribution
-        .last
-        .as_deref()
-        .cloned()
-        .unwrap();
+    let last = last_of(&harness.state().distribution);
     let rows = last.rows.unwrap();
     harness.hover_at(egui::pos2(last.frame.center().x, rows.centre(1)));
     harness.run_steps(40);
@@ -1918,14 +1789,6 @@ fn hovering_the_strip_of_both_shows_a_box_and_below_it_a_bin() {
 
 #[test]
 fn show_and_whiskers_are_saved_and_old_histograms_load_as_bars() {
-    let distribution = Distribution {
-        show: Show::Both,
-        whiskers: Whiskers::P1,
-        ..distribution_of(&["a"])
-    };
-    let json = serde_json::to_string(&distribution).unwrap();
-    let loaded: Distribution = serde_json::from_str(&json).unwrap();
-    assert_eq!((loaded.show, loaded.whiskers), (Show::Both, Whiskers::P1));
     // a view saved by the name it had before it showed boxes
     let old = r#"{"name": "Spread", "kind": {"Histogram": {"traces": ["a"], "markers": "Mean"}}}"#;
     let view: crate::widgets::view::View = serde_json::from_str(old).unwrap();

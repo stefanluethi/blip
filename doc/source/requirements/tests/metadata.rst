@@ -60,7 +60,7 @@ Tests of the requirements in :doc:`/requirements/system/metadata`.
    ``the_tooltip_describes_the_row_and_writes_labels_with_the_number``,
    ``kit/src/widgets/view/plot`` ``the_curve_nearest_the_pointer_within_12_points_is_the_one_under_it``
    and ``the_tooltip_describes_the_trace_near_the_pointer``,
-   ``kit/src/widgets/view/heatmap`` ``the_tooltips_of_a_heatmap_describe_its_trace``,
+   ``kit/src/widgets/view/heatmap`` ``the_tooltips_of_bands_cells_and_elements``,
    ``kit/src/widgets/view/xy`` ``the_tooltips_of_points_and_elements_describe_the_trace``
    (the elements only with one array), ``kit/src/widgets/view/distribution/boxes``
    ``the_tooltip_of_a_box_describes_the_trace`` and ``kit/src/widgets/view/distribution``
@@ -117,7 +117,7 @@ Tests of the requirements in :doc:`/requirements/system/metadata`.
    :verifies: REQ_META_HEATMAP
 
    ``kit/src/widgets/view/heatmap`` unit tests
-   ``the_colour_scale_starts_from_the_expected_range`` and
+   ``heatmaps_saved_with_a_fixed_or_no_range_load_to_the_same_scale`` and
    ``the_colour_scale_fits_the_values_or_the_expected_range_grown_by_them``
    check that Expected is the declared range of the array trace, grown by values
    beyond it, the fitted values without a declared range, and that Values is the

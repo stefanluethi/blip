@@ -21,8 +21,7 @@ fn value_range_skips_nulls() {
     assert_eq!(value_range(&[f64::NAN]), None);
 }
 
-#[test]
-fn over_time_holds_each_sample_until_the_next() {
+fn frame_traces() -> Traces {
     let mut traces = Traces::default();
     for (second, elements) in [(1, [1.0, 2.0]), (3, [3.0, 4.0])] {
         append(
@@ -32,6 +31,12 @@ fn over_time_holds_each_sample_until_the_next() {
             Data::Array(elements.iter().copied().map(Data::Float).collect()),
         );
     }
+    traces
+}
+
+#[test]
+fn over_time_holds_each_sample_until_the_next() {
+    let traces = frame_traces();
     let trace = traces.get("a").unwrap();
     // columns centered at 0.5, 1.5, ... 5.5 seconds
     let grid = over_time(trace, 2, (0.0, 6.0), 4.0, 6, 0);
@@ -47,75 +52,9 @@ fn over_time_holds_each_sample_until_the_next() {
     assert_eq!(bits(&grid[6..]), bits(&[nan, 1.0, 1.0, 3.0, nan, nan]));
 }
 
-fn frame_traces() -> Traces {
-    let mut traces = Traces::default();
-    for (second, elements) in [(1, [1.0, 2.0]), (3, [3.0, 4.0])] {
-        append(
-            &mut traces,
-            second * 1_000_000_000,
-            "a",
-            Data::Array(elements.iter().copied().map(Data::Float).collect()),
-        );
-    }
-    traces
-}
-
-#[test]
-fn the_tooltips_of_a_heatmap_describe_its_trace() {
-    use super::super::tooltip::Footer;
-    use crate::widgets::time::TimeBase;
-    let traces = frame_traces();
-    let a = traces.get("a").unwrap();
-    let mut text = ValueText {
-        format: DisplayFormat::Default,
-        unit: None,
-        labels: None,
-        description: Some("Thermal frame"),
-    };
-    let footer = Some(Footer {
-        name: "frame".into(),
-        description: "Thermal frame".into(),
-    });
-    assert_eq!(
-        text.tooltip(
-            "[0][0]".into(),
-            Label::Weak("frame".into()),
-            Some(Number::Float(1.0)),
-            "frame"
-        )
-        .footer,
-        footer
-    );
-    assert_eq!(
-        text.tooltip(
-            "[0]".into(),
-            Label::Trace(TraceName::new("frame", "thermal/frame", 0)),
-            Some(Number::Float(1.0)),
-            "frame"
-        )
-        .footer,
-        footer
-    );
-    let band = band_tooltip(a, text, TimeBase::SinceBoot, 2_000_000_000, 1);
-    assert_eq!(
-        band.footer.map(|footer| footer.description),
-        Some("Thermal frame".into())
-    );
-    text.description = None;
-    assert_eq!(
-        text.tooltip(
-            "[0][0]".into(),
-            Label::Weak("frame".into()),
-            Some(Number::Null),
-            "frame"
-        )
-        .footer,
-        None
-    );
-}
-
 #[test]
 fn the_tooltips_of_bands_cells_and_elements() {
+    use super::super::tooltip::Footer;
     use crate::widgets::time::TimeBase;
     let traces = frame_traces();
     let a = traces.get("a").unwrap();
@@ -125,7 +64,16 @@ fn the_tooltips_of_bands_cells_and_elements() {
         labels: None,
         description: Some("Thermal frame"),
     };
+    // the footer names the trace and describes it, if it has a description
+    let footer = Some(Footer {
+        name: "frame".into(),
+        description: "Thermal frame".into(),
+    });
     let tooltip = band_tooltip(a, text, TimeBase::SinceBoot, 2_000_000_000, 1);
+    assert_eq!(
+        tooltip.footer.map(|footer| footer.description),
+        Some("Thermal frame".into())
+    );
     assert_eq!(tooltip.header, Some(Header::Text("0:00:02.000".into())));
     assert_eq!(
         tooltip.groups,
@@ -143,6 +91,7 @@ fn the_tooltips_of_bands_cells_and_elements() {
         Some(Number::Float(21.5)),
         "frame",
     );
+    assert_eq!(tooltip.footer, footer);
     assert_eq!(tooltip.header, Some(Header::Text("[1][2]".into())));
     assert_eq!(
         tooltip.groups,
@@ -161,6 +110,7 @@ fn the_tooltips_of_bands_cells_and_elements() {
 
     let label = Label::Trace(TraceName::new("frame", "thermal/frame", 0));
     let tooltip = text.tooltip("[3]".into(), label, Some(Number::Float(0.5)), "frame");
+    assert_eq!(tooltip.footer, footer);
     assert_eq!(tooltip.header, Some(Header::Text("[3]".into())));
     let trace = TraceName {
         name: "frame".into(),
@@ -171,6 +121,17 @@ fn the_tooltips_of_bands_cells_and_elements() {
         tooltip.groups,
         [vec![Row::new(Label::Trace(trace), [Value::text("0.5 °C")])]]
     );
+    let text = ValueText {
+        description: None,
+        ..text
+    };
+    let tooltip = text.tooltip(
+        "[1][2]".into(),
+        Label::Weak("frame".into()),
+        Some(Number::Null),
+        "frame",
+    );
+    assert_eq!(tooltip.footer, None);
 }
 
 /// A harness showing a heatmap of the trace `frame` (1D, `[0, 1, 2, 3]` V every second
@@ -221,11 +182,11 @@ fn heatmap_harness(
 }
 
 /// The texts of the tooltip after hovering the middle of the heatmap.
-fn hovered_texts(mut harness: egui_kittest::Harness<'static, ViewState<Heatmap>>) -> Vec<String> {
+fn hovered_texts(harness: &mut egui_kittest::Harness<'static, ViewState<Heatmap>>) -> Vec<String> {
     harness.run();
     harness.hover_at(egui::pos2(200.0, 150.0));
     harness.run_steps(40);
-    super::super::tooltip::shown_texts(&harness)
+    super::super::tooltip::shown_texts(harness)
         .into_iter()
         .map(|(text, _)| text)
         .collect()
@@ -243,26 +204,20 @@ fn hovering_a_heatmap_shows_the_framed_tooltip() {
             .unwrap_or_else(|| panic!("an [i] in {texts:?}"))
     };
 
-    let texts = hovered_texts(heatmap_harness("frame", ArrayMode::OverTime));
+    let texts = hovered_texts(&mut heatmap_harness("frame", ArrayMode::OverTime));
     let i = index_of(&texts);
     assert!(texts.contains(&format!("{i} V")), "{texts:?}");
     assert!(texts[0].starts_with("0:00:"), "{texts:?}");
 
     let mut harness = heatmap_harness("frame", ArrayMode::AtCursor);
-    harness.run();
-    harness.hover_at(egui::pos2(200.0, 150.0));
-    harness.run_steps(40);
+    let texts = hovered_texts(&mut harness);
     assert!(harness.query_by_label_contains(" = ").is_none());
-    let texts: Vec<String> = super::super::tooltip::shown_texts(&harness)
-        .into_iter()
-        .map(|(text, _)| text)
-        .collect();
     let i = index_of(&texts);
     assert_eq!(texts[0], format!("[{i}]"));
     assert_eq!(texts[1], "frame");
     assert_eq!(texts[2], format!("{i} V"));
 
-    let texts = hovered_texts(heatmap_harness("grid", ArrayMode::OverTime));
+    let texts = hovered_texts(&mut heatmap_harness("grid", ArrayMode::OverTime));
     let cell = texts
         .iter()
         .find_map(|text| {
@@ -276,18 +231,6 @@ fn hovering_a_heatmap_shows_the_framed_tooltip() {
     assert!(cell.0 < 3 && cell.1 < 3);
     let value = format!("{} °C", 10 * cell.0 + cell.1);
     assert!(texts.contains(&value), "{texts:?}");
-}
-
-#[test]
-fn the_colour_scale_starts_from_the_expected_range() {
-    let mut heatmap = Heatmap {
-        expected: Some((0.0, 100.0)),
-        fitted_range: Some((3.0, 7.0)),
-        ..Heatmap::default()
-    };
-    assert_eq!(heatmap.shown_range(), (0.0, 100.0));
-    heatmap.expected = None;
-    assert_eq!(heatmap.shown_range(), (3.0, 7.0));
 }
 
 #[test]

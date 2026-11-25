@@ -162,70 +162,50 @@ fn the_tooltip_lists_the_values_in_the_order_drawn() {
     assert_eq!(value_step(&box_of(&[0.0], Whiskers::Iqr)), 1.0);
 }
 
-#[test]
-fn the_tooltip_of_a_box_describes_the_trace() {
-    use crate::widgets::view::tooltip::TraceName;
-    let name = TraceName::new("x", "pose.x", 0);
-    let tip = |description| Tip {
-        trace: name.clone(),
-        stats: None,
-        whiskers: Whiskers::Iqr,
+fn tip<'a>(
+    stats: Option<&'a BoxStats>,
+    whiskers: Whiskers,
+    description: Option<&'a str>,
+) -> Tooltip {
+    Tip {
+        trace: TraceName::new("x", "pose.x", 0),
+        stats,
+        whiskers,
         orientation: Orientation::Upright,
         format: DisplayFormat::Default,
-        unit: None,
+        unit: Some("ms"),
         description,
-    };
-    let footer = tip(Some("Pose x")).tooltip().footer.expect("a footer");
+    }
+    .tooltip()
+}
+
+#[test]
+fn the_tooltip_of_a_box_describes_the_trace() {
+    let footer = tip(None, Whiskers::Iqr, Some("Pose x"))
+        .footer
+        .expect("a footer");
     assert_eq!(
         (footer.name.as_str(), footer.description.as_str()),
         ("x", "Pose x")
     );
-    assert_eq!(tip(None).tooltip().footer, None);
+    assert_eq!(tip(None, Whiskers::Iqr, None).footer, None);
 }
 
 #[test]
 fn the_tooltip_of_a_box_names_the_trace_and_splits_off_the_counts() {
-    use crate::widgets::view::tooltip::{Header, Label, Tone, TraceName, Value};
-    let x = TraceName {
-        name: "x".into(),
-        path: "pose.x".into(),
-        index: 0,
-    };
+    use crate::widgets::view::tooltip::{Header, Label, Tone, Value};
+    let x = TraceName::new("x", "pose.x", 0);
     let samples = [1.0, 2.0, 3.0, 4.0, 5.0];
-    let tip = |stats: Option<&BoxStats>, whiskers| {
-        Tip {
-            trace: x.clone(),
-            stats,
-            whiskers,
-            orientation: Orientation::Upright,
-            format: DisplayFormat::Default,
-            unit: Some("ms"),
-            description: Some("Pose x"),
-        }
-        .tooltip()
-    };
+    let tip = |stats, whiskers| tip(stats, whiskers, Some("Pose x"));
     let stats = box_of(&samples, Whiskers::Iqr);
     let tooltip = tip(Some(&stats), Whiskers::Iqr);
     assert_eq!(tooltip.header, Some(Header::Trace(x.clone())));
     assert_eq!(tooltip.groups.len(), 2);
-    let names: Vec<&str> = (tooltip.groups[0].iter())
-        .map(|row| match &row.label {
-            Label::Weak(name) => name.as_str(),
-            Label::Trace(_) => panic!("a trace"),
-        })
-        .collect();
-    assert_eq!(
-        names,
-        [
-            "Min",
-            "Low whisker",
-            "Q1",
-            "Median",
-            "Mean",
-            "Q3",
-            "High whisker",
-            "Max"
-        ]
+    // the names and their order are asserted by the_tooltip_lists_the_values_in_the_order_drawn
+    assert_eq!(tooltip.groups[0].len(), 8);
+    assert!(
+        (tooltip.groups[0].iter()).all(|row| matches!(row.label, Label::Weak(_))),
+        "the labels are weak"
     );
     let values: Vec<(&str, Tone)> = (tooltip.groups[0].iter())
         .map(|row| (row.values[0].text.as_str(), row.values[0].tone))
