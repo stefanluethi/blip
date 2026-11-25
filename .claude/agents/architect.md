@@ -63,3 +63,10 @@ Write the options, the list of what depends on the change and your recommendatio
 the file your brief names (`.claude/specs/<change>-architecture.md`), and return a
 short version of it: the options in a few lines each, the recommendation, and the
 questions the lead should ask the user to choose between them.
+
+Keep the file to about 300 lines: signatures, not bodies, and what differs between the
+options, not what they share. Add a map of the code the change touches (file and
+function or line range, a line each), so that the spec's author need not search for
+it again. Write the file in parts (the first with Write, the rest appended), each a
+short output: one long output takes minutes, the prompt cache runs out meanwhile, and
+all you have read is paid for again.

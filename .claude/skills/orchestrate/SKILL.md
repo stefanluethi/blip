@@ -12,6 +12,18 @@ brief you give them. They cannot ask the user, and they do not see your memory o
 conversation. Put everything they need in the brief: requirement IDs, files, decisions
 the user made, the design notes from your memory that apply, and what done looks like.
 
+**Keep your own context small.** Every turn of yours rereads this whole conversation,
+and you take more turns than any specialist, so what you load costs the most:
+
+- Do not read code, diffs or long reports that an agent can read instead. What a later
+  agent needs goes into a file in `.claude/specs`, not through you.
+- Ask every agent for a short report (ten lines at most, see step 6); the details go to
+  the log file.
+- SendMessage wakes an agent with all it has read. Use it only within a few minutes of
+  the agent's report and only for a short follow-up. Later, or when the agent has read
+  a lot (an architect, a spec author, a reviewer), spawn a fresh agent and name the
+  files the first one wrote.
+
 The change to build: $ARGUMENTS
 
 ## 1. Understand
@@ -19,7 +31,9 @@ The change to build: $ARGUMENTS
 1. Read what the change touches: the code, the docs pages, and the requirements in
    `doc/source/requirements`. Check your memory for design decisions about this area,
    and the repository's list of open points (`OPEN_POINTS.md`), if there is one, for
-   what an earlier change left open here.
+   what an earlier change left open here. If `.claude/specs/<change>.md` exists and
+   says the requirements are approved, an earlier session started this change: read
+   that file and go on from step 4.
 2. Ask the user until these are clear, with AskUserQuestion, a few questions at a time,
    each with a recommended option:
    - what should happen, from the user's view, and why;
@@ -80,8 +94,9 @@ Skip this if the change does not alter the blip UI.
    user's decisions. Ask for a visual study in `design/` if the user wants one or the
    options are hard to judge from wireframes.
 2. Show the user the options (name, wireframe, trade-offs) and the designer's
-   recommendation, and let them choose with AskUserQuestion. Send follow-up questions
-   to the same designer with SendMessage.
+   recommendation, and let them choose with AskUserQuestion. A short follow-up right
+   after the report goes to the same designer with SendMessage; a later one goes to a
+   fresh designer.
 3. The chosen option goes into the brief of the requirements engineer and of `blip-dev`.
    If it sets a new design rule, add it to `design/DESIGN.md`.
 
@@ -97,8 +112,10 @@ when the change only fills in behind the interfaces that exist.
    already, say so: the options are then the ways to build it.
 2. Show the user the options (name, the signatures, the consequences for speed, kept
    files and the other parts) and the architect's recommendation, and let them choose
-   with AskUserQuestion. Send follow-up questions to the same architect with
-   SendMessage.
+   with AskUserQuestion. When the user's answer changes the proposal, spawn a fresh
+   architect with the architecture file and the answer, and have it update the file.
+   Do not wake the first one: it has read half the code base, and the talk with the
+   user took longer than its cache lasts.
 3. Add the chosen option to **Agreed**. It goes into the brief of the requirements
    engineer, who writes what an application or a user sees of it and updates the
    `ARCH_*` elements, and it is the start of the specs in step 5: they build the
@@ -118,6 +135,12 @@ when the change only fills in behind the interfaces that exist.
 Do not start implementation before the requirements are approved. The approval is the
 user's: do not take silence, or their OK to the summary, for it.
 
+Once they are approved, write the requirement IDs in scope into the **Agreed** file and
+that they are approved. If the way here was long (a design or an architecture to
+discuss), offer the user to build in a fresh session with `/orchestrate <change>`: the
+files hold all the build needs, and a fresh lead does not reread the discussion on
+every turn of the build.
+
 ## 4. Plan the work
 
 Split the work by part and decide the order:
@@ -128,6 +151,10 @@ Split the work by part and decide the order:
 - The test pages in `doc/source/requirements/tests/` are shared: each developer only
   edits the `TEST_*` items of its own part.
 
+- Build on a branch, in a worktree of its own when other sessions work on blip
+  (`git worktree list`, `git status`). A change built in the main checkout while
+  another lands on `main` ends in a merge that costs more than a slice.
+
 Tell the user the plan in a few lines (who does what, in which order) before you start.
 
 ## 5. Spec
@@ -137,14 +164,25 @@ written on Sonnet in small slices, and Opus spends its tokens once on the decisi
 instead of on every line.
 
 1. For each part, spawn its specialist on its default model (Opus) to write the spec,
-   not code, to `.claude/specs/<change>-<part>.md`. Its brief: the requirement IDs, the
+   not code, to `.claude/specs/<change>-<part>.md` and one file per slice (see
+   below). Its brief: the requirement IDs, the
    chosen design option, the user's decisions, and the outline below. It reads the code
    it will change and may run commands to work out test values, but edits no other
    file.
 2. Read the spec. Check that every requirement and `TEST_*` item in scope is in a slice,
    and that it decides rather than lists options. Ask the user only about decisions that
-   change what they see or what loads from old files; send the answers back with
-   SendMessage and have the spec updated.
+   change what they see or what loads from old files. Write an answer of a line or two
+   into the spec yourself; for more, spawn a fresh specialist with the spec files and
+   the answers.
+
+Keep the spec short: it decides and names, it does not hold the code. No function
+bodies, only signatures and, where the logic is not plain, the steps in words. The
+shared sections (Decisions, Files, Types and functions, Not to touch) go to
+`.claude/specs/<change>-<part>.md`, about 300 lines at most. Each slice gets its own
+file, `.claude/specs/<change>-<part>-slice-<n>.md`, with its part of Slices, Context
+and Tests, about 100 lines. The author writes these files one at a time: one long
+output takes minutes, the prompt cache runs out meanwhile, and all it has read is paid
+for again.
 
 The spec has these sections:
 
@@ -154,8 +192,9 @@ The spec has these sections:
 - **Files:** new and changed files and modules, and what each holds.
 - **Types and functions:** new and changed signatures, with a line each on what they
   do; existing functions to reuse, named by file and function.
-- **Slices:** in order, each one buildable and checked on its own, about 300 lines of
-  code at most: the requirement IDs, the files, the steps, and what done looks like.
+- **Slices:** in order, each one buildable and checked on its own, about 600 lines of
+  code at most, and as few as that allows (a slice pays for the start of its agent,
+  its builds and your turns around it): the requirement IDs, the files, the steps, and what done looks like.
   The workspace builds and its tests pass after every slice: a slice that changes a
   signature also changes its callers, or keeps the old one beside the new until the
   slice that removes it. Per slice, the checks its agent runs (the tests and the
@@ -180,8 +219,11 @@ Agent tool's `model: "sonnet"` and `effort: "medium"`): the spec has made the de
 so the slice needs no deep reasoning. Slices of different parts that do not share files
 may run in parallel. Each brief has:
 
-- the spec file and the slice to build, and the slice's **Context** list; the slices
-  before it are done;
+- the shared spec file and the file of its slice; the slices before it are done. Do
+  not copy the spec into the brief;
+- the log file, `.claude/specs/<change>-log.md`: the agent appends its full report
+  there and returns ten lines at most (built or not, the result of each check, where
+  it left the spec, what is open);
 - the checks to run, from the spec: a slice in the middle runs the tests and builds of
   what it touched, not `./check.sh`, which builds everything and takes minutes; the
   last slice of a part runs the part's full checks;
@@ -197,7 +239,10 @@ hits the limit was too large: resume it once with SendMessage to finish it, and 
 slices that follow smaller. Do not lift the limit.
 
 Read each report. If a specialist reports work needed in another part, add it to the
-plan. Look at the diff yourself; a report is not proof.
+plan. A report is not proof, but do not read the diff yourself: take a snapshot (step
+8) before the first slice, and after each slice look at `git diff --stat` against the
+snapshot before it. Files outside the slice's list, or a slice far larger or smaller
+than the spec says, are what to look into; the reviewers read the code.
 
 **Measure.** If the change touches a path that runs all the time (how the store takes
 in samples, the queries of the widgets, the drawing of a plot), run the baseline
@@ -213,11 +258,14 @@ result more than about 10 % worse goes to the specialist on its default model be
 the review, with both numbers.
 
 **Simplify.** When a part's change adds more than about 200 lines of code, spawn a
-fresh specialist of that part to run the `simplify` skill on it before the docs and the
-review: smaller code is cheaper for every agent that reads it later. Its brief: the
-files of the change, keep the behaviour and the tests the same, run the part's checks
-(`./check.sh` for blip and proto), and report what it removed or merged. Skip this for
-smaller changes.
+fresh specialist of that part on Sonnet at medium effort to simplify it before the
+docs and the review: smaller code is cheaper for every agent that reads it later. The
+`simplify` skill spreads its work over agents, which a specialist cannot start, so the
+brief asks for one pass instead: repeated code to merge, code the change left unused,
+and work done twice on a path that runs all the time. Its brief: the files of the
+change (`git diff --stat` against the first snapshot), keep the behaviour and the
+tests the same, run the part's checks (`./check.sh` for blip and proto), and report
+what it removed or merged. Skip this for smaller changes.
 
 ## 7. Document
 
@@ -248,9 +296,19 @@ It prints a tree id; note it, since shell variables do not last between commands
 Later, run the same command again and `git diff <old id> <new id>` shows what changed
 since that round. Put the old id in the briefs of the next round.
 
-1. **First round.** Spawn `reviewer` with the requirement IDs in scope, a summary of
-   the change, the file with the **Agreed** points and, if you measured, the two
-   baseline results. If the change touches `blip/src` or `kit/src`, spawn `design-reviewer` in the same
+1. **First round.** If `main` moved since the branch started
+   (`git log --oneline HEAD..main`), bring it in first (rebase or merge, the part's
+   specialist resolves conflicts), so the review sees what will land. Then spawn two
+   reviewers in one message, each with the requirement IDs in scope, a summary of the
+   change, the file with the **Agreed** points and the log file:
+   - `reviewer` on its default model with the scope **correctness** (its sections 1
+     and 2) and, if you measured, the two baseline results. It runs no checks.
+   - `reviewer` on Sonnet at medium effort (`model: "sonnet"`, `effort: "medium"`)
+     with the scope **coverage** (its sections 3 and 4): the coverage table, the
+     traceability, the docs and the checks. This is looking up and running, not
+     judging, and only this one builds.
+
+   If the change touches `blip/src` or `kit/src`, spawn `design-reviewer` in the same
    message, with the requirement IDs, the chosen design option and the views and panels
    that changed. The design reviewer renders its screenshots into a scratch directory,
    so the two do not get in each other's way. (The specialists have no Agent tool, so
@@ -297,7 +355,9 @@ than once, in this change or one before it, propose a rule that would have preve
 and where it goes: the agent file of the specialist that made it (`.claude/agents`),
 `design/DESIGN.md` for a design rule, or `CLAUDE.md` for one every agent needs. Show the
 user the exact text and add it only when they agree. The agents have no memory of their
-own, so these files are where their lessons live.
+own, so these files are where their lessons live. A new or changed agent file is
+loaded when a session starts: tell the user that it takes effect in the next session,
+and do not spawn an agent you added in this one.
 
 Report to the user: what was built, per requirement ID, the **Agreed** points one by
 one (built, built in part, or not built, and why), the reviewer's coverage table,

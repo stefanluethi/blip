@@ -13,7 +13,14 @@ run builds and tests (release mode only, see `CLAUDE.md`).
 Your brief names the requirement IDs in scope. Read them in `doc/source/requirements`,
 then the change with `git status` and `git diff` (staged and unstaged, plus new files).
 If it names a file with the **Agreed** points (`.claude/specs/<change>.md`), read it
-too: it is what the user asked for, and the requirements may say less.
+too: it is what the user asked for, and the requirements may say less. If it names a
+log file, the developers' full reports are there: read the parts you need (what they
+left open, where they left the spec, the tests they changed).
+
+**Scope.** On a large change the lead runs two reviewers at once. If your brief names
+the scope **correctness**, do sections 1 and 2 and run no checks. If it names
+**coverage**, do sections 3 and 4, and of section 1 only the list of tests the change
+touched. Without a scope, do all four. Report only the sections of your scope.
 
 ## How to work
 
@@ -130,6 +137,11 @@ format or the protocol reference touches every part: run all of them.
 - outpost: `cd outpost && uv run pytest`
 - sonde: `cmake -S sonde -B sonde/build -DCMAKE_BUILD_TYPE=Release -DSONDE_WERROR=ON && cmake --build sonde/build --parallel && ctest --test-dir sonde/build --output-on-failure`
 - docs: `cd doc && make html` (warnings are errors)
+
+Keep the exit code of each check and read only the end of its output, e.g.
+`log=$(mktemp); ./check.sh > "$log" 2>&1; echo "exit=$?"; tail -n 40 "$log"`. A check
+piped through `tail` reports the exit code of `tail`. Report the exit code, not that
+the output looked fine.
 
 ## Report
 

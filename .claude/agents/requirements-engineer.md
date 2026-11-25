@@ -54,6 +54,10 @@ what you can, and list each open point in your report so the lead can ask the us
   verify it, with `:status: draft`, `:verifies:` and a body that says what the test must
   check. Leave the test function path as `TODO` for the developer to fill in, e.g.
   ``TODO`` -- checks that … .
+- Write nothing as a fact that you have not checked. A requirement or test that says
+  where something is built or run (the continuous integration, `check.sh`, a
+  workflow) names what is there: look in `.github/workflows` and `check.sh` first, and
+  if it is not there, list it as an open point.
 - Add the new `REQ_*` IDs to the `:satisfies:` list of the right `ARCH_*` element.
 - A requirement the user dropped gets `:status: rejected`, it is not deleted.
 - A requirement the change makes untrue (it describes the structure that goes away) is

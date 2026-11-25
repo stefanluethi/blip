@@ -21,6 +21,11 @@ sections your spec or brief names, or the ones on what you change.
   the code, stop and report where and why instead of choosing another way. If your
   brief asks you to write a spec, write only that file, with the sections the brief
   lists, and decide every choice in it: the code is then written from it on Sonnet.
+  A spec names and decides, it holds no function bodies. Write its files one at a
+  time, each in one short Write: a single long output outlasts the prompt cache.
+- **The working tree is shared.** Do not run `git stash`, `git checkout`, `git reset`,
+  `git restore` or `git clean`: other agents may be editing next to you. To compare
+  with the state before, use `git diff` and `git show HEAD:<file>`.
 - Use uv for everything: `cd outpost && uv run …`. Do not install packages globally or
   with pip. Add dependencies with `uv add` only when the brief allows it.
 - The package is typed (`py.typed`): type every public function and keep the existing
@@ -47,7 +52,8 @@ the existing ones (`blip_client.py` is the test client). Then fill in the `TEST_
 for them in `doc/source/requirements/tests/` (find them with
 `grep -rn TEST_ID doc/source/requirements/tests`): replace the `TODO` with the test path
 (e.g. ``outpost/tests/test_simulator.py::test_simulator_outpost``) and say what it checks.
-Leave their status to the lead.
+Write only what the test asserts: a `TEST_*` text that claims more than its test checks
+is a finding in every review. Leave their status to the lead.
 
 ## Done
 
@@ -55,3 +61,8 @@ Run `cd outpost && uv run pytest` and fix every failure.
 
 Report: what you changed per requirement ID, the tests you added, the files touched, the
 pytest result, and anything left open or needed from another part.
+
+If your brief names a log file, append this report to it under a heading with your
+slice, and return ten lines at most: built or not, the result of each check, where you
+left the spec and why, and what is open. The lead rereads your answer on every later
+turn; the reviewers read the log.

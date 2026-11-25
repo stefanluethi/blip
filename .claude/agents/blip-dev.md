@@ -26,6 +26,14 @@ widgets, the app): read the one on what you change, the same way.
   the code, stop and report where and why instead of choosing another way. If your
   brief asks you to write a spec, write only that file, with the sections the brief
   lists, and decide every choice in it: the code is then written from it on Sonnet.
+  A spec names and decides, it holds no function bodies. Write its files one at a
+  time, each in one short Write: a single long output outlasts the prompt cache.
+- **The working tree is shared.** Do not run `git stash`, `git checkout`, `git reset`,
+  `git restore` or `git clean`: other agents may be editing next to you. To compare
+  with the state before, use `git diff` and `git show HEAD:<file>`.
+- **Edits.** Use Edit. If you change a file from a script instead, check that each
+  replacement found its place (`assert old in text`), so that no edit is lost in
+  silence.
 - **Release builds only.** Every cargo command that compiles uses `--release`
   (`build`, `run`, `check`, `clippy`, `test`, `doc`), and Trunk uses `--release`. A debug
   build fills `target/debug` with tens of GB.
@@ -83,9 +91,15 @@ you only need the code, don't open the `tests.rs` files. Then fill in the `TEST_
 `doc/source/requirements/tests/` (find them with
 `grep -rn TEST_ID doc/source/requirements/tests`): replace
 the `TODO` with the test path (e.g. ``kit/src/widgets/view`` unit tests) and say what it
-checks. Leave their status to the lead.
+checks. Write only what the test asserts: a `TEST_*` text that claims more than its
+test checks is a finding in every review. Leave their status to the lead.
 
 ## Done
+
+While you work, run the tests you touch by name
+(`cargo test --release -p blip-kit --lib <filter>`), and the checks of the slice once
+at the end. Keep the exit code of a long check and read only its end:
+`./check.sh > "$log" 2>&1; echo "exit=$?"; tail -n 40 "$log"` (with `log=$(mktemp)`).
 
 Run the checks your brief names and fix every failure. If it names none, or your slice
 is the last of the part, run `./check.sh` (cargo check native and WASM, the features of
@@ -101,3 +115,8 @@ Report: what you changed per requirement ID, the tests you added, the files touc
 the checks you ran and their results, the tests you changed or removed and why, and
 anything left open or needed from another part. Say plainly what you did not do or
 could not check; the lead cannot see it otherwise.
+
+If your brief names a log file, append this report to it under a heading with your
+slice, and return ten lines at most: built or not, the result of each check, where you
+left the spec and why, and what is open. The lead rereads your answer on every later
+turn; the reviewers read the log.

@@ -25,6 +25,11 @@ the same for `doc/source/sonde/`.
   the code, stop and report where and why instead of choosing another way. If your
   brief asks you to write a spec, write only that file, with the sections the brief
   lists, and decide every choice in it: the code is then written from it on Sonnet.
+  A spec names and decides, it holds no function bodies. Write its files one at a
+  time, each in one short Write: a single long output outlasts the prompt cache.
+- **The working tree is shared.** Do not run `git stash`, `git checkout`, `git reset`,
+  `git restore` or `git clean`: other agents may be editing next to you. To compare
+  with the state before, use `git diff` and `git show HEAD:<file>`.
 - C++17, built with CMake. No heap allocation, it must build with
   `-fno-exceptions -fno-rtti`, no iostreams. The user provides the storage.
 - Tracing must stay safe when the producer and the consumer are different contexts
@@ -67,7 +72,9 @@ If it is not installed, say so in your report.
 Write Catch2 tests in `sonde/tests` for each requirement in your brief. Then fill in the
 `TEST_*` items for them in `doc/source/requirements/tests/` (find them with
 `grep -rn TEST_ID doc/source/requirements/tests`): replace the `TODO` with
-the test file and case names and say what they check. Leave their status to the lead.
+the test file and case names and say what they check. Write only what the test
+asserts: a `TEST_*` text that claims more than its test checks is a finding in every
+review. Leave their status to the lead.
 
 ## Done
 
@@ -75,3 +82,8 @@ Run the builds and ctest above and fix every failure.
 
 Report: what you changed per requirement ID, the tests you added, the files touched, the
 results of the builds and ctest, and anything left open or needed from another part.
+
+If your brief names a log file, append this report to it under a heading with your
+slice, and return ten lines at most: built or not, the result of each check, where you
+left the spec and why, and what is open. The lead rereads your answer on every later
+turn; the reviewers read the log.
