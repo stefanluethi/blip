@@ -21,7 +21,7 @@ fn values_fit_the_kind_and_bounds_of_parameters() {
     assert_eq!(fit(&int, &Data::Float(2.6)), Some(Data::Uint(3)));
     assert_eq!(fit(&int, &Data::Int(-9)), Some(Data::Int(-5)));
     assert_eq!(fit(&int, &Data::from("x")), None);
-    let choice = param(ParamKind::Enum(vec!["a".to_owned(), "b".to_owned()]));
+    let choice = param(choice(&["a", "b"]));
     assert_eq!(fit(&choice, &Data::from("b")), Some(Data::from("b")));
     assert_eq!(fit(&choice, &Data::from("c")), None);
     assert_eq!(fit(&param(ParamKind::Bool), &Data::Uint(1)), None);
@@ -29,10 +29,7 @@ fn values_fit_the_kind_and_bounds_of_parameters() {
 
 #[test]
 fn integers_fit_exactly_and_bounds_the_wrong_way_round_do_not_panic() {
-    let unbounded = param(ParamKind::Int {
-        min: None,
-        max: None,
-    });
+    let unbounded = param(register());
     let big = Data::Uint((1 << 53) + 1);
     assert_eq!(fit(&unbounded, &big), Some(big.clone()));
     assert_eq!(
@@ -64,7 +61,7 @@ fn inputs_start_from_the_readback_the_default_or_the_lowest_value() {
     assert_eq!(initial(&speed, Some(Data::Float(1432.4))), Data::Uint(1432));
     // a readback that does not fit is ignored
     assert_eq!(initial(&speed, Some(Data::from("fast"))), Data::Uint(1500));
-    let level = param(ParamKind::Enum(vec!["info".to_owned(), "warn".to_owned()]));
+    let level = param(choice(&["info", "warn"]));
     assert_eq!(initial(&level, None), Data::from("info"));
     let ratio = param(ParamKind::Float {
         min: Some(-1.0),
@@ -105,6 +102,42 @@ fn named(name: &str, kind: ParamKind) -> Param {
         name: name.to_owned(),
         ..param(kind)
     }
+}
+
+/// An integer parameter without bounds.
+fn register() -> ParamKind {
+    ParamKind::Int {
+        min: None,
+        max: None,
+    }
+}
+
+/// A number parameter without bounds.
+fn ratio() -> ParamKind {
+    ParamKind::Float {
+        min: None,
+        max: None,
+        step: None,
+    }
+}
+
+/// An integer parameter from 0 to 100, shown as a slider.
+fn percent() -> ParamKind {
+    ParamKind::Int {
+        min: Some(0),
+        max: Some(100),
+    }
+}
+
+/// A parameter choosing one of `options`.
+fn choice(options: &[&str]) -> ParamKind {
+    ParamKind::Enum(options.iter().map(|option| option.to_string()).collect())
+}
+
+/// Clicks the label and runs two frames.
+fn click(harness: &mut egui_kittest::Harness<'_, State>, label: &str) {
+    harness.get_by_label(label).click();
+    harness.run_steps(2);
 }
 
 /// A harness showing a view of `actions`, announced by the connection without a
@@ -181,8 +214,7 @@ fn buttons_and_toggles_send_right_away() {
         action("reset", vec![]),
         action("enable", vec![named("on", ParamKind::Bool)]),
     ]);
-    harness.get_by_label(&format!("{PLAY} Run")).click();
-    harness.run_steps(2);
+    click(&mut harness, &format!("{PLAY} Run"));
     assert_eq!(
         sent(&mut harness),
         [("reset".to_owned(), Data::Record(vec![]))]
@@ -200,19 +232,18 @@ fn buttons_and_toggles_send_right_away() {
 
 #[test]
 fn several_parameters_are_sent_with_the_send_button() {
-    let kinds = ParamKind::Enum(vec!["slow".to_owned(), "fast".to_owned()]);
     let mut harness = harness(vec![action(
         "move",
-        vec![named("mode", kinds), named("far", ParamKind::Bool)],
+        vec![
+            named("mode", choice(&["slow", "fast"])),
+            named("far", ParamKind::Bool),
+        ],
     )]);
     harness.get_by_label("fast").click();
     harness.get_by_role(egui::accesskit::Role::CheckBox).click();
     harness.run_steps(2);
     assert!(sent(&mut harness).is_empty());
-    harness
-        .get_by_label(&format!("{PAPER_PLANE_RIGHT} Send"))
-        .click();
-    harness.run_steps(2);
+    click(&mut harness, &format!("{PAPER_PLANE_RIGHT} Send"));
     let args = Data::Record(vec![
         ("mode".to_owned(), Data::from("fast")),
         ("far".to_owned(), Data::Bool(true)),
@@ -222,11 +253,13 @@ fn several_parameters_are_sent_with_the_send_button() {
 
 #[test]
 fn several_parameters_chosen_to_be_sent_on_change_are_sent_at_most_every_interval() {
-    let kinds = ParamKind::Enum(vec!["slow".to_owned(), "fast".to_owned()]);
     let mut harness = stepped_harness(
         vec![action(
             "move",
-            vec![named("mode", kinds), named("far", ParamKind::Bool)],
+            vec![
+                named("mode", choice(&["slow", "fast"])),
+                named("far", ParamKind::Bool),
+            ],
         )],
         0.01,
     );
@@ -244,8 +277,7 @@ fn several_parameters_chosen_to_be_sent_on_change_are_sent_at_most_every_interva
         ])
     };
 
-    harness.get_by_label("fast").click();
-    harness.run_steps(2);
+    click(&mut harness, "fast");
     assert_eq!(
         sent(&mut harness),
         [("move".to_owned(), args("fast", false))]
@@ -292,13 +324,11 @@ fn reboot() -> ActionDescriptor {
 #[test]
 fn confirmed_actions_are_selected_then_carried_out_in_their_row() {
     let mut harness = harness(vec![reboot()]);
-    harness.get_by_label(&format!("{PLAY} Run…")).click();
-    harness.run_steps(2);
+    click(&mut harness, &format!("{PLAY} Run…"));
     assert!(sent(&mut harness).is_empty());
     // the description says what it does
     harness.get_by_label("Restarts the device");
-    harness.get_by_label("Run reboot").click();
-    harness.run_steps(2);
+    click(&mut harness, "Run reboot");
     assert_eq!(sent(&mut harness).len(), 1);
     assert!(harness.query_by_label("Run reboot").is_none());
     assert!(harness.query_by_label("Restarts the device").is_none());
@@ -308,20 +338,16 @@ fn confirmed_actions_are_selected_then_carried_out_in_their_row() {
 fn selected_actions_are_cancelled_or_lapse() {
     let mut harness = harness(vec![reboot()]);
     let run = format!("{PLAY} Run…");
-    harness.get_by_label(&run).click();
-    harness.run_steps(2);
-    harness.get_by_label("Cancel").click();
-    harness.run_steps(2);
+    click(&mut harness, &run);
+    click(&mut harness, "Cancel");
     assert!(harness.query_by_label("Run reboot").is_none());
 
-    harness.get_by_label(&run).click();
-    harness.run_steps(2);
+    click(&mut harness, &run);
     harness.key_press(egui::Key::Escape);
     harness.run_steps(2);
     assert!(harness.query_by_label("Run reboot").is_none());
 
-    harness.get_by_label(&run).click();
-    harness.run_steps(2);
+    click(&mut harness, &run);
     // frames of a quarter of a second
     harness.run_steps((ARM_SECONDS * 4.0) as usize - 4);
     harness.get_by_label("Run reboot");
@@ -333,8 +359,7 @@ fn selected_actions_are_cancelled_or_lapse() {
 #[test]
 fn selected_actions_lapse_once_disabled() {
     let mut harness = harness(vec![reboot()]);
-    harness.get_by_label(&format!("{PLAY} Run…")).click();
-    harness.run_steps(2);
+    click(&mut harness, &format!("{PLAY} Run…"));
     // the target disables the action while it is selected
     let disabled = ActionDescriptor {
         enabled: false,
@@ -357,20 +382,13 @@ fn confirmed_forms_send_their_values_and_lapse_when_changed() {
         ..action("move", vec![named("far", ParamKind::Bool)])
     };
     let mut harness = harness(vec![move_to]);
-    harness
-        .get_by_label(&format!("{PAPER_PLANE_RIGHT} Send…"))
-        .click();
-    harness.run_steps(2);
+    click(&mut harness, &format!("{PAPER_PLANE_RIGHT} Send…"));
     harness.get_by_label("Send move");
     harness.get_by_role(egui::accesskit::Role::CheckBox).click();
     harness.run_steps(2);
     assert!(harness.query_by_label("Send move").is_none());
-    harness
-        .get_by_label(&format!("{PAPER_PLANE_RIGHT} Send…"))
-        .click();
-    harness.run_steps(2);
-    harness.get_by_label("Send move").click();
-    harness.run_steps(2);
+    click(&mut harness, &format!("{PAPER_PLANE_RIGHT} Send…"));
+    click(&mut harness, "Send move");
     let args = Data::Record(vec![("far".to_owned(), Data::Bool(true))]);
     assert_eq!(sent(&mut harness), [("move".to_owned(), args)]);
 }
@@ -408,8 +426,7 @@ fn actions_are_carried_out_only_while_recording() {
     harness.run_steps(2);
     harness.get_by_label(START_RECORDING);
     assert!(harness.get_by_label(&run).accesskit_node().is_disabled());
-    harness.get_by_label(&run).click();
-    harness.run_steps(2);
+    click(&mut harness, &run);
     assert!(sent(&mut harness).is_empty());
     // while disconnected that is the reason, not recording
     harness.state_mut().invoker.connected.clear();
@@ -418,8 +435,7 @@ fn actions_are_carried_out_only_while_recording() {
     harness.state_mut().invoker.connected.insert(String::new());
     harness.state_mut().invoker.recording = true;
     harness.run_steps(2);
-    harness.get_by_label(&run).click();
-    harness.run_steps(2);
+    click(&mut harness, &run);
     assert_eq!(sent(&mut harness).len(), 1);
 }
 
@@ -491,19 +507,32 @@ fn new_views_show_no_actions_until_checked() {
     }
 }
 
-#[test]
-fn actions_are_sent_to_the_chosen_outpost() {
+/// A harness whose view shows "reset", which the `outposts` announce, with the
+/// `connected` ones open.
+fn announced_by(outposts: &[&str], connected: &[&str]) -> egui_kittest::Harness<'static, State> {
     let mut harness = harness(vec![]);
     let state = harness.state_mut();
-    state.model.actions.set("a", vec![action("reset", vec![])]);
-    state.model.actions.set("b", vec![action("reset", vec![])]);
+    for outpost in outposts {
+        state
+            .model
+            .actions
+            .set(outpost, vec![action("reset", vec![])]);
+    }
     state.view.shown = ["reset".to_owned()].into();
-    state.invoker.connected = ["a".to_owned(), "b".to_owned()].into();
+    state.invoker.connected = connected
+        .iter()
+        .map(|outpost| outpost.to_string())
+        .collect();
     harness.run_steps(2);
+    harness
+}
+
+#[test]
+fn actions_are_sent_to_the_chosen_outpost() {
+    let mut harness = announced_by(&["a", "b"], &["a", "b"]);
     let run = format!("{PLAY} Run");
     // by default to the first outpost announcing it
-    harness.get_by_label(&run).click();
-    harness.run_steps(2);
+    click(&mut harness, &run);
     assert_eq!(
         sent_to(&mut harness),
         [("a".to_owned(), "reset".to_owned())]
@@ -511,8 +540,7 @@ fn actions_are_sent_to_the_chosen_outpost() {
 
     harness.state_mut().view.outpost = Some("b".to_owned());
     harness.run_steps(2);
-    harness.get_by_label(&run).click();
-    harness.run_steps(2);
+    click(&mut harness, &run);
     assert_eq!(
         sent_to(&mut harness),
         [("b".to_owned(), "reset".to_owned())]
@@ -526,22 +554,10 @@ fn actions_are_sent_to_the_chosen_outpost() {
 
 #[test]
 fn by_default_actions_are_sent_to_an_open_connection() {
-    let mut harness = harness(vec![]);
-    let state = harness.state_mut();
     // the outpost connected before, whose actions are still known, and the one now
-    state
-        .model
-        .actions
-        .set("old", vec![action("reset", vec![])]);
-    state
-        .model
-        .actions
-        .set("new", vec![action("reset", vec![])]);
-    state.view.shown = ["reset".to_owned()].into();
-    state.invoker.connected = ["new".to_owned()].into();
-    harness.run_steps(2);
-    harness.get_by_label(&format!("{PLAY} Run")).click();
-    harness.run_steps(2);
+    let mut harness = announced_by(&["old", "new"], &["new"]);
+    let run = format!("{PLAY} Run");
+    click(&mut harness, &run);
     assert_eq!(
         sent_to(&mut harness),
         [("new".to_owned(), "reset".to_owned())]
@@ -549,7 +565,6 @@ fn by_default_actions_are_sent_to_an_open_connection() {
     // with none open, the first announcing it shows, disabled
     harness.state_mut().invoker.connected.clear();
     harness.run_steps(2);
-    let run = format!("{PLAY} Run");
     assert!(harness.get_by_label(&run).accesskit_node().is_disabled());
 }
 
@@ -726,11 +741,7 @@ fn layouts_of_older_versions_load() {
 
 #[test]
 fn clicking_a_slider_sends_its_new_value_once() {
-    let percent = ParamKind::Int {
-        min: Some(0),
-        max: Some(100),
-    };
-    let mut harness = harness(vec![action("level", vec![named("p", percent)])]);
+    let mut harness = harness(vec![action("level", vec![named("p", percent())])]);
     harness.get_by_role(egui::accesskit::Role::Slider).click();
     harness.run_steps(3);
     let sent = sent(&mut harness);
@@ -786,11 +797,7 @@ fn field_text(harness: &egui_kittest::Harness<'_, State>) -> String {
 
 #[test]
 fn rejected_values_go_back_to_the_accepted_one_with_the_reason() {
-    let register = ParamKind::Int {
-        min: None,
-        max: None,
-    };
-    let mut harness = harness(vec![action("poke", vec![named("v", register)])]);
+    let mut harness = harness(vec![action("poke", vec![named("v", register())])]);
     enter_text(&mut harness, "5");
     answer(&mut harness, 0, Ok(()));
     enter_text(&mut harness, "7");
@@ -805,11 +812,7 @@ fn rejected_values_go_back_to_the_accepted_one_with_the_reason() {
 
 #[test]
 fn a_dragged_slider_goes_back_only_once_let_go() {
-    let percent = ParamKind::Int {
-        min: Some(0),
-        max: Some(100),
-    };
-    let mut harness = harness(vec![action("level", vec![named("p", percent)])]);
+    let mut harness = harness(vec![action("level", vec![named("p", percent())])]);
     let input = |harness: &egui_kittest::Harness<'_, State>| {
         let key = (ActionId::new("", "level"), "p".to_owned());
         harness.state().invoker.inputs[&key].clone()
@@ -842,13 +845,9 @@ fn a_dragged_slider_goes_back_only_once_let_go() {
 
 #[test]
 fn rejected_values_go_back_to_what_showed_before_and_not_the_readback() {
-    let register = ParamKind::Int {
-        min: None,
-        max: None,
-    };
     let poke = ActionDescriptor {
         readback: Some("rb".to_owned()),
-        ..action("poke", vec![named("v", register)])
+        ..action("poke", vec![named("v", register())])
     };
     let mut harness = harness(vec![poke]);
     let sample = |harness: &mut egui_kittest::Harness<'_, State>, timestamp, value| {
@@ -878,13 +877,7 @@ fn rejected_text_is_kept_to_correct_it() {
 
 #[test]
 fn rejected_values_without_an_accepted_one_go_back_to_the_default() {
-    let mut ratio = named(
-        "r",
-        ParamKind::Int {
-            min: None,
-            max: None,
-        },
-    );
+    let mut ratio = named("r", register());
     ratio.default = Some(Data::Uint(3));
     let mut harness = harness(vec![action("ratio", vec![ratio])]);
     enter_text(&mut harness, "9");
@@ -897,19 +890,13 @@ fn forms_keep_their_inputs_when_rejected() {
     let mut harness = harness(vec![action(
         "message",
         vec![
-            named(
-                "level",
-                ParamKind::Enum(vec!["info".to_owned(), "warn".to_owned()]),
-            ),
+            named("level", choice(&["info", "warn"])),
             named("text", ParamKind::String),
         ],
     )]);
     enter_text(&mut harness, "pump stalled");
     harness.get_by_label("warn").click();
-    harness
-        .get_by_label(&format!("{PAPER_PLANE_RIGHT} Send"))
-        .click();
-    harness.run_steps(2);
+    click(&mut harness, &format!("{PAPER_PLANE_RIGHT} Send"));
     answer(&mut harness, 0, Err("busy"));
     assert_eq!(field_text(&harness), "pump stalled");
     harness.get_by_label("Rejected: busy");
@@ -920,31 +907,22 @@ fn changed_inputs_of_a_form_are_marked_until_sent() {
     let mut harness = harness(vec![action(
         "message",
         vec![
-            named(
-                "level",
-                ParamKind::Enum(vec!["info".to_owned(), "warn".to_owned()]),
-            ),
+            named("level", choice(&["info", "warn"])),
             named("far", ParamKind::Bool),
         ],
     )]);
     assert!(harness.query_by_label("Changed").is_none());
-    harness.get_by_label("warn").click();
-    harness.run_steps(2);
+    click(&mut harness, "warn");
     assert_eq!(harness.query_all_by_label("Changed").count(), 1);
     harness.get_by_role(egui::accesskit::Role::CheckBox).click();
     harness.run_steps(2);
     assert_eq!(harness.query_all_by_label("Changed").count(), 2);
-    harness
-        .get_by_label(&format!("{PAPER_PLANE_RIGHT} Send"))
-        .click();
-    harness.run_steps(2);
+    click(&mut harness, &format!("{PAPER_PLANE_RIGHT} Send"));
     assert_eq!(sent(&mut harness).len(), 1);
     assert!(harness.query_by_label("Changed").is_none());
     // changing back to what was sent is no change
-    harness.get_by_label("info").click();
-    harness.run_steps(2);
-    harness.get_by_label("warn").click();
-    harness.run_steps(2);
+    click(&mut harness, "info");
+    click(&mut harness, "warn");
     assert!(harness.query_by_label("Changed").is_none());
 }
 
@@ -955,18 +933,14 @@ fn forms_sent_on_change_and_inputs_sent_at_once_are_not_marked() {
         action(
             "move",
             vec![
-                named(
-                    "mode",
-                    ParamKind::Enum(vec!["slow".to_owned(), "fast".to_owned()]),
-                ),
+                named("mode", choice(&["slow", "fast"])),
                 named("far", ParamKind::Bool),
             ],
         ),
     ]);
     harness.state_mut().view.on_change.insert("move".to_owned());
     harness.run();
-    harness.get_by_label("fast").click();
-    harness.run_steps(2);
+    click(&mut harness, "fast");
     harness
         .get_all_by_role(egui::accesskit::Role::CheckBox)
         .next()
@@ -977,46 +951,30 @@ fn forms_sent_on_change_and_inputs_sent_at_once_are_not_marked() {
 }
 
 #[test]
-fn text_fields_hint_at_enter_until_sent() {
-    let mut harness = harness(vec![action("say", vec![named("text", ParamKind::String)])]);
-    let field = || egui::accesskit::Role::TextInput;
-    harness.get_by_role(field()).focus();
-    harness.run_steps(2);
-    harness.get_by_role(field()).type_text("hello");
-    harness.run_steps(2);
-    harness.get_by_label("Enter to send");
-    harness.get_by_label("Changed");
-    harness.key_press(egui::Key::Enter);
-    harness.run_steps(2);
-    assert_eq!(sent(&mut harness).len(), 1);
-    assert!(harness.query_by_label("Enter to send").is_none());
-    assert!(harness.query_by_label("Changed").is_none());
-}
-
-#[test]
 fn typed_integers_are_marked_until_entered() {
-    let register = || ParamKind::Int {
-        min: None,
-        max: None,
-    };
-    let mut harness = harness(vec![action("poke", vec![named("v", register())])]);
     let field = || egui::accesskit::Role::TextInput;
-    harness.get_by_role(field()).focus();
-    harness.run_steps(2);
-    // focusing alone changes nothing
-    assert!(harness.query_by_label("Enter to send").is_none());
-    harness.get_by_role(field()).type_text("12");
-    harness.run_steps(2);
-    harness.get_by_label("Enter to send");
-    harness.get_by_label("Changed");
-    harness.key_press(egui::Key::Enter);
-    harness.run_steps(2);
-    assert_eq!(sent(&mut harness).len(), 1);
-    assert!(harness.query_by_label("Enter to send").is_none());
-    assert!(harness.query_by_label("Changed").is_none());
+    for (kind, text) in [(ParamKind::String, "hello"), (register(), "12")] {
+        let mut harness = harness(vec![action("poke", vec![named("v", kind)])]);
+        harness.get_by_role(field()).focus();
+        harness.run_steps(2);
+        // focusing alone changes nothing
+        assert!(harness.query_by_label("Enter to send").is_none());
+        harness.get_by_role(field()).type_text(text);
+        harness.run_steps(2);
+        harness.get_by_label("Enter to send");
+        harness.get_by_label("Changed");
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(2);
+        assert_eq!(sent(&mut harness).len(), 1);
+        assert!(harness.query_by_label("Enter to send").is_none());
+        assert!(harness.query_by_label("Changed").is_none());
+    }
 
     // in a form with a Send button the parameter gets the dot
-    let mut harness = harness_form(vec![named("v", register()), named("on", ParamKind::Bool)]);
+    let mut harness = harness(vec![action(
+        "form",
+        vec![named("v", register()), named("on", ParamKind::Bool)],
+    )]);
     harness.get_by_role(field()).focus();
     harness.run_steps(2);
     harness.get_by_role(field()).type_text("7");
@@ -1025,15 +983,10 @@ fn typed_integers_are_marked_until_entered() {
     assert!(sent(&mut harness).is_empty());
 }
 
-fn harness_form(params: Vec<Param>) -> egui_kittest::Harness<'static, State> {
-    harness(vec![action("form", params)])
-}
-
 #[test]
 fn pending_invocations_count_the_seconds_after_the_first() {
     let mut harness = harness(vec![action("reset", vec![])]);
-    harness.get_by_label(&format!("{PLAY} Run")).click();
-    harness.run_steps(2);
+    click(&mut harness, &format!("{PLAY} Run"));
     assert!(harness.query_by_label("1 s").is_none());
     // frames of a quarter of a second
     harness.run_steps(4);
@@ -1043,8 +996,7 @@ fn pending_invocations_count_the_seconds_after_the_first() {
 #[test]
 fn unanswered_invocations_say_how_long_they_wait() {
     let mut harness = harness(vec![action("reset", vec![])]);
-    harness.get_by_label(&format!("{PLAY} Run")).click();
-    harness.run_steps(2);
+    click(&mut harness, &format!("{PLAY} Run"));
     assert_eq!(sent(&mut harness).len(), 1);
     // six seconds in frames of a quarter
     for _ in 0..24 {
@@ -1060,11 +1012,7 @@ fn unanswered_invocations_say_how_long_they_wait() {
 
 #[test]
 fn typed_integers_are_sent_exactly_on_enter() {
-    let register = ParamKind::Int {
-        min: None,
-        max: None,
-    };
-    let mut harness = harness(vec![action("poke", vec![named("v", register)])]);
+    let mut harness = harness(vec![action("poke", vec![named("v", register())])]);
     let field = || egui::accesskit::Role::TextInput;
     harness.get_by_role(field()).focus();
     harness.run_steps(2);
@@ -1087,12 +1035,7 @@ fn typed_integers_are_sent_exactly_on_enter() {
 
 #[test]
 fn typed_numbers_are_sent_on_enter_only() {
-    let ratio = ParamKind::Float {
-        min: None,
-        max: None,
-        step: None,
-    };
-    let mut harness = harness(vec![action("ratio", vec![named("r", ratio)])]);
+    let mut harness = harness(vec![action("ratio", vec![named("r", ratio())])]);
     harness
         .get_by_role(egui::accesskit::Role::SpinButton)
         .click();
@@ -1118,18 +1061,13 @@ fn typed_numbers_are_sent_on_enter_only() {
 
 #[test]
 fn typed_numbers_left_without_enter_stay_unsent_drafts() {
-    let register = ParamKind::Int {
-        min: None,
-        max: None,
-    };
-    let ratio = ParamKind::Float {
-        min: None,
-        max: None,
-        step: None,
-    };
     for (kind, role, value) in [
-        (register, egui::accesskit::Role::TextInput, Data::Uint(12)),
-        (ratio, egui::accesskit::Role::SpinButton, Data::Float(12.0)),
+        (register(), egui::accesskit::Role::TextInput, Data::Uint(12)),
+        (
+            ratio(),
+            egui::accesskit::Role::SpinButton,
+            Data::Float(12.0),
+        ),
     ] {
         let mut harness = harness(vec![action("poke", vec![named("v", kind)])]);
         harness.get_by_role(role).click();
@@ -1138,8 +1076,7 @@ fn typed_numbers_left_without_enter_stay_unsent_drafts() {
         harness.get_by_role(role).type_text("12");
         harness.run_steps(2);
         // clicking elsewhere leaves the field without sending
-        harness.get_by_label("poke").click();
-        harness.run_steps(2);
+        click(&mut harness, "poke");
         assert!(!harness.get_by_role(role).is_focused());
         assert!(sent(&mut harness).is_empty());
         harness.get_by_label("Changed");
@@ -1171,17 +1108,14 @@ fn a_pending_run_cannot_be_sent_again() {
     // a double click runs it once
     harness.get_by_label(&run).click();
     harness.run_steps(1);
-    harness.get_by_label(&run).click();
-    harness.run_steps(2);
+    click(&mut harness, &run);
     assert_eq!(sent(&mut harness).len(), 1);
     assert!(harness.get_by_label(&run).accesskit_node().is_disabled());
-    harness.get_by_label(&run).click();
-    harness.run_steps(2);
+    click(&mut harness, &run);
     assert!(sent(&mut harness).is_empty());
     // once answered it runs again
     answer(&mut harness, 0, Ok(()));
     assert!(!harness.get_by_label(&run).accesskit_node().is_disabled());
-    harness.get_by_label(&run).click();
-    harness.run_steps(2);
+    click(&mut harness, &run);
     assert_eq!(sent(&mut harness).len(), 1);
 }

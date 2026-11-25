@@ -1,6 +1,8 @@
 use super::*;
 use crate::store::MemoryStore;
 use crate::store::testing::append;
+use egui_kittest::Harness;
+use egui_kittest::kittest::{NodeT, Queryable};
 
 /// What is picked for a view of `view_type` as `paths`, without wildcards.
 fn selection(paths: &mut BTreeSet<String>, view_type: ViewType) -> ViewSelection<'_> {
@@ -22,10 +24,13 @@ fn filter(search: &str, compatible_only: bool) -> TreeFilter<'_> {
     }
 }
 
+/// The names of the children of `tree`.
+fn keys<'a>(tree: &TraceTree<'a>) -> Vec<&'a str> {
+    tree.children.keys().copied().collect()
+}
+
 #[test]
 fn wildcard_folders_are_marked_and_tell_their_state() {
-    use egui_kittest::kittest::Queryable;
-
     let mut model = MemoryStore::default();
     add_trace(&mut model, "motor/rpm");
     add_trace(&mut model, "imu/x");
@@ -75,8 +80,6 @@ fn branches_and_wildcards_below_others_are_known() {
 
 #[test]
 fn one_trace_views_pick_with_radio_buttons() {
-    use egui_kittest::kittest::Queryable;
-
     let mut model = MemoryStore::default();
     add_array(&mut model, "a", 3);
     add_array(&mut model, "b", 3);
@@ -98,11 +101,9 @@ fn one_trace_views_pick_with_radio_buttons() {
 
 #[test]
 fn without_a_view_the_folders_still_open_and_close() {
-    use egui_kittest::kittest::{NodeT, Queryable};
-
     let mut model = MemoryStore::default();
     add_trace(&mut model, "motor/rpm");
-    let mut harness = egui_kittest::Harness::builder()
+    let mut harness = Harness::builder()
         .with_size(egui::vec2(300.0, 400.0))
         .build_ui(move |ui| show(ui, &model, filter("", false), None, &[], true));
     harness.run();
@@ -121,8 +122,6 @@ fn without_a_view_the_folders_still_open_and_close() {
 
 #[test]
 fn alt_click_and_the_menu_open_and_close_all_below() {
-    use egui_kittest::kittest::Queryable;
-
     let mut model = MemoryStore::default();
     add_trace(&mut model, "a/b/c");
     add_trace(&mut model, "a/d/e");
@@ -155,13 +154,11 @@ fn alt_click_and_the_menu_open_and_close_all_below() {
 
 #[test]
 fn checked_only_shows_the_checked_and_hidden_ones_are_counted() {
-    use egui_kittest::kittest::Queryable;
-
     let mut model = MemoryStore::default();
     add_trace(&mut model, "motor/rpm");
     add_trace(&mut model, "motor/temp");
     add_array(&mut model, "arr", 3);
-    let mut harness = egui_kittest::Harness::builder()
+    let mut harness = Harness::builder()
         .with_size(egui::vec2(300.0, 400.0))
         .build_ui_state(
             move |ui, (search, checked_only, paths): &mut (String, bool, BTreeSet<String>)| {
@@ -204,8 +201,6 @@ fn checked_only_shows_the_checked_and_hidden_ones_are_counted() {
 
 #[test]
 fn ctrl_f_focuses_the_search() {
-    use egui_kittest::kittest::Queryable;
-
     let mut harness = tree_harness(ViewType::Plot);
     request_search_focus(&harness.ctx);
     harness.run_steps(2);
@@ -215,8 +210,6 @@ fn ctrl_f_focuses_the_search() {
 
 #[test]
 fn the_arrow_keys_move_the_focus_and_open_and_close_folders() {
-    use egui_kittest::kittest::Queryable;
-
     let mut model = MemoryStore::default();
     add_trace(&mut model, "motor/rpm");
     add_trace(&mut model, "motor/temp");
@@ -242,13 +235,10 @@ fn trace_tree_branches_at_slashes() {
         .map(|path| Trace::leaked(path, None, Samples::Empty(0)))
         .collect();
     let tree = TraceTree::build(traces.iter().copied());
-    assert_eq!(
-        tree.children.keys().copied().collect::<Vec<_>>(),
-        ["acc", "cpu"]
-    );
+    assert_eq!(keys(&tree), ["acc", "cpu"]);
     let acc = &tree.children["acc"];
     assert_eq!(acc.trace.map(|trace| trace.path), Some("acc"));
-    assert_eq!(acc.children.keys().copied().collect::<Vec<_>>(), ["x", "y"]);
+    assert_eq!(keys(acc), ["x", "y"]);
     assert_eq!(
         acc.children["x"].trace.map(|trace| trace.path),
         Some("acc/x")
@@ -268,17 +258,11 @@ fn trace_tree_branches_at_record_fields() {
     ];
     let tree = TraceTree::build(traces.iter().copied());
     let sensors = &tree.children["sensors"];
-    assert_eq!(
-        sensors.children.keys().copied().collect::<Vec<_>>(),
-        ["imu", "v1.2"]
-    );
+    assert_eq!(keys(sensors), ["imu", "v1.2"]);
     let imu = &sensors.children["imu"];
     assert!(imu.is_record());
     assert!(!sensors.is_record());
-    assert_eq!(
-        imu.children.keys().copied().collect::<Vec<_>>(),
-        [".acc", ".ok"]
-    );
+    assert_eq!(keys(imu), [".acc", ".ok"]);
     assert_eq!(
         imu.children[".acc"].children[".z"]
             .trace
@@ -329,34 +313,14 @@ fn pruning_keeps_only_what_the_view_can_show() {
     let mut tree = TraceTree::build(traces.iter().copied());
     tree.add_actions(["reboot"].into_iter());
     tree.retain_selectable(ViewType::Plot.into());
-    assert_eq!(
-        tree.children.keys().copied().collect::<Vec<_>>(),
-        ["imu", "motor"]
-    );
-    assert_eq!(
-        tree.children["imu"]
-            .children
-            .keys()
-            .copied()
-            .collect::<Vec<_>>(),
-        ["acc"]
-    );
-    assert_eq!(
-        tree.children["motor"]
-            .children
-            .keys()
-            .copied()
-            .collect::<Vec<_>>(),
-        ["rpm"]
-    );
+    assert_eq!(keys(&tree), ["imu", "motor"]);
+    assert_eq!(keys(&tree.children["imu"]), ["acc"]);
+    assert_eq!(keys(&tree.children["motor"]), ["rpm"]);
 
     let mut tree = TraceTree::build(traces.iter().copied());
     tree.add_actions(["motor/rpm", "reboot"].into_iter());
     tree.retain_selectable(ViewType::Actions.into());
-    assert_eq!(
-        tree.children.keys().copied().collect::<Vec<_>>(),
-        ["motor", "reboot"]
-    );
+    assert_eq!(keys(&tree), ["motor", "reboot"]);
     let rpm = &tree.children["motor"].children["rpm"];
     assert!(rpm.trace.is_none());
     assert_eq!(rpm.action, Some("motor/rpm"));
@@ -372,30 +336,11 @@ fn searches_match_each_word_ignoring_case() {
 
 #[test]
 fn searching_shows_and_selects_only_the_matching_traces() {
-    use egui_kittest::Harness;
-    use egui_kittest::kittest::Queryable;
-
     let mut model = MemoryStore::default();
     for path in ["motor/speed", "motor/current", "sensor/temp"] {
         append(&mut model.traces, 0, path, proto::Data::Uint(1));
     }
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(300.0, 400.0))
-        .build_ui_state(
-            move |ui, (search, paths): &mut (String, BTreeSet<String>)| {
-                search_ui(ui, search, &mut false, &mut false, true);
-                show(
-                    ui,
-                    &model,
-                    filter(search, false),
-                    Some(selection(paths, ViewType::Plot)),
-                    &[],
-                    true,
-                );
-            },
-            (String::new(), BTreeSet::new()),
-        );
-    harness.run();
+    let mut harness = tree_harness_of(model, ViewType::Plot);
     harness
         .get_by_role(egui::accesskit::Role::TextInput)
         .focus();
@@ -468,7 +413,7 @@ fn tree_frame_time() {
             append(&mut model.traces, 0, &path, proto::Data::Float(1.0));
         }
     }
-    let mut harness = egui_kittest::Harness::builder()
+    let mut harness = Harness::builder()
         .with_size(egui::vec2(300.0, 800.0))
         .build_ui_state(
             move |ui, paths: &mut BTreeSet<String>| {
@@ -503,9 +448,8 @@ fn tree_frame_time() {
     println!("{:.3} ms per frame", spent / f64::from(frames) * 1.0e3);
 }
 
-fn tree_harness(view_type: ViewType) -> egui_kittest::Harness<'static, (String, BTreeSet<String>)> {
-    let mut model = MemoryStore::default();
-    append(&mut model.traces, 0, "motor/rpm", proto::Data::Uint(1));
+/// Adds the action "motor/speed" to `model`.
+fn add_action(model: &mut MemoryStore) {
     model.actions.set(
         "a",
         vec![proto::ActionDescriptor {
@@ -518,7 +462,15 @@ fn tree_harness(view_type: ViewType) -> egui_kittest::Harness<'static, (String, 
             disabled_reason: None,
         }],
     );
-    let mut harness = egui_kittest::Harness::builder()
+}
+
+/// A harness showing the search field and the tree of `model` for a view of
+/// `view_type`.
+fn tree_harness_of(
+    model: MemoryStore,
+    view_type: ViewType,
+) -> Harness<'static, (String, BTreeSet<String>)> {
+    let mut harness = Harness::builder()
         .with_size(egui::vec2(300.0, 400.0))
         .build_ui_state(
             move |ui, (search, paths): &mut (String, BTreeSet<String>)| {
@@ -538,20 +490,21 @@ fn tree_harness(view_type: ViewType) -> egui_kittest::Harness<'static, (String, 
     harness
 }
 
-#[test]
-fn the_type_icon_at_the_end_of_a_row_shows_the_hover_text_of_the_row() {
-    use egui_kittest::kittest::Queryable;
-
-    let mut harness = tree_harness(ViewType::Plot);
-    harness.get_by_label(HASH).hover();
-    harness.run();
-    assert!(harness.query_by_label_contains("motor/rpm").is_some());
+/// A tree with the described trace "motor/rpm" and the action "motor/speed".
+fn tree_harness(view_type: ViewType) -> Harness<'static, (String, BTreeSet<String>)> {
+    let mut model = MemoryStore::default();
+    append(&mut model.traces, 0, "motor/rpm", proto::Data::Uint(1));
+    model.traces.set_metadata(&proto::TraceMetadata {
+        path: "motor/rpm".to_owned(),
+        description: "Speed of the shaft".to_owned(),
+        ..Default::default()
+    });
+    add_action(&mut model);
+    tree_harness_of(model, view_type)
 }
 
 #[test]
 fn actions_views_check_the_actions_in_the_tree() {
-    use egui_kittest::kittest::{NodeT, Queryable};
-
     let mut harness = tree_harness(ViewType::Actions);
     assert!(
         harness
@@ -585,8 +538,6 @@ fn actions_views_check_the_actions_in_the_tree() {
 
 #[test]
 fn shown_actions_no_outpost_announces_can_be_unchecked() {
-    use egui_kittest::kittest::Queryable;
-
     let mut harness = tree_harness(ViewType::Actions);
     harness.state_mut().1 = BTreeSet::from(["gone/reset".to_owned()]);
     harness.run();
@@ -600,8 +551,6 @@ fn shown_actions_no_outpost_announces_can_be_unchecked() {
 
 #[test]
 fn actions_are_disabled_for_other_views() {
-    use egui_kittest::kittest::{NodeT, Queryable};
-
     let mut harness = tree_harness(ViewType::Plot);
     assert!(
         harness
@@ -616,9 +565,6 @@ fn actions_are_disabled_for_other_views() {
 
 #[test]
 fn the_filter_shows_only_what_the_view_can_show() {
-    use egui_kittest::Harness;
-    use egui_kittest::kittest::{NodeT, Queryable};
-
     let mut model = MemoryStore::default();
     append(&mut model.traces, 0, "motor/rpm", proto::Data::Uint(1));
     append(
@@ -627,18 +573,7 @@ fn the_filter_shows_only_what_the_view_can_show() {
         "motor/mode",
         proto::Data::String("idle".to_owned()),
     );
-    model.actions.set(
-        "a",
-        vec![proto::ActionDescriptor {
-            path: "motor/speed".to_owned(),
-            description: String::new(),
-            params: vec![],
-            readback: None,
-            confirm: false,
-            enabled: true,
-            disabled_reason: None,
-        }],
-    );
+    add_action(&mut model);
     let mut harness = Harness::builder()
         .with_size(egui::vec2(300.0, 400.0))
         .build_ui_state(
@@ -707,9 +642,6 @@ fn the_filter_shows_only_what_the_view_can_show() {
 
 #[test]
 fn the_buttons_are_as_high_as_the_search_field_and_fit_beside_it() {
-    use egui_kittest::Harness;
-    use egui_kittest::kittest::Queryable;
-
     let width = 250.0;
     // the size of egui and that of blip, without and with the clear button
     for (size, search) in [12.5, 14.0]
@@ -762,13 +694,19 @@ fn add_trace(model: &mut MemoryStore, path: &str) {
     append(&mut model.traces, 0, path, proto::Data::Uint(1));
 }
 
+/// Clicks the label and runs the frames after it.
+fn click(harness: &mut Harness<'_, PickState>, label: &str) {
+    harness.get_by_label(label).click();
+    harness.run();
+}
+
 type PickState = (MemoryStore, BTreeSet<String>, BTreeSet<String>, String);
 
 /// A harness showing the search field and the tree of `model` for a view picking
 /// `picks`, with the picked paths and the wildcards, which are expanded in each
 /// frame.
-fn pick_harness(model: MemoryStore, picks: Picks) -> egui_kittest::Harness<'static, PickState> {
-    let mut harness = egui_kittest::Harness::builder()
+fn pick_harness(model: MemoryStore, picks: Picks) -> Harness<'static, PickState> {
+    let mut harness = Harness::builder()
         .with_size(egui::vec2(300.0, 400.0))
         .build_ui_state(
             move |ui, (model, paths, wildcards, search): &mut PickState| {
@@ -798,17 +736,11 @@ fn set(paths: &[&str]) -> BTreeSet<String> {
 
 #[test]
 fn checking_a_branch_also_picks_what_is_added_to_it_later() {
-    use egui_kittest::kittest::Queryable;
-
     let mut model = MemoryStore::default();
     for path in ["motor/a", "motor/b", "cpu"] {
         add_trace(&mut model, path);
     }
     let mut harness = pick_harness(model, ViewType::Plot.into());
-    let click = |harness: &mut egui_kittest::Harness<'_, PickState>, label: &str| {
-        harness.get_by_label(label).click();
-        harness.run();
-    };
     click(&mut harness, "motor");
     assert_eq!(harness.state().1, set(&["motor/a", "motor/b"]));
     assert_eq!(harness.state().2, set(&["/motor"]));
@@ -855,8 +787,6 @@ fn add_log(model: &mut MemoryStore, path: &str) {
 
 #[test]
 fn new_log_views_check_the_logs_of_all_paths_also_later_ones() {
-    use egui_kittest::kittest::Queryable;
-
     let mut model = MemoryStore::default();
     add_trace(&mut model, "motor/rpm");
     add_log(&mut model, "motor");
@@ -883,8 +813,6 @@ fn new_log_views_check_the_logs_of_all_paths_also_later_ones() {
 
 #[test]
 fn checking_the_log_folder_picks_the_log_paths_below_it_also_later_ones() {
-    use egui_kittest::kittest::Queryable;
-
     let mut model = MemoryStore::default();
     for path in ["", "log/imu", "motor"] {
         add_log(&mut model, path);
@@ -905,8 +833,6 @@ fn checking_the_log_folder_picks_the_log_paths_below_it_also_later_ones() {
 
 #[test]
 fn shown_logs_of_paths_without_records_can_be_unchecked() {
-    use egui_kittest::kittest::Queryable;
-
     let mut model = MemoryStore::default();
     add_log(&mut model, "motor");
     let mut harness = pick_harness(model, ViewType::Logs.into());
@@ -929,8 +855,6 @@ fn add_array(model: &mut MemoryStore, path: &str, len: usize) {
 
 #[test]
 fn xy_views_check_arrays_as_a_whole_apart_from_other_traces() {
-    use egui_kittest::kittest::Queryable;
-
     let mut model = MemoryStore::default();
     add_trace(&mut model, "sensors/rpm");
     add_array(&mut model, "sensors/adc", MAX_LISTED_ELEMENTS + 1);
@@ -956,31 +880,26 @@ fn xy_views_check_arrays_as_a_whole_apart_from_other_traces() {
     assert!(tree.children["sensors"].children.contains_key("adc"));
 
     let mut harness = pick_harness(model, ViewType::Xy.into());
-    let click = |harness: &mut egui_kittest::Harness<'_, PickState>, label: &str| {
-        harness.get_by_label(label).click();
-        harness.run();
-    };
-    let array = |name: &str| name.to_owned();
     click(&mut harness, "rpm");
     assert_eq!(harness.state().1, set(&["sensors/rpm"]));
-    click(&mut harness, &array("adc"));
+    click(&mut harness, "adc");
     assert_eq!(harness.state().1, set(&["sensors/adc"]));
-    click(&mut harness, &array("wave"));
+    click(&mut harness, "wave");
     assert_eq!(harness.state().1, set(&["sensors/adc", "sensors/wave"]));
 
     // checking other traces unchecks the arrays, and the other way round; a small
     // array checks its elements, as in other views
-    click(&mut harness, &array("pos"));
+    click(&mut harness, "pos");
     assert_eq!(
         harness.state().1,
         set(&["sensors/pos[0]", "sensors/pos[1]"])
     );
-    click(&mut harness, &array("adc"));
+    click(&mut harness, "adc");
     click(&mut harness, "sensors");
     assert!(harness.state().1.contains("sensors/pos[1]"));
     assert!(!harness.state().1.contains("sensors/adc"));
     assert_eq!(harness.state().2, set(&["/sensors"]));
-    click(&mut harness, &array("adc"));
+    click(&mut harness, "adc");
     assert_eq!(harness.state().1, set(&["sensors/adc"]));
     assert!(harness.state().2.is_empty());
 }
@@ -1002,10 +921,7 @@ fn tables_of_records_pick_records_and_folders_of_records() {
     assert_eq!(devices.paths(picks), ["devices/x", "devices/y"]);
     assert!(tree.children["cpu"].paths(picks).is_empty());
     tree.retain_selectable(picks);
-    assert_eq!(
-        tree.children.keys().copied().collect::<Vec<_>>(),
-        ["devices"]
-    );
+    assert_eq!(keys(&tree), ["devices"]);
 
     // a wildcard picks the records added later, not their fields
     let (mut paths, mut wildcards) = (set(&["devices/x"]), set(&["/devices"]));
@@ -1022,8 +938,6 @@ fn tables_of_records_pick_records_and_folders_of_records() {
 
 #[test]
 fn records_are_checked_as_a_whole_in_tables_of_records() {
-    use egui_kittest::kittest::{NodeT, Queryable};
-
     let mut model = MemoryStore::default();
     add_record(&mut model, "devices/x");
     add_trace(&mut model, "cpu");
@@ -1053,33 +967,10 @@ fn element_indices_are_row_major() {
 
 #[test]
 fn the_tree_row_of_a_described_trace_has_its_description_on_hover() {
-    use egui_kittest::kittest::Queryable;
-
-    let mut model = MemoryStore::default();
-    append(&mut model.traces, 0, "motor/rpm", proto::Data::Uint(1));
-    model.traces.set_metadata(&proto::TraceMetadata {
-        path: "motor/rpm".to_owned(),
-        description: "Speed of the shaft".to_owned(),
-        ..Default::default()
-    });
-    let mut harness = egui_kittest::Harness::builder()
-        .with_size(egui::vec2(300.0, 400.0))
-        .build_ui_state(
-            move |ui, paths: &mut BTreeSet<String>| {
-                show(
-                    ui,
-                    &model,
-                    filter("", false),
-                    Some(selection(paths, ViewType::Plot)),
-                    &[],
-                    true,
-                );
-            },
-            BTreeSet::new(),
-        );
-    harness.run();
+    let mut harness = tree_harness(ViewType::Plot);
     harness.get_by_label(HASH).hover();
     harness.run();
+    assert!(harness.query_by_label_contains("motor/rpm").is_some());
     assert!(
         harness
             .query_by_label_contains("Speed of the shaft")
