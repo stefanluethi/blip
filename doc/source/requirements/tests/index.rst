@@ -9,9 +9,14 @@ whose requirements the tests verify.
    :maxdepth: 1
 
    views
+   plot
+   xy-heatmap
    histogram
    distribution
+   selection
+   layout
    time
+   app
    connectivity
    protocol
    metadata
@@ -19,6 +24,7 @@ whose requirements the tests verify.
    platforms
    files
    library
+   workbench
    outpost
    sonde
    documentation

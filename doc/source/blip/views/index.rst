@@ -64,6 +64,18 @@ a number. Choose another format to see the numbers.
 Number fields in the properties that are left empty show *auto*: the value is
 fitted to the data.
 
+The range of an axis or of a colour scale is set the same way in all views. If
+a shown trace declares the range its values are expected in, **Fit to** comes
+first: *Expected* fits that range, *Values* the values shown. Below it, **Min**
+and **Max** are empty to fit; the fitted end shows as the faint hint. A
+field with text that is no finite number, or a min that is not below the
+max, gets an outline in the error colour, and its hover says why; the view
+fits that end instead. Presets of earlier versions load to the same picture.
+
+Where nothing is checked, a view says *Check the traces to show in the tree on
+the left*, an XY view with one trace *Check a second trace to plot against the
+first*, a log view *Check the logs to show in the tree on the left*.
+
 Actions
 -------
 

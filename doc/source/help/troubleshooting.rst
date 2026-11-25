@@ -67,7 +67,7 @@ Not recording
 
 The view shows nothing
    A view shows the traces checked for it. Select the view and check traces in
-   the **Traces & actions** tree, see :doc:`/blip/traces`.
+   the **Traces, actions and logs** tree, see :doc:`/blip/traces`.
 
 The window is elsewhere
    Paused, the window stays where it was. Press **Live** to follow the newest

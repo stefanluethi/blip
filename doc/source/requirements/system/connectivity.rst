@@ -19,7 +19,8 @@ Connections to targets and the wire protocol.
    the user from connecting, disconnecting and editing the connections, but
    for connecting again those that broke. A connection opening while no other is
    open shall start afresh, without the data, traces and actions received or
-   opened before; blip shall ask before while a recording is not saved.
+   opened before, unless the data is a recording not saved, which it shall keep
+   until the user drops it (:need:`REQ_FILE_UNSAVED`).
 
 .. req:: One timeline
    :id: REQ_CONN_TIMELINE
@@ -49,7 +50,9 @@ Connections to targets and the wire protocol.
 
    blip shall tell the user when connecting fails, a connection breaks or is
    closed by the other end, and when a file cannot be opened or saved, with a
-   notice that disappears on its own.
+   notice (:need:`REQ_APP_NOTICES`), which for an error stays until the user
+   closes it. The error of a failed connecting shall end with "Is the outpost
+   running?".
 
 .. req:: CBOR wire protocol
    :id: REQ_PROTO_CBOR
@@ -142,3 +145,33 @@ Connections to targets and the wire protocol.
    the connection, in its row and in the chip, shall be amber (warn) and its
    hover text and the third line of its row shall say ``protocol N is newer
    than blip`` (in warn colour), with the version N of the ``Hello``.
+
+.. req:: Status of the connections
+   :id: REQ_CONN_STATUS
+   :status: implemented
+   :component: blip, blip-kit
+   :satisfies: STK_LIVE_OBSERVE, STK_CONFIDENCE
+
+   A connection closed by the other side shall be shown as "Connection lost:" and
+   the reason, with a red dot, in its row. While none is open the connections
+   chip shall say "Connecting…" while one is being opened, "Connection lost" or
+   "Failed", with a red dot, when one broke or its connecting failed, and
+   otherwise "Not connected" or the name of the opened file. While one is open
+   and another failed or speaks a newer protocol the dot shall be amber.
+
+.. req:: Edit and delete a connection
+   :id: REQ_CONN_EDIT
+   :status: implemented
+   :component: blip, blip-kit
+   :satisfies: STK_LIVE_OBSERVE, STK_CONFIDENCE
+   :rationale: A field that closes on a refused edit leaves the user guessing.
+
+   An edit of the name or address of a connection that blip refuses, because it
+   is blank or another connection has it, shall keep the field open and tell
+   why in the error colour: "Another connection has this name", "Enter the
+   address to connect to" or "Another connection has this address". An address
+   without a scheme shall get ``ws://``. Editing the address of an active
+   connection shall note "A new address disconnects this connection". Delete on
+   a connection shall ask in its row "Delete <name>?", or "Disconnect and delete
+   <name>?" while it is active; Enter shall confirm it while nothing else has the
+   focus, and Escape shall cancel it, as it ends an edit first.

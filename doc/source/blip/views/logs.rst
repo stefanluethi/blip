@@ -24,6 +24,16 @@ column headers and are kept with the view:
    :class: screenshot
    :alt: The Path filter of a log view, with a checkbox per log path.
 
+Messages are one line; hover for the full text. Only whole rows show. Click an
+entry to put the time cursor there; the entry at the cursor is marked and
+scrolled into view. Right-click for **Copy message** or **Copy row**.
+
+Scrolling up pauses following the newest records; reaching the bottom, or the
+arrow button below the table, resumes it. While paused, the log follows the
+time range only with autoscroll on. Without records in the shown time range it
+says *No entries in this time range*, without checked logs *Check the logs to
+show in the tree on the left*.
+
 Below the table, the arrow button follows the newest records, the count says
 how many of the records of the shown paths are shown, and **Clear filters**
 shows all again.

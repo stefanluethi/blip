@@ -49,10 +49,13 @@ The histogram view.
    and each bin holds the same number of integers; with a width of 1, the
    bar of a value runs from half a unit below it to half a unit above it.
    The user
-   shall be able to fix the minimum and maximum of the values binned;
-   samples outside a fixed range shall not be binned but counted, and their
+   shall be able to set the minimum, the maximum or both of the values binned
+   (:need:`REQ_VIS_RANGE`);
+   samples outside a set range shall not be binned but counted, and their
    counts shown faintly at the end they lie beyond, such as "‹ 232" and
-   "36 ›". Infinite samples shall not be binned but counted the same way at
+   "36 ›". A fixed bin width too small for the shown values shall be widened,
+   and its field shall be marked in the warning colour with the width in use on
+   hover. Infinite samples shall not be binned but counted the same way at
    their end, also when the range is not fixed.
 
 .. req:: Histogram counts axis
@@ -120,7 +123,7 @@ The histogram view.
    shows, as it is zoomed, panned or fixed, and that range shall act as a
    fixed range: the boxes and whiskers shall be cut at its edges and the bins, automatic, a fixed number or a fixed width, shall
    cover it, and samples outside it shall be counted and shown faintly at the
-   end they lie beyond. The view's own fixed range, zooming and panning
+   end they lie beyond. The view's own range, zooming and panning
    of the values shall be off while linked, also while the plot shows no y
    range yet. Deleting the plot shall drop the link.
 
@@ -138,6 +141,7 @@ The histogram view.
    mouse wheel shall zoom, and dragging shall pan, the value axis only, of
    all forms, magnifying the bins without binning anew, and a double click shall fit it
    again. None of them shall change the shown time range or the time cursor.
+   Editing the range in the properties shall clear a panned view.
 
 .. req:: Distribution without data
    :id: REQ_VIS_HIST_EMPTY
@@ -146,7 +150,7 @@ The histogram view.
    :satisfies: STK_LIVE_OBSERVE
 
    A Distribution view without checked traces shall show a hint to check
-   traces in the tree of the traces. A Distribution view whose traces have no samples in the
+   traces in the tree of the traces, and keep its axes. A Distribution view whose traces have no samples in the
    shown time range shall show empty axes and "No samples in the shown
    window". The Bars of a view whose samples all have the same value shall
    show one bar centred on that value.

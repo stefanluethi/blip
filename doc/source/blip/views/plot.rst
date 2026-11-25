@@ -18,7 +18,8 @@ was received.
 Hovering the plot shows a tooltip with the time and a row per shown trace: its
 dot and name, and its value at the pointer with the unit: that of the closest
 sample, or on a curve of steps the value held there. A trace without a
-value there shows a faint *—*. A value with a label shows the label and the
+value there shows a faint *—*. The tooltip writes its time with as many
+decimals as the zoom needs, and the sample's own time while the rows share one. A value with a label shows the label and the
 number faint beside it. Below a rule, the tooltip gives the name and
 description of the curve nearest the pointer, if it is within a few pixels of
 it and its target sent a description.
@@ -29,7 +30,9 @@ it and its target sent a description.
 * The y axis fits all data of its traces, also outside the shown range,
   unless its min or max is set. When a trace says what range its values are
   expected in, the axis fits that range instead, see **Fit to** below. **Drag up or down** to pan it, scroll with
-  :kbd:`Alt` held to zoom it, and **double-click** to fit it again.
+  :kbd:`Alt` held to zoom it, and **double-click** to fit it again. Fitting
+  leaves the time range and the cursor as they were. A drag waits until it has
+  moved 6 points to tell whether it pans in time or in value.
 * **Click** to put the time cursor there, or drag the cursor line.
 
 Properties:
@@ -43,7 +46,10 @@ Properties:
        declare none, and values beyond a declared range grow the axis;
        *Values* fits the values of the traces, as for traces without a range.
        **Min** and **Max**, empty to fit, show the ends in use as faint
-       hints; **Label**, by default the unit the traces share.
+       hints, also while the axis is zoomed; a **Zoomed** row with a button
+       then fits it again. A min or max that is no number, or out of order,
+       is outlined in the error colour; hover for the reason. **Label**, by
+       default the unit the traces share.
    * - **Lines**
      - **Interpolation**: *Linear* or *Step*. **Width** of the lines.
        **Points**: mark the samples *Auto* (when they are far enough apart),
@@ -52,7 +58,12 @@ Properties:
    * - **Legend**
      - **Placement**: *Title*, in the title row with the value of each trace
        at the time cursor, in a corner, or hidden. A plot alone in a tab has
-       no title row and shows the title legend at the top right.
+       no title row and shows the title legend at the top right. A legend in a
+       corner is a picture: it cannot hide traces. The title legend keeps
+       whole entries while they fit; when the room is short it drops the unit
+       first, then cuts a name, then ends in *…*. The legend and the tooltip
+       show the same sample, and hovering a value of the legend or a stat chip
+       shows all its digits.
    * - **Line styles**
      - Per trace *Solid*, *Dashed*, *Dotted* or *None* (points only).
    * - **Stats**

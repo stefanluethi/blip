@@ -102,7 +102,7 @@ The distribution view and its boxes.
 
    blip shall group the properties of a Distribution view as Link (Plot);
    Display (Show, Orientation, Axis side when sideways, then Markers for Bars
-   or Whiskers for Boxes and Both in the same place); Values (Range, which
-   cuts the boxes too); and for Bars and Both only Bins (Mode, Number or
+   or Whiskers for Boxes and Both in the same place); Values (Fit to while a
+   trace declares an expected range, Min and Max, which cut the boxes too); and for Bars and Both only Bins (Mode, Number or
    Width) and Counts (Scale). Rows that do not apply to the form shown shall be
    hidden.

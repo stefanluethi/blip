@@ -10,7 +10,9 @@ Tests of the requirements in :doc:`/requirements/system/views`.
    :verifies: REQ_VIS_STATES, REQ_VIS_TABLE, REQ_VIS_XY, REQ_VIS_HEATMAP
 
    ``kit/src/widgets/view`` unit tests -- merge equal values into state runs
-   with gaps at nulls, hide collapsed rows of the table, pair samples with the
+   with gaps at nulls, cut the names of the rows of States with "…" to the
+   width of the axis (``long_names_are_cut_off_to_the_width_of_the_axis``), hide
+   collapsed rows of the table, pair samples with the
    current sample of their x trace, pair sibling x and y traces, sample arrays
    over time for heatmaps, and zoom plots with the mouse wheel without panning
    them, unless disabled.
@@ -89,6 +91,9 @@ Tests of the requirements in :doc:`/requirements/system/views`.
    ``kit/src/widgets/view/distribution`` unit tests (``egui_kittest``) -- the
    tooltips of a bin and of a box of Distribution are built through the helper,
    with the bin range or the dot and name of the trace as header.
+   ``kit/src/widgets/view/time_axis/tests.rs::time_decimals_follow_the_zoom`` --
+   the time in the header has no decimals for seconds per point and up to
+   nanoseconds for a deeply zoomed plot.
 
 .. test:: Tooltip screenshots
    :id: TEST_BLIP_TOOLTIP_SHOTS
@@ -101,3 +106,33 @@ Tests of the requirements in :doc:`/requirements/system/views`.
    one of a Heatmap, in the light and the dark theme, for the documentation and
    to check by eye that they look like the tooltip of a box of Distribution
    (``view-distribution-box-tooltip``).
+
+.. test:: Log tables follow, mark the cursor and keep rows whole
+   :id: TEST_BLIP_LOG_FOLLOW
+   :status: implemented
+   :component: blip
+   :verifies: REQ_VIS_LOG_FOLLOW, REQ_VIS_LOG_CURSOR, REQ_VIS_LOG_ROWS
+
+   ``kit/src/widgets/view/log_table/tests.rs`` --
+   ``scrolling_up_stops_following_until_back_at_the_bottom`` checks that the
+   newest record is followed while live until the user scrolls up, and again
+   at the bottom; ``a_moved_range_scrolls_only_while_following`` that a range
+   that moves scrolls to its newest record only with autoscroll on;
+   ``a_followed_log_shows_whole_rows_only``; ``a_click_on_an_entry_puts_the_cursor_there``;
+   ``the_entry_at_a_cursor_put_elsewhere_scrolls_into_view`` that the record at
+   the cursor is marked and scrolled to; ``long_messages_are_cut_to_one_line``;
+   ``logs_without_entries_or_checked_logs_show_a_hint`` ("Check the logs to show
+   in the tree on the left" and "No entries in this time range"). The context
+   menu with Copy message and Copy row is checked by hand.
+
+.. test:: Views without traces say what to check
+   :id: TEST_BLIP_EMPTY
+   :status: implemented
+   :component: blip
+   :verifies: REQ_VIS_EMPTY
+
+   ``kit/src/widgets/view/distribution/tests.rs::without_traces_or_samples_the_view_says_so``
+   -- a Distribution view without traces shows "Check the traces to show in the
+   tree on the left". ``kit/src/widgets/view/xy/tests.rs::a_single_array_is_plotted_over_its_indices``
+   -- an XY view with one trace that is no array shows "Check a second trace to
+   plot against the first", one with a single array shows no hint.

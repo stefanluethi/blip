@@ -96,7 +96,10 @@ Structure
      - ``App``: the panels of the window, the menu, opening and saving files,
        persistence. ``State``: the time range and the ``Session``, with the
        rules of the session (a recording starts only while connected and
-       clears the data; the first connection to open starts afresh).
+       clears the data; the first connection to open starts afresh, unless
+       that drops an unsaved recording). The keyboard shortcuts (``SHORTCUTS``,
+       listed under Help), the question whether to discard the unsaved
+       recording and the "Drop to open" overlay.
    * - ``store``
      - What was received. ``store.rs`` is the ``MemoryStore``, which applies
        the messages, and the ``Level`` of the notices for the user. Its
@@ -116,8 +119,9 @@ Structure
        on ``ewebsock``. See :doc:`/library/sources`.
    * - ``store/session.rs``
      - The ``Session``: the ``MemoryStore``, the ``Invoker``, whether
-       recording and the sources, and what happens each frame apart from the
-       GUI.
+       recording and the sources, whether the data is an unsaved recording
+       (``is_unsaved``, ``mark_saved``), and what happens each frame apart from
+       the GUI.
    * - ``widgets/time.rs``, ``widgets/time/timeline.rs``
      - The ``TimeRange`` shared by all views, its controls and the timeline
        with the activity bars.
@@ -141,17 +145,28 @@ Structure
      - The list of connections, opened from the status chip in the menu bar,
        and one ``WebSocket`` source per open address. Splits frames into
        messages and passes them on with the name of their connection; reads
-       the ``Hello`` to show it; sends requests.
+       the ``Hello`` to show it; sends requests. ``Connections::status`` gives
+       the ``Status`` for the chip (connecting, failed or lost, while none is
+       open) and ``clear_failures`` drops the failures, e.g. when a recording
+       is opened. A refused edit keeps its field open with the reason.
    * - ``workbench/layout``
      - The ``Layout``: an ``egui_tiles`` tree of views, the menus to add and
        delete them in the center, the properties panel (``properties.rs``), dragging in
-       the center (``drag.rs``) and the saved form (``file.rs``).
+       the center (``drag.rs``) and the saved form (``file.rs``). Deleting a
+       view, tab or group, and ``Layout::clear``, keep the layout before in a
+       single undo step, see below.
    * - ``workbench/files.rs``, ``workbench/opening.rs``
      - Open and save dialogs (``rfd`` natively, a file input and a download
        on the web) and dropped files; reading a recording a part in each
-       frame.
+       frame. ``files::save`` returns the name it saved, or ``None`` if the
+       user cancelled; ``files::save_label`` adds the ellipsis of a dialog
+       natively.
    * - ``workbench/toasts.rs``
-     - The notices in the bottom right.
+     - The notices in the bottom right. A ``Toast`` has a ``Level`` of its own
+       (``Info``, ``Warning``, ``Error``): the first two expire, errors stay
+       until closed. ``Toasts::with_action`` adds a button, e.g. *Undo*; its
+       clicks come back from ``take_actions`` as the value given, and
+       ``dismiss`` closes the offer.
 
 The modules without a crate before them are in ``kit/src``.
 
@@ -381,6 +396,12 @@ passed.
 
 ``TimeRange::ui`` draws the controls with the timeline; ``controls_ui`` and
 ``timeline_ui`` draw them apart, for an application that lays them out itself.
+``toggle_play`` and ``release_cursor`` do what the play button and Escape do,
+and ``set_connected`` tells whether a connection is open, for the hint of the
+empty timeline. The window length is one field with a menu of round lengths
+(10 ms to 1 h); ``parse_duration`` reads the units in any case, and an entry
+it cannot read stays in the field, marked, until replaced. The timeline's
+scrubbing of the ruler moves the window with the cursor.
 
 Layout and views
 ----------------
@@ -484,6 +505,14 @@ Trace metadata in the views
   (``trace_facts_rows``); the Records layout of a table adds the same rows
   under each column. ``trace_hover`` writes the hover text of the tree, the
   table and the Records headers.
+* **Ends.** The ends of the ranges of the axes of Plot (``y_min``, ``y_max``),
+  XY, the heatmap and the distribution are set in one place, ``range_rows``,
+  which draws *Fit to* (while a trace declares a range) and the **Min** and
+  **Max** fields. The XY view, the heatmap and the distribution keep the ends
+  as ``Ends``, each end ``None`` to fit; it reads the fixed ``[a, b]`` and
+  ``null`` of older presets. ``Ends::over`` gives the range in use over the
+  fitted one and ``problems`` the marks of wrong entries (not a number, min
+  not below max).
 * **Fit.** ``Fit`` (``Expected`` or ``Values``) is saved in ``Plot`` and
   ``Xy``, default ``Expected``, so older layouts get it. The row *Fit to* shows
   only while a shown trace declares a range. ``Plot::range_y`` takes the union
@@ -491,6 +520,19 @@ Trace metadata in the views
   usual margin, values beyond the declared range growing it; ``Xy::axis_ranges``
   does the same for both axes. The heatmap's Auto colour scale is the declared
   range of its array.
+
+Undoing a delete
+~~~~~~~~~~~~~~~~
+
+Deleting a view, tab or group (``Layout::delete_selected`` or the menus) and
+``Layout::clear`` keep the layout from before, with the selection to restore.
+``Layout::take_deleted`` gives the name for the toast, *Deleted Plot 1* or *all
+views*, which the app shows with an *Undo* button tagged with
+``Layout::undo_number``. ``undo_delete`` brings the layout back and keeps the
+edits made to the views that were not deleted, e.g. their traces. Any other
+change of the layout, e.g. a move, forgets the kept layout, as undoing it would
+lose that change; ``can_undo_delete`` tells whether it is still there, and the
+app closes the toast of a delete that no longer can be undone.
 
 Links between views
 ~~~~~~~~~~~~~~~~~~~

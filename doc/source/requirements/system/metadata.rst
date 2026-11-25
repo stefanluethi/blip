@@ -77,8 +77,8 @@ description, the labels of integer values and the expected range
    none; values beyond the expected range shall grow the axis. Values shall fit
    the values of the shown traces. The fields Min and Max shall show the ends
    in use as faint hints; typing in a field shall override that end and
-   clearing it return to the fit. A Distribution linked to the plot shall take
-   the range of its axis as it does today.
+   clearing it return to the fit (:need:`REQ_VIS_RANGE`). A Distribution
+   linked to the plot shall take the range of its axis as it does today.
 
 .. req:: Fit the XY axes to the expected ranges
    :id: REQ_META_FIT_XY
@@ -89,7 +89,8 @@ description, the labels of integer values and the expected range
    While a shown trace of an XY view declares an expected range, its Axes
    properties shall have the same Fit to row, with the X axis taken from the
    range of the X trace and the Y axis from the union of the ranges of the Y
-   traces, as in :need:`REQ_META_FIT_PLOT`.
+   traces, as in :need:`REQ_META_FIT_PLOT`, with the fields Min and Max of
+   :need:`REQ_VIS_RANGE` on each axis.
 
 .. req:: Heatmap colour scale from the expected range
    :id: REQ_META_HEATMAP
@@ -97,9 +98,13 @@ description, the labels of integer values and the expected range
    :component: blip
    :satisfies: STK_MEANING, STK_LIVE_OBSERVE
 
-   For an array trace that declares an expected range, the colour scale Auto of
-   a Heatmap shall be that range, and Fixed shall start from it, its min and
-   max showing the range when the user switches to Fixed.
+   The colour scale of a Heatmap of an array trace that declares an expected
+   range shall have the row Fit to with the choices Expected, the default, and
+   Values. Expected shall be that range, grown to take in values beyond it;
+   Values shall be the range of the shown values. The fields Min and Max shall
+   set the ends of the scale as in :need:`REQ_VIS_RANGE`, and show the range in
+   use as hints. The same shall hold for the y axis of an array shown as a line
+   at the cursor.
 
 .. req:: Metadata settings saved
    :id: REQ_META_SAVED

@@ -8,7 +8,7 @@ outpost first, see :doc:`/start/installation`.
 .. figure:: /screenshots/window.png
    :target: ../_images/window.png
    :class: screenshot
-   :alt: blip connected to an outpost, recording: plots of the acceleration and the motor speed, the states of the motor, the log, the traces tree, the layout and the properties of the selected plot, and the timeline.
+   :alt: blip connected to an outpost, recording: plots of the acceleration and the motor speed, the states of the motor, the log, the traces tree and the properties of the selected plot, and the timeline.
 
    Where the tour ends up, give or take the layout.
 
@@ -53,9 +53,9 @@ or in the browser (then open http://127.0.0.1:8080)::
    cd blip && trunk serve
 
 blip starts with an empty layout. The window has five
-parts, see :doc:`/blip/index`: the menu on top, the traces and the layout on
-the left, the properties and the connections on the right, the views in the
-center and the time range at the bottom.
+parts, see :doc:`/blip/index`: the menu on top, with the connections chip at
+its right, the traces on the left, the properties on the right, the views in
+the center and the time range at the bottom.
 
 3. Connect and record
 ---------------------
@@ -63,11 +63,12 @@ center and the time range at the bottom.
 #. Click the chip *Not connected* at the right of the menu bar, then
    **outpost** in the connections that open. Its dot turns green, and the
    chip shows how many messages arrive per second.
-#. The **Traces & actions** tree on the left fills with what the simulator
-   sends, e.g. ``imu``, ``motor``, ``robot/pose`` and ``sysinfo/cpu``.
-#. Click **Record** in the bottom panel. blip keeps the values and log records
-   only while recording; before, it only learns which traces and actions
-   there are.
+#. The **Traces, actions and logs** tree on the left fills with what the
+   simulator sends, e.g. ``imu``, ``motor``, ``robot/pose`` and ``sysinfo/cpu``.
+#. Click **Record** in the bottom panel (or press :kbd:`R`). blip keeps the
+   values and log records only while recording; before, it only learns which
+   traces and actions there are. While connected and not recording, the
+   Record dot is amber to remind you that the incoming data is dropped.
 
 4. Plot something
 -----------------
@@ -88,8 +89,9 @@ e.g. fixed y limits, step lines or where the legend goes.
 5. Add more views
 -----------------
 
-Click **+** in the **Layout** panel and pick a view type. The new view is
-added next to the selected one; select it and check its traces:
+Add a view with **View › Add view**, or with **⋯** on the title of a view, and
+pick a view type. The new view is added next to the selected one; select it
+and check its traces:
 
 * **States**: ``motor`` › ``.state`` and ``.enabled`` show as coloured bands,
   one per run of equal values.
@@ -135,12 +137,14 @@ see them, next to the log records at ``log/sensor``, ``log/net``,
 --------------------------------
 
 * Click a plot to put the **time cursor** there: tables, heatmaps and the XY
-  marker show the values at its time. **Live** returns it to the end.
+  marker show the values at its time. **Live** or :kbd:`Escape` returns it to
+  the end.
 * The **timeline** at the bottom shows when data arrived and the log records by
   level; drag its thumb to move through the recording. See :doc:`/blip/time`.
 * **File › Save recording** (:kbd:`Ctrl+S`) saves everything recorded to a
   ``.blip`` file; **File › Open recording** (:kbd:`Ctrl+O`) shows it again
-  later, or drop the file onto the window.
+  later, or drop the file onto the window. blip asks before it discards a
+  recording you have not saved.
 * blip keeps the views, their settings and the connections in the active
   preset across restarts. **Presets › Export presets** saves them to a JSON
   file, see :doc:`/blip/presets`.

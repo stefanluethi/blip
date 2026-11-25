@@ -8,7 +8,8 @@ Table
 
 The values of the checked traces at the time cursor, i.e. the latest sample
 at or before it. Arrays show a few elements per dimension; hover them for
-more. Values with labels show them, and hovering the name of a trace shows its
+more, and hovering a value shows all its digits. Right-click a cell for **Copy
+value** or **Copy row**, the row tab separated. Values with labels show them, and hovering the name of a trace shows its
 path, type and description.
 
 Properties, **Rows**:
@@ -18,8 +19,8 @@ Properties, **Rows**:
   records, and a checked branch adds the records that arrive below it later.
 * **Traces** (*Traces* layout) -- list them as a *Tree*, by their full
   *Paths*, or by their *Names* only.
-* **Empty** (*Traces* layout) -- also show traces without a value at the
-  cursor time.
+* **Show empty traces** (*Traces* layout) -- also show traces without a value
+  at the cursor time.
 
 With the *Records* layout, the **Columns** section shows and hides the fields,
 reorders them by dragging, and sets the number format of each, with the description, expected range and

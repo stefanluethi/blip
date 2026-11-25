@@ -14,8 +14,10 @@ outpost on this machine.
 Presets menu
 ------------
 
-The **Presets** menu lists the presets; the active one is highlighted. Click
-another to switch to it.
+The **Presets** button reads *Presets: <name>* with the active preset. Its menu
+lists the presets; the active one is highlighted. Click another to switch to
+it. While the kept presets are of a newer version of blip, which blip leaves
+as they are, the menu starts with *Changes to presets are not kept*.
 
 **New preset**
    Adds a preset named *Preset 1* (or the next free number), with an empty
@@ -26,17 +28,21 @@ another to switch to it.
    to it, e.g. to try out a layout and keep the original.
 
 **Rename preset…**
-   Renames the active preset. The names of the presets differ.
+   Renames the active preset; the dialog opens with the name selected. The
+   names of the presets differ.
 
 **Delete preset…**
-   Deletes the active preset after asking, and switches to the next one. The
-   only preset cannot be deleted.
+   Deletes the active preset after asking, and switches to the next one.
+   :kbd:`Enter` confirms, :kbd:`Escape` cancels. The only preset cannot be
+   deleted.
 
 **Import presets…**, **Export presets…**
    Import presets from a file and export them to one, see below.
 
-Switching presets disconnects all connections; connect again from the
-connection chip (see :doc:`/blip/connecting`). The data received stays. While
+Switching to a preset, or adding one with **New** or **Duplicate**, keeps the
+open connections that the new preset also has, with the same name and address,
+and disconnects the others; connect again from the connection chip (see
+:doc:`/blip/connecting`). The data received stays. While
 recording, the active preset stays: switching, adding, duplicating and
 deleting are disabled. Stop recording first.
 
@@ -52,7 +58,8 @@ firmware, share it with the team or generate it, see :doc:`/reference/files`.
 the window. blip lists the presets in the file, all checked: uncheck those to
 leave out. A preset with
 the name of one you have is marked *replaces the existing one*; importing it
-replaces that preset, with its layout and connections. Replacing the active
+replaces that preset, with its layout and connections, and the button reads
+**Import and replace** while a checked preset replaces one, else **Import**. Replacing the active
 preset shows the imported one at once, so it is disabled while recording;
 its choice comes back once recording stops. A file dropped while a dialog of
 the presets is open is not imported: close the dialog and drop it again.

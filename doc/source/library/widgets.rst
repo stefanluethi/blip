@@ -30,7 +30,8 @@ A view draws itself with a ``ViewContext``:
    plot.view(ui, &mut context);
 
 The context has the store as a ``&dyn Store``, the ``TimeRange`` (mutable: a
-plot pans and zooms it, a click sets the cursor), the ``Invoker`` to queue
+plot pans and zooms it, a click sets the cursor, as a click on a log entry does;
+``LogTable::ui`` takes ``&mut TimeRange`` for that), the ``Invoker`` to queue
 invocations, the display formats of the traces of the view and the plots of
 the layout. ``ViewContext::new`` gives the default formats, no title row and no
 plots.
@@ -73,7 +74,9 @@ The views
 
 What each view takes and shows is in the user pages. The settings the user
 changes in the properties panel are fields of the view, which an application
-sets in code, e.g. ``plot.y_min``. The workbench saves them with the
+sets in code, e.g. ``plot.y_min``. The ends of the ranges of XY views, heatmaps
+and distributions are ``Ends``: a min and a max, each ``None`` to fit the shown
+values; an older preset with a fixed range or ``null`` still loads. The workbench saves them with the
 layout, so the fields are serialisable, and a new field has a default so that
 older presets still load.
 
@@ -96,7 +99,11 @@ There are three ways to show its controls:
   application that lays out the controls itself.
 
 ``recording`` is whether the application keeps the samples: going live only
-follows new data while it does.
+follows new data while it does. ``TimeRange::set_connected(bool)`` tells whether
+a source is open, for the hint of the empty timeline. ``toggle_play()`` does
+what the play and pause button does and ``release_cursor()`` puts the cursor
+back at the end of the window, e.g. for keys of the application. ``TimeRange``
+is ``Clone``.
 
 Columns of the application in a table
 -------------------------------------

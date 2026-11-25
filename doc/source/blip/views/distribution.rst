@@ -35,7 +35,8 @@ infinite samples, whatever the range.
 * **Scroll the mouse wheel** to zoom the value axis, and **drag** to pan it;
   the bins are magnified, not counted anew. **Double-click** to fit it again.
   None of them changes the time range or the time cursor.
-* Without checked traces it asks to check them in the tree; without samples
+* Without checked traces it says *Check the traces to show in the tree on the
+  left*, and the axes stay, with the hint of the fields; without samples
   in the shown range it shows *No samples in the shown window*; with only
   infinite samples it shows their counts at the ends of empty axes. If all
   samples have the same value, it shows one bar centred on it.
@@ -86,7 +87,7 @@ The statistics count all samples that are not ``null`` and finite in the shown
 time range, each once, however long it lasts, unlike the stats of a plot. The
 quartiles and percentiles are interpolated between samples. Infinite samples
 are left out of the boxes, while the bars still count them at their ends. The
-boxes do not depend on the **Range**: a fixed or linked range only cuts them at
+boxes do not depend on the range: a set or linked range only cuts them at
 its edge, and a box wholly beyond it shows a faint arrow at that edge (*‹* and
 *›*, *↓* and *↑* sideways).
 
@@ -126,16 +127,20 @@ row are kept.
        it lasts; σ is the population standard deviation. **Whiskers**
        (*Boxes* and *Both*): where the whiskers end, see above.
    * - **Values**
-     - **Range**: *Auto* fits the values shown, with 5 % room on each side
-       for the bars; *Fixed* shows only those between **Min** and **Max**,
-       and the bars count the others at the ends.
+     - **Fit to** (while a trace declares its expected range), then **Min**
+       and **Max**, empty to fit: the values shown, with 5 % room on each side
+       for the bars. A set end shows only the values within it, and the bars
+       count the others at the ends. Editing them clears a panned or zoomed
+       view.
    * - **Bins** (*Bars* and *Both*)
      - **Mode**: *Auto*, about the square root of the number of samples, at
        least 8 and at most 64, of a round width (1, 2 or 5 times a power of
        ten) that changes only once the ideal width is clearly past a step, so
        it does not flip between two widths while live; *Number*, a fixed
        number of bins split evenly over the range of the values; or *Width*,
-       bins of a fixed width in the unit of the traces. Automatic and
+       bins of a fixed width in the unit of the traces. A width too small for the
+       shown values is widened, which the field marks in the warning colour,
+       and its hover gives the width in use. Automatic and
        fixed-width bins start at multiples of their width, so the bars stay
        put as the range moves. Over integer traces, bins of a whole-number
        width start half a unit below those multiples instead, so no integer
@@ -168,7 +173,7 @@ the plot in **Link** › **Plot**, upright or sideways:
 * The value axis shows the y range the plot shows, as it is zoomed, panned
   or fixed. The bins cover that range, and the samples outside it are
   counted at its ends, as for a fixed range; boxes are cut at it. The
-  distribution's own **Range** is greyed (*Set by the linked plot*), and
+  distribution's own **Min** and **Max** are greyed (*Set by the linked plot*), and
   zooming and panning of the values are off, also before the plot shows a y
   range.
 

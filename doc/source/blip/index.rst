@@ -29,10 +29,11 @@ The window
    and :doc:`/blip/presets`), a chip with
    the open connections and the messages received per second, which opens the
    connections to the outposts and targets (see :doc:`/blip/connecting`), buttons to hide
-   or show the side panels, and the theme button, which switches between the
-   light, dark and system theme.
+   or show the traces and the properties, and the theme button, which
+   switches between the light, dark and system theme and says what a click
+   does. The **Presets** button shows the active preset.
 
-② Traces & actions
+② Traces, actions and logs
    The traces and actions received, as a tree, with a checkbox for each to
    choose what the selected view shows. See :doc:`/blip/traces`.
 
@@ -44,14 +45,16 @@ The window
    The plots, tables, logs and other views, in tabs. **⋯** on the title of a
    view adds a view next to it or deletes it. See :doc:`/blip/layout`.
    Errors and warnings, e.g. when connecting fails, show as notices in the
-   bottom right corner of this area.
+   bottom right corner of this area; errors stay until closed, and a notice
+   can have a button, e.g. **Undo** after a delete.
 
 ⑤ Time range
    **Record**, play and pause, **Live**, the length of the window and the
    timeline of all collected data. See :doc:`/blip/time`.
 
 Dragging the inner edge of a side panel past its smallest width hides it, as
-does its button in the menu bar.
+does its button in the menu bar. The keyboard shortcuts are listed in
+:doc:`/blip/controls`.
 
 How blip shows data
 -------------------
@@ -63,7 +66,7 @@ View
    :doc:`views/index`.
 
 Selection
-   What a view shows is chosen in the **Traces & actions** tree while the view
+   What a view shows is chosen in the **Traces, actions and logs** tree while the view
    is selected. Checking a branch also checks what arrives below it later.
    See :doc:`traces`.
 

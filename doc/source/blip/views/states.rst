@@ -38,5 +38,9 @@ name and description of the trace under the pointer, if the target sent one.
 
 Floats cannot be shown as states; plot them instead.
 
-Properties: **Bands** -- **Height** of a band as a fraction of its row, and
-**Values** to label the bands wide enough with their value.
+Rows with names too long for the left column end in *…*, and band values too
+low to read are left out.
+
+Properties: **Bands** -- **Height** of a band as a fraction of its row, set by
+dragging or typing, and **Values** to label the bands wide enough with their
+value.

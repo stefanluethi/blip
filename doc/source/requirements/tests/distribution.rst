@@ -57,7 +57,7 @@ Tests of the requirements in :doc:`/requirements/system/distribution`.
    ``kit/src/widgets/view/distribution.rs::the_properties_hide_the_rows_that_do_not_apply_to_the_form``
    (``egui_kittest``) -- Bars shows Markers, Bins and Counts; Boxes shows
    Whiskers in the place of Markers and hides Bins and Counts; Both shows
-   Whiskers, Bins and Counts; Range is in all; the whiskers are chosen in a
+   Whiskers, Bins and Counts; the fields Min and Max are in all; the whiskers are chosen in a
    combo box and the hidden settings are kept.
    ``kit/src/widgets/view/distribution.rs::a_linked_view_follows_the_plot_in_all_forms``
    (``egui_kittest``) -- in Bars, Boxes and Both, upright and sideways, a

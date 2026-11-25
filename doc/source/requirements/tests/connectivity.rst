@@ -20,7 +20,7 @@ Tests of the requirements in :doc:`/requirements/system/connectivity`.
    :component: blip
    :verifies: REQ_PROTO_SEQUENCE
 
-   ``kit/src/store.rs::a_cbor_sequence_is_split_into_its_items`` --
+   ``kit/src/store/cbor.rs::a_sequence_is_split_into_its_items`` --
    splits a CBOR sequence of a value and a log record into both messages, and
    one cut off or broken in the middle into the messages before and an error.
 
@@ -35,10 +35,15 @@ Tests of the requirements in :doc:`/requirements/system/connectivity`.
    them with the + button, open several at once, pass on when the first one
    opens before its messages and start afresh then unless recording, keep
    them from being changed while recording but connect again those that
-   broke, ask before dropping an unsaved recording, report why an invalid
-   address fails to connect, show errors and warnings as toasts until they
-   expire or are closed, count a repeated one instead of stacking it, and
-   warn when a recording is opened in part; ``kit/src/store/traces.rs``
+   broke, report why an invalid address fails to connect, with what to check
+   (``an_invalid_address_fails_to_connect``), show errors and warnings as toasts
+   until they expire or, for errors, are closed, count a repeated one instead of
+   stacking it, and warn when a recording is opened in part;
+   ``kit/src/store/session/tests.rs`` --
+   ``the_first_source_to_open_keeps_an_unsaved_recording`` keeps the recorded
+   data of an unsaved recording when a connection opens and starts afresh once
+   it is saved, ``a_kept_recording_takes_no_logs_of_a_new_connection`` takes no
+   logs of the new connection into it; ``kit/src/store/traces.rs``
    tests -- put the samples of a path in the order of their timestamps,
    also when several connections send it.
 
@@ -146,3 +151,35 @@ Tests of the requirements in :doc:`/requirements/system/connectivity`.
    no component key``, ``a tracer logs at its name, without a component``) --
    checks that a ``Tracer`` record, also of a child, is at its full name and has
    no ``component`` key, and equals the record of ``Queue::log`` at that path.
+
+.. test:: The status of the connections is shown
+   :id: TEST_BLIP_CONN_STATUS
+   :status: implemented
+   :component: blip, blip-kit
+   :verifies: REQ_CONN_STATUS
+
+   ``kit/src/workbench/connections/tests.rs`` --
+   ``a_connection_closed_by_the_other_side_is_lost`` checks that a connection
+   the other side closes is "Connection lost" with the reason and not a failure
+   to connect; ``the_status_sums_up_the_connections`` that the status is none,
+   being opened, open (with a problem while another failed) or failed (lost or
+   not), open beating being opened beating failed;
+   ``clearing_the_failures_leaves_no_status`` that forgetting the failures
+   leaves none. ``blip/src/app/tests.rs::an_opened_recording_is_named_in_the_chip_until_other_data_replaces_it``
+   checks that the chip names the file while none is open.
+
+.. test:: Connections are edited and deleted with reasons
+   :id: TEST_BLIP_CONN_EDIT
+   :status: implemented
+   :component: blip, blip-kit
+   :verifies: REQ_CONN_EDIT
+
+   ``kit/src/workbench/connections/tests.rs`` --
+   ``a_refused_edit_stays_open_and_tells_why`` checks that a blank or a taken
+   name or address keeps the field open with the reason;
+   ``a_refused_address_is_shown_in_the_list`` that the reason shows in the list;
+   ``an_address_without_a_scheme_gets_ws`` that ``ws://`` is added;
+   ``editing_the_address_of_a_connection_tells_it_disconnects`` that the note
+   shows for an active connection; ``deleting_a_connection_is_confirmed`` that
+   Delete asks "Delete <name>?" or "Disconnect and delete <name>?", Enter
+   confirms and Escape or Cancel keeps the connection.

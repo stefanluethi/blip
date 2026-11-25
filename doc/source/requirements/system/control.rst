@@ -48,7 +48,7 @@ Actions that targets announce and blip invokes.
    checkboxes, choices, sliders, number and text fields by the kinds of their
    parameters, and the value of their readback traces. Sliders shall send
    while dragged at a limited rate, actions with several parameters shall be
-   sent with a separate Send button. The user shall choose the actions a view
+   sent with a separate Send button, marked with a paper plane. The user shall choose the actions a view
    shows in the tree of the traces, where actions are marked as such, per
    view the connection the actions are sent to, and per action whether it has
    the readback trace announced.
@@ -63,3 +63,26 @@ Actions that targets announce and blip invokes.
    its own at startup or on reconnecting, ask before sending actions that
    need confirmation, and disable actions while not connected or while the
    target cannot carry them out.
+
+.. req:: Typed numbers are sent with Enter
+   :id: REQ_CTRL_TYPED
+   :status: implemented
+   :component: blip
+   :satisfies: STK_CONTROL
+   :rationale: A number half typed, or left by a click elsewhere, must not
+      reach the target (:need:`REQ_CTRL_SAFE`).
+
+   A number typed in a field of an action shall be sent only with Enter. Leaving
+   the field in another way, such as a click elsewhere, shall keep the number as
+   a draft, marked as unsent, until Enter in the field sends it or the number is
+   changed back.
+
+.. req:: One run at a time
+   :id: REQ_CTRL_PENDING
+   :status: implemented
+   :component: blip
+   :satisfies: STK_CONTROL
+
+   The button Run of an action shall be disabled until the target has answered
+   the invocation before, with "Waiting for the target to answer" on hover, so
+   that a double click runs it once.

@@ -79,3 +79,13 @@ Stakeholder Requirements
    As a Rust developer I want to feed the views from my own data source in
    my own process, without a separate outpost, and to keep the samples in
    another time series store than the one in memory, such as InfluxDB.
+
+.. stk:: Work with confidence
+   :id: STK_CONFIDENCE
+   :status: implemented
+   :priority: medium
+
+   As a developer I want blip to ask before it throws away what I recorded,
+   to let me undo a slip, to tell me why something did not work and what it is
+   waiting for, and to let me do the common things from the keyboard, so that I
+   can work quickly without fear of losing data.

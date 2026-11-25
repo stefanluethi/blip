@@ -73,6 +73,76 @@ blip
    * Internal: shared helpers for the timestamp searches (``store/sorted``),
      the drawing of the plot views (``view/plotting``), theme tokens, fields
      and property rows.
+   * Keyboard shortcuts: :kbd:`R` records, :kbd:`Space` plays and pauses,
+     :kbd:`L` goes live, :kbd:`Escape` releases the time cursor,
+     :kbd:`Ctrl+F` searches the traces, :kbd:`F2` renames and :kbd:`Delete`
+     deletes the selected view, besides :kbd:`Ctrl+O` and :kbd:`Ctrl+S`. They
+     are listed under **Help › Keyboard shortcuts** and in
+     :doc:`/blip/controls`.
+   * An unsaved recording is not dropped without asking: *Discard the unsaved
+     recording?* before Record, **Clear recording**, opening or dropping a
+     recording and quitting; the web page warns on reload. Connecting keeps
+     it. Opening a file keeps the connections and a running recording until
+     the file is read, and Record cancels the opening. While connected and not
+     recording, the Record dot is amber and the timeline says *Press Record to
+     collect data*. **File › Clear data** is **Clear recording**; saving
+     says *Saved <name>*.
+   * Deleting a view, tab or group, and **View › Clear layout**, can be
+     undone with the **Undo** button of the notice or **View › Undo delete**.
+     Tabs are renamed with a double click and deleted with a **✕**; the keys
+     :kbd:`F2` and :kbd:`Delete` act on the selected view.
+   * Notices have an info level for what went well, errors stay until
+     closed, and a notice can have a button.
+   * Connections: a refused edit keeps the field open with the reason, an
+     address without a scheme gets ``ws://``, deleting asks in the row, and a
+     connection closed by the other side is *Connection lost* with a red dot,
+     also in the chip. Switching, adding and duplicating presets keep the open
+     connections the new preset also has. Importing presets says *Import and
+     replace* when it replaces one.
+   * The time panel: **Live** also in an opened recording and while the cursor
+     is set, **Play** disabled without data, a window length field with a menu
+     of round lengths that reads ``us``, ``ms``, ``s``, ``min``, ``h`` and
+     ``d`` and marks what it cannot read, scrubbing the ruler moves the
+     window, gaps say *No data for* their duration, and *Paused, N s behind*
+     while recording.
+   * The traces tree is *Traces, actions and logs*: a **checked only** button
+     and a count of checked traces hidden by the search, **Expand all** and
+     **Collapse all**, :kbd:`Alt`-click on a caret for the subtree, arrow keys,
+     a faint **+** on folders that also check what arrives later, and radio
+     buttons in the heatmap.
+   * One range control in all views: **Fit to**, then **Min** and **Max**,
+     empty to fit; wrong entries are outlined in the error colour with the
+     reason on hover. A zoomed plot shows its range as the hints, with a
+     **Zoomed** row and a Fit button. Double-clicking a plot fits the y axis
+     and leaves the time and the cursor.
+   * Legends in the corners of plots cannot hide traces; the legend in the
+     title row drops the unit, then cuts a name, when the room is short.
+     Hovering a legend value or a stat chip shows all digits.
+   * XY: a legend and **Placement**, **Width**, and sections **X axis** and
+     **Y axis** with **Min**, **Max** and **Label**, a row per curve, no hover
+     rulers. The heatmap at the cursor has a **Y axis** section and **Lines**,
+     and its grid fills its card.
+   * Logs: scrolling up pauses following, a click on an entry sets the time
+     cursor, messages are one line, and right-click copies the message or the
+     row. Actions: a typed number is sent with :kbd:`Enter` only, and **Run**
+     waits for the target's answer. Tables: right-click copies a value or a
+     row, and **Show empty traces**.
+   * The native window starts at 1280 × 800, the browser without WebGL says
+     so, and **Help › Documentation** opens a new tab.
+   * Internal: ``Toasts::info``, ``notice``, ``with_action``, ``take_actions``
+     and ``dismiss``, with a ``toasts::Level`` of their own;
+     ``files::save`` returns the name saved (``Result<Option<String>, _>``)
+     and ``files::save_label``; ``Session::is_unsaved``, ``mark_saved`` and
+     ``waiting_for_record``; ``Connections::status``, ``Status`` and
+     ``clear_failures``; ``Layout::undo_delete``, ``can_undo_delete``,
+     ``take_deleted``, ``undo_number``, ``clear``, ``delete_selected`` and
+     ``rename_selected``; ``TimeRange::release_cursor``, ``toggle_play`` and
+     ``set_connected``, and ``TimeRange`` is ``Clone``;
+     ``LogTable::ui`` takes ``&mut TimeRange``; ``Ends`` and
+     ``range_rows(ui, &mut Ends, fitted)`` replace the fixed ranges of the XY
+     view, the heatmap and the distribution; ``trace_selection::search_ui``
+     and ``show`` take a ``TreeFilter``, and ``request_search_focus`` focuses
+     the search.
 
 blip-kit
    * The library blip is built on, to build your own tracing UI in egui, in
@@ -150,6 +220,13 @@ Upgrading
    presets of a newer version of blip*), a version 1 file loads without a
    notice. A trace with labels is shown with its labels unless a layout chose
    another format; choose *Default* in **Traces** to see the numbers.
+
+   The ranges of the XY view, the heatmap and the distribution are a min and a
+   max, each empty to fit, in place of a fixed range or none. Saved presets
+   load to the same picture; presets saved now write ``min`` and ``max``, which
+   a blip of before this change may not read. Code that calls ``files::save``, ``LogTable::ui`` or
+   ``trace_selection::show`` and ``search_ui`` needs the new signatures, see
+   above.
 
    Without a ``Hello`` blip guesses the time base as before, so old targets
    need no change; add ``clock`` to the ``Hello`` of your target to make it

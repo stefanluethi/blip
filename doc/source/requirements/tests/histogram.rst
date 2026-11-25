@@ -77,6 +77,9 @@ Tests of the requirements in :doc:`/requirements/system/histogram`.
    from 4.5 to 5.5 as when 5 is the only value, no integer is on an edge and a
    bin of width 2 holds two integers, also in a fixed range; bins of floats or
    narrower bins are not moved.
+   ``kit/src/widgets/view/distribution/tests.rs::a_bin_width_too_small_is_marked_with_the_one_in_use``
+   -- a fixed width too small for the shown values is told as widened, with the
+   width in use in the hover, and one that is not widened is not.
 
 .. test:: Histogram counts axis
    :id: TEST_BLIP_HIST_COUNTS

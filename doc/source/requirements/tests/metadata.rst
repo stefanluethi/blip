@@ -110,7 +110,7 @@ Tests of the requirements in :doc:`/requirements/system/metadata`.
    the Y axis from the union of the declared ranges of the Y traces and all
    values, and that Values fits the values only.
 
-.. test:: The heatmap scale starts from the expected range
+.. test:: The heatmap scale fits the expected range
    :id: TEST_BLIP_HEATMAP_RANGE
    :status: implemented
    :component: blip
@@ -118,9 +118,11 @@ Tests of the requirements in :doc:`/requirements/system/metadata`.
 
    ``kit/src/widgets/view/heatmap`` unit tests
    ``the_colour_scale_starts_from_the_expected_range`` and
-   ``a_fixed_range_starts_with_the_one_shown`` check that Auto is the declared
-   range of the array trace, the fitted values without one, and that Fixed
-   starts with that range in its min and max.
+   ``the_colour_scale_fits_the_values_or_the_expected_range_grown_by_them``
+   check that Expected is the declared range of the array trace, grown by values
+   beyond it, the fitted values without a declared range, and that Values is the
+   range of the shown values; ``each_end_of_the_colour_scale_is_set_alone_and_wrong_ends_are_left_out``
+   that Min and Max set one end each, as in :need:`REQ_VIS_RANGE`.
 
 .. test:: Metadata settings are saved with the layout
    :id: TEST_BLIP_META_SAVED

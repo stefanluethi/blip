@@ -41,7 +41,9 @@ Inputs
    :class: screenshot
    :alt: An actions view: a checkbox, a slider whose readback line sits in its handle and a slider without readback, a choice, an action with two parameters and a Send button, and a Run… button of an action that asks for confirmation.
 
-* An action without parameters is a **Run** button.
+* An action without parameters is a **Run** button. It is disabled, with
+  *Waiting for the target to answer* on hover, until the target has answered
+  its last invocation.
 * An action with one parameter is sent as soon as its input changes:
 
   * a checkbox for a bool,
@@ -49,14 +51,15 @@ Inputs
   * a slider for a number with a minimum and a maximum, sent while it is
     dragged (at most ten times a second, and the final value on release),
   * a number field otherwise, sent when dragged like a slider, or once a
-    typed number is entered with :kbd:`Enter` or by leaving the field,
+    typed number is entered with :kbd:`Enter`. Leaving the field keeps the
+    number as an unsent draft, marked with the dot,
   * a text field for a string, sent with :kbd:`Enter`. Until then a dot by
     the name and the hint *Enter to send* show that the text was not sent.
 
   Clicking a field to type in it sends nothing. Integers are typed in a text
   field and kept exact, also beyond 2\ :sup:`53`.
 * An action with several parameters lists them below its name, joined by a
-  line from the first one to its **Send** button, and is sent with that button, or, if chosen under **Sending** in the properties, each
+  line from the first one to its **Send** button (with a paper plane), and is sent with that button, or, if chosen under **Sending** in the properties, each
   time one of its inputs changes (at most ten times a second, the latest
   change sent once the time is up). With a Send button, a dot by a parameter
   shows that its input changed since the action was last sent.
@@ -70,7 +73,7 @@ The inputs start from the readback, the default of the parameter or its lowest
 value. Checkboxes and choices with a readback follow it, so they show the
 state of the target. After a change they keep the new value until a readback
 sample arrives that is newer than the target's answer; meanwhile the readback
-column says what the target reports, e.g. *reads off*.
+column says what the target reports, e.g. *Reads off* or *Reads on*.
 
 A slider shows its readback as a blue line on it, with the gap to the handle
 shaded: the handle is the value you asked for, the line the one the target
@@ -117,7 +120,8 @@ e.g. while a recording is open, while blip is not recording (the view then
 says *Start recording to carry out actions*), and while its target cannot
 carry it out, e.g. during a calibration. If the target says why, the reason shows below the action,
 e.g. *calibrating, keep the device still*. Checked actions that no outpost announces, or that the
-chosen outpost does not announce, are listed greyed out; the traces panel lists
+chosen outpost does not announce, are listed greyed out, with *Not announced by
+any outpost* or *Not announced by <outpost>*; the traces panel lists
 them too, to uncheck them.
 
 Properties

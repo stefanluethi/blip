@@ -60,6 +60,42 @@ What the views show and how blip displays values.
    Clearing the filters of the table shall also clear the path filter. A layout
    saved with hidden components shall load without them and without a notice.
 
+.. req:: Follow the newest log record
+   :id: REQ_VIS_LOG_FOLLOW
+   :status: implemented
+   :component: blip
+   :satisfies: STK_LIVE_OBSERVE
+   :rationale: A log that jumps to the newest record while the user reads an
+      older one cannot be read.
+
+   While live, a log table shall show the newest record and keep it in view as
+   records arrive, until the user scrolls up from it. Scrolling back to the
+   bottom or the button in the footer shall follow it again. While not live, the
+   table shall move to the newest record of the shown time range as the range
+   moves only if its autoscroll is on. The table shall show only whole rows.
+
+.. req:: Log records and the time cursor
+   :id: REQ_VIS_LOG_CURSOR
+   :status: implemented
+   :component: blip
+   :satisfies: STK_LIVE_OBSERVE
+
+   A click on a record of a log table shall put the time cursor at its time. The
+   record at the time cursor shall be marked, and shall scroll into view when
+   the cursor is put elsewhere, such as on a plot.
+
+.. req:: Log message rows
+   :id: REQ_VIS_LOG_ROWS
+   :status: implemented
+   :component: blip
+   :satisfies: STK_LIVE_OBSERVE
+
+   A log table shall show each message on one line, cut at the end, with the
+   whole text on hover, and offer Copy message and Copy row in the context menu
+   of a record. A log table without checked logs shall say "Check the logs to
+   show in the tree on the left", and one whose checked logs have no record in
+   the shown time range "No entries in this time range".
+
 .. req:: Show states over time
    :id: REQ_VIS_STATES
    :status: implemented
@@ -67,7 +103,8 @@ What the views show and how blip displays values.
    :satisfies: STK_LIVE_OBSERVE
 
    blip shall display string, bool and integer traces over time as a row of
-   coloured bands, one band for each run of equal values.
+   coloured bands, one band for each run of equal values. A name of a row too
+   long for the axis shall end in "…".
 
 .. req:: Show values in a table
    :id: REQ_VIS_TABLE
@@ -77,6 +114,10 @@ What the views show and how blip displays values.
 
    blip shall display the values of traces of any type in a table, at the
    time of the time cursor, also as a row per record with a column per field.
+   Hovering a value shall show it with all its digits, and the context menu of
+   a row shall offer to copy the value or the whole row, with its cells
+   separated by tabs. The user shall be able to hide the traces without a value
+   at the time of the cursor with the property Show empty traces.
 
 .. req:: Plot traces against each other
    :id: REQ_VIS_XY
@@ -113,6 +154,9 @@ What the views show and how blip displays values.
    with its unit. A missing or empty value shall be faint. A rule may split
    groups of rows. XY and the array line of a Heatmap shall show the name of
    the trace with its x and y values, and the element index with its value.
+   The time in a header shall have as many decimals as the zoom of the view
+   needs to tell neighbouring pixels apart, and a Plot whose rows share the
+   time of one sample shall show the time of that sample.
 
 .. req:: Exact integers
    :id: REQ_VIS_INT
@@ -128,5 +172,17 @@ What the views show and how blip displays values.
    :status: implemented
    :component: blip
 
-   blip shall let the user scale its whole UI, and keep the scale across
-   restarts.
+   blip shall let the user scale its whole UI, with Zoom in, Zoom out and
+   Reset zoom, which names the current scale in per cent, in the View menu, and
+   keep the scale across restarts.
+
+.. req:: Views without anything to show
+   :id: REQ_VIS_EMPTY
+   :status: implemented
+   :component: blip
+   :satisfies: STK_LIVE_OBSERVE
+   :rationale: One wording tells the user what to do in every view.
+
+   A view with no trace checked shall say "Check the traces to show in the tree
+   on the left", an XY view with a single trace "Check a second trace to plot
+   against the first", and a log table the hints of :need:`REQ_VIS_LOG_ROWS`.

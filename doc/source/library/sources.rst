@@ -160,12 +160,21 @@ GUI.
        session, e.g. of an opened file.
    * - ``first_opened()``
      - Tells that a source opened while no other was open. Starts afresh unless
-       recording. ``update`` calls it itself.
+       recording or the data is an unsaved recording. ``update`` calls it
+       itself.
    * - ``set_recording(recording, connected)``
      - Starts or stops recording, see below.
    * - ``clear_data()``, ``start_fresh(store)``
      - Drops the data and the descriptions are kept, or replaces the store, e.g.
-       with that of an opened recording.
+       with that of an opened recording. Both mark the data as not unsaved.
+   * - ``is_unsaved()``, ``mark_saved()``
+     - Whether the data holds samples recorded since it was last saved,
+       cleared or replaced: ask before you drop them, e.g. to record anew or
+       to quit. ``mark_saved()`` tells that you saved the data.
+   * - ``waiting_for_record()``
+     - Whether samples arrive but are dropped because nothing records them: a
+       source is open, the session is not recording and has no samples. An
+       application with a record button tells the user to press it.
    * - ``take_requests()``, ``update_invoker(connected, now)``
      - What ``send_invocations`` and ``update`` do, in parts, for an
        application that sends the requests itself, as blip does through its
@@ -185,5 +194,7 @@ it live. Actions are invoked only while recording, so that the recording shows
 what they did.
 
 The first source to open while nothing is recording starts afresh: the data of
-the earlier connections is dropped. How a message is applied is in
+the earlier connections is dropped, unless it is an unsaved recording, which
+stays until the application drops it (``start_fresh`` or ``clear_data``) after
+asking the user. How a message is applied is in
 :doc:`/blip/internals`.

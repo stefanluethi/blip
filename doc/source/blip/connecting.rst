@@ -17,24 +17,34 @@ Adding and editing connections
 ------------------------------
 
 * Add an address with the **+** button; :kbd:`Enter` keeps it, :kbd:`Escape`
-  drops it. The new connection is named after the last part of the path of the
-  address, e.g. ``robby`` for ``ws://192.168.1.10/ws/robby``, numbered if
-  another connection has that name.
+  drops it. An address without a scheme gets ``ws://``. The new connection is
+  named after the last part of the path of the address, e.g. ``robby`` for
+  ``ws://192.168.1.10/ws/robby``, numbered if another connection has that
+  name.
 * Right-click a connection to connect or disconnect it, to rename it, to edit
   its address or to delete it. Rename it while it is disconnected. The names
   of two connections differ, unless they are empty.
+* A refused edit keeps the field open and says why in the error colour:
+  *Another connection has this name*, *Enter the address to connect to* or
+  *Another connection has this address*. While you edit the address of a
+  connection that is open, the field notes *A new address disconnects this
+  connection*.
+* **Delete…** asks in the row: *Delete <name>?*, or *Disconnect and delete
+  <name>?* for an open connection. :kbd:`Enter` confirms while nothing else
+  has the focus, :kbd:`Escape` cancels.
 
 Connecting and disconnecting
 ----------------------------
 
 * Click a connection to connect it, click it again to disconnect it.
 * The connections are independent: connecting another one keeps the data
-  received so far; clear it with **File › Clear data**.
+  received so far; clear it with **File › Clear recording**.
 * A connection that opens while no other is open **starts afresh**: the data,
   traces and actions received before, or of an opened recording, are dropped,
-  also the trace metadata and actions that **Clear data** keeps, and the traces panel
-  starts anew. Save a recording you want to keep first: connecting does not
-  ask.
+  also the trace metadata and actions that **Clear recording** keeps, and the
+  traces panel starts anew. An unsaved recording is the exception: connecting
+  keeps it until you discard it, and the logs of the new connection are not
+  added to it, see :doc:`/blip/files`.
 * The received values and log records are kept only while recording, started
   with **Record** in the bottom panel once connected, see :doc:`/blip/time`. Before,
   blip only collects the trace metadata and actions the targets announce.
@@ -65,10 +75,14 @@ The dot before each connection shows its state:
    * - red
      - connecting failed or the connection broke; hover it for the reason
 
-A target that sends a ``Hello`` is shown in its row, see below. The reason is also shown as a notice in the bottom right of the views, as is a
-connection closed by its outpost or target. The chip in the menu bar shows the
-open connection (or their number) and the messages received per second, or
-*Not connected*.
+A target that sends a ``Hello`` is shown in its row, see below. The reason is
+also shown as a notice in the bottom right of the views; an error notice stays
+until you close it. A connect error ends with *Is the outpost running?*. A
+connection closed by its outpost or target is *Connection lost: …*, with a red
+dot. The chip in the menu bar shows the open connection (or their number) and
+the messages received per second. While none is open it says *Connecting…*,
+*Connection lost* or *Failed* with a red dot, else *Not connected*. Opening a
+recording shows its file name there and clears the failures.
 
 What the target says of itself
 ------------------------------

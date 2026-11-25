@@ -28,17 +28,21 @@ arrays it shows the index ``[i]`` and a row per array. Values with a label show
 it, with the number faint beside it, and below a rule the description of the y
 trace, or of the array if one is shown, if the target sent it.
 
-The view fits all data of its traces until it is dragged or zoomed.
+The view fits all data of its traces until it is dragged or zoomed. It draws
+no rulers under the pointer. Its legend is in the title row.
 
 Properties:
 
 * **Axes** -- **Fit to** *Expected* or *Values*, shown while a shown trace
   declares its expected range: the x axis fits the range of the x traces and the y
   axis the ranges of the y traces, grown by values beyond them, as for the plot.
-  For each trace whether it is on the **X** or the **Y** axis, and
-  for a y trace the x trace it is plotted against (any number of traces can be
-  on the x axis, e.g. the positions of two robots); **Equal axes** gives a unit
-  the same length on both axes, e.g. for positions.
-* **Lines** -- **Points** as for plots, and **Fade**: how far the oldest part of
-  the trail fades out.
+  A row per curve has an **X** and a **Y** choice: the x trace and the y trace
+  it is plotted against (any number of traces can be on the x axis, e.g. the
+  positions of two robots); **Equal axes** gives a unit the same length on both
+  axes, e.g. for positions.
+* **X axis**, **Y axis** -- **Min** and **Max**, empty to fit with the fitted
+  end as the hint, and a **Label**, as for the plot.
+* **Lines** -- **Points** as for plots, **Width** and **Fade**: how far the
+  oldest part of the trail fades out.
+* **Legend** -- **Placement**, as for plots.
 * **Line styles** -- as for plots.

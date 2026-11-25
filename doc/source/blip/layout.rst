@@ -12,7 +12,8 @@ another preset with an empty layout.
 Adding views and tabs
 ---------------------
 
-Click **+** after the tabs to add a tab. An empty tab shows the view types
+Click **+** after the tabs to add a tab. Hover a tab for how to rename and move
+it. An empty tab shows the view types
 (see :doc:`/blip/views/index`); click one to add a view of that type.
 
 To add a view next to another, click **⋯** at the right of the title of that
@@ -28,7 +29,7 @@ Selecting
 
 Click a view to select it. The traces panel then chooses what the view shows
 and the properties panel shows its settings. Switching tabs keeps the selected
-view; clicking the open tab selects it, and the properties panel shows the
+view; clicking a tab selects it, and the properties panel shows the
 settings of its group.
 
 Arranging
@@ -49,13 +50,20 @@ Moving the last view out of a tab removes the tab.
 Renaming and deleting
 ---------------------
 
-Click the title of a view, or the open tab, to rename it, or edit the **Name**
-in the properties. :kbd:`Enter` keeps the new name, :kbd:`Escape` drops it.
+Click the title of a view, or double-click a tab, to rename it, press
+:kbd:`F2` with the view selected, or edit the **Name** in the properties.
+:kbd:`Enter` keeps the new name, :kbd:`Escape` drops it.
 
 The same menu, from **⋯** or a right click on the title of a view, or a right
-click on a tab, has **Rename** and **Delete**.
-Deleting a tab deletes the views in it. Deleting the last view of a tab keeps
-the tab, to add other views to it.
+click on a tab, has **Rename** and **Delete**; a view shown as a tab has the
+menu of a view. A tab has a **✕** on hover that deletes it, and :kbd:`Delete`
+deletes the selected view. Deleting a tab deletes the views in it. Deleting the
+last view of a tab keeps the tab, to add other views to it.
+
+Deleting a view, tab or group, and **View › Clear layout**, can be undone: a
+notice, *Deleted <name>*, has an **Undo** button, and **View › Undo delete**
+does the same, until the layout changes in another way. Undoing keeps the
+changes made to other views in the meantime, e.g. their traces.
 
 Properties
 ----------
@@ -65,9 +73,12 @@ sections that can be collapsed. Changes apply at once and are kept with the
 preset.
 
 * A **group** has its **Name** and **Arrange**: whether it shows its children
-  as *Tabs*, *Vertical* or *Horizontal*.
+  as *Tabs*, *Vertical* or *Horizontal*, as a choice of three buttons.
 * A **view** has its **Name**, the sections of its type, and the **Number
   format** of its traces, see :doc:`/blip/views/index`.
+
+A name left blank shows the name kept as its hint. The chip with the kind of
+the view is no button; a long name is cut before it.
 
 Log views keep their search and filters in the view itself.
 

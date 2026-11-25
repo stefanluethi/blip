@@ -110,7 +110,8 @@ Each frame does the same things in the same order:
 
 ``Session::update(now)`` takes the time in seconds, as egui counts it. The
 notices are what went wrong in the store and with the sources, e.g. a
-connection that broke. The example logs them; blip shows them as toasts.
+connection that broke. The example logs them; blip shows them as toasts, see
+``Toasts`` of the workbench.
 
 A source that wakes the application itself, as the ``WebSocket`` does, needs no
 repaint timer. The simulator has no thread, so the example asks for a repaint.
@@ -151,7 +152,9 @@ The other three steps are in ``show``:
   window on while playing.
 * ``TimeRange::ui`` draws the controls and the timeline. The ``true`` is
   whether the application is recording, which the *Live* button depends on:
-  going live only follows new data while recording.
+  going live only follows new data while recording. An application that tells
+  the time range whether a source is open, with ``TimeRange::set_connected``,
+  gets the hint *Press Record to collect data* on the empty timeline.
 * A view is drawn with a ``ViewContext``, made from the store, the time range
   and the invoker. The views read the store and may move the time range and
   queue invocations.

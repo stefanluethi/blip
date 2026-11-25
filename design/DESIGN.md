@@ -56,7 +56,8 @@ oscilloscope, not like a web app.
 - Fira Sans Book 13 for text (Regular was too dense, Light too thin, 14 was rejected),
   with tabular digits frozen in, so changing numbers keep their place. Fira Code 12 for
   values. Small 11, heading 20. The same faces as the documentation.
-- Sentence case. No all-caps labels.
+- Sentence case. No all-caps labels. Panel and section titles too: "Traces, actions and
+  logs", not "Traces & Actions".
 
 ## Controls and layout
 
@@ -67,7 +68,10 @@ oscilloscope, not like a web app.
   are Phosphor.
 - Left panel: the traces tree of the selected view, with a search field. Checked traces
   of plots, XY plots and histograms fill their checkbox with the trace colour; type icons sit in a
-  faint right column. A check on a folder is a wildcard for new traces.
+  faint right column. A check on a folder is a wildcard for new traces, marked by a faint
+  "+" at the end of its row, and its hover tells the state. Views that show one trace
+  (Heatmap) use radio buttons, not checkboxes. Without a selected view only the checkboxes
+  are disabled; folders still open.
 - Right panel: the properties of the selected view or group. Controls live there, not in
   the views; only the Logs view keeps its own search, filter and autoscroll.
 - Bottom: the one time range of all views, with the timeline. Top: the menu bar with
@@ -75,7 +79,13 @@ oscilloscope, not like a web app.
 - Views are added from an empty tab's picker, View › Add view or a view's ⋯ menu, and
   arranged by dragging. There is no layout panel.
 - Plot legends sit in the view's title row (dot, name, value at the cursor, the shared
-  unit once at the end). Stats are chips below the plot, coloured by their trace.
+  unit once at the end). Stats are chips below the plot, coloured by their trace. A legend
+  never hides traces: a corner legend is a picture, not a control. The title legend keeps
+  whole entries while they fit, then drops the unit, then cuts a name, then ends in "…".
+  Legend and tooltip show the same sample.
+- One range control in every view, plot or not: "Fit to" (only while a trace declares its
+  range), then Min and Max, empty to fit, with the fitted end as the faint hint. A zoomed
+  axis shows its range as the hints, with a "Zoomed" row and a Fit button.
 - Histogram legends are a dot and name per trace in the title row, no cursor value;
   without a title row, egui_plot's legend at the top right, as for plots. The axes use
   egui_plot's marks, as in plots, except the decades of a logarithmic counts axis. A
@@ -108,7 +118,21 @@ oscilloscope, not like a web app.
 - Tooltips add the description of the one trace under the pointer only, as a footer
   below a rule, at most 3 lines.
 - Status dots: green when fine, amber (`warn`) when connected with a problem, red when
-  failed.
+  failed. The Record dot is amber while connected and not recording, as the data is
+  dropped.
+- A field whose entry is wrong keeps it, outlined in the error colour (`view::mark`),
+  with the reason on hover; the value in use is the last good one. A value that is limited
+  or changed for the user is outlined in the warning colour, with what is in use on hover.
+- Destructive actions ask or can be undone, never silently. What loses unsaved data asks
+  "Discard the unsaved recording?" with Discard (error colour) and Cancel; Escape cancels.
+  Deleting a view, tab or group, and Clear layout, take effect at once and offer Undo in a
+  toast and in View › Undo delete. A connection or preset asks inline or in a dialog,
+  where Enter confirms and Escape cancels.
+- Toasts: info (neutral, expires), warning (expires) and error (stays until closed). A
+  toast may have one action button, e.g. Undo.
+- Escape goes to the innermost thing first: a field, then a menu, dialog or the connections
+  list, and only then releases the time cursor. Keys such as R and Space do not fire while a
+  field has the focus or a dialog is open.
 
 ## Words
 
@@ -118,5 +142,6 @@ the flow.
 
 ## Rejected on purpose
 
-User-set trace colours, display names or hiding; a separate layout panel; egui_tiles' own
+User-set trace colours, display names or hiding; a separate layout panel; legends that
+hide traces on a click; egui_tiles' own
 docking; teal accent; gradients; noisy, per-pixel timelines; 14 px text.
