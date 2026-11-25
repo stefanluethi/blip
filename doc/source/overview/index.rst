@@ -6,8 +6,8 @@ blip shows what an embedded target does. Between the target and blip sits the
 other. Firmware and unit tests can also speak blip's language themselves, with
 **sonde**.
 
-.. figure:: /diagrams/system-context.svg
-   :target: ../_images/system-context.svg
+.. figure:: /diagrams/system-context.drawio.svg
+   :target: ../_images/system-context.drawio.svg
    :class: diagram
    :alt: System context: the embedded target with firmware and optionally
          sonde, the outpost with your script, WebSocket server and recorder,
@@ -52,8 +52,8 @@ the answers to invocations, as CBOR over WebSockets (see
 Which setup you need
 --------------------
 
-.. figure:: /diagrams/setups.svg
-   :target: ../_images/setups.svg
+.. figure:: /diagrams/setups.drawio.svg
+   :target: ../_images/setups.drawio.svg
    :class: diagram
    :alt: Five ways to feed blip: the simulator, your target through your own
          protocol, a target with sonde through the TCP or UDP passthrough, a

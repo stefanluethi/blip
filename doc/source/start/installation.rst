@@ -107,7 +107,7 @@ This documentation
    make html     # output: doc/_build/html/index.html
    make serve    # live-reloading preview
 
-The diagrams are draw.io files in ``doc/source/diagrams``; after editing one,
-``make diagrams`` exports the SVGs next to them (needs the draw.io desktop
-app on the ``PATH``). ``make screenshots`` renders the screenshots of blip
+The diagrams are editable draw.io SVGs (``*.drawio.svg``) in
+``doc/source/diagrams``; open one in draw.io and save it, there is nothing to
+export. ``make screenshots`` renders the screenshots of blip
 again, see ``doc/README.md``.

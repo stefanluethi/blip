@@ -221,10 +221,11 @@ pre.literal-block {
   font-size: 0.75rem;
 }
 
-/* draw.io diagrams (doc/source/diagrams), drawn in blip's colours on a card.
-   themed-images.js swaps in the dark variant in dark mode, as for the
-   screenshots. */
+/* draw.io diagrams (doc/source/diagrams/*.drawio.svg), drawn in blip's colours
+   on a card. Each holds both themes in light-dark() colours and follows the
+   color-scheme of its <img>, set here from the theme of the page. */
 img.diagram {
+  color-scheme: light;
   display: block;
   max-width: 100%;
   height: auto;
@@ -238,6 +239,7 @@ img.diagram {
 }
 
 .dark img.diagram {
+  color-scheme: dark;
   background: #181b1f;
 }
 

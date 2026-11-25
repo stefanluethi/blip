@@ -15,8 +15,8 @@ calls your **actions** when blip invokes them.
    :doc:`/start/installation`), and a way to talk to your target from Python, e.g.
    pyserial for a serial port.
 
-.. figure:: /diagrams/setups.svg
-   :target: ../_images/setups.svg
+.. figure:: /diagrams/setups.drawio.svg
+   :target: ../_images/setups.drawio.svg
    :class: diagram
    :alt: The simulator example, your own script, the TCP or UDP passthrough
          for targets with sonde, and the replay of recordings all serve blip

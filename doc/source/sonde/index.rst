@@ -298,8 +298,8 @@ that sends (the **consumer**) takes the oldest ready batch with ``take()``,
 sends it and gives it back with ``release()``. The producer never blocks: when
 no batch is free it drops the message.
 
-.. figure:: /diagrams/sonde-batches.svg
-   :target: ../_images/sonde-batches.svg
+.. figure:: /diagrams/sonde-batches.drawio.svg
+   :target: ../_images/sonde-batches.drawio.svg
    :class: diagram
    :alt: The producer encodes into the open batch; commit makes it ready; the
          consumer takes ready batches, sends them and releases them back to

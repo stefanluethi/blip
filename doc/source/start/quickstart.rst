@@ -19,8 +19,8 @@ outpost first, see :doc:`/start/installation`.
    *Demo* preset and switch to it in the **Presets** menu to look around
    without running anything.
 
-.. figure:: /diagrams/setups.svg
-   :target: ../_images/setups.svg
+.. figure:: /diagrams/setups.drawio.svg
+   :target: ../_images/setups.drawio.svg
    :class: diagram
    :alt: Five ways to feed blip: the simulator, your target through your own
          protocol, a target with sonde through the TCP or UDP passthrough, a

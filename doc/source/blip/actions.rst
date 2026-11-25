@@ -12,8 +12,8 @@ recording shows what the action did.
    A connection to an outpost or target that announces actions, and recording on:
    blip carries out actions only while recording.
 
-.. figure:: /diagrams/action-sequence.svg
-   :target: ../_images/action-sequence.svg
+.. figure:: /diagrams/action-sequence.drawio.svg
+   :target: ../_images/action-sequence.drawio.svg
    :class: diagram
    :alt: Sequence: the outpost announces the actions; the user changes an
          input; blip sends Invoke; the outpost checks the arguments and calls

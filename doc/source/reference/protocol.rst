@@ -299,8 +299,8 @@ A ``Param`` has a ``name: String``, a ``kind: ParamKind``, a ``unit: String``
    * - ``"String"``
      - string
 
-.. figure:: /diagrams/action-sequence.svg
-   :target: ../_images/action-sequence.svg
+.. figure:: /diagrams/action-sequence.drawio.svg
+   :target: ../_images/action-sequence.drawio.svg
    :class: diagram
    :alt: Sequence of announcing, invoking, answering and reading back an
          action.
@@ -334,8 +334,8 @@ recording**), the outpost writes the same format when asked to record and sonde
 with its ``FileSink``. A recording is a CBOR sequence (RFC 8742), i.e. CBOR items one after another
 without anything around them, compressed with gzip:
 
-.. figure:: /diagrams/recording-file.svg
-   :target: ../_images/recording-file.svg
+.. figure:: /diagrams/recording-file.drawio.svg
+   :target: ../_images/recording-file.drawio.svg
    :class: diagram
    :alt: A recording file: a header, then messages, with text strings naming
          the connection of the messages after them, all gzip-compressed.

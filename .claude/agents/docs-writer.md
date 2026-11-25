@@ -42,11 +42,14 @@ the guides. Keep the headings and structure of the page you edit.
 
 - When modules, layers or the flow of the data changed, check each diagram that shows
   them (`grep -rn 'diagrams/' doc/source` finds where they are used) against the code,
-  not only the text around it. A diagram you cannot export is still stale: name it in
-  your report.
-- Diagrams are draw.io files in `doc/source/diagrams`. Edit the `.drawio` source, then
-  run `cd doc && make diagrams` to export the light and dark SVGs. It needs the `drawio`
-  app on the PATH; if it is missing, say which diagrams need exporting.
+  not only the text around it. A diagram you could not save in draw.io is still stale:
+  name it in your report.
+- Diagrams are editable draw.io SVGs, `doc/source/diagrams/*.drawio.svg`, which hold
+  the diagram and its image in both themes; there is no export step. Write each colour
+  as `light-dark(light,dark)` from `python3 doc/source/diagrams/palette.py table`, and
+  run `palette.py check` on the diagrams you touch. A change to a diagram's XML (the
+  `content` attribute) shows only once the file is saved in draw.io, so if you cannot
+  run draw.io, say which diagrams need opening and saving.
 - Screenshots come from `cd doc && make screenshots` (renders blip from the demo data in
   `blip/tests/data`). Run it when the change alters what a screenshot shows.
 

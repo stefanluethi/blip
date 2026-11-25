@@ -12,8 +12,8 @@ timeline of all collected data.
 
    The bottom panel while recording.
 
-.. figure:: /diagrams/time-states.svg
-   :target: ../_images/time-states.svg
+.. figure:: /diagrams/time-states.drawio.svg
+   :target: ../_images/time-states.drawio.svg
    :class: diagram
    :alt: Live goes to paused on pause, dragging a plot, moving the thumb or
          setting the cursor; paused goes to playing on play; playing goes back

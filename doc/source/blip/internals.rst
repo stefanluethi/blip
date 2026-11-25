@@ -71,8 +71,8 @@ The modules depend on each other in one direction only: ``workbench`` uses
 Structure
 ---------
 
-.. figure:: /diagrams/blip-modules.svg
-   :target: ../_images/blip-modules.svg
+.. figure:: /diagrams/blip-modules.drawio.svg
+   :target: ../_images/blip-modules.drawio.svg
    :class: diagram
    :alt: The App holds the State (time range and session), the
          connections, the files, the toasts and the layout with its views; the
@@ -199,8 +199,8 @@ eframe calls ``App::logic`` and then ``App::ui`` for each frame. blip repaints
 when there is input, and the sockets wake it up when a message arrives, so it
 draws as often as data arrives, not more.
 
-.. figure:: /diagrams/blip-frame.svg
-   :target: ../_images/blip-frame.svg
+.. figure:: /diagrams/blip-frame.drawio.svg
+   :target: ../_images/blip-frame.drawio.svg
    :class: diagram
    :alt: logic(): update the session, which polls its sources, parses the
          frames, routes what arrives to the recorder, the store and the invoker

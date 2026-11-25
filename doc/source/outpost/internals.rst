@@ -16,8 +16,8 @@ own or in the event loop of the script. The examples live next to it in
 Structure
 ---------
 
-.. figure:: /diagrams/outpost-architecture.svg
-   :target: ../_images/outpost-architecture.svg
+.. figure:: /diagrams/outpost-architecture.drawio.svg
+   :target: ../_images/outpost-architecture.drawio.svg
    :class: diagram
    :alt: The user's script, or the command line with the passthrough and the
          replay, talks to the target and uses the Outpost; its send functions

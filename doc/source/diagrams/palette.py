@@ -1,12 +1,12 @@
 """The colours of blip (kit/src/widgets/theme.rs) for the draw.io diagrams.
 
-The diagrams are drawn in the light theme with these colours only. `dark` maps each
-light colour to the one of the dark theme, so the dark variant of a diagram follows
-from the light one:
+Each diagram is an editable SVG (name.drawio.svg) that draw.io opens and saves as it
+is. Its colours are those of this palette, each written `light-dark(light,dark)`, so
+that the SVG shows the theme of the page (theme.css sets the color-scheme of its
+<img>). The trace colours, the same in both themes but the grey, stay plain.
 
-    python3 palette.py dark system-context.drawio system-context-dark.drawio
-    python3 palette.py fonts system-context.svg     # adds fallbacks to Fira Sans
-    python3 palette.py table                        # the colours, to pick from
+    python3 palette.py table                 # the colours, to paste into draw.io
+    python3 palette.py check *.drawio.svg    # colours outside the palette or light only
 
 Keep the tokens in step with theme.rs.
 """
@@ -78,43 +78,49 @@ def colors():
     return table
 
 
-def dark(text):
-    """`text`, a draw.io file in the light colours, in the dark ones."""
-    mapping = {light.lower(): dark for light, dark in colors().values() if light != dark}
-
-    def replace(match):
-        return mapping.get(match.group(0).lower(), match.group(0))
-
-    return re.sub(r"#[0-9a-fA-F]{6}\b", replace, text)
-
-
-FONTS = "Fira Sans, Helvetica, Arial, sans-serif"
-MONO = "Fira Code, Courier New, monospace"
+def _pairs():
+    """The colours of the diagrams as draw.io writes them: plain for those the same
+    in both themes, else `light-dark(light,dark)`."""
+    return {
+        light.lower() if light == dark else f"light-dark({light},{dark})".lower()
+        for light, dark in colors().values()
+    }
 
 
-def fonts(svg):
-    """`svg` with fallbacks for the fonts of the docs, which an <img> cannot load."""
-    svg = re.sub(r'font-family="Fira Sans"', f'font-family="{FONTS}"', svg)
-    svg = re.sub(r'font-family="Fira Code"', f'font-family="{MONO}"', svg)
-    svg = re.sub(r"font-family: Fira Sans;", f"font-family: {FONTS};", svg)
-    svg = re.sub(r"font-family: Fira Code;", f"font-family: {MONO};", svg)
-    return svg
+def check(svg):
+    """What is wrong with `svg`, a .drawio.svg: the colours of its image that are
+    not in the palette, or that would not change with the theme."""
+    problems = []
+    if not re.search(r"<svg[^>]*color-scheme:\s*light dark", svg):
+        problems.append("the <svg> has no `color-scheme: light dark`")
+    # the image, without the diagram that draw.io embeds in it
+    image = re.sub(r'\bcontent="[^"]*"', "", svg)
+    image = re.sub(r"rgb\((\d+), ?(\d+), ?(\d+)\)", lambda m: _hex(int(c) for c in m.groups()), image)
+    image = re.sub(r"light-dark\(\s*(#\w+)\s*,\s*(#\w+)\s*\)", r"light-dark(\1,\2)", image)
+    allowed = _pairs()
+    found = re.findall(r"light-dark\(#\w+,#\w+\)|#[0-9a-fA-F]{6}\b", image)
+    dark_of = {light.lower(): dark for light, dark in colors().values()}
+    for colour in sorted({c.lower() for c in found} - allowed):
+        if colour in dark_of:
+            problems.append(f"colour {colour} is light only: light-dark({colour},{dark_of[colour]})")
+        else:
+            problems.append(f"colour {colour} is not in the palette")
+    return problems
 
 
 def main(args):
-    if args[:1] == ["dark"] and len(args) == 3:
-        with open(args[1], encoding="utf-8") as f:
-            text = f.read()
-        with open(args[2], "w", encoding="utf-8") as f:
-            f.write(dark(text))
-    elif args[:1] == ["fonts"] and len(args) == 2:
-        with open(args[1], encoding="utf-8") as f:
-            svg = f.read()
-        with open(args[1], "w", encoding="utf-8") as f:
-            f.write(fonts(svg))
-    elif args == ["table"]:
+    if args == ["table"]:
         for name, (light, dark_color) in colors().items():
-            print(f"{name:16} {light}  {dark_color}")
+            colour = light if light == dark_color else f"light-dark({light},{dark_color})"
+            print(f"{name:16} {colour}")
+    elif args[:1] == ["check"] and len(args) > 1:
+        failed = False
+        for path in args[1:]:
+            with open(path, encoding="utf-8") as f:
+                for problem in check(f.read()):
+                    print(f"{path}: {problem}", file=sys.stderr)
+                    failed = True
+        return 1 if failed else 0
     else:
         print(__doc__, file=sys.stderr)
         return 2

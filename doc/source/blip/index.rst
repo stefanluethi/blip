@@ -15,8 +15,8 @@ The window
 
    blip with the demo recording and preset.
 
-.. figure:: /diagrams/blip-window.svg
-   :target: ../_images/blip-window.svg
+.. figure:: /diagrams/blip-window.drawio.svg
+   :target: ../_images/blip-window.drawio.svg
    :class: diagram
    :alt: The blip window: menu with the connection chip on top, traces on the
          left, properties on the right, views in the center, record
@@ -99,8 +99,8 @@ Time cursor
    timeline. Tables, heatmaps at the cursor and the XY marker show the values
    at its time. Until you set it, it is at the end of the window.
 
-.. figure:: /diagrams/time-range.svg
-   :target: ../_images/time-range.svg
+.. figure:: /diagrams/time-range.drawio.svg
+   :target: ../_images/time-range.drawio.svg
    :class: diagram
    :alt: The shown window over the collected data, with the time cursor, when
          live, paused and playing.

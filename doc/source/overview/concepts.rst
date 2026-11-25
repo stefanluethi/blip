@@ -105,8 +105,8 @@ Metadata
    values, which blip fits plots to. It comes from the target only. A newer
    message of a trace replaces the earlier one.
 
-.. figure:: /diagrams/data-model.svg
-   :target: ../_images/data-model.svg
+.. figure:: /diagrams/data-model.drawio.svg
+   :target: ../_images/data-model.drawio.svg
    :class: diagram
    :alt: Sample messages with records become one trace per field; metadata sets
          units, descriptions, labels and ranges; log messages become log records; the Actions message lists the
@@ -174,8 +174,8 @@ Readback
    measured speed for a speed setpoint. It shows the effect; the answer to the
    invocation only says whether the target took it.
 
-.. figure:: /diagrams/action-sequence.svg
-   :target: ../_images/action-sequence.svg
+.. figure:: /diagrams/action-sequence.drawio.svg
+   :target: ../_images/action-sequence.drawio.svg
    :class: diagram
    :alt: Sequence of announcing, invoking, answering and reading back an
          action.

@@ -128,15 +128,15 @@ def _drop_cdn_fonts(app, exception):
 
 
 def _copy_dark_images(app, exception):
-    """Copy the dark variants of the diagrams and screenshots next to the light
-    ones, which the figures reference, for themed-images.js to swap in."""
+    """Copy the dark variants of the screenshots next to the light ones, which the
+    figures reference, for themed-images.js to swap in. The diagrams hold both
+    themes."""
     if exception or app.builder.format != "html":
         return
     images = Path(app.outdir, "_images")
     images.mkdir(exist_ok=True)
-    for pattern in ("diagrams/*-dark.svg", "screenshots/*-dark.png"):
-        for image in Path(app.srcdir).glob(pattern):
-            shutil.copyfile(image, images / image.name)
+    for image in Path(app.srcdir).glob("screenshots/*-dark.png"):
+        shutil.copyfile(image, images / image.name)
 
 
 def setup(app):

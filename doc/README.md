@@ -39,38 +39,37 @@ source/
 │                      (REQ_DOC_*), architecture elements (ARCH_*), tests
 │                      (TEST_*), traceability tables, authoring guide
 ├── changes.rst        release notes
-├── diagrams/          draw.io sources (*.drawio) and their exported *.svg
+├── diagrams/          draw.io diagrams (*.drawio.svg), both themes in one SVG
 └── screenshots/       screenshots of blip, rendered by `make screenshots`
 ```
 
 ## Diagrams
 
 The diagrams are drawn with [draw.io](https://www.drawio.com) in the colours of
-blip (`kit/src/widgets/theme.rs`). Edit the `.drawio` file (in the desktop app, or
-the draw.io VS Code extension), then export the SVGs next to the sources:
+blip (`kit/src/widgets/theme.rs`). Each is an editable SVG, `name.drawio.svg`:
+open it in the draw.io desktop app or the VS Code extension and save it. Nothing
+to export; the file is the source and the image.
 
-```bash
-make diagrams   # needs the draw.io desktop app (`drawio`) on the PATH
-```
+Each colour is written `light-dark(light,dark)`, the light colour of the palette
+and its dark twin, so one SVG shows both themes. It follows the `color-scheme` of
+its `<img>`, which `_static/theme.css` sets from the theme of the page. Set the
+colours in Edit Style (Ctrl+E) of a shape, as in `fillColor=light-dark(#d0ddff,#384c7d)`;
+`python3 source/diagrams/palette.py table` lists them, and
+`python3 source/diagrams/palette.py check source/diagrams/*.drawio.svg` reports
+colours that are not in the palette or light only. The trace colours, the same in
+both themes but the grey, stay plain.
 
-Each diagram is exported twice: `name.svg` in the light colours and
-`name-dark.svg`, whose colours `source/diagrams/palette.py` maps to those of the
-dark theme. `_static/themed-images.js` shows the variant of the theme of the page.
-The SVGs are committed, so building the documentation does not need draw.io.
-
-Draw with the light colours of the palette only, so that each maps to its dark
-twin; `python3 source/diagrams/palette.py table` lists them. Each part has one
-colour of the trace palette, as a tinted fill with the colour as border: blip
-blue, outpost purple, target orange, recordings yellow, tests magenta, others
-grey. Text is `text`, lines `text_weak`, plain boxes the `card`. Keep the
-palette in step with `theme.rs`.
+Each part has one colour of the trace palette, as a tinted fill with the colour as
+border: blip blue, outpost purple, target orange, recordings yellow, tests
+magenta, others grey. Text is `text`, lines `text_weak`, plain boxes the `card`.
+Keep the palette in step with `theme.rs`.
 
 Include a diagram with a figure of class `diagram`, linked to the full-size
 image:
 
 ```rst
-.. figure:: /diagrams/system-context.svg
-   :target: ../_images/system-context.svg
+.. figure:: /diagrams/system-context.drawio.svg
+   :target: ../_images/system-context.drawio.svg
    :class: diagram
    :alt: What the diagram shows, in words.
 

@@ -29,8 +29,8 @@ A ``Queue`` encodes messages into the batches of its ``Storage<BatchBytes,
 Batches>``, slots the user owns (static or on the stack). A batch is a CBOR
 sequence of whole messages, ready to be one UDP datagram or one write.
 
-.. figure:: /diagrams/sonde-batches.svg
-   :target: ../_images/sonde-batches.svg
+.. figure:: /diagrams/sonde-batches.drawio.svg
+   :target: ../_images/sonde-batches.drawio.svg
    :class: diagram
    :alt: The batches cycle from free to open (the producer encodes into it),
          ready (committed), taken (the consumer sends it) and back to free on
