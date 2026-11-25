@@ -395,6 +395,9 @@ impl LogTable {
                     })
                     .body(|mut body| {
                         let lines = lines.in_body(body.ui_mut());
+                        let tokens = body.ui_mut().tokens();
+                        let weak = body.ui_mut().visuals().weak_text_color();
+                        let strong = body.ui_mut().visuals().text_color();
                         let shown_entries = &self.shown;
                         let paths = self.shown_paths();
                         body.rows(row_height, shown_entries.len(), |mut row| {
@@ -407,14 +410,8 @@ impl LogTable {
                             }
                             // the message stands out, the time and the path less,
                             // and all of an entry outside the time range stays faint
-                            let text = |text: &str, ui: &egui::Ui, role: Role| {
-                                let tokens = ui.tokens();
-                                let color = match role {
-                                    _ if !shown => tokens.text_faint,
-                                    Role::Time => tokens.text_faint,
-                                    Role::Path => ui.visuals().weak_text_color(),
-                                    Role::Message => ui.visuals().text_color(),
-                                };
+                            let text = |text: &str, color: egui::Color32| {
+                                let color = if shown { color } else { tokens.text_faint };
                                 let text = egui::RichText::new(text).monospace().color(color);
                                 // a click on the text clicks the row
                                 egui::Label::new(text).selectable(false)
@@ -426,20 +423,20 @@ impl LogTable {
                             };
                             row.col(|ui| {
                                 lines.above(ui, index);
-                                ui.add(text(&time, ui, Role::Time));
+                                ui.add(text(&time, tokens.text_faint));
                             });
                             row.col(|ui| {
                                 level_badge(ui, entry.level, shown);
                             });
                             row.col(|ui| {
-                                let label = ui.add(text(&path[folder..], ui, Role::Path));
+                                let label = ui.add(text(&path[folder..], weak));
                                 if folder > 0 {
                                     label.on_hover_text(&**path);
                                 }
                             });
                             row.col(|ui| {
                                 // cut to one line, the whole message shows on hover
-                                ui.add(text(&entry.message, ui, Role::Message).truncate());
+                                ui.add(text(&entry.message, strong).truncate());
                             });
                             let response = row.response();
                             if response.clicked() {
@@ -799,14 +796,6 @@ fn badge_size(ui: &egui::Ui) -> egui::Vec2 {
         .painter()
         .layout_no_wrap("DEBUG".to_owned(), font, egui::Color32::PLACEHOLDER);
     egui::vec2(widest.size().x + 10.0, size + 4.0)
-}
-
-/// What a text of a log entry is, which sets its color.
-#[derive(Clone, Copy)]
-enum Role {
-    Time,
-    Path,
-    Message,
 }
 
 #[cfg(test)]
