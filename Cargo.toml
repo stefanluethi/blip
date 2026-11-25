@@ -28,6 +28,10 @@ all = { level = "warn", priority = -1 }
 
 [profile.release]
 opt-level = 2 # fast and small wasm
+# Release is the only profile built here (see CLAUDE.md), so it is also the one edited
+# against: an edit recompiles the changed parts of a workspace crate, not all of it.
+# The dependencies are not built incrementally and still come from sccache.
+incremental = true
 
 # The web build (see blip/index.html): optimized for the size of the wasm.
 [profile.web]
@@ -35,6 +39,7 @@ inherits = "release"
 opt-level = "s"
 lto = true
 codegen-units = 1
+incremental = false
 panic = "abort"
 # not stripped: wasm-opt reads the features of the wasm from a section of it, and
 # removes the names itself
