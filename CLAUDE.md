@@ -32,15 +32,7 @@ cargo test --release --workspace --doc
 (cd blip && trunk serve --release)
 ```
 
-For sonde, configure CMake with `-DCMAKE_BUILD_TYPE=Release`:
-
-```bash
-cmake -S sonde -B sonde/build -DCMAKE_BUILD_TYPE=Release
-cmake --build sonde/build --parallel
-ctest --test-dir sonde/build --output-on-failure
-```
-
-Cross builds for Cortex-M use `MinSizeRel`, as in `.github/workflows/sonde.yml`.
+sonde builds with CMake in `Release`: the commands are in `sonde/CLAUDE.md`.
 
 A hook (`.claude/hooks/release-only.py`, registered in `.claude/settings.json`) blocks
 Bash commands that would build in debug. The project's `blip-lsp` plugin
@@ -55,13 +47,29 @@ start with a build of many minutes. Before the first build of a session, run
 installed, that builds work but every worktree compiles the dependencies again, and
 that `cargo install sccache --locked` installs it; then go on.
 
+The release profile is incremental (`Cargo.toml`): after an edit, cargo recompiles the
+changed parts of a workspace crate only. The web profile is not.
+
+## While a change is in work
+
+- Check and test the crate you edit, not the workspace, and name the test:
+  `cargo check -q --release -p blip-kit --all-targets --message-format=short`,
+  `cargo test -q --release -p blip-kit --lib <filter>`. Run `./check.sh --fast` once,
+  when the change is complete.
+- Keep the output short: `-q` on every cargo command, and for a long run write to a log
+  and read its end: `log=$(mktemp); ./check.sh --fast > "$log" 2>&1; echo "exit=$?"; tail -n 40 "$log"`.
+- Use the LSP tool (rust-analyzer) for the diagnostics of a file you edited and to find
+  a definition or the references of an item, before `cargo check` and `grep`.
+- A hook (`.claude/hooks/rustfmt.py`) formats each Rust file you edit: do not run
+  `cargo fmt` yourself.
+
 ## Checks
 
 `./check.sh` runs the CI-style checks (all in release): cargo check for native and
 WASM, the features of `blip-kit` and its example, rustfmt, clippy, the tests, the API
 docs, the packaging of the library crates and a Trunk build. Run it before committing Rust
 changes. `./check.sh --fast` stops after the tests: it leaves out the API docs, the
-packaging and the Trunk build, and is the check to run while a change is in work.
+packaging and the Trunk build, and is the check to run when a change is complete.
 
 - outpost: `cd outpost && uv run pytest`
 - docs: `cd doc && make html` (warnings are errors)
@@ -71,9 +79,7 @@ packaging and the Trunk build, and is the check to run while a change is in work
 
 - Update the docs in `doc/source` (guides, architecture, requirements and tests) along
   with the code they describe.
-- `blip-kit` keeps its layers: `store` uses no GUI crate and neither `widgets` nor
-  `workbench`; `widgets` does not use `workbench`. Widgets read data only through the
-  `Store` trait (`&dyn Store`), with the `Window` they show.
+- `kit/CLAUDE.md` has the layer rules of `blip-kit`.
 - Rust unit tests live in their own file: `src/x/foo/tests.rs`, declared in `foo.rs` as
   `#[cfg(test)] mod tests;`, not inline, so reading code doesn't load its tests. Skip
   `tests.rs` files when searching or reading code you don't test.

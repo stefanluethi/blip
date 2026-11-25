@@ -13,6 +13,7 @@ readme = "README.md"
 keywords = ["tracing", "embedded", "egui", "plot", "telemetry"]
 categories = ["embedded", "gui", "visualization"]
 publish = true
+exclude = ["CLAUDE.md"] # for the agents that work here, not for users of the crate
 
 [features]
 default = ["widgets", "websocket"]

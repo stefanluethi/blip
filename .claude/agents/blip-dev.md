@@ -44,7 +44,7 @@ widgets, the app): read the one on what you change, the same way.
   is `pub` in them is a promise. A new item is `pub(crate)` or private unless an
   application needs it; do not make an internal public to reach it from a test or
   another module. Every public item you add or change gets a doc comment that says
-  what it is for, as its user reads it. Keep the layers of `CLAUDE.md`: `store` uses no
+  what it is for, as its user reads it. Keep the layers of `kit/CLAUDE.md`: `store` uses no
   GUI crate, the widgets read data only through `&dyn Store`. When a signature changes,
   change every user of it in the same slice: `kit/`, `blip/`, `kit/examples`,
   `kit/tests` and the code samples in `doc/source/library` (report the pages, the

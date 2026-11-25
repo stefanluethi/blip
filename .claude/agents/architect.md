@@ -18,7 +18,7 @@ still open as questions for the lead.
 
 ## Before designing
 
-1. Read the rules that bind the structure: `CLAUDE.md` (the layers of `blip-kit`), and
+1. Read the rules that bind the structure: `kit/CLAUDE.md` (the layers of `blip-kit`), and
    the `ARCH_*` elements in `doc/source/requirements/architecture.rst` that the change
    touches.
 2. Read how it is built today, in parts (`grep -n`, then that range): the pages of

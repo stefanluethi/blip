@@ -53,7 +53,7 @@ the same for `doc/source/sonde/`.
 
 ## Build and test
 
-Configure with Release locally, as `CLAUDE.md` says:
+Configure with Release locally, as `sonde/CLAUDE.md` says:
 
 ```bash
 cmake -S sonde -B sonde/build -DCMAKE_BUILD_TYPE=Release -DSONDE_WERROR=ON
