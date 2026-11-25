@@ -20,6 +20,14 @@ fn create_entry(level: LogLevel, message: &str) -> LogEntry {
     }
 }
 
+/// An entry at `time` with the level and the message given.
+fn at(time: u64, level: LogLevel, message: &str) -> LogEntry {
+    LogEntry {
+        time,
+        ..create_entry(level, message)
+    }
+}
+
 /// The paths and the indices of the shown entries.
 fn shown(table: &LogTable) -> Vec<(&str, u32)> {
     let paths = &table.shown_for.as_ref().unwrap().paths;
@@ -33,22 +41,30 @@ fn shown_indices(table: &LogTable) -> Vec<u32> {
     shown(table).into_iter().map(|(_, index)| index).collect()
 }
 
+/// A harness showing `logs` in `table`.
+fn logs_harness(
+    mut table: LogTable,
+    logs: Logs,
+    mut time: TimeRange,
+    size: egui::Vec2,
+) -> Harness<'static> {
+    Harness::builder()
+        .with_size(size)
+        .build_ui(move |ui| table.ui(ui, &logs, &mut time))
+}
+
 #[test]
 fn new_entries_are_filtered_and_all_again_when_the_filter_or_order_changes() {
-    let at = |time, level| LogEntry {
-        time,
-        ..create_entry(level, "message")
-    };
     let mut logs = Logs::default();
-    logs.push("", at(1, LogLevel::Info));
-    logs.push("", at(2, LogLevel::Warn));
+    logs.push("", at(1, LogLevel::Info, "message"));
+    logs.push("", at(2, LogLevel::Warn, "message"));
     let mut table = table();
     table.filter.hidden_levels.insert(LogLevel::Info);
     table.update_shown(&logs);
     assert_eq!(shown_indices(&table), [1]);
 
-    logs.push("", at(3, LogLevel::Warn));
-    logs.push("", at(4, LogLevel::Info));
+    logs.push("", at(3, LogLevel::Warn, "message"));
+    logs.push("", at(4, LogLevel::Info, "message"));
     table.update_shown(&logs);
     assert_eq!(shown_indices(&table), [1, 2]);
 
@@ -59,7 +75,7 @@ fn new_entries_are_filtered_and_all_again_when_the_filter_or_order_changes() {
     // an entry before the others moves them on
     table.filter.hidden_levels.insert(LogLevel::Info);
     table.update_shown(&logs);
-    logs.push("", at(0, LogLevel::Warn));
+    logs.push("", at(0, LogLevel::Warn, "message"));
     table.update_shown(&logs);
     assert_eq!(shown_indices(&table), [0, 2, 3]);
 }
@@ -93,14 +109,10 @@ fn only_the_logs_of_the_picked_paths_are_shown() {
 
 #[test]
 fn the_entries_of_several_paths_are_shown_in_the_order_of_their_times() {
-    let at = |time| LogEntry {
-        time,
-        ..create_entry(LogLevel::Info, "message")
-    };
     let mut logs = Logs::default();
-    logs.push("motor", at(1));
-    logs.push("robot", at(2));
-    logs.push("motor", at(3));
+    logs.push("motor", at(1, LogLevel::Info, "message"));
+    logs.push("robot", at(2, LogLevel::Info, "message"));
+    logs.push("motor", at(3, LogLevel::Info, "message"));
     let mut table = LogTable {
         paths: BTreeSet::from(["motor".to_owned(), "robot".to_owned()]),
         ..LogTable::default()
@@ -108,8 +120,8 @@ fn the_entries_of_several_paths_are_shown_in_the_order_of_their_times() {
     table.update_shown(&logs);
     assert_eq!(shown(&table), [("motor", 0), ("robot", 0), ("motor", 1)]);
     // appended to its path, but before an entry of the other one
-    logs.push("robot", at(2));
-    logs.push("motor", at(4));
+    logs.push("robot", at(2, LogLevel::Info, "message"));
+    logs.push("motor", at(4, LogLevel::Info, "message"));
     table.update_shown(&logs);
     let expected = [
         ("motor", 0),
@@ -121,11 +133,11 @@ fn the_entries_of_several_paths_are_shown_in_the_order_of_their_times() {
     assert_eq!(shown(&table), expected);
     // a path whose first entry arrives, after the known ones of the same time
     table.paths.insert("arm".to_owned());
-    logs.push("arm", at(3));
+    logs.push("arm", at(3, LogLevel::Info, "message"));
     table.update_shown(&logs);
     assert_eq!(shown(&table)[3..5], [("motor", 1), ("arm", 0)]);
     // an entry before the others of its path, which alone is filtered again
-    logs.push("robot", at(0));
+    logs.push("robot", at(0, LogLevel::Info, "message"));
     table.update_shown(&logs);
     let expected = [
         ("robot", 0),
@@ -137,14 +149,6 @@ fn the_entries_of_several_paths_are_shown_in_the_order_of_their_times() {
         ("motor", 2),
     ];
     assert_eq!(shown(&table), expected);
-}
-
-/// An entry at `time` with the level and the message given.
-fn at(time: u64, level: LogLevel, message: &str) -> LogEntry {
-    LogEntry {
-        time,
-        ..create_entry(level, message)
-    }
 }
 
 fn paths_of(paths: &[&str]) -> BTreeSet<String> {
@@ -173,14 +177,11 @@ fn the_path_is_always_shown_relative_to_the_folder() {
         for path in ["log/default", "log/imu", "log/motor/left", "motor"] {
             logs.push(path, at(1, LogLevel::Info, "message"));
         }
-        let mut table = LogTable {
+        let table = LogTable {
             paths: paths_of(paths),
             ..LogTable::default()
         };
-        let mut time = TimeRange::default();
-        Harness::builder()
-            .with_size(egui::vec2(600.0, 300.0))
-            .build_ui(move |ui| table.ui(ui, &logs, &mut time))
+        logs_harness(table, logs, TimeRange::default(), egui::vec2(600.0, 300.0))
     };
     let header = format!("Path {}", regular::CARET_DOWN);
     let several = harness(&["log/default", "log/imu", "log/motor/left"]);
@@ -284,12 +285,8 @@ fn autoscroll_button_stays_visible_in_a_small_view() {
     for _ in 0..100 {
         logs.push("", create_entry(LogLevel::Info, "message"));
     }
-    let mut table = table();
-    let mut time = TimeRange::default();
     let size = egui::vec2(400.0, 120.0);
-    let harness = Harness::builder()
-        .with_size(size)
-        .build_ui(move |ui| table.ui(ui, &logs, &mut time));
+    let harness = logs_harness(table(), logs, TimeRange::default(), size);
     let button = harness.get_by_label(regular::ARROW_LINE_DOWN);
     assert!(button.rect().bottom() <= size.y);
 }
@@ -329,12 +326,12 @@ fn autoscroll_keeps_up_with_new_entries() {
 
 #[test]
 fn the_header_holds_the_filters() {
-    let logs = Logs::default();
-    let mut table = table();
-    let mut time = TimeRange::default();
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(600.0, 300.0))
-        .build_ui(move |ui| table.ui(ui, &logs, &mut time));
+    let mut harness = logs_harness(
+        table(),
+        Logs::default(),
+        TimeRange::default(),
+        egui::vec2(600.0, 300.0),
+    );
     harness
         .get_by_label(&format!("Level {}", regular::CARET_DOWN))
         .click();
@@ -366,7 +363,7 @@ fn the_columns_follow_the_properties() {
             ..create_entry(LogLevel::Info, "speed 100")
         };
         logs.push("", entry);
-        let mut table = LogTable { columns, ..table() };
+        let table = LogTable { columns, ..table() };
         // the time base comes from the model
         let mut model = crate::store::MemoryStore::default();
         let hello = proto::Message::Hello(proto::Hello {
@@ -378,9 +375,7 @@ fn the_columns_follow_the_properties() {
         crate::store::testing::receive(&mut model, "", &hello);
         let mut time = TimeRange::default();
         time.update(&model, 0.0);
-        Harness::builder()
-            .with_size(egui::vec2(600.0, 300.0))
-            .build_ui(move |ui| table.ui(ui, &logs, &mut time))
+        logs_harness(table, logs, time, egui::vec2(600.0, 300.0))
     };
     let date = TimeBase::Unix.format_dated(1_700_000_000_000_000_000, 3);
     let shown = harness(LogColumns::default());
@@ -489,17 +484,21 @@ fn test_regex_filter() {
 /// time range over them.
 type Timed = (LogTable, crate::store::MemoryStore, TimeRange);
 
+/// The log record "message {second}" at `second`.
+fn log_record(second: u64) -> proto::Message {
+    proto::Message::Log(proto::LogRecord {
+        timestamp: second * 1_000_000_000,
+        path: String::new(),
+        level: proto::level::INFO,
+        message: format!("message {second}"),
+    })
+}
+
 /// A harness showing the entries of [`Timed`], live.
 fn timed_harness(auto_scroll: bool) -> Harness<'static, Timed> {
     let mut model = crate::store::MemoryStore::default();
     for second in 0..100u64 {
-        let record = proto::Message::Log(proto::LogRecord {
-            timestamp: second * 1_000_000_000,
-            path: String::new(),
-            level: proto::level::INFO,
-            message: format!("message {second}"),
-        });
-        crate::store::testing::receive(&mut model, "", &record);
+        crate::store::testing::receive(&mut model, "", &log_record(second));
     }
     let mut table = table();
     table.filter.auto_scroll = auto_scroll;
@@ -538,14 +537,8 @@ fn wheel(harness: &mut Harness<'_, Timed>, points: f32) {
 
 /// Adds the entry "message {second}" at `second` and shows it.
 fn push(harness: &mut Harness<'_, Timed>, second: u64) {
-    let record = proto::Message::Log(proto::LogRecord {
-        timestamp: second * 1_000_000_000,
-        path: String::new(),
-        level: proto::level::INFO,
-        message: format!("message {second}"),
-    });
     let (_, model, time) = harness.state_mut();
-    crate::store::testing::receive(model, "", &record);
+    crate::store::testing::receive(model, "", &log_record(second));
     time.update(model, 0.0);
     harness.run_steps(4);
 }
@@ -658,11 +651,12 @@ fn long_messages_are_cut_to_one_line() {
     let mut logs = Logs::default();
     let long = format!("first line\n{}", "and more ".repeat(100));
     logs.push("", create_entry(LogLevel::Info, &long));
-    let mut table = table();
-    let mut time = TimeRange::default();
-    let harness = Harness::builder()
-        .with_size(egui::vec2(600.0, 300.0))
-        .build_ui(move |ui| table.ui(ui, &logs, &mut time));
+    let harness = logs_harness(
+        table(),
+        logs,
+        TimeRange::default(),
+        egui::vec2(600.0, 300.0),
+    );
     let label = harness.get_by_label_contains("first line");
     let row_height = harness.get_by_label("INFO").rect().height();
     assert!(label.rect().height() <= row_height + 4.0);

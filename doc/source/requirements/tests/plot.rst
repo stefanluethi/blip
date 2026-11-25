@@ -16,16 +16,16 @@ Tests of the requirements in :doc:`/requirements/system/plot`.
    ``ends_out_of_order_blame_the_ends_set`` that ends set the wrong way round
    are blamed with the reason ("Min must be below Max, 4").
    ``kit/src/widgets/view/tests.rs::ends_over_fit_the_ends_that_are_not_set``
-   and ``the_hints_of_min_and_max_are_the_ends_of_the_axis`` -- Plot fits the end
-   not set and shows the ends in use as hints.
+   and ``kit/src/widgets/view/plot/tests.rs::a_typed_end_overrides_the_fit_and_clearing_it_returns``
+   -- Plot fits the end not set and shows the ends in use.
    ``kit/src/widgets/view/xy/tests.rs::an_axis_is_set_only_by_ends_in_order`` --
    an XY axis takes the ends set only in order, else it fits.
    ``kit/src/widgets/view/heatmap/tests.rs::each_end_of_the_colour_scale_is_set_alone_and_wrong_ends_are_left_out``
    and ``kit/src/widgets/view/distribution/tests.rs::each_end_of_the_range_is_set_alone_and_wrong_ends_are_left_out``
    -- the same for the colour scale and for the values binned.
-   ``heatmaps_saved_with_a_fixed_or_no_range_load_to_the_same_scale``,
-   ``distributions_saved_with_a_fixed_or_no_range_load_to_the_same_bins`` and
-   ``xy_plots_saved_before_the_new_properties_load_to_the_same_picture`` --
+   ``kit/src/widgets/view/heatmap/tests.rs::heatmaps_saved_with_a_fixed_or_no_range_load_to_the_same_scale``,
+   ``kit/src/widgets/view/distribution/tests.rs::distributions_saved_with_a_fixed_or_no_range_load_to_the_same_bins`` and
+   ``kit/src/widgets/view/xy/tests.rs::xy_plots_saved_before_the_new_properties_load_to_the_same_picture`` --
    presets saved with a fixed range, or none, load to the same picture. The
    outline in the error colour is checked by hand.
 

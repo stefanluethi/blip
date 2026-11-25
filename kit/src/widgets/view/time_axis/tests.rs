@@ -37,6 +37,16 @@ fn time_plot_harness_stepping(step: f32) -> Harness<'static, TimeRange> {
         )
 }
 
+/// A click at `at`.
+fn click(harness: &mut Harness<'_, TimeRange>, at: egui::Pos2) {
+    harness.hover_at(at);
+    harness.run();
+    harness.drag_at(at);
+    harness.run();
+    harness.drop_at(at);
+    harness.run();
+}
+
 #[test]
 fn clicking_a_time_plot_sets_the_cursor_which_can_be_dragged() {
     let mut harness = time_plot_harness();
@@ -45,11 +55,8 @@ fn clicking_a_time_plot_sets_the_cursor_which_can_be_dragged() {
     assert_eq!(harness.state().cursor(), Some(40.0));
 
     // the window from 20 to 40 seconds spans the plot
-    let click = egui::pos2(300.0, 100.0);
-    harness.drag_at(click);
-    harness.run();
-    harness.drop_at(click);
-    harness.run();
+    let at = egui::pos2(300.0, 100.0);
+    click(&mut harness, at);
     let time = harness.state();
     assert!(!time.is_live());
     let clicked = time.cursor().unwrap();
@@ -57,7 +64,7 @@ fn clicking_a_time_plot_sets_the_cursor_which_can_be_dragged() {
     let range = time.range();
 
     // dragging the cursor moves it and not the window
-    drag(&mut harness, click, egui::pos2(350.0, 100.0));
+    drag(&mut harness, at, egui::pos2(350.0, 100.0));
     let time = harness.state();
     assert!(time.cursor().unwrap() > clicked + 1.0);
     assert_eq!(time.range(), range);
@@ -88,13 +95,7 @@ fn a_double_click_leaves_the_time_as_it_was() {
     assert!(!time.cursor_is_set());
 
     // a cursor put somewhere stays there
-    let click = egui::pos2(250.0, 100.0);
-    harness.hover_at(click);
-    harness.run();
-    harness.drag_at(click);
-    harness.run();
-    harness.drop_at(click);
-    harness.run();
+    click(&mut harness, egui::pos2(250.0, 100.0));
     let cursor = harness.state().cursor();
     let range = harness.state().range();
     assert!(harness.state().cursor_is_set());

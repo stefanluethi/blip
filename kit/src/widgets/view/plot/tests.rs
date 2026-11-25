@@ -26,23 +26,19 @@ fn downsample_keeps_small_series() {
 }
 
 #[test]
-fn downsample_limits_points_and_keeps_extremes() {
-    let traces = traces(1_000_003, false);
-    let points = downsample(traces.series("a").unwrap(), 0, 300);
-    assert!(points.len() <= 1_000);
-    assert!(points.windows(2).all(|p| p[0][0] <= p[1][0]));
-    assert!(points.iter().any(|p| p[1] == 0.0));
-    assert!(points.iter().any(|p| p[1] == 6.0));
-}
-
-#[test]
-fn downsample_keeps_gaps() {
-    let traces = traces(1_000_003, true);
-    let points = downsample(traces.series("a").unwrap(), 0, 300);
-    assert!(points.len() <= 1_000);
-    assert!(points.windows(2).all(|p| p[0][0] <= p[1][0]));
-    assert!(points.iter().any(|p| p[1].is_nan()));
-    assert!(points.iter().any(|p| p[1] == 6.0));
+fn downsample_limits_points_keeps_extremes_and_gaps() {
+    for with_nulls in [false, true] {
+        let traces = traces(1_000_003, with_nulls);
+        let points = downsample(traces.series("a").unwrap(), 0, 300);
+        assert!(points.len() <= 1_000);
+        assert!(points.windows(2).all(|p| p[0][0] <= p[1][0]));
+        if with_nulls {
+            assert!(points.iter().any(|p| p[1].is_nan()));
+        } else {
+            assert!(points.iter().any(|p| p[1] == 0.0));
+        }
+        assert!(points.iter().any(|p| p[1] == 6.0));
+    }
 }
 
 /// A harness showing a plot of a trace `a` whose value is the time in seconds from 0
@@ -585,13 +581,4 @@ fn offers_fit(paths: &[&str]) -> bool {
 fn fit_to_is_offered_only_while_a_shown_trace_declares_a_range() {
     assert!(offers_fit(&["a", "b"]));
     assert!(!offers_fit(&["b"]));
-}
-
-#[test]
-fn the_hints_of_min_and_max_are_the_ends_of_the_axis() {
-    // a declared range and a trace without one: the properties show `range_y` as hints
-    let (plot, model) = fit_model(&["a", "b"]);
-    let hints = plot.range_y(&model);
-    assert_eq!(hints, Some((-5.5, 120.0)));
-    assert_eq!(plot.shown_y(&model), hints);
 }

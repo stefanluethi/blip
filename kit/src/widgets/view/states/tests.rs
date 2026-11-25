@@ -2,26 +2,19 @@ use super::*;
 use crate::store::MemoryStore;
 use crate::store::Window;
 use crate::store::testing::append;
-use crate::store::traces::Traces;
 use proto::Data;
 
-/// Traces of the given samples, one every second.
-fn traces(samples: &[(&str, Data)]) -> Traces {
-    let mut traces = Traces::default();
+/// A model with the given samples, one every second.
+fn model(samples: &[(&str, Data)]) -> MemoryStore {
+    let mut model = MemoryStore::default();
     for (second, (path, value)) in samples.iter().enumerate() {
         append(
-            &mut traces,
+            &mut model.traces,
             second as u64 * 1_000_000_000,
             path,
             value.clone(),
         );
     }
-    traces
-}
-
-fn model(samples: &[(&str, Data)]) -> MemoryStore {
-    let mut model = MemoryStore::default();
-    model.traces = traces(samples);
     model
 }
 

@@ -3,6 +3,26 @@ use crate::store::MemoryStore;
 use crate::store::testing::append;
 use egui_kittest::Harness;
 
+/// A harness showing the properties of `view`, run once.
+fn properties_harness(model: MemoryStore, view: View, plots: Plots) -> Harness<'static, View> {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(300.0, 600.0))
+        .build_ui_state(
+            move |ui, view: &mut View| {
+                let connected = HashSet::new();
+                let context = PropertiesContext {
+                    store: &model,
+                    connected: &connected,
+                    plots: &plots,
+                };
+                view.properties_ui(ui, &context);
+            },
+            view,
+        );
+    harness.run();
+    harness
+}
+
 #[test]
 fn the_number_formats_of_a_linked_histogram_are_greyed() {
     let plots = Plots(vec![PlotInfo {
@@ -18,21 +38,7 @@ fn the_number_formats_of_a_linked_histogram_are_greyed() {
         use egui_kittest::kittest::{NodeT, Queryable};
         let mut model = MemoryStore::default();
         append(&mut model.traces, 0, "motor/errors", proto::Data::Uint(3));
-        let mut harness = Harness::builder()
-            .with_size(egui::vec2(300.0, 600.0))
-            .build_ui_state(
-                move |ui, view: &mut View| {
-                    let connected = HashSet::new();
-                    let context = PropertiesContext {
-                        store: &model,
-                        connected: &connected,
-                        plots: &plots,
-                    };
-                    view.properties_ui(ui, &context);
-                },
-                view,
-            );
-        harness.run();
+        let harness = properties_harness(model, view, plots);
         let format = harness.get_by(|node| {
             node.role() == egui::accesskit::Role::ComboBox
                 && node.value().as_deref() == Some("Default")
@@ -350,22 +356,7 @@ fn the_traces_section_lists_the_facts() {
     if let ViewKind::Plot(plot) = &mut view.kind {
         plot.traces.extend(["a", "m", "p"].map(str::to_owned));
     }
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(300.0, 600.0))
-        .build_ui_state(
-            move |ui, view: &mut View| {
-                let connected = HashSet::new();
-                let plots = Plots::default();
-                let context = PropertiesContext {
-                    store: &model,
-                    connected: &connected,
-                    plots: &plots,
-                };
-                view.properties_ui(ui, &context);
-            },
-            view,
-        );
-    harness.run();
+    let harness = properties_harness(model, view, Plots::default());
     for label in [
         "Traces",
         "Speed",
