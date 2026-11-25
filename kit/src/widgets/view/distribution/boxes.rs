@@ -5,13 +5,10 @@ use super::{
     MARKER_INSET, MARKER_RADIUS, OUTLINE_WIDTH, OVERLAY_INSET, Orientation, Shown, Whiskers,
     nice_near, write_value,
 };
-use crate::store::Version;
 use crate::store::numbers::DisplayFormat;
 use crate::widgets::theme::{self, TokensExt};
 use crate::widgets::view::tooltip::{Header, Label, Row, Tone, Tooltip, TraceName, Value};
 use crate::widgets::view::with_unit;
-use std::collections::BTreeSet;
-use std::sync::Arc;
 
 /// How thick a box is, as a part of its row, at least and at most this many points.
 const BOX_SHARE: f32 = 0.4;
@@ -110,40 +107,6 @@ impl BoxStats {
             outliers,
         })
     }
-}
-
-/// The boxes of the shown traces, kept while their samples, the window and the whiskers
-/// stay the same, as sorting the samples is slower than counting them in bins.
-#[derive(Clone)]
-pub struct Cache {
-    key: (Version, (u64, u64), Whiskers, BTreeSet<String>),
-    boxes: Arc<[Option<BoxStats>]>,
-}
-
-/// The boxes of the samples of `shown` in `window`, in nanoseconds, of the samples of
-/// `version` of the traces at `paths`, from `cache` if it holds them, else computed and
-/// kept in it.
-pub fn boxes(
-    cache: &mut Option<Box<Cache>>,
-    (version, window): (Version, (u64, u64)),
-    whiskers: Whiskers,
-    paths: &BTreeSet<String>,
-    shown: &[Shown<'_>],
-) -> Arc<[Option<BoxStats>]> {
-    if let Some(cache) = cache.as_ref()
-        && (cache.key.0, cache.key.1, cache.key.2) == (version, window, whiskers)
-        && &cache.key.3 == paths
-    {
-        return cache.boxes.clone();
-    }
-    let boxes: Arc<[Option<BoxStats>]> = (shown.iter())
-        .map(|trace| BoxStats::of(super::values(&trace.series), whiskers))
-        .collect();
-    *cache = Some(Box::new(Cache {
-        key: (version, window, whiskers, paths.clone()),
-        boxes: boxes.clone(),
-    }));
-    boxes
 }
 
 /// How the boxes in the rows are drawn, in points.
@@ -410,23 +373,6 @@ pub fn beyond(stats: &BoxStats, (low, high): (f64, f64)) -> Option<bool> {
     } else {
         None
     }
-}
-
-/// `text` cut with "…" to at most `width` points in `font`.
-pub fn cut(ui: &egui::Ui, text: &str, width: f32, font: &egui::FontId) -> String {
-    let fits = |text: &str| {
-        let galley =
-            ui.painter()
-                .layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::PLACEHOLDER);
-        galley.size().x <= width
-    };
-    if fits(text) {
-        return text.to_owned();
-    }
-    (text.char_indices().rev())
-        .map(|(end, _)| format!("{}…", &text[..end]))
-        .find(|cut| fits(cut))
-        .unwrap_or_else(|| "…".to_owned())
 }
 
 /// The names and values of the tooltip of `stats` with `whiskers`, in the order drawn:

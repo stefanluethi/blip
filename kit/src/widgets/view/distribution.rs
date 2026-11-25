@@ -7,9 +7,10 @@ use super::plotting::{
     TIME_Y_AXIS_THICKNESS, TitleEntry, Y_MARGIN, base_plot, corner_legend, title_legend,
     with_margin,
 };
+use super::stats::Sums;
 use super::tooltip::{Header, Label, Row, Tone, Tooltip, TraceName, Value};
 use super::{
-    Ends, Fit, Formats, Plots, PropertiesContext, ViewContext, ViewId, Viewable, text_size,
+    Ends, Fit, Formats, Plots, PropertiesContext, ViewContext, ViewId, Viewable, cut_off, text_size,
 };
 use crate::store::numbers::{DisplayFormat, Number, NumberKind, SHOWN_DIGITS, format_significant};
 use crate::store::sorted::within;
@@ -17,7 +18,9 @@ use crate::store::traces::{Samples, Series, Trace};
 use crate::store::{Store, Window};
 use crate::widgets::theme::{self, TokensExt};
 use crate::widgets::time::TimeRange;
+use boxes::BoxStats;
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 mod boxes;
 
@@ -229,9 +232,6 @@ pub struct Distribution {
     /// The bin or the row under the pointer in the last frame.
     #[serde(skip)]
     hovered: Option<Hovered>,
-    /// The boxes of the last frame, kept while their samples stay the same.
-    #[serde(skip)]
-    boxes: Option<Box<boxes::Cache>>,
 }
 
 /// What is under the pointer.
@@ -264,7 +264,6 @@ impl Default for Distribution {
             share_top: None,
             last: None,
             hovered: None,
-            boxes: None,
         }
     }
 }
@@ -710,10 +709,7 @@ pub fn count(values: impl Iterator<Item = f64>, bins: &Bins, fixed: Option<(f64,
         bins: vec![0; bins.count],
         ..Counts::default()
     };
-    // the sums of the values minus the first one, which keeps the sum of squares
-    // precise for values far from zero
-    let mut shift = None;
-    let (mut binned, mut sum, mut squares) = (0u64, 0.0, 0.0);
+    let mut sums = Sums::default();
     for value in values {
         if value.is_nan() {
             continue;
@@ -736,16 +732,11 @@ pub fn count(values: impl Iterator<Item = f64>, bins: &Bins, fixed: Option<(f64,
             }
         }
         counts.bins[bins.index(value)] += 1;
-        let shifted = value - *shift.get_or_insert(value);
-        binned += 1;
-        sum += shifted;
-        squares += shifted * shifted;
+        sums.add(value, 1.0);
     }
-    if let Some(shift) = shift {
-        let n = binned as f64;
-        let mean = sum / n;
-        counts.mean = Some(shift + mean);
-        counts.std_dev = Some((squares / n - mean * mean).max(0.0).sqrt());
+    if let Some((mean, variance)) = sums.mean_variance() {
+        counts.mean = Some(mean);
+        counts.std_dev = Some(variance.sqrt());
     }
     counts
 }
@@ -995,13 +986,17 @@ impl Viewable for Distribution {
         };
         let boxes = match (self.show, window) {
             (Show::Bars, _) | (_, None) => None,
-            (_, Some(window)) => Some(boxes::boxes(
-                &mut self.boxes,
-                (store.samples_version(), window),
-                self.whiskers,
-                &self.traces,
-                &shown,
-            )),
+            // kept while their samples, the window, the whiskers and the traces stay the
+            // same, as sorting the samples is slower than counting them in bins
+            (_, Some(window)) => {
+                let traces = egui::Id::new(&self.traces);
+                let key = (store.samples_version(), window, self.whiskers, traces);
+                Some(super::cached(ui, id.with("boxes"), key, || {
+                    (shown.iter())
+                        .map(|trace| BoxStats::of(self::values(&trace.series), self.whiskers))
+                        .collect::<Arc<[_]>>()
+                }))
+            }
         };
 
         let paths = || self.traces.iter().map(String::as_str);
@@ -1398,15 +1393,15 @@ impl Distribution {
     /// large, cut with "…" to at most a third of the view and, sideways, to their
     /// columns.
     fn row_names(&self, ui: &egui::Ui, shown: &[Shown<'_>], frame: egui::Vec2) -> Vec<String> {
-        let font = egui::TextStyle::Body.resolve(ui.style());
         let third = ui.available_width() / 3.0;
         let width = self.orientation.pick(
             // the axis keeps a margin on each side of its labels
             third - 2.0 * NAME_MARGIN,
             third.min(frame.x / shown.len().max(1) as f32 - 2.0 * NAME_MARGIN),
         );
+        let width_of = |text: &str| text_size(ui, text, egui::TextStyle::Body).x;
         (shown.iter())
-            .map(|trace| boxes::cut(ui, &trace.name, width.max(0.0), &font))
+            .map(|trace| cut_off(&trace.name, width.max(0.0), width_of))
             .collect()
     }
 

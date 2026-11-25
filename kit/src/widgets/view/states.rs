@@ -4,7 +4,7 @@
 use super::Selectable;
 use super::time_axis::{self, visible_range};
 use super::tooltip::{Header, Label, Row, Tooltip, Value};
-use super::{Formats, PropertiesContext, ViewContext, Viewable, short_names, with_unit};
+use super::{Formats, PropertiesContext, ViewContext, Viewable, cut_off, short_names, with_unit};
 use crate::store::logs::LogLevel;
 use crate::store::numbers::{DisplayFormat, Labels, NumberKind, SHOWN_DIGITS};
 use crate::store::sorted::index_at;
@@ -256,21 +256,6 @@ fn fnv1a(text: &str) -> u64 {
 /// of the time plots, less the margins egui_plot leaves beside its labels.
 const MAX_NAME_WIDTH: f32 = super::plotting::TIME_Y_AXIS_THICKNESS - 8.0;
 
-/// `name`, cut off with "…" to be at most `max` points wide as `width_of` measures it.
-fn cut_off(name: &str, max: f32, width_of: impl Fn(&str) -> f32) -> String {
-    if width_of(name) <= max {
-        return name.to_owned();
-    }
-    // the longest start of the name that fits with the "…"
-    let ends: Vec<usize> = name.char_indices().map(|(at, _)| at).skip(1).collect();
-    let fits = |&end: &usize| width_of(&format!("{}…", &name[..end])) <= max;
-    let count = ends.partition_point(fits);
-    match count.checked_sub(1) {
-        Some(last) => format!("{}…", &name[..ends[last]]),
-        None => "…".to_owned(),
-    }
-}
-
 impl States {
     /// Draws the bands of `samples` in the row centered at `y`.
     fn plot_row(
@@ -402,13 +387,7 @@ impl Viewable for States {
     fn view(&mut self, ui: &mut egui::Ui, context: &mut ViewContext<'_>) {
         let (store, formats, time) = (context.store, context.formats, &mut *context.time);
         // long names are cut off, so that the axis is as wide as that of other plots
-        let font = egui::TextStyle::Body.resolve(ui.style());
-        let width_of = |text: &str| {
-            let galley =
-                ui.painter()
-                    .layout_no_wrap(text.to_owned(), font.clone(), Color32::PLACEHOLDER);
-            galley.size().x
-        };
+        let width_of = |text: &str| super::text_size(ui, text, egui::TextStyle::Body).x;
         let names: Vec<String> = short_names(self.traces.iter().map(String::as_str))
             .into_iter()
             .map(|name| cut_off(name, MAX_NAME_WIDTH, width_of))

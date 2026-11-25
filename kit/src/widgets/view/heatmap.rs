@@ -159,9 +159,16 @@ impl ValueText<'_> {
         value.format(Some(SHOWN_DIGITS), self.format)
     }
 
-    /// `value` as a tooltip shows it, with its unit and label.
-    fn tooltip_value(self, value: Number) -> Vec<Value> {
-        Value::labelled(value, SHOWN_DIGITS, self.format, self.unit, self.labels)
+    /// The tooltip of `value`, a dash without one, in a row with `label` under `header`,
+    /// with the description of the trace `name`.
+    fn tooltip(self, header: String, label: Label, value: Option<Number>, name: &str) -> Tooltip {
+        let value = value.map_or_else(
+            || vec![Value::missing()],
+            |value| Value::labelled(value, SHOWN_DIGITS, self.format, self.unit, self.labels),
+        );
+        Tooltip::new(Header::Text(header))
+            .group(vec![Row::new(label, value)])
+            .describe(name, self.description)
     }
 }
 
@@ -176,46 +183,14 @@ fn band_tooltip(
 ) -> Tooltip {
     let value = index_at(trace.timestamps, t)
         .and_then(|index| trace.samples.array_sample(index))
-        .and_then(|elements| elements.get(element))
-        .map_or_else(
-            || vec![Value::missing()],
-            |number| text.tooltip_value(number),
-        );
-    let row = Row::new(Label::Weak(format!("[{element}]")), value);
-    Tooltip::new(Header::Text(base.format(t, 3)))
-        .group(vec![row])
-        .describe(short_names([trace.path])[0], text.description)
-}
-
-/// The tooltip of the cell at `(row, column)` of the 2D array `name` with `value`.
-fn cell_tooltip(
-    name: &str,
-    text: ValueText<'_>,
-    (row, column): (usize, usize),
-    value: Number,
-) -> Tooltip {
-    let rows = vec![Row::new(
-        Label::Weak(name.to_owned()),
-        text.tooltip_value(value),
-    )];
-    Tooltip::new(Header::Text(format!("[{row}][{column}]")))
-        .group(rows)
-        .describe(name, text.description)
-}
-
-/// The tooltip of element `index` of the 1D array trace `name` at `path` with `value`.
-fn element_tooltip(
-    name: &str,
-    path: &str,
-    text: ValueText<'_>,
-    index: usize,
-    value: Number,
-) -> Tooltip {
-    let trace = TraceName::new(name, path, 0);
-    let row = Row::new(Label::Trace(trace), text.tooltip_value(value));
-    Tooltip::new(Header::Text(format!("[{index}]")))
-        .group(vec![row])
-        .describe(name, text.description)
+        .and_then(|elements| elements.get(element));
+    let label = Label::Weak(format!("[{element}]"));
+    text.tooltip(
+        base.format(t, 3),
+        label,
+        value,
+        short_names([trace.path])[0],
+    )
 }
 
 /// The values of an array trace of `len` elements within `(start, end)` seconds as a
@@ -471,7 +446,8 @@ impl Heatmap {
         super::zoom_on_wheel(&response.response);
         if let Some((row, column, value)) = response.inner {
             let name = short_names([trace.path])[0];
-            let tooltip = cell_tooltip(name, text, (row, column), value);
+            let header = format!("[{row}][{column}]");
+            let tooltip = text.tooltip(header, Label::Weak(name.to_owned()), Some(value), name);
             response
                 .response
                 .on_hover_ui_at_pointer(|ui| tooltip.ui(ui));
@@ -521,7 +497,8 @@ impl Heatmap {
         }
         if let Some(index) = response.inner {
             let name = short_names([trace.path])[0];
-            let tooltip = element_tooltip(name, trace.path, text, index, numbers[index]);
+            let label = Label::Trace(TraceName::new(name, trace.path, 0));
+            let tooltip = text.tooltip(format!("[{index}]"), label, Some(numbers[index]), name);
             response
                 .response
                 .on_hover_ui_at_pointer(|ui| tooltip.ui(ui));

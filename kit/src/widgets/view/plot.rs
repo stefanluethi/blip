@@ -1,5 +1,5 @@
 use super::Selectable;
-use super::plotting::{TitleEntry, is_point, title_legend, to_screen};
+use super::plotting::{TitleEntry, is_point, plot_lines, plot_points, title_legend, to_screen};
 use super::stats::{self, Measurement};
 use super::time_axis::{self, TimeAxis, visible_range};
 use super::tooltip::{Header, Label, Row, Tooltip, TraceName, Value};
@@ -302,34 +302,16 @@ impl Plot {
         }
         let show_points = style.marks_points(self.points, points.len(), width);
         let line_style = style.plot_style(&points, plot_ui.transform());
-        let step = self.steps(&series);
         // lines and markers of the same name share one legend entry
-        for segment in points
-            .split(|point| point[1].is_nan())
-            .filter(|segment| !segment.is_empty())
-        {
-            if show_points {
-                plot_ui.points(
-                    egui_plot::Points::new(name, segment.to_vec())
-                        .color(color)
-                        .radius(self.line_width + 1.0),
-                );
-            }
-            let Some(line_style) = line_style else {
-                continue;
-            };
-            let segment = if step {
-                steps(segment)
-            } else {
-                segment.to_vec()
-            };
-            plot_ui.line(
-                egui_plot::Line::new(name, egui_plot::PlotPoints::from(segment))
-                    .color(color)
-                    .width(self.line_width)
-                    .style(line_style),
-            );
+        if show_points {
+            plot_points(name, &points, color, self.line_width + 1.0, plot_ui);
         }
+        let line = if self.steps(&series) {
+            steps(&points)
+        } else {
+            points
+        };
+        plot_lines(name, &line, color, (line_style, self.line_width), plot_ui);
     }
 
     /// The y range of the values of the shown traces for which `include` holds, also
@@ -631,11 +613,12 @@ fn downsample(series: Series<'_>, origin: u64, buckets: usize) -> Vec<[f64; 2]> 
     points
 }
 
-/// The line through `points` as steps that hold each value until the next point.
+/// The line through `points` as steps that hold each value until the next point, but
+/// not on to a gap.
 fn steps(points: &[[f64; 2]]) -> Vec<[f64; 2]> {
     let mut stepped = Vec::with_capacity(points.len() * 2);
     for (index, &point) in points.iter().enumerate() {
-        if index > 0 {
+        if index > 0 && !point[1].is_nan() {
             stepped.push([point[0], points[index - 1][1]]);
         }
         stepped.push(point);

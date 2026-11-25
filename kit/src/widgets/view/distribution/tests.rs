@@ -1437,15 +1437,10 @@ fn boxes_of(
     plots: &Plots,
 ) -> Vec<Option<boxes::BoxStats>> {
     let counting = distribution.counting(model, time, plots, 1000.0);
-    let window = counting.window.expect("a window");
-    boxes::boxes(
-        &mut distribution.boxes,
-        (model.samples_version(), window),
-        distribution.whiskers,
-        &distribution.traces,
-        &counting.shown,
-    )
-    .to_vec()
+    counting.window.expect("a window");
+    (counting.shown.iter())
+        .map(|trace| BoxStats::of(values(&trace.series), distribution.whiskers))
+        .collect()
 }
 
 #[test]

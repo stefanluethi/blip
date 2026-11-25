@@ -44,7 +44,7 @@ pub(super) fn to_screen(point: [f64; 2], transform: &egui_plot::PlotTransform) -
 }
 
 /// Draws the lines through `points` in `style`, if any, `width` points wide, broken
-/// where a point is missing.
+/// where a point is missing. A point between gaps shows as a dot as wide as the line.
 pub(super) fn plot_lines(
     name: &str,
     points: &[[f64; 2]],
@@ -56,7 +56,7 @@ pub(super) fn plot_lines(
         return;
     };
     for segment in points.split(|point| !is_point(point)) {
-        if segment.len() > 1 {
+        if !segment.is_empty() {
             plot_ui.line(
                 egui_plot::Line::new(name, segment.to_vec())
                     .color(color)
@@ -67,11 +67,12 @@ pub(super) fn plot_lines(
     }
 }
 
-/// Marks the `points` that are not missing.
+/// Marks the `points` that are not missing with dots of `radius` points.
 pub(super) fn plot_points(
     name: &str,
     points: &[[f64; 2]],
     color: egui::Color32,
+    radius: f32,
     plot_ui: &mut egui_plot::PlotUi<'_>,
 ) {
     let points: Vec<[f64; 2]> = points.iter().copied().filter(is_point).collect();
@@ -79,7 +80,7 @@ pub(super) fn plot_points(
         plot_ui.points(
             egui_plot::Points::new(name, points)
                 .color(color)
-                .radius(POINT_RADIUS)
+                .radius(radius)
                 .filled(true),
         );
     }
@@ -104,7 +105,7 @@ pub(super) fn plot_array(
     plot_lines(name, &values, color, (line_style, width), plot_ui);
     let width = plot_ui.transform().frame().width();
     if style.marks_points(points, values.len(), width) {
-        plot_points(name, &values, color, plot_ui);
+        plot_points(name, &values, color, POINT_RADIUS, plot_ui);
     }
 }
 

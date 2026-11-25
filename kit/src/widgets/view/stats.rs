@@ -246,10 +246,6 @@ pub fn is_linear(series: &Series<'_>, interpolation: super::plot::Interpolation)
     interpolation == super::plot::Interpolation::Linear && series.kind != NumberKind::Bool
 }
 
-/// What the stats of a trace were computed for: the samples of the store, the window
-/// and how edges are found, see [`Stats::of_series`].
-type StatsKey = (crate::store::Version, (u64, u64), Option<bool>);
-
 /// Shows `measurements` of the `shown` traces of a plot over the shown `window`, in
 /// nanoseconds, side by side and wrapping, each in the colour of its trace. Those of
 /// traces not shown are left out. `linear` tells for a series whether its curve runs
@@ -280,17 +276,11 @@ pub fn measurements_ui(
                 let edges = cycles.then(|| linear(&series));
                 // kept from frame to frame while the samples and the window stay the
                 // same, e.g. while paused
-                let key: StatsKey = (samples, window?, edges);
+                let window = window?;
                 let id = ui.id().with(("stats of", path));
-                if let Some((known, stats)) =
-                    ui.data(|data| data.get_temp::<(StatsKey, Option<Stats>)>(id))
-                    && known == key
-                {
-                    return stats;
-                }
-                let stats = Stats::of_series(&series, key.1, edges);
-                ui.data_mut(|data| data.insert_temp(id, (key, stats)));
-                stats
+                super::cached(ui, id, (samples, window, edges), || {
+                    Stats::of_series(&series, window, edges)
+                })
             });
             let value = trace_stats.and_then(|stats| measurement.stat.of(&stats));
             let format = formats.of(path);
@@ -429,9 +419,7 @@ impl Stats {
         let mut min = f64::INFINITY;
         let mut max = f64::NEG_INFINITY;
         // sums over the time each value holds, and over the values for windows without
-        // time between their samples, of the values minus the first one, which keeps
-        // the sum of squares precise for values far from zero
-        let mut shift = None;
+        // time between their samples
         let mut timed = Sums::default();
         let mut counted = Sums::default();
         for (index, &timestamp) in timestamps.iter().enumerate() {
@@ -447,15 +435,11 @@ impl Stats {
             }
             min = min.min(value);
             max = max.max(value);
-            let shifted = value - *shift.get_or_insert(value);
-            timed.add(shifted, held.max(0.0));
-            counted.add(shifted, 1.0);
+            timed.add(value, held.max(0.0));
+            counted.add(value, 1.0);
         }
-        let shift = shift?;
         let sums = if timed.weight > 0.0 { timed } else { counted };
-        let mean = sums.mean();
-        let variance = (sums.mean_square() - mean * mean).max(0.0);
-        let mean = shift + mean;
+        let (mean, variance) = sums.mean_variance()?;
         let cycles = edges.filter(|_| max > min).and_then(|linear| {
             cycles(
                 timestamps,
@@ -478,27 +462,29 @@ impl Stats {
     }
 }
 
-/// Sums of weighted values.
+/// Sums of weighted values less the first one, which keeps the sum of squares precise
+/// for values far from zero.
 #[derive(Clone, Copy, Default)]
-struct Sums {
+pub(super) struct Sums {
+    shift: Option<f64>,
     weight: f64,
     values: f64,
     squares: f64,
 }
 
 impl Sums {
-    fn add(&mut self, value: f64, weight: f64) {
+    pub(super) fn add(&mut self, value: f64, weight: f64) {
+        let value = value - *self.shift.get_or_insert(value);
         self.weight += weight;
         self.values += value * weight;
         self.squares += value * value * weight;
     }
 
-    fn mean(&self) -> f64 {
-        self.values / self.weight
-    }
-
-    fn mean_square(&self) -> f64 {
-        self.squares / self.weight
+    /// The mean and the variance of the values, `None` without a value.
+    pub(super) fn mean_variance(&self) -> Option<(f64, f64)> {
+        let mean = self.values / self.weight;
+        let variance = (self.squares / self.weight - mean * mean).max(0.0);
+        Some((self.shift? + mean, variance))
     }
 }
 

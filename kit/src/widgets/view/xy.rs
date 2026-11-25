@@ -4,9 +4,9 @@
 use super::Selectable;
 use super::plot::{LegendPlacement, LineStyle, LineStyles, ShowPoints, line_width_row};
 use super::plotting::{
-    TitleEntry, base_plot, corner_legend, hovered_point, index_spacer, index_under, index_x_axis,
-    is_point, nearest_point, plot_array, plot_lines, plot_points, sample_at_cursor, title_legend,
-    to_screen,
+    POINT_RADIUS, TitleEntry, base_plot, corner_legend, hovered_point, index_spacer, index_under,
+    index_x_axis, is_point, nearest_point, plot_array, plot_lines, plot_points, sample_at_cursor,
+    title_legend, to_screen,
 };
 use super::tooltip::{Header, Label, Row, Tooltip, TraceName, Value};
 use super::trace_selection::MAX_LISTED_ELEMENTS;
@@ -608,14 +608,8 @@ impl Xy {
         style: LineStyle,
         plot_ui: &mut egui_plot::PlotUi<'_>,
     ) {
-        if let Some(&last) = points.last().filter(|point| is_point(point)) {
-            plot_ui.points(
-                egui_plot::Points::new(name, vec![last])
-                    .color(color)
-                    .radius(4.0)
-                    .filled(true),
-            );
-        }
+        let last = points.len().saturating_sub(1);
+        plot_points(name, &points[last..], color, 4.0, plot_ui);
         let transform = *plot_ui.transform();
         let steps = if self.fade > 0.0 { FADE_STEPS } else { 1 };
         let line_style = style.plot_style(points, &transform);
@@ -635,7 +629,7 @@ impl Xy {
             let steps = points.len().div_ceil(step_len);
             for (step, chunk) in points.chunks(step_len).enumerate() {
                 let color = color.gamma_multiply(trail_opacity(self.fade, step, steps));
-                plot_points(name, chunk, color, plot_ui);
+                plot_points(name, chunk, color, POINT_RADIUS, plot_ui);
             }
         }
     }

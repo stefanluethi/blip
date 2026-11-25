@@ -75,11 +75,23 @@ fn the_tooltips_of_a_heatmap_describe_its_trace() {
         description: "Thermal frame".into(),
     });
     assert_eq!(
-        cell_tooltip("frame", text, (0, 0), Number::Float(1.0)).footer,
+        text.tooltip(
+            "[0][0]".into(),
+            Label::Weak("frame".into()),
+            Some(Number::Float(1.0)),
+            "frame"
+        )
+        .footer,
         footer
     );
     assert_eq!(
-        element_tooltip("frame", "thermal/frame", text, 0, Number::Float(1.0)).footer,
+        text.tooltip(
+            "[0]".into(),
+            Label::Trace(TraceName::new("frame", "thermal/frame", 0)),
+            Some(Number::Float(1.0)),
+            "frame"
+        )
+        .footer,
         footer
     );
     let band = band_tooltip(a, text, TimeBase::SinceBoot, 2_000_000_000, 1);
@@ -89,7 +101,13 @@ fn the_tooltips_of_a_heatmap_describe_its_trace() {
     );
     text.description = None;
     assert_eq!(
-        cell_tooltip("frame", text, (0, 0), Number::Null).footer,
+        text.tooltip(
+            "[0][0]".into(),
+            Label::Weak("frame".into()),
+            Some(Number::Null),
+            "frame"
+        )
+        .footer,
         None
     );
 }
@@ -117,7 +135,12 @@ fn the_tooltips_of_bands_cells_and_elements() {
     let tooltip = band_tooltip(a, text, TimeBase::SinceBoot, 500_000_000, 0);
     assert_eq!(tooltip.groups[0][0].values, [Value::missing()]);
 
-    let tooltip = cell_tooltip("frame", text, (1, 2), Number::Float(21.5));
+    let tooltip = text.tooltip(
+        "[1][2]".into(),
+        Label::Weak("frame".into()),
+        Some(Number::Float(21.5)),
+        "frame",
+    );
     assert_eq!(tooltip.header, Some(Header::Text("[1][2]".into())));
     assert_eq!(
         tooltip.groups,
@@ -126,10 +149,16 @@ fn the_tooltips_of_bands_cells_and_elements() {
             [Value::text("21.5 °C")]
         )]]
     );
-    let tooltip = cell_tooltip("frame", text, (1, 2), Number::Null);
+    let tooltip = text.tooltip(
+        "[1][2]".into(),
+        Label::Weak("frame".into()),
+        Some(Number::Null),
+        "frame",
+    );
     assert_eq!(tooltip.groups[0][0].values, [Value::faint("null")]);
 
-    let tooltip = element_tooltip("frame", "thermal/frame", text, 3, Number::Float(0.5));
+    let label = Label::Trace(TraceName::new("frame", "thermal/frame", 0));
+    let tooltip = text.tooltip("[3]".into(), label, Some(Number::Float(0.5)), "frame");
     assert_eq!(tooltip.header, Some(Header::Text("[3]".into())));
     let trace = TraceName {
         name: "frame".into(),

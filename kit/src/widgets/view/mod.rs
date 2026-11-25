@@ -463,6 +463,37 @@ pub fn text_size(ui: &egui::Ui, text: &str, style: egui::TextStyle) -> egui::Vec
         .size()
 }
 
+/// `name`, cut off with "…" to be at most `max` points wide as `width_of` measures it.
+pub(crate) fn cut_off(name: &str, max: f32, width_of: impl Fn(&str) -> f32) -> String {
+    if width_of(name) <= max {
+        return name.to_owned();
+    }
+    // the longest start of the name that fits with the "…"
+    let ends: Vec<usize> = name.char_indices().map(|(at, _)| at).skip(1).collect();
+    let fits = |&end: &usize| width_of(&format!("{}…", &name[..end])) <= max;
+    let count = ends.partition_point(fits);
+    match count.checked_sub(1) {
+        Some(last) => format!("{}…", &name[..ends[last]]),
+        None => "…".to_owned(),
+    }
+}
+
+/// What `compute` gives, kept under `id` from frame to frame while `key` stays the same.
+pub(crate) fn cached<K, V>(ui: &egui::Ui, id: egui::Id, key: K, compute: impl FnOnce() -> V) -> V
+where
+    K: PartialEq + Clone + Send + Sync + 'static,
+    V: Clone + Send + Sync + 'static,
+{
+    if let Some((known, value)) = ui.data(|data| data.get_temp::<(K, V)>(id))
+        && known == key
+    {
+        return value;
+    }
+    let value = compute();
+    ui.data_mut(|data| data.insert_temp(id, (key, value.clone())));
+    value
+}
+
 /// The widest `needed` since `slot` last changed, kept under `id`. Keeps a value in place
 /// while it changes, until a new slot (e.g. another range or format) starts it anew.
 pub fn sticky_width(ctx: &egui::Context, id: egui::Id, slot: String, needed: f32) -> f32 {
